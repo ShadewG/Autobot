@@ -131,12 +131,12 @@ class PortalService {
         const formFields = await page.evaluate(() => {
             const fields = [];
 
-            // Get all input, textarea, and select elements
-            document.querySelectorAll('input, textarea, select').forEach((el, index) => {
+            // Get all input, textarea, select, and contenteditable elements
+            document.querySelectorAll('input, textarea, select, [contenteditable="true"]').forEach((el, index) => {
                 const field = {
                     index,
                     tag: el.tagName.toLowerCase(),
-                    type: el.type || 'text',
+                    type: el.type || (el.getAttribute('contenteditable') === 'true' ? 'contenteditable' : 'text'),
                     name: el.name || el.id || '',
                     id: el.id || '',
                     placeholder: el.placeholder || '',
@@ -196,11 +196,33 @@ class PortalService {
      */
     async fillForm(page, formAnalysis, caseData) {
         const filledFields = [];
+        let hasFilledDescription = false;
 
         for (const field of formAnalysis.fields) {
             try {
-                const selector = field.id ? `#${field.id}` : `[name="${field.name}"]`;
-                const value = this.mapFieldToCaseData(field, caseData);
+                // Build selector - special handling for contenteditable
+                let selector;
+                if (field.id) {
+                    selector = `#${field.id}`;
+                } else if (field.type === 'contenteditable') {
+                    selector = `[contenteditable="true"]`;
+                } else if (field.name) {
+                    selector = `[name="${field.name}"]`;
+                } else {
+                    continue; // Skip if no way to select
+                }
+
+                let value = this.mapFieldToCaseData(field, caseData);
+
+                // If this is a contenteditable with no label and we haven't filled description yet,
+                // assume it's the main request description
+                if (!value && field.type === 'contenteditable' && !hasFilledDescription) {
+                    const records = Array.isArray(caseData.requested_records)
+                        ? caseData.requested_records.join(', ')
+                        : caseData.requested_records || 'police records';
+                    value = `Requesting ${records} related to an incident involving ${caseData.subject_name || 'subject'} on ${caseData.incident_date || 'the date in question'} at ${caseData.incident_location || 'the location in question'}. ${caseData.additional_details || ''}`;
+                    hasFilledDescription = true;
+                }
 
                 if (!value) continue;
 
@@ -218,6 +240,14 @@ class PortalService {
                     // Handle radio
                     await page.check(selector);
                     filledFields.push({ field: field.label || field.name, value });
+                } else if (field.type === 'contenteditable') {
+                    // Handle contenteditable (rich text editors)
+                    await page.click(selector);
+                    await page.evaluate(({ sel, val }) => {
+                        const el = document.querySelector(sel);
+                        if (el) el.textContent = val;
+                    }, { sel: selector, val: value.toString() });
+                    filledFields.push({ field: field.label || field.name || 'Request description', value });
                 } else {
                     // Handle text inputs
                     await page.fill(selector, value.toString());
@@ -240,17 +270,7 @@ class PortalService {
     mapFieldToCaseData(field, caseData) {
         const label = (field.label || field.name || field.placeholder).toLowerCase();
 
-        // Name/Subject mapping
-        if (label.includes('name') && !label.includes('your') && !label.includes('requester')) {
-            return caseData.subject_name || caseData.case_name;
-        }
-
-        // Your name (requester)
-        if (label.includes('your name') || label.includes('requester name')) {
-            return process.env.REQUESTER_NAME || 'Samuel Hylton';
-        }
-
-        // Email
+        // Email (check this first before name fields)
         if (label.includes('email') || field.type === 'email') {
             return process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com';
         }
@@ -260,14 +280,41 @@ class PortalService {
             return process.env.REQUESTER_PHONE || '';
         }
 
-        // Address
-        if (label.includes('address')) {
+        // Address/Street address/City/State/Zip
+        if (label.includes('street') || label.includes('city') || label.includes('zip')) {
+            return ''; // Leave blank for now
+        }
+
+        if (label.includes('address') && !label.includes('email')) {
             return process.env.REQUESTER_ADDRESS || '';
+        }
+
+        // Redaction/agreement fields - auto-agree
+        if (label.includes('redaction') || label.includes('agree') || label.includes('acknowledge')) {
+            if (field.type === 'checkbox') {
+                return true;
+            }
+            return 'Yes'; // For text fields asking "Yes or No"
+        }
+
+        // Company/Organization
+        if (label.includes('company') || label.includes('organization')) {
+            return ''; // Leave blank
+        }
+
+        // Name fields - IMPROVED LOGIC
+        if (label.includes('name')) {
+            // Subject name only if explicitly mentioned
+            if (label.includes('subject') || label.includes('individual') || label.includes('person of interest')) {
+                return caseData.subject_name || caseData.case_name;
+            }
+            // Otherwise default to requester name (most forms ask for YOUR name)
+            return process.env.REQUESTER_NAME || 'Samuel Hylton';
         }
 
         // Description/Details/Request
         if (label.includes('description') || label.includes('details') ||
-            label.includes('request') || label.includes('information')) {
+            label.includes('request') || label.includes('information sought')) {
             const records = Array.isArray(caseData.requested_records)
                 ? caseData.requested_records.join(', ')
                 : caseData.requested_records || 'police records';

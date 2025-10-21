@@ -406,14 +406,45 @@ router.post('/test-portal', async (req, res) => {
         console.log(`Testing portal: ${portalUrl}`);
         const result = await portalService.testPortal(portalUrl, testCaseData, { dryRun: true });
 
-        // Don't send full base64 screenshots in response (too large)
+        // Save screenshots to public folder and return URLs
+        const fs = require('fs');
+        const path = require('path');
+        const screenshotUrls = {};
+
+        if (result.screenshots) {
+            const timestamp = Date.now();
+            const publicDir = path.join(__dirname, '..', 'public', 'screenshots');
+
+            // Create screenshots directory if it doesn't exist
+            if (!fs.existsSync(publicDir)) {
+                fs.mkdirSync(publicDir, { recursive: true });
+            }
+
+            if (result.screenshots.initial) {
+                const filename = `portal-initial-${timestamp}.png`;
+                const filepath = path.join(publicDir, filename);
+                fs.writeFileSync(filepath, Buffer.from(result.screenshots.initial, 'base64'));
+                screenshotUrls.initial = `/screenshots/${filename}`;
+            }
+
+            if (result.screenshots.filled) {
+                const filename = `portal-filled-${timestamp}.png`;
+                const filepath = path.join(publicDir, filename);
+                fs.writeFileSync(filepath, Buffer.from(result.screenshots.filled, 'base64'));
+                screenshotUrls.filled = `/screenshots/${filename}`;
+            }
+        }
+
         const responseResult = {
-            ...result,
-            screenshots: result.screenshots ? {
-                hasInitial: !!result.screenshots.initial,
-                hasFilled: !!result.screenshots.filled,
-                note: 'Screenshots captured but not returned (too large for JSON)'
-            } : null
+            url: result.url,
+            success: result.success,
+            fieldsFound: result.fieldsFound,
+            fieldsFilled: result.fieldsFilled,
+            submitButtonFound: result.submitButtonFound,
+            submitButtonText: result.submitButtonText,
+            fields: result.fields,
+            dryRun: result.dryRun,
+            screenshotUrls
         };
 
         res.json({
