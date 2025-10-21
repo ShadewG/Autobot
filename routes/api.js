@@ -60,40 +60,8 @@ router.post('/process/all', async (req, res) => {
 });
 
 /**
- * Process a single case
- */
-router.post('/process/:caseId', async (req, res) => {
-    try {
-        const caseId = parseInt(req.params.caseId);
-        const caseData = await db.getCaseById(caseId);
-
-        if (!caseData) {
-            return res.status(404).json({
-                success: false,
-                error: 'Case not found'
-            });
-        }
-
-        await generateQueue.add('generate-and-send', {
-            caseId: caseId
-        });
-
-        res.json({
-            success: true,
-            message: `Case ${caseId} queued for processing`,
-            case_name: caseData.case_name
-        });
-    } catch (error) {
-        console.error('Error processing case:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-/**
  * Process a single Notion page by URL/ID
+ * IMPORTANT: This must come BEFORE the :caseId route
  */
 router.post('/process/notion-page', async (req, res) => {
     try {
@@ -127,6 +95,39 @@ router.post('/process/notion-page', async (req, res) => {
         });
     } catch (error) {
         console.error('Error processing Notion page:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Process a single case by ID
+ */
+router.post('/process/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const caseData = await db.getCaseById(caseId);
+
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Case not found'
+            });
+        }
+
+        await generateQueue.add('generate-and-send', {
+            caseId: caseId
+        });
+
+        res.json({
+            success: true,
+            message: `Case ${caseId} queued for processing`,
+            case_name: caseData.case_name
+        });
+    } catch (error) {
+        console.error('Error processing case:', error);
         res.status(500).json({
             success: false,
             error: error.message
