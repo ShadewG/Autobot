@@ -19,6 +19,11 @@ const generateQueue = new Queue('generate-queue', { connection });
  * Add random delay to appear more human
  */
 function getRandomDelay() {
+    // Check if testing mode (no delays)
+    if (process.env.TESTING_MODE === 'true' || process.env.NODE_ENV === 'development') {
+        return 0; // No delay for testing
+    }
+
     // Random delay between 2-10 minutes (in milliseconds)
     const minDelay = 2 * 60 * 1000;
     const maxDelay = 10 * 60 * 1000;
@@ -49,6 +54,11 @@ function isBusinessHours(timezone = 'America/New_York') {
  * Calculate delay to next business hours if needed
  */
 function delayToBusinessHours() {
+    // Skip business hours check in testing mode
+    if (process.env.TESTING_MODE === 'true' || process.env.NODE_ENV === 'development') {
+        return 0;
+    }
+
     if (isBusinessHours()) {
         return 0;
     }

@@ -215,6 +215,11 @@ class FollowUpService {
      * Get random delay for follow-up (2-10 minutes)
      */
     getRandomDelay() {
+        // No delay in testing mode
+        if (process.env.TESTING_MODE === 'true' || process.env.NODE_ENV === 'development') {
+            return 0;
+        }
+
         const minDelay = 2 * 60 * 1000;
         const maxDelay = 10 * 60 * 1000;
         return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
