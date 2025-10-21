@@ -35,18 +35,44 @@ class NotionService {
     parseNotionPage(page) {
         const props = page.properties;
 
+        // Get title from any title property
+        const titleProp = Object.values(props).find(p => p.type === 'title');
+        const caseName = titleProp?.title?.[0]?.plain_text || 'Untitled Case';
+
         return {
             notion_page_id: page.id,
-            case_name: this.getProperty(props, 'Case Name', 'title'),
-            subject_name: this.getProperty(props, 'Subject Name', 'rich_text'),
-            agency_name: this.getProperty(props, 'Agency Name', 'rich_text'),
-            agency_email: this.getProperty(props, 'Agency Email', 'email'),
-            state: this.getProperty(props, 'State', 'select'),
-            incident_date: this.getProperty(props, 'Incident Date', 'date'),
-            incident_location: this.getProperty(props, 'Incident Location', 'rich_text'),
-            requested_records: this.getProperty(props, 'Requested Records', 'multi_select'),
-            additional_details: this.getProperty(props, 'Additional Details', 'rich_text'),
-            status: this.getProperty(props, 'Status', 'select')
+            case_name: caseName,
+            // Default to email for testing, or try to find it in properties
+            agency_email: this.getProperty(props, 'Agency Email', 'email') ||
+                         this.getProperty(props, 'Email', 'email') ||
+                         process.env.DEFAULT_TEST_EMAIL ||
+                         'shadewofficial@gmail.com',
+            // Try different property names that might exist
+            subject_name: this.getProperty(props, 'Subject Name', 'rich_text') ||
+                         this.getProperty(props, 'Subject', 'rich_text') ||
+                         this.getProperty(props, 'Name', 'rich_text') ||
+                         caseName,
+            agency_name: this.getProperty(props, 'Agency Name', 'rich_text') ||
+                        this.getProperty(props, 'Agency', 'rich_text') ||
+                        'Police Department',
+            state: this.getProperty(props, 'State', 'select') ||
+                  this.getProperty(props, 'Location', 'select') ||
+                  'CA',
+            incident_date: this.getProperty(props, 'Incident Date', 'date') ||
+                          this.getProperty(props, 'Date', 'date') ||
+                          null,
+            incident_location: this.getProperty(props, 'Incident Location', 'rich_text') ||
+                             this.getProperty(props, 'Location', 'rich_text') ||
+                             '',
+            requested_records: this.getProperty(props, 'Requested Records', 'multi_select') ||
+                             this.getProperty(props, 'Records', 'multi_select') ||
+                             ['Police report', 'Body cam footage'],
+            additional_details: this.getProperty(props, 'Additional Details', 'rich_text') ||
+                              this.getProperty(props, 'Details', 'rich_text') ||
+                              this.getProperty(props, 'Notes', 'rich_text') ||
+                              '',
+            status: this.getProperty(props, 'Status', 'select') ||
+                   'ready_to_send'
         };
     }
 
@@ -287,8 +313,51 @@ class NotionService {
             // Fetch the page
             const page = await this.notion.pages.retrieve({ page_id: pageId });
 
+            // Fetch page content (blocks)
+            let pageContent = '';
+            try {
+                const blocks = await this.notion.blocks.children.list({
+                    block_id: pageId,
+                    page_size: 100
+                });
+
+                // Extract text from blocks
+                pageContent = blocks.results
+                    .map(block => {
+                        if (block.type === 'paragraph' && block.paragraph?.rich_text) {
+                            return block.paragraph.rich_text.map(t => t.plain_text).join('');
+                        }
+                        if (block.type === 'heading_1' && block.heading_1?.rich_text) {
+                            return block.heading_1.rich_text.map(t => t.plain_text).join('');
+                        }
+                        if (block.type === 'heading_2' && block.heading_2?.rich_text) {
+                            return block.heading_2.rich_text.map(t => t.plain_text).join('');
+                        }
+                        if (block.type === 'heading_3' && block.heading_3?.rich_text) {
+                            return block.heading_3.rich_text.map(t => t.plain_text).join('');
+                        }
+                        if (block.type === 'bulleted_list_item' && block.bulleted_list_item?.rich_text) {
+                            return '- ' + block.bulleted_list_item.rich_text.map(t => t.plain_text).join('');
+                        }
+                        return '';
+                    })
+                    .filter(text => text.length > 0)
+                    .join('\n');
+
+                console.log(`Extracted ${pageContent.length} characters of content from page`);
+            } catch (contentError) {
+                console.warn('Could not fetch page content:', contentError.message);
+            }
+
             // Parse the page
             const notionCase = this.parseNotionPage(page);
+
+            // Add page content as additional details if we have it
+            if (pageContent && !notionCase.additional_details) {
+                notionCase.additional_details = pageContent.substring(0, 5000); // Limit to 5000 chars
+            } else if (pageContent) {
+                notionCase.additional_details += '\n\n--- Page Content ---\n' + pageContent.substring(0, 5000);
+            }
 
             // Check if already exists
             const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
