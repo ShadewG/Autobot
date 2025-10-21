@@ -93,14 +93,58 @@ router.post('/process/:caseId', async (req, res) => {
 });
 
 /**
+ * Process a single Notion page by URL/ID
+ */
+router.post('/process/notion-page', async (req, res) => {
+    try {
+        const { pageId } = req.body;
+
+        if (!pageId) {
+            return res.status(400).json({
+                success: false,
+                error: 'pageId is required'
+            });
+        }
+
+        // Fetch and create case from Notion page
+        const caseData = await notionService.processSinglePage(pageId);
+
+        // Queue for generation and sending
+        const job = await generateQueue.add('generate-and-send', {
+            caseId: caseData.id
+        });
+
+        res.json({
+            success: true,
+            message: 'Case imported and queued for processing',
+            case: {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                agency_name: caseData.agency_name,
+                status: caseData.status
+            },
+            delay_minutes: Math.round(Math.random() * 8) + 2 // Estimate 2-10 min
+        });
+    } catch (error) {
+        console.error('Error processing Notion page:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Get all cases
  */
 router.get('/cases', async (req, res) => {
     try {
         const status = req.query.status;
+        const limit = parseInt(req.query.limit) || 100;
+
         const cases = status
             ? await db.getCasesByStatus(status)
-            : await db.query('SELECT * FROM cases ORDER BY created_at DESC LIMIT 100').then(r => r.rows);
+            : await db.query(`SELECT * FROM cases ORDER BY created_at DESC LIMIT ${limit}`).then(r => r.rows);
 
         res.json({
             success: true,

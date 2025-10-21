@@ -276,6 +276,46 @@ class NotionService {
             console.error('Error adding AI summary to Notion:', error);
         }
     }
+
+    /**
+     * Fetch and process a single Notion page by ID
+     */
+    async processSinglePage(pageId) {
+        try {
+            console.log(`Fetching single Notion page: ${pageId}`);
+
+            // Fetch the page
+            const page = await this.notion.pages.retrieve({ page_id: pageId });
+
+            // Parse the page
+            const notionCase = this.parseNotionPage(page);
+
+            // Check if already exists
+            const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
+            if (existing) {
+                console.log(`Case already exists: ${notionCase.case_name}`);
+                return existing;
+            }
+
+            // Calculate deadline
+            const deadline = await this.calculateDeadline(notionCase.state);
+            notionCase.deadline_date = deadline;
+
+            // Create case
+            const newCase = await db.createCase(notionCase);
+            console.log(`Created case from Notion page: ${newCase.case_name}`);
+
+            // Log activity
+            await db.logActivity('case_imported', `Imported case from Notion page: ${newCase.case_name}`, {
+                case_id: newCase.id
+            });
+
+            return newCase;
+        } catch (error) {
+            console.error('Error processing single Notion page:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = new NotionService();

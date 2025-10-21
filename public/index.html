@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autobot MVP - FOIA Automation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 16px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            color: #333;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .cases-list {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .case-item {
+            border-bottom: 1px solid #e0e0e0;
+            padding: 15px 0;
+        }
+
+        .case-item:last-child {
+            border-bottom: none;
+        }
+
+        .case-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .case-details {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge.ready { background: #ffeaa7; color: #2d3436; }
+        .badge.sent { background: #74b9ff; color: #0984e3; }
+        .badge.awaiting { background: #a29bfe; color: #6c5ce7; }
+        .badge.responded { background: #55efc4; color: #00b894; }
+        .badge.completed { background: #00b894; color: white; }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .example {
+            background: #f8f9fa;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #666;
+            margin-top: 8px;
+        }
+
+        .code {
+            font-family: 'Courier New', monospace;
+            background: #f1f3f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Autobot MVP</h1>
+            <p class="subtitle">Automated FOIA Request System</p>
+        </div>
+
+        <div class="card">
+            <h2 style="margin-bottom: 20px;">Submit Case from Notion</h2>
+
+            <form id="submitForm">
+                <div class="form-group">
+                    <label for="notionUrl">Notion Page URL</label>
+                    <input
+                        type="text"
+                        id="notionUrl"
+                        placeholder="https://www.notion.so/Case-Name-abc123..."
+                        required
+                    >
+                    <div class="example">
+                        💡 Example: <span class="code">https://www.notion.so/workspace/Case-Name-abc123def456</span>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn" id="submitBtn">
+                    Process This Case
+                </button>
+            </form>
+
+            <div id="status" class="status"></div>
+        </div>
+
+        <div class="card">
+            <h2 style="margin-bottom: 20px;">Statistics</h2>
+            <div class="stats-grid" id="stats">
+                <div class="stat-card">
+                    <div class="stat-value">-</div>
+                    <div class="stat-label">Total Cases</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">-</div>
+                    <div class="stat-label">Ready to Send</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">-</div>
+                    <div class="stat-label">Sent</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">-</div>
+                    <div class="stat-label">Responded</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 style="margin-bottom: 20px;">Recent Cases</h2>
+            <div class="cases-list" id="casesList">
+                <p style="color: #999; text-align: center; padding: 40px 0;">
+                    Loading cases...
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+
+        // Submit form handler
+        document.getElementById('submitForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const notionUrl = document.getElementById('notionUrl').value;
+            const statusDiv = document.getElementById('status');
+            const submitBtn = document.getElementById('submitBtn');
+
+            // Extract page ID from URL
+            const pageId = extractPageId(notionUrl);
+            if (!pageId) {
+                showStatus('error', 'Invalid Notion URL. Please paste the full URL from your browser.');
+                return;
+            }
+
+            // Disable button
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="loading"></span>Processing...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/process/notion-page`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pageId })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showStatus('success', `✓ Case "${data.case.case_name}" processed successfully! Email will be sent in ${data.delay_minutes || 'a few'} minutes.`);
+                    document.getElementById('notionUrl').value = '';
+                    loadCases();
+                    loadStats();
+                } else {
+                    showStatus('error', `Error: ${data.error || 'Failed to process case'}`);
+                }
+            } catch (error) {
+                showStatus('error', `Network error: ${error.message}`);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = 'Process This Case';
+            }
+        });
+
+        // Extract Notion page ID from URL
+        function extractPageId(url) {
+            // Remove hyphens and extract 32-character ID
+            const match = url.match(/([a-f0-9]{32})|([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+            return match ? match[0].replace(/-/g, '') : null;
+        }
+
+        // Show status message
+        function showStatus(type, message) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = `status ${type}`;
+            statusDiv.textContent = message;
+            statusDiv.style.display = 'block';
+
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const data = await response.json();
+
+                if (data.success) {
+                    const stats = data.cases;
+                    const statsHtml = `
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.total || 0}</div>
+                            <div class="stat-label">Total Cases</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.ready || 0}</div>
+                            <div class="stat-label">Ready to Send</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.sent || 0}</div>
+                            <div class="stat-label">Sent</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${stats.responded || 0}</div>
+                            <div class="stat-label">Responded</div>
+                        </div>
+                    `;
+                    document.getElementById('stats').innerHTML = statsHtml;
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // Load cases
+        async function loadCases() {
+            try {
+                const response = await fetch(`${API_BASE}/api/cases?limit=10`);
+                const data = await response.json();
+
+                const casesList = document.getElementById('casesList');
+
+                if (data.success && data.cases.length > 0) {
+                    const casesHtml = data.cases.map(c => `
+                        <div class="case-item">
+                            <div class="case-name">${c.case_name}</div>
+                            <div class="case-details">
+                                ${c.agency_name || 'No agency'} • ${c.state || 'No state'}
+                                ${c.send_date ? `• Sent ${new Date(c.send_date).toLocaleDateString()}` : ''}
+                            </div>
+                            <span class="badge ${c.status.replace('_', '-')}">${c.status.replace('_', ' ').toUpperCase()}</span>
+                        </div>
+                    `).join('');
+                    casesList.innerHTML = casesHtml;
+                } else {
+                    casesList.innerHTML = '<p style="color: #999; text-align: center; padding: 40px 0;">No cases yet. Submit a Notion page to get started!</p>';
+                }
+            } catch (error) {
+                console.error('Failed to load cases:', error);
+                document.getElementById('casesList').innerHTML = '<p style="color: #e74c3c; text-align: center; padding: 40px 0;">Failed to load cases</p>';
+            }
+        }
+
+        // Auto-refresh every 10 seconds
+        setInterval(() => {
+            loadStats();
+            loadCases();
+        }, 10000);
+
+        // Initial load
+        loadStats();
+        loadCases();
+    </script>
+</body>
+</html>
