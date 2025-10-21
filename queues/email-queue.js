@@ -15,68 +15,7 @@ const emailQueue = new Queue('email-queue', { connection });
 const analysisQueue = new Queue('analysis-queue', { connection });
 const generateQueue = new Queue('generate-queue', { connection });
 
-/**
- * Add random delay to appear more human
- */
-function getRandomDelay() {
-    // Check if testing mode (no delays)
-    if (process.env.TESTING_MODE === 'true' || process.env.NODE_ENV === 'development') {
-        return 0; // No delay for testing
-    }
-
-    // Random delay between 2-10 minutes (in milliseconds)
-    const minDelay = 2 * 60 * 1000;
-    const maxDelay = 10 * 60 * 1000;
-    return Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;
-}
-
-/**
- * Check if current time is within business hours
- */
-function isBusinessHours(timezone = 'America/New_York') {
-    const now = new Date();
-    const hour = now.getHours();
-    const day = now.getDay();
-
-    const startHour = parseInt(process.env.BUSINESS_HOURS_START) || 9;
-    const endHour = parseInt(process.env.BUSINESS_HOURS_END) || 17;
-
-    // Check if weekend
-    if (day === 0 || day === 6) {
-        return false;
-    }
-
-    // Check if within business hours
-    return hour >= startHour && hour < endHour;
-}
-
-/**
- * Calculate delay to next business hours if needed
- */
-function delayToBusinessHours() {
-    // Skip business hours check in testing mode
-    if (process.env.TESTING_MODE === 'true' || process.env.NODE_ENV === 'development') {
-        return 0;
-    }
-
-    if (isBusinessHours()) {
-        return 0;
-    }
-
-    const now = new Date();
-    const hour = now.getHours();
-    const startHour = parseInt(process.env.BUSINESS_HOURS_START) || 9;
-
-    // If after hours, wait until next business day start
-    let hoursToWait;
-    if (hour >= 17) {
-        hoursToWait = 24 - hour + startHour;
-    } else {
-        hoursToWait = startHour - hour;
-    }
-
-    return hoursToWait * 60 * 60 * 1000;
-}
+// Delays removed - emails send immediately
 
 // ===== EMAIL QUEUE WORKER =====
 const emailWorker = new Worker('email-queue', async (job) => {
@@ -191,8 +130,6 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                     subject: messageData.subject,
                     content: autoReply.reply_text,
                     originalMessageId: messageData.message_id
-                }, {
-                    delay: getRandomDelay() / 2 // Shorter delay for replies (1-5 min)
                 });
 
                 console.log('Auto-reply queued for case:', caseId);
@@ -234,26 +171,22 @@ const generateWorker = new Worker('generate-queue', async (job) => {
         // Create subject line
         const subject = `Public Records Request - ${caseData.subject_name || 'Information Request'}`;
 
-        // Queue the email to be sent with random delay
-        const delay = getRandomDelay() + delayToBusinessHours();
-
+        // Queue the email to be sent immediately (no delays)
         await emailQueue.add('send-initial-request', {
             type: 'initial_request',
             caseId: caseId,
             toEmail: caseData.agency_email,
             subject: subject,
             content: generated.request_text
-        }, {
-            delay: delay
         });
 
-        console.log(`Generated and queued email for case ${caseId}, will send in ${Math.round(delay / 1000 / 60)} minutes`);
+        console.log(`Generated and queued email for case ${caseId}, sending immediately`);
 
         return {
             success: true,
             case_id: caseId,
             queued_for_send: true,
-            delay_minutes: Math.round(delay / 1000 / 60)
+            delay_minutes: 0
         };
     } catch (error) {
         console.error('Generation job failed:', error);
