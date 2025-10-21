@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
+const portalService = require('../services/portal-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
 
 /**
@@ -369,6 +370,100 @@ router.get('/stats', async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching stats:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Test a portal (dry run - fills but doesn't submit)
+ */
+router.post('/test-portal', async (req, res) => {
+    try {
+        const { portalUrl, caseData } = req.body;
+
+        if (!portalUrl) {
+            return res.status(400).json({
+                success: false,
+                error: 'portalUrl is required'
+            });
+        }
+
+        // Use default test case data if not provided
+        const testCaseData = caseData || {
+            case_name: 'Test FOIA Request',
+            subject_name: 'John Doe',
+            agency_name: 'Test Police Department',
+            state: 'CA',
+            incident_date: '2024-01-15',
+            incident_location: '123 Main St, Test City',
+            requested_records: ['Police report', 'Body cam footage'],
+            additional_details: 'Test request for automation testing'
+        };
+
+        console.log(`Testing portal: ${portalUrl}`);
+        const result = await portalService.testPortal(portalUrl, testCaseData, { dryRun: true });
+
+        // Don't send full base64 screenshots in response (too large)
+        const responseResult = {
+            ...result,
+            screenshots: result.screenshots ? {
+                hasInitial: !!result.screenshots.initial,
+                hasFilled: !!result.screenshots.filled,
+                note: 'Screenshots captured but not returned (too large for JSON)'
+            } : null
+        };
+
+        res.json({
+            success: result.success,
+            result: responseResult
+        });
+
+    } catch (error) {
+        console.error('Error testing portal:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+});
+
+/**
+ * Test portal with a case ID
+ */
+router.post('/test-portal/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const { portalUrl } = req.body;
+
+        if (!portalUrl) {
+            return res.status(400).json({
+                success: false,
+                error: 'portalUrl is required'
+            });
+        }
+
+        const result = await portalService.submitToPortal(caseId, portalUrl, true);
+
+        const responseResult = {
+            ...result,
+            screenshots: result.screenshots ? {
+                hasInitial: !!result.screenshots.initial,
+                hasFilled: !!result.screenshots.filled,
+                note: 'Screenshots captured but not returned (too large for JSON)'
+            } : null
+        };
+
+        res.json({
+            success: result.success,
+            result: responseResult
+        });
+
+    } catch (error) {
+        console.error('Error testing portal with case:', error);
         res.status(500).json({
             success: false,
             error: error.message

@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "migrate": "node database/migrate.js",
     "test-setup": "node test-setup.js",
+    "postinstall": "playwright install chromium --with-deps || echo 'Playwright install failed, continuing...'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -37,7 +38,9 @@
     "cron": "^3.1.6",
     "date-fns": "^2.30.0",
     "date-fns-tz": "^2.0.0",
-    "winston": "^3.11.0"
+    "winston": "^3.11.0",
+    "playwright": "^1.40.0",
+    "playwright-chromium": "^1.40.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
