@@ -48,6 +48,81 @@ app.use('/api', apiRoutes);
 
 // Import cron service
 const cronService = require('./services/cron-service');
+const fs = require('fs');
+
+/**
+ * Run database migrations automatically
+ */
+async function runMigrations() {
+    try {
+        const migrationsDir = path.join(__dirname, 'migrations');
+
+        // Check if migrations directory exists
+        if (!fs.existsSync(migrationsDir)) {
+            console.log('No migrations directory found, skipping...');
+            return;
+        }
+
+        // Get all migration files
+        const migrationFiles = fs.readdirSync(migrationsDir)
+            .filter(f => f.endsWith('.sql'))
+            .sort(); // Ensure they run in order
+
+        if (migrationFiles.length === 0) {
+            console.log('No migration files found, skipping...');
+            return;
+        }
+
+        // Create migrations tracking table if it doesn't exist
+        await db.query(`
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                id SERIAL PRIMARY KEY,
+                filename VARCHAR(255) UNIQUE NOT NULL,
+                applied_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // Check which migrations have been run
+        const appliedMigrations = await db.query(
+            'SELECT filename FROM schema_migrations'
+        );
+        const appliedSet = new Set(appliedMigrations.rows.map(r => r.filename));
+
+        // Run pending migrations
+        let ranCount = 0;
+        for (const filename of migrationFiles) {
+            if (appliedSet.has(filename)) {
+                console.log(`  ✓ ${filename} (already applied)`);
+                continue;
+            }
+
+            console.log(`  Running ${filename}...`);
+            const sql = fs.readFileSync(path.join(migrationsDir, filename), 'utf8');
+
+            try {
+                await db.query(sql);
+                await db.query(
+                    'INSERT INTO schema_migrations (filename) VALUES ($1)',
+                    [filename]
+                );
+                console.log(`  ✓ ${filename} applied successfully`);
+                ranCount++;
+            } catch (error) {
+                console.error(`  ✗ ${filename} failed:`, error.message);
+                throw error;
+            }
+        }
+
+        if (ranCount > 0) {
+            console.log(`\n✓ Applied ${ranCount} migration(s)`);
+        } else {
+            console.log('✓ All migrations up to date');
+        }
+    } catch (error) {
+        console.error('Migration error:', error);
+        throw error;
+    }
+}
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -73,6 +148,10 @@ async function startServer() {
         await db.initialize();
         console.log('Database initialized successfully');
 
+        // Run migrations automatically
+        console.log('\nRunning database migrations...');
+        await runMigrations();
+
         // Start cron jobs
         console.log('\nStarting automated services...');
         cronService.start();
@@ -86,8 +165,10 @@ async function startServer() {
             console.log(`\n   Health check: http://localhost:${PORT}/health`);
             console.log(`   API: http://localhost:${PORT}/api`);
             console.log(`   Webhooks: http://localhost:${PORT}/webhooks/inbound`);
-            console.log(`\n   ✓ Automated follow-ups enabled`);
+            console.log(`\n   ✓ Database migrations applied`);
+            console.log(`   ✓ Automated follow-ups enabled`);
             console.log(`   ✓ Notion sync every 15 minutes`);
+            console.log(`   ✓ Adaptive learning system active`);
             console.log(`   ✓ Ready to receive requests!\n`);
         });
     } catch (error) {

@@ -1,6 +1,8 @@
 const OpenAI = require('openai');
 const Anthropic = require('@anthropic-ai/sdk');
 const db = require('./database');
+const documentaryFOIAPrompts = require('../prompts/documentary-foia-prompts');
+const adaptiveLearning = require('./adaptive-learning-service');
 
 class AIService {
     constructor() {
@@ -15,48 +17,68 @@ class AIService {
         try {
             console.log(`Generating FOIA request for case: ${caseData.case_name}`);
 
-            const prompt = this.buildFOIARequestPrompt(caseData);
+            // Get adaptive strategy based on learned patterns
+            const strategy = await adaptiveLearning.generateStrategicVariation(caseData);
+            console.log('Using strategy:', strategy);
 
-            // Try OpenAI first
+            const systemPrompt = this.buildFOIASystemPrompt(caseData.state, strategy);
+            const userPrompt = this.buildFOIAUserPrompt(caseData, strategy);
+
+            // Combine system and user prompts for GPT-5
+            const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+
+            // Try GPT-5 first (latest and most capable for FOIA generation)
             try {
                 const response = await this.openai.chat.completions.create({
-                    model: 'gpt-4o',
+                    model: process.env.OPENAI_MODEL || 'gpt-5',
                     messages: [
                         {
                             role: 'system',
-                            content: 'You are an expert at writing formal FOIA requests. Generate professional, legally sound requests that are clear, specific, and comply with relevant public records laws.'
+                            content: systemPrompt
                         },
                         {
                             role: 'user',
-                            content: prompt
+                            content: userPrompt
                         }
                     ],
-                    temperature: 0.7,
-                    max_tokens: 1500
+                    reasoning_effort: 'medium',  // Medium reasoning for FOIA generation
+                    verbosity: 'medium',
+                    max_completion_tokens: 2000
                 });
 
                 const requestText = response.choices[0].message.content;
 
-                // Store generated request
+                // Store generated request with strategy info
+                const modelUsed = process.env.OPENAI_MODEL || 'gpt-5';
                 await db.createGeneratedRequest({
                     case_id: caseData.id,
                     request_text: requestText,
-                    ai_model: 'gpt-4o',
+                    ai_model: modelUsed,
                     generation_metadata: {
-                        tokens_used: response.usage.total_tokens,
-                        cost: this.calculateCost(response.usage, 'gpt-4o')
+                        tokens_used: response.usage?.total_tokens || 0,
+                        prompt_tokens: response.usage?.prompt_tokens || 0,
+                        completion_tokens: response.usage?.completion_tokens || 0,
+                        reasoning_tokens: response.usage?.reasoning_tokens || 0,
+                        cost: this.calculateCost(response.usage, modelUsed),
+                        strategy_used: strategy
                     },
                     status: 'approved'
                 });
 
+                // Store strategy in case record for later learning
+                await db.query(
+                    'UPDATE cases SET strategy_used = $1 WHERE id = $2',
+                    [JSON.stringify(strategy), caseData.id]
+                );
+
                 return {
                     success: true,
                     request_text: requestText,
-                    model: 'gpt-4o'
+                    model: modelUsed
                 };
             } catch (openaiError) {
                 console.error('OpenAI failed, trying Claude:', openaiError.message);
-                return await this.generateWithClaude(caseData, prompt);
+                return await this.generateWithClaude(caseData);
             }
         } catch (error) {
             console.error('Error generating FOIA request:', error);
@@ -67,14 +89,19 @@ class AIService {
     /**
      * Generate FOIA request using Claude (fallback)
      */
-    async generateWithClaude(caseData, prompt) {
+    async generateWithClaude(caseData) {
+        const systemPrompt = this.buildFOIASystemPrompt(caseData.state);
+        const userPrompt = this.buildFOIAUserPrompt(caseData);
+
+        const modelUsed = process.env.CLAUDE_MODEL || 'claude-3-7-sonnet-20250219';
         const response = await this.anthropic.messages.create({
-            model: 'claude-3-5-sonnet-20241022',
-            max_tokens: 1500,
+            model: modelUsed,
+            max_tokens: 2000,
+            system: systemPrompt,
             messages: [
                 {
                     role: 'user',
-                    content: prompt
+                    content: userPrompt
                 }
             ]
         });
@@ -84,7 +111,7 @@ class AIService {
         await db.createGeneratedRequest({
             case_id: caseData.id,
             request_text: requestText,
-            ai_model: 'claude-3-5-sonnet',
+            ai_model: modelUsed,
             generation_metadata: {
                 tokens_used: response.usage.input_tokens + response.usage.output_tokens
             },
@@ -94,42 +121,109 @@ class AIService {
         return {
             success: true,
             request_text: requestText,
-            model: 'claude-3-5-sonnet'
+            model: modelUsed
         };
     }
 
     /**
-     * Build the prompt for FOIA request generation
+     * Build the system prompt for FOIA request generation (documentary-focused)
      */
-    buildFOIARequestPrompt(caseData) {
-        const recordsList = Array.isArray(caseData.requested_records)
-            ? caseData.requested_records.join(', ')
-            : caseData.requested_records || 'police reports and related records';
+    buildFOIASystemPrompt(jurisdiction, strategy = null) {
+        const basePrompt = documentaryFOIAPrompts.systemPrompt;
+        const jurisdictionGuidance = `
 
-        return `Generate a formal FOIA request letter with the following details:
+JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
+- Apply the specific laws and requirements for ${jurisdiction}
+- Use appropriate legal citations for this jurisdiction
+- Consider local retention schedules and deadlines
+- Apply state-specific strategies based on enforcement strength`;
 
-**Case Information:**
-- Subject: ${caseData.subject_name || 'Unknown'}
-- Agency: ${caseData.agency_name}
-- Incident Date: ${caseData.incident_date || 'Unknown'}
-- Incident Location: ${caseData.incident_location || 'Unknown'}
-- State: ${caseData.state}
+        // Add OpenAI enhancement prompt
+        const enhancementPrompt = documentaryFOIAPrompts.enhancementPrompts.openai ?
+            `\n\n${documentaryFOIAPrompts.enhancementPrompts.openai.prompt}` : '';
 
-**Requested Records:**
-${recordsList}
+        // Add strategy-specific instructions if provided
+        let strategyInstructions = '';
+        if (strategy) {
+            const modifications = adaptiveLearning.buildPromptModifications(strategy);
+            strategyInstructions = `\n\nSTRATEGIC APPROACH FOR THIS REQUEST:
+- Tone: ${modifications.tone_instruction}
+- Emphasis: ${modifications.emphasis_instruction}
+- Detail Level: ${modifications.detail_instruction}
+- Legal Citations: ${modifications.legal_instruction}
+- Fee Waiver: ${modifications.fee_instruction}
+- Urgency: ${modifications.urgency_instruction}`;
+        }
 
-**Additional Details:**
-${caseData.additional_details || 'None provided'}
+        return basePrompt + jurisdictionGuidance + enhancementPrompt + strategyInstructions;
+    }
 
-The request should:
-1. Be professional and formal
-2. Cite the appropriate state FOIA law (${caseData.state} public records act)
-3. Be specific about what records are requested
-4. Include time frame and location details
-5. Request expedited processing if appropriate
-6. Include a statement about fee waivers if applicable
-7. Provide contact information placeholder
-8. Be properly formatted as a letter
+    /**
+     * Build the user prompt for FOIA request generation (documentary-focused)
+     */
+    buildFOIAUserPrompt(caseData, strategy = null) {
+        const legalStyle = strategy?.tone || caseData.legal_style || 'standard';
+        const legalStyleInstructions = {
+            'standard': 'Use standard professional legal language with polite but firm tone.',
+            'formal': 'Use highly formal, traditional legal language with maximum respect and deference.',
+            'assertive': 'Use assertive, demanding tone that emphasizes legal rights and obligations.',
+            'collaborative': 'Use collaborative, cooperative tone that seeks to work with the agency.'
+        };
+
+        const styleInstruction = legalStyleInstructions[legalStyle] || legalStyleInstructions['standard'];
+
+        // Build detailed item descriptions
+        let itemDescriptions = '';
+        if (caseData.requested_records) {
+            itemDescriptions = '\n\nDETAILED FOOTAGE REQUESTS:\n';
+            const records = Array.isArray(caseData.requested_records)
+                ? caseData.requested_records
+                : [caseData.requested_records];
+
+            records.forEach((item, index) => {
+                itemDescriptions += `\n${index + 1}. ${item}`;
+            });
+        }
+
+        // Get state-specific enforcement guidance (default to moderate)
+        const enforcementStrength = 'moderate'; // Could be enhanced with actual state data lookup
+        const stateGuidance = documentaryFOIAPrompts.stateSpecificGuidance[enforcementStrength] || '';
+
+        // Build incident details
+        const incidentDetails = `${caseData.case_name || 'Incident'} involving ${caseData.subject_name || 'subject'} on ${caseData.incident_date || 'unknown date'} at ${caseData.incident_location || 'unknown location'}. ${caseData.additional_details || ''}`;
+
+        // Get requester info from env or use defaults
+        const requesterName = process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const requesterEmail = process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com';
+
+        return `Generate a professional FOIA/public records request for DOCUMENTARY FILM PRODUCTION with the following details:
+
+Jurisdiction: ${caseData.state}
+Agency: ${caseData.agency_name}
+Requester: ${requesterName} (${requesterEmail})
+Representing: MATCHER LEGAL DEPARTMENT
+
+Incident Details: ${incidentDetails}
+${itemDescriptions}
+
+Legal Style: ${styleInstruction}
+
+STATE-SPECIFIC CONSIDERATIONS:
+${stateGuidance}
+
+CREATE A DOCUMENTARY-FOCUSED REQUEST THAT:
+1. Emphasizes VIDEO FOOTAGE as primary need (body cameras, dashcams, surveillance)
+2. Includes officer names/badge numbers when provided in the case details
+3. Specifies exact time ranges and camera angles needed
+4. Requests footage in native digital format with original audio
+5. Includes only essential supporting documents (police report)
+6. Uses language preventing "no responsive records" claims
+7. Cites relevant state laws and retention schedules
+8. Emphasizes public interest in documentary transparency
+9. Includes preservation notice for all footage
+10. Avoids requesting unnecessary administrative documents
+
+REMEMBER: This is for a DOCUMENTARY FILM - we need compelling footage, not paperwork. Be specific about which officers' cameras we need based on the details provided.
 
 Please generate only the body of the letter, starting with a proper salutation and ending with a professional closing.`;
     }
@@ -198,6 +292,9 @@ Return ONLY valid JSON, no other text.`;
                 suggested_action: analysis.suggested_action,
                 full_analysis_json: analysis
             });
+
+            // Record outcome for adaptive learning
+            await this.recordOutcomeForLearning(caseData, analysis, messageData);
 
             return analysis;
         } catch (error) {
@@ -336,10 +433,22 @@ Return ONLY the email body text.`;
      * Calculate cost for OpenAI API call
      */
     calculateCost(usage, model) {
+        if (!usage) return 0;
+
         const prices = {
+            'gpt-5': {
+                input: 0.00002,  // $0.02 per 1K input tokens
+                output: 0.00008,  // $0.08 per 1K output tokens
+                reasoning: 0.00008  // $0.08 per 1K reasoning tokens
+            },
+            'gpt-5-mini': {
+                input: 0.000001,  // $0.001 per 1K tokens
+                output: 0.000004,
+                reasoning: 0.000004
+            },
             'gpt-4o': {
-                input: 0.00001,  // $0.01 per 1K tokens
-                output: 0.00003  // $0.03 per 1K tokens
+                input: 0.00001,
+                output: 0.00003
             },
             'gpt-4o-mini': {
                 input: 0.00000015,
@@ -348,10 +457,86 @@ Return ONLY the email body text.`;
         };
 
         const modelPrices = prices[model] || prices['gpt-4o-mini'];
-        const inputCost = (usage.prompt_tokens / 1000) * modelPrices.input;
-        const outputCost = (usage.completion_tokens / 1000) * modelPrices.output;
 
-        return inputCost + outputCost;
+        // GPT-5 and other reasoning models track reasoning tokens separately
+        if (model.startsWith('gpt-5')) {
+            const inputCost = ((usage.prompt_tokens || 0) / 1000) * modelPrices.input;
+            const outputCost = ((usage.completion_tokens || 0) / 1000) * modelPrices.output;
+            const reasoningCost = ((usage.reasoning_tokens || 0) / 1000) * (modelPrices.reasoning || 0);
+            return inputCost + outputCost + reasoningCost;
+        } else {
+            // Standard models
+            const inputCost = ((usage.prompt_tokens || 0) / 1000) * modelPrices.input;
+            const outputCost = ((usage.completion_tokens || 0) / 1000) * modelPrices.output;
+            return inputCost + outputCost;
+        }
+    }
+
+    /**
+     * Record outcome for adaptive learning
+     */
+    async recordOutcomeForLearning(caseData, analysis, messageData) {
+        try {
+            // Check if outcome already recorded
+            if (caseData.outcome_recorded) {
+                return;
+            }
+
+            // Map AI analysis to outcome type
+            let outcomeType = 'no_response';
+            let feeWaived = false;
+
+            switch (analysis.intent) {
+                case 'delivery':
+                    outcomeType = 'full_approval';
+                    break;
+                case 'denial':
+                    outcomeType = 'denial';
+                    break;
+                case 'fee_request':
+                    outcomeType = 'partial_approval';
+                    feeWaived = false;
+                    break;
+                case 'acknowledgment':
+                    outcomeType = 'partial_approval';
+                    break;
+                default:
+                    outcomeType = 'partial_approval';
+            }
+
+            // Check if fee was waived
+            if (analysis.extracted_fee_amount === 0 ||
+                (analysis.key_points && analysis.key_points.some(p =>
+                    p.toLowerCase().includes('waived') || p.toLowerCase().includes('no fee')
+                ))) {
+                feeWaived = true;
+            }
+
+            // Calculate response time
+            const responseTimeDays = caseData.send_date ?
+                Math.floor((new Date(messageData.received_at) - new Date(caseData.send_date)) / (1000 * 60 * 60 * 24)) :
+                null;
+
+            // Get the strategy that was used
+            const strategy = caseData.strategy_used || {};
+
+            // Record the outcome
+            await adaptiveLearning.recordOutcome(caseData.id, strategy, {
+                type: outcomeType,
+                response_time_days: responseTimeDays,
+                fee_waived: feeWaived
+            });
+
+            // Mark outcome as recorded
+            await db.query(
+                'UPDATE cases SET outcome_recorded = TRUE, outcome_type = $1 WHERE id = $2',
+                [outcomeType, caseData.id]
+            );
+
+            console.log(`Recorded learning outcome for case ${caseData.id}: ${outcomeType}`);
+        } catch (error) {
+            console.error('Error recording outcome for learning:', error);
+        }
     }
 }
 

@@ -1,0 +1,201 @@
+{
+  "timestamp": "2025-10-21T13:29:44.958Z",
+  "summary": {
+    "total": 30,
+    "successful": 3,
+    "failed": 27,
+    "withSubmitButton": 1,
+    "avgFieldsFilled": 2
+  },
+  "results": [
+    {
+      "url": "https://abilenetxopenrecords.nextrequest.com/requests/new",
+      "success": true,
+      "fieldsFound": 12,
+      "fieldsFilled": 6,
+      "submitButtonFound": true,
+      "submitButtonText": "Make request",
+      "duration": 5871
+    },
+    {
+      "url": "https://alamedaca.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://alamedaca.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30092
+    },
+    {
+      "url": "https://albanyny.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://albanyny.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30076
+    },
+    {
+      "url": "https://alexandriava.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://alexandriava.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30083
+    },
+    {
+      "url": "https://annarbormi.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://annarbormi.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30089
+    },
+    {
+      "url": "https://arlingtontx.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://arlingtontx.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30095
+    },
+    {
+      "url": "https://atlantaga.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://atlantaga.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30103
+    },
+    {
+      "url": "https://austintexas.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://austintexas.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30086
+    },
+    {
+      "url": "https://batonrougela.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://batonrougela.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30087
+    },
+    {
+      "url": "https://berkeleyka.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://berkeleyka.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30085
+    },
+    {
+      "url": "https://birminghamal.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://birminghamal.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30086
+    },
+    {
+      "url": "https://bocaratonfl.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://bocaratonfl.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30079
+    },
+    {
+      "url": "https://boiseid.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://boiseid.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30079
+    },
+    {
+      "url": "https://bostonma.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://bostonma.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30090
+    },
+    {
+      "url": "https://bouldercolorado.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://bouldercolorado.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30075
+    },
+    {
+      "url": "https://cambridgema.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://cambridgema.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30081
+    },
+    {
+      "url": "https://charlottenc.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://charlottenc.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30094
+    },
+    {
+      "url": "https://chattanoogatn.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://chattanoogatn.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30089
+    },
+    {
+      "url": "https://chicagoil.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://chicagoil.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30085
+    },
+    {
+      "url": "https://cincinnatioh.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://cincinnatioh.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30099
+    },
+    {
+      "url": "https://columbusga.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://columbusga.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30093
+    },
+    {
+      "url": "https://dallastexas.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://dallastexas.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30088
+    },
+    {
+      "url": "https://denverco.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://denverco.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30092
+    },
+    {
+      "url": "https://detroitmi.nextrequest.com/requests/new",
+      "success": true,
+      "fieldsFound": 1,
+      "fieldsFilled": 0,
+      "submitButtonFound": false,
+      "submitButtonText": null,
+      "duration": 5719
+    },
+    {
+      "url": "https://durhamny.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://durhamny.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30071
+    },
+    {
+      "url": "https://elpasotexas.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://elpasotexas.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30086
+    },
+    {
+      "url": "https://evanstonil.nextrequest.com/requests/new",
+      "success": true,
+      "fieldsFound": 1,
+      "fieldsFilled": 0,
+      "submitButtonFound": false,
+      "submitButtonText": null,
+      "duration": 5558
+    },
+    {
+      "url": "https://fortworthtx.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://fortworthtx.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30083
+    },
+    {
+      "url": "https://fresnoca.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://fresnoca.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30068
+    },
+    {
+      "url": "https://grandrapidsmi.nextrequest.com/requests/new",
+      "success": false,
+      "error": "page.goto: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - navigating to \"https://grandrapidsmi.nextrequest.com/requests/new\", waiting until \"networkidle\"\u001b[22m\n",
+      "duration": 30093
+    }
+  ]
+}

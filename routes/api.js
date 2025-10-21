@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const portalService = require('../services/portal-service');
+const adaptiveLearning = require('../services/adaptive-learning-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
 
 /**
@@ -495,6 +496,100 @@ router.post('/test-portal/:caseId', async (req, res) => {
 
     } catch (error) {
         console.error('Error testing portal with case:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Get adaptive learning insights for an agency
+ */
+router.get('/insights/:agency', async (req, res) => {
+    try {
+        const { agency } = req.params;
+        const { state } = req.query;
+
+        const insights = await adaptiveLearning.getInsightsReport(agency, state);
+
+        res.json({
+            success: true,
+            insights
+        });
+    } catch (error) {
+        console.error('Error getting insights:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Get all learning insights
+ */
+router.get('/insights', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                agency_name,
+                state,
+                best_strategies,
+                sample_size,
+                last_updated
+            FROM foia_learned_insights
+            ORDER BY sample_size DESC
+            LIMIT 50
+        `);
+
+        res.json({
+            success: true,
+            insights: result.rows
+        });
+    } catch (error) {
+        console.error('Error getting all insights:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Get strategy performance dashboard
+ */
+router.get('/strategy-performance', async (req, res) => {
+    try {
+        const stats = await db.query(`
+            SELECT
+                COUNT(*) as total_cases,
+                COUNT(CASE WHEN outcome_type = 'full_approval' THEN 1 END) as approvals,
+                COUNT(CASE WHEN outcome_type = 'denial' THEN 1 END) as denials,
+                AVG(CASE WHEN outcome_recorded THEN 1 ELSE 0 END) as completion_rate
+            FROM cases
+            WHERE strategy_used IS NOT NULL
+        `);
+
+        const topStrategies = await db.query(`
+            SELECT
+                strategy_config,
+                outcome_type,
+                COUNT(*) as count,
+                AVG(outcome_score) as avg_score
+            FROM foia_strategy_outcomes
+            GROUP BY strategy_config, outcome_type
+            ORDER BY avg_score DESC
+            LIMIT 10
+        `);
+
+        res.json({
+            success: true,
+            stats: stats.rows[0],
+            topStrategies: topStrategies.rows
+        });
+    } catch (error) {
+        console.error('Error getting strategy performance:', error);
         res.status(500).json({
             success: false,
             error: error.message

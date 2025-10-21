@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test FOIA Request Form</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        form {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .required {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <form id="foiaForm">
+        <h1>FOIA Request Form</h1>
+
+        <div class="form-group">
+            <label for="requesterName">Your Name <span class="required">*</span></label>
+            <input type="text" id="requesterName" name="requester_name" required>
+        </div>
+
+        <div class="form-group">
+            <label for="email">Your Email <span class="required">*</span></label>
+            <input type="email" id="email" name="email" required>
+        </div>
+
+        <div class="form-group">
+            <label for="phone">Phone Number</label>
+            <input type="tel" id="phone" name="phone">
+        </div>
+
+        <div class="form-group">
+            <label for="address">Mailing Address</label>
+            <input type="text" id="address" name="address">
+        </div>
+
+        <div class="form-group">
+            <label for="subjectName">Subject Name</label>
+            <input type="text" id="subjectName" name="subject_name">
+        </div>
+
+        <div class="form-group">
+            <label for="incidentDate">Incident Date</label>
+            <input type="date" id="incidentDate" name="incident_date">
+        </div>
+
+        <div class="form-group">
+            <label for="location">Incident Location</label>
+            <input type="text" id="location" name="incident_location">
+        </div>
+
+        <div class="form-group">
+            <label for="recordType">Type of Records Requested <span class="required">*</span></label>
+            <select id="recordType" name="record_type" required>
+                <option value="">-- Select --</option>
+                <option value="police_report">Police Report</option>
+                <option value="bodycam">Body Camera Footage</option>
+                <option value="incident_report">Incident Report</option>
+                <option value="arrest_records">Arrest Records</option>
+                <option value="other">Other</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="description">Request Description <span class="required">*</span></label>
+            <textarea id="description" name="request_description" required placeholder="Please describe the records you are requesting..."></textarea>
+        </div>
+
+        <button type="submit">Submit FOIA Request</button>
+    </form>
+
+    <script>
+        document.getElementById('foiaForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            alert('Form submitted! (This is a test form - no data is actually sent)');
+        });
+    </script>
+</body>
+</html>
