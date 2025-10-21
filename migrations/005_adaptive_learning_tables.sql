@@ -11,13 +11,14 @@ CREATE TABLE IF NOT EXISTS foia_strategy_outcomes (
     outcome_type VARCHAR(50) NOT NULL,  -- full_approval, partial_approval, denial, etc.
     outcome_score INTEGER NOT NULL,  -- Calculated score based on outcome
     response_time_days INTEGER,  -- How long it took to respond
-    created_at TIMESTAMP DEFAULT NOW(),
-
-    INDEX idx_strategy_outcomes_agency (agency_name),
-    INDEX idx_strategy_outcomes_state (state),
-    INDEX idx_strategy_outcomes_score (outcome_score),
-    INDEX idx_strategy_outcomes_created (created_at)
+    created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Create indexes for strategy outcomes
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_agency ON foia_strategy_outcomes(agency_name);
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_state ON foia_strategy_outcomes(state);
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_score ON foia_strategy_outcomes(outcome_score);
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_created ON foia_strategy_outcomes(created_at);
 
 -- Table to store learned insights (aggregated knowledge)
 CREATE TABLE IF NOT EXISTS foia_learned_insights (
@@ -29,10 +30,12 @@ CREATE TABLE IF NOT EXISTS foia_learned_insights (
     sample_size INTEGER NOT NULL,  -- Number of data points
     last_updated TIMESTAMP DEFAULT NOW(),
 
-    UNIQUE(agency_name, state),
-    INDEX idx_learned_insights_agency (agency_name),
-    INDEX idx_learned_insights_state (state)
+    UNIQUE(agency_name, state)
 );
+
+-- Create indexes for learned insights
+CREATE INDEX IF NOT EXISTS idx_learned_insights_agency ON foia_learned_insights(agency_name);
+CREATE INDEX IF NOT EXISTS idx_learned_insights_state ON foia_learned_insights(state);
 
 -- Table to track A/B test experiments
 CREATE TABLE IF NOT EXISTS foia_experiments (
@@ -43,10 +46,11 @@ CREATE TABLE IF NOT EXISTS foia_experiments (
     variant_strategy JSONB NOT NULL,
     started_at TIMESTAMP DEFAULT NOW(),
     ended_at TIMESTAMP,
-    status VARCHAR(20) DEFAULT 'active',  -- active, completed, cancelled
-
-    INDEX idx_experiments_status (status)
+    status VARCHAR(20) DEFAULT 'active'  -- active, completed, cancelled
 );
+
+-- Create index for experiments
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON foia_experiments(status);
 
 -- Table to track which cases were part of experiments
 CREATE TABLE IF NOT EXISTS foia_experiment_cases (
@@ -54,11 +58,12 @@ CREATE TABLE IF NOT EXISTS foia_experiment_cases (
     experiment_id INTEGER REFERENCES foia_experiments(id) ON DELETE CASCADE,
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     variant_group VARCHAR(20) NOT NULL,  -- control or variant
-    created_at TIMESTAMP DEFAULT NOW(),
-
-    INDEX idx_experiment_cases_experiment (experiment_id),
-    INDEX idx_experiment_cases_case (case_id)
+    created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Create indexes for experiment cases
+CREATE INDEX IF NOT EXISTS idx_experiment_cases_experiment ON foia_experiment_cases(experiment_id);
+CREATE INDEX IF NOT EXISTS idx_experiment_cases_case ON foia_experiment_cases(case_id);
 
 -- Add strategy_used field to cases table if it doesn't exist
 DO $$
