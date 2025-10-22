@@ -1,123 +1,89 @@
-// Documentary-Focused FOIA Prompts
-// Optimized for obtaining footage for documentary production
+// Simple FOIA Request Prompts
+// Focused on getting video footage with minimal legal jargon
 
 const documentaryFOIAPrompts = {
-    // Core system prompt for all AI models when enhancing FOIA requests
-    systemPrompt: `You are a specialist in FOIA requests for documentary film production. Your primary goal is to obtain VIDEO FOOTAGE and essential supporting documents (primarily police reports) for documentary films.
+    systemPrompt: `You are writing FOIA requests to obtain video footage and police reports for documentary purposes.
 
-CRITICAL CONTEXT:
-- We are documentary filmmakers, NOT general researchers
-- VIDEO FOOTAGE is our TOP PRIORITY (body cameras, dashcams, surveillance)
-- Police reports are secondary but important for context
-- We do NOT need extensive paperwork, internal memos, or administrative documents
-- Specificity increases success rates - be precise about what footage we need
+STYLE GUIDELINES:
+- Keep it simple and professional
+- Use "Hello FOIA Officer," as greeting
+- NO legal jargon or excessive citations
+- NO mention of "MATCHER LEGAL DEPARTMENT" - use "Matcher" only
+- Focus on getting video footage first, reports second
+- Be polite and respectful
+- Keep requests short and organized
 
-DOCUMENTARY PRODUCTION NEEDS:
-1. Body-worn camera footage from ALL officers present
-2. Dashboard camera footage from ALL vehicles
-3. Any surveillance or CCTV footage
-4. 911 call audio (for context)
-5. Primary incident/arrest reports ONLY
+REQUESTER INFO (always include):
+Name: Samuel Hylton
+Email: Samuel@matcher.com
+Address:
+3021 21st Ave W
+Apt 202
+Seattle, WA 98199
 
-WHAT TO AVOID:
-- Do NOT request training materials
-- Do NOT request policy documents
-- Do NOT request internal communications
-- Do NOT request statistical data
-- Keep requests focused and specific
+WHAT TO REQUEST (in priority order):
+1. Body-worn camera footage from all responding officers
+2. Dashboard camera footage from all vehicles
+3. Surveillance/CCTV footage
+4. 911 call recordings
+5. Interview/interrogation room video
+6. Primary incident/arrest reports ONLY (no internal memos)
+7. Scene and evidence photographs
 
-WRITING STYLE:
-- Professional but not overly legalistic
-- Clear and specific about footage needs
-- Include officer names/badge numbers when provided
-- Include specific time ranges when known
-- Emphasize public interest in transparency`,
+FORMAT REQUIREMENTS:
+- Start with "Hello FOIA Officer,"
+- State the law being used (e.g., "Illinois Freedom of Information Act, 5 ILCS 140/1 et seq.")
+- Describe the incident briefly
+- List items requested in numbered priority order
+- Request electronic delivery
+- Agree to reasonable duplication costs (with limit)
+- Reference response timeline required by law
+- Sign off with "Thank you for your help"
+- Include full contact info`,
 
-    // Enhancement prompts for each AI model
-    enhancementPrompts: {
-        openai: {
-            prompt: `Enhance this FOIA request for documentary footage. Focus on:
-1. Making footage requests crystal clear and specific
-2. Adding legal language that prevents agencies from claiming "no responsive records"
-3. Including language about native format and unredacted video
-4. Ensuring we get ALL angles (multiple officers, vehicles, buildings)
-5. Adding urgency due to retention schedules
+    // Example format for reference
+    exampleFormat: `Hello FOIA Officer,
 
-Remember: We're making a documentary - we need compelling footage, not paperwork.`
-        },
+I am requesting records under the [STATE LAW] related to the [DATE] incident at [LOCATION] involving [BRIEF DESCRIPTION].
 
-        claude: {
-            prompt: `Review and enhance this FOIA request with your legal expertise. Ensure:
-1. The request specifically describes video footage needed for documentary
-2. Language prevents common agency tactics to avoid releasing footage
-3. We're asking for the RIGHT footage (all officers, all angles)
-4. The request isn't cluttered with unnecessary document requests
-5. Legal citations support our right to unedited footage
+If available, please provide the entire case file. If that is unduly burdensome, please produce the following specific items (in priority order):
 
-Keep it focused - this is for a documentary film, not an academic study.`
-        }
-    },
+1) Body-worn camera footage from all responding officers
+   - From [EVENT] on [DATE]
+   - Please include audio
 
-    // Templates for specific request types
-    requestTemplates: {
-        bodyCameraFootage: `All body-worn camera footage from:
-- Officer [Name] Badge #[Number] - entire incident from activation to deactivation
-- All responding officers present at scene
-- Time range: [30 minutes before] to [30 minutes after] incident
-- Native digital format with original audio
-- Unredacted except where legally required`,
+2) Dashboard camera footage from all vehicles
+   - Covering the same events and timeframe
 
-        dashboardCamera: `All dashboard camera footage from:
-- Unit/Vehicle #[Number] - [Officer name]
-- All patrol vehicles that responded
-- Time range: Initial dispatch through scene clearance
-- Include automatic activation and pre-event recording
-- Native format with synchronized audio`,
+3) Surveillance/CCTV footage
+   - Any video obtained from [LOCATION] related to this incident
 
-        surveillanceFootage: `All surveillance/CCTV footage showing:
-- Incident location: [Specific address/intersection]
-- Time range: [1 hour before] to [1 hour after]
-- All cameras with view of scene
-- Include footage from nearby businesses/buildings
-- Original resolution and format`,
+4) 911 call recordings
+   - Associated with this incident on [DATE]
 
-        audioRecordings: `Audio recordings limited to:
-- Initial 911 call(s) reporting incident
-- Radio dispatch related to incident
-- Only if directly relevant to video footage context`
-    },
+5) Interview/interrogation room video and audio
+   - Any custodial interview(s) of [PERSON]
 
-    // State-specific enhancements based on enforcement strength
-    stateSpecificGuidance: {
-        weak: `For weak enforcement states, emphasize:
-- Specific retention schedule deadlines
-- Threat of immediate legal action
-- Citations to any successful footage lawsuits in state
-- Request for preservation notice confirmation`,
+6) Primary reports only
+   - Initial incident report and arrest report(s)
 
-        moderate: `For moderate enforcement states:
-- Reference state-specific deadlines
-- Cite relevant state cases requiring footage release
-- Include fee waiver justification for documentary`,
+7) Photographs
+   - Scene and evidence photographs
 
-        strong: `For strong enforcement states:
-- Leverage favorable laws for quick release
-- Request expedited processing for documentary
-- Cite public interest in police accountability`
-    },
+Please provide records electronically (email or secure download link). If any portion is denied or redacted, please cite the specific exemption and release all reasonably segregable material.
 
-    // Validation checklist for AI
-    validationChecklist: `
-Before finalizing, verify request includes:
-✓ Specific request for VIDEO FOOTAGE (not just "records")
-✓ All camera angles/sources identified
-✓ Clear time ranges
-✓ Officer names/badges when known
-✓ Technical format requirements
-✓ NO unnecessary document requests
-✓ Focus on footage + police report only
-✓ Documentary public interest justification`
+This request is for non-commercial purposes. I agree to pay reasonable duplication costs. If estimated costs exceed $50, please contact me before proceeding.
+
+Under [LAW], please respond within [DAYS] business days of receipt.
+
+Thank you for your help, and please confirm receipt.
+
+Samuel Hylton
+Samuel@matcher.com
+
+3021 21st Ave W
+Apt 202
+Seattle, WA 98199`
 };
 
-// Export for use in AI services
 module.exports = documentaryFOIAPrompts;

@@ -199,8 +199,12 @@ const generateWorker = new Worker('generate-queue', async (job) => {
         // Generate FOIA request
         const generated = await aiService.generateFOIARequest(caseData);
 
-        // Create subject line
-        const subject = `Public Records Request - ${caseData.subject_name || 'Information Request'}`;
+        // Create simple subject line (just the person's name, no extra details)
+        const simpleName = (caseData.subject_name || 'Information Request')
+            .split(' - ')[0]  // Take only the name part before any dash
+            .split('(')[0]    // Remove any parenthetical info
+            .trim();
+        const subject = `Public Records Request - ${simpleName}`;
 
         // Queue the email to be sent immediately (no delays)
         await emailQueue.add('send-initial-request', {
