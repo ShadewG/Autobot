@@ -18,8 +18,16 @@ const generateQueue = new Queue('generate-queue', { connection });
 /**
  * Generate human-like delay for auto-replies (2-10 hours)
  * Avoids immediate responses that look automated
+ * Set AUTO_REPLY_DELAY_MINUTES env var to override (use 0 for immediate testing)
  */
 function getHumanLikeDelay() {
+    // Check for testing override
+    if (process.env.AUTO_REPLY_DELAY_MINUTES !== undefined) {
+        const minutes = parseInt(process.env.AUTO_REPLY_DELAY_MINUTES);
+        console.log(`Using override delay: ${minutes} minutes`);
+        return minutes * 60 * 1000;
+    }
+
     const now = new Date();
     const hour = now.getHours();
 
