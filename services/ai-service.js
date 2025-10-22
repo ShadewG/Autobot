@@ -2,6 +2,7 @@ const OpenAI = require('openai');
 const Anthropic = require('@anthropic-ai/sdk');
 const db = require('./database');
 const documentaryFOIAPrompts = require('../prompts/documentary-foia-prompts');
+const responseHandlingPrompts = require('../prompts/response-handling-prompts');
 const adaptiveLearning = require('./adaptive-learning-service');
 
 class AIService {
@@ -285,7 +286,7 @@ Return ONLY valid JSON, no other text.`;
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are an AI that analyzes FOIA response emails. Always return valid JSON.'
+                        content: responseHandlingPrompts.analysisSystemPrompt
                     },
                     {
                         role: 'user',
@@ -366,7 +367,7 @@ Return ONLY the email body text, no subject line or metadata.`;
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are an AI that writes professional FOIA correspondence. Be polite, clear, and efficient.'
+                        content: responseHandlingPrompts.autoReplySystemPrompt
                     },
                     {
                         role: 'user',
@@ -431,7 +432,7 @@ Return ONLY the email body text.`;
                 messages: [
                     {
                         role: 'system',
-                        content: 'You are an AI that writes professional FOIA follow-up emails.'
+                        content: responseHandlingPrompts.followUpSystemPrompt
                     },
                     {
                         role: 'user',
