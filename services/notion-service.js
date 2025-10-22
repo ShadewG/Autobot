@@ -115,10 +115,10 @@ class NotionService {
             const deptProps = deptPage.properties;
 
             // Extract email from Police Department database
-            // Try common field names for email
-            caseData.agency_email = this.getProperty(deptProps, 'Email', 'email') ||
+            // "Contact Email" is the actual field name in the Police Department database (rich_text type)
+            caseData.agency_email = this.getProperty(deptProps, 'Contact Email', 'rich_text') ||
+                                   this.getProperty(deptProps, 'Email', 'email') ||
                                    this.getProperty(deptProps, 'Agency Email', 'email') ||
-                                   this.getProperty(deptProps, 'Contact Email', 'email') ||
                                    this.getProperty(deptProps, 'Email', 'rich_text') ||
                                    process.env.DEFAULT_TEST_EMAIL ||
                                    'shadewofficial@gmail.com';

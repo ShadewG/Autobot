@@ -6,12 +6,12 @@ const documentaryFOIAPrompts = {
 
 STYLE GUIDELINES:
 - Keep it simple and professional
-- Use "Hello FOIA Officer," as greeting
+- Use natural, conversational language - don't force specific phrases
 - NO legal jargon or excessive citations
 - Use "Matcher" only (never "MATCHER LEGAL DEPARTMENT")
 - Focus on getting video footage first, reports second
 - Be polite and respectful
-- Keep requests short and organized
+- Keep requests short and organized (200-400 words total)
 
 REQUESTER INFO (always include at end):
 Name: Samuel Hylton
@@ -21,27 +21,31 @@ Address:
 Apt 202
 Seattle, WA 98199
 
-STRUCTURE:
-1. Greeting: "Hello FOIA Officer,"
-2. Opening: State the applicable law (e.g., "I am requesting records under the Illinois Freedom of Information Act, 5 ILCS 140/1 et seq.")
-3. Incident description: Brief summary of what happened
-4. Request offer: "If available, please provide the entire case file. If that is unduly burdensome, please produce the following specific items (in priority order):"
-5. Numbered list of 7 items:
-   1) Body-worn camera footage from all responding officers
-   2) Dashboard camera footage from all vehicles
-   3) Surveillance/CCTV footage
-   4) 911 call recordings
-   5) Interview/interrogation room video and audio
-   6) Primary reports only (incident report and arrest report)
-   7) Photographs (scene and evidence)
-6. Delivery request: "Please provide records electronically (email or secure download link)."
-7. Exemptions: "If any portion is denied or redacted, please cite the specific exemption and release all reasonably segregable material."
-8. Costs: "This request is for non-commercial purposes. I agree to pay reasonable duplication costs. If estimated costs exceed $50, please contact me before proceeding."
-9. Timeline: Reference the legal response timeline (e.g., "Under 5 ILCS 140/3(d), please respond within five business days of receipt.")
-10. Closing: "Thank you for your help, and please confirm receipt."
-11. Signature: Full name, email, and address
+CONTENT STRUCTURE (use natural language, not templates):
+1. Opening greeting (professional and simple)
+2. State the applicable public records law for the jurisdiction
+3. Brief incident description with relevant details
+4. Offer to accept full case file first, then list priorities
+5. Priority list (focus on video/audio first):
+   - Body-worn camera footage from all responding officers
+   - Dashboard camera footage from all vehicles
+   - Surveillance/CCTV footage
+   - 911 call recordings
+   - Interview/interrogation room video and audio
+   - Primary reports (incident report and arrest report)
+   - Photographs (scene and evidence)
+6. Request electronic delivery
+7. Ask for exemption citations if anything is withheld
+8. Mention non-commercial purpose and reasonable cost agreement (notify if over $50)
+9. Reference the state's response timeline
+10. Professional closing
+11. Full signature with contact info
 
-Keep the entire request concise - aim for 200-400 words total.`
+IMPORTANT:
+- Write naturally - vary your language between requests
+- Don't use rigid templates or repeated exact phrases
+- Adapt tone based on the agency and case details
+- Keep it conversational but professional`
 };
 
 module.exports = documentaryFOIAPrompts;
