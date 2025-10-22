@@ -209,36 +209,30 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
         const requesterName = process.env.REQUESTER_NAME || 'Samuel Hylton';
         const requesterEmail = process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com';
 
-        return `Generate a professional FOIA/public records request for DOCUMENTARY FILM PRODUCTION with the following details:
+        return `Generate a simple, professional FOIA/public records request with these details:
 
 Jurisdiction: ${caseData.state}
 Agency: ${caseData.agency_name}
-Requester: ${requesterName} (${requesterEmail})
-Representing: MATCHER LEGAL DEPARTMENT
+Requester: ${requesterName}
+Email: ${requesterEmail}
+Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
 
 Incident Details: ${incidentDetails}
 ${itemDescriptions}
 
-Legal Style: ${styleInstruction}
+INSTRUCTIONS:
+- Use the EXACT format from the example in the system prompt
+- Start with "Hello FOIA Officer,"
+- State the appropriate state law (e.g., "Illinois Freedom of Information Act, 5 ILCS 140/1 et seq.")
+- Briefly describe the incident
+- List 7 items in priority order: 1) Body cameras, 2) Dashcams, 3) Surveillance, 4) 911 calls, 5) Interview video, 6) Reports, 7) Photos
+- Request electronic delivery
+- Agree to reasonable costs up to $50
+- Reference response timeline required by law
+- Sign with full contact info including the Seattle address
+- Keep it short and simple - NO legal jargon or excessive citations
 
-STATE-SPECIFIC CONSIDERATIONS:
-${stateGuidance}
-
-CREATE A DOCUMENTARY-FOCUSED REQUEST THAT:
-1. Emphasizes VIDEO FOOTAGE as primary need (body cameras, dashcams, surveillance)
-2. Includes officer names/badge numbers when provided in the case details
-3. Specifies exact time ranges and camera angles needed
-4. Requests footage in native digital format with original audio
-5. Includes only essential supporting documents (police report)
-6. Uses language preventing "no responsive records" claims
-7. Cites relevant state laws and retention schedules
-8. Emphasizes public interest in documentary transparency
-9. Includes preservation notice for all footage
-10. Avoids requesting unnecessary administrative documents
-
-REMEMBER: This is for a DOCUMENTARY FILM - we need compelling footage, not paperwork. Be specific about which officers' cameras we need based on the details provided.
-
-Please generate only the body of the letter, starting with a proper salutation and ending with a professional closing.`;
+Generate ONLY the email body. Do NOT add a subject line.`;
     }
 
     /**
