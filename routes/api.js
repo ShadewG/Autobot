@@ -340,6 +340,58 @@ router.get('/activity', async (req, res) => {
 });
 
 /**
+ * Test SendGrid configuration
+ */
+router.post('/test-sendgrid', async (req, res) => {
+    try {
+        const sendgridService = require('../services/sendgrid-service');
+
+        // Check if env vars are set
+        const config = {
+            api_key_set: !!process.env.SENDGRID_API_KEY,
+            from_email: process.env.SENDGRID_FROM_EMAIL || 'not set',
+            from_name: process.env.SENDGRID_FROM_NAME || 'not set',
+            test_email: process.env.DEFAULT_TEST_EMAIL || 'not set'
+        };
+
+        if (!process.env.SENDGRID_API_KEY) {
+            return res.status(500).json({
+                success: false,
+                error: 'SENDGRID_API_KEY not set',
+                config
+            });
+        }
+
+        // Try sending a test email
+        const sgMail = require('@sendgrid/mail');
+        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+        const msg = {
+            to: req.body.to || process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com',
+            from: process.env.SENDGRID_FROM_EMAIL || 'samuel@matcher.com',
+            subject: 'Test Email from Railway - Autobot MVP',
+            text: `This is a test email sent at ${new Date().toISOString()}`,
+            html: `<p>This is a test email sent from Railway at ${new Date().toISOString()}</p>`
+        };
+
+        await sgMail.send(msg);
+
+        res.json({
+            success: true,
+            message: 'Test email sent successfully',
+            config,
+            sent_to: msg.to
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            details: error.response?.body || 'No details available'
+        });
+    }
+});
+
+/**
  * Get dashboard stats
  */
 router.get('/stats', async (req, res) => {
