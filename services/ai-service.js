@@ -41,9 +41,9 @@ class AIService {
                             content: userPrompt
                         }
                     ],
-                    reasoning_effort: 'medium',  // Medium reasoning for FOIA generation
+                    reasoning_effort: 'low',  // Low reasoning to save tokens for actual content
                     verbosity: 'medium',
-                    max_completion_tokens: 2000
+                    max_completion_tokens: 4000  // Increased to ensure we get content after reasoning
                 });
 
                 const requestText = response.choices[0].message.content;
