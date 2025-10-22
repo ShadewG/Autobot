@@ -22,7 +22,15 @@ class NotionService {
                 }
             });
 
-            return response.results.map(page => this.parseNotionPage(page));
+            // Parse pages and enrich with police department data
+            const cases = [];
+            for (const page of response.results) {
+                const caseData = this.parseNotionPage(page);
+                const enrichedCase = await this.enrichWithPoliceDepartment(caseData);
+                cases.push(enrichedCase);
+            }
+
+            return cases;
         } catch (error) {
             console.error('Error fetching cases from Notion:', error);
             throw error;
@@ -31,6 +39,8 @@ class NotionService {
 
     /**
      * Parse a Notion page into our case format
+     * Note: This returns a partial case object. Call enrichWithPoliceDepartment()
+     * to fetch related police department data including email.
      */
     parseNotionPage(page) {
         const props = page.properties;
@@ -39,41 +49,94 @@ class NotionService {
         const titleProp = Object.values(props).find(p => p.type === 'title');
         const caseName = titleProp?.title?.[0]?.plain_text || 'Untitled Case';
 
+        // Get portal URL if available
+        const portalUrl = this.getProperty(props, 'Portal', 'url');
+
+        // Get Police Department relation ID
+        const policeDeptRelation = props['Police Department'];
+        const policeDeptId = policeDeptRelation?.relation?.[0]?.id || null;
+
         return {
             notion_page_id: page.id,
             case_name: caseName,
-            // Default to email for testing, or try to find it in properties
-            agency_email: this.getProperty(props, 'Agency Email', 'email') ||
-                         this.getProperty(props, 'Email', 'email') ||
-                         process.env.DEFAULT_TEST_EMAIL ||
-                         'shadewofficial@gmail.com',
-            // Try different property names that might exist
-            subject_name: this.getProperty(props, 'Subject Name', 'rich_text') ||
-                         this.getProperty(props, 'Subject', 'rich_text') ||
-                         this.getProperty(props, 'Name', 'rich_text') ||
+            // Email will be fetched from related Police Department page
+            agency_email: null, // Will be populated by enrichWithPoliceDepartment()
+            police_dept_id: policeDeptId, // Store relation ID for fetching
+            // ACTUAL NOTION FIELD: "Suspect" (not "Subject Name")
+            subject_name: this.getProperty(props, 'Suspect', 'rich_text') ||
+                         this.getProperty(props, 'Victim', 'rich_text') ||
                          caseName,
-            agency_name: this.getProperty(props, 'Agency Name', 'rich_text') ||
-                        this.getProperty(props, 'Agency', 'rich_text') ||
-                        'Police Department',
+            // ACTUAL NOTION FIELD: "Police Department" name will be fetched from relation
+            agency_name: null, // Will be populated by enrichWithPoliceDepartment()
+            // ACTUAL NOTION FIELDS: "State" or "US State"
             state: this.getProperty(props, 'State', 'select') ||
-                  this.getProperty(props, 'Location', 'select') ||
+                  this.getProperty(props, 'US State', 'select') ||
                   'CA',
-            incident_date: this.getProperty(props, 'Incident Date', 'date') ||
-                          this.getProperty(props, 'Date', 'date') ||
+            // ACTUAL NOTION FIELDS: "Crime Date" or "Date of arrest"
+            incident_date: this.getProperty(props, 'Crime Date', 'date') ||
+                          this.getProperty(props, 'Date of arrest', 'date') ||
                           null,
-            incident_location: this.getProperty(props, 'Incident Location', 'rich_text') ||
-                             this.getProperty(props, 'Location', 'rich_text') ||
+            // ACTUAL NOTION FIELD: "Location"
+            incident_location: this.getProperty(props, 'Location', 'rich_text') ||
+                             this.getProperty(props, 'City ', 'select') ||
                              '',
-            requested_records: this.getProperty(props, 'Requested Records', 'multi_select') ||
-                             this.getProperty(props, 'Records', 'multi_select') ||
+            // ACTUAL NOTION FIELD: "What to Request"
+            requested_records: this.getProperty(props, 'What to Request', 'multi_select') ||
+                             this.getProperty(props, 'Included Records', 'multi_select') ||
                              ['Police report', 'Body cam footage'],
-            additional_details: this.getProperty(props, 'Additional Details', 'rich_text') ||
-                              this.getProperty(props, 'Details', 'rich_text') ||
+            // ACTUAL NOTION FIELDS: "Case Summary" and "Notes" (rollup)
+            additional_details: this.getProperty(props, 'Case Summary', 'rich_text') ||
                               this.getProperty(props, 'Notes', 'rich_text') ||
                               '',
             status: this.getProperty(props, 'Status', 'select') ||
-                   'ready_to_send'
+                   'ready_to_send',
+            // Add portal URL for reference
+            portal_url: portalUrl
         };
+    }
+
+    /**
+     * Fetch police department details from related page and enrich case data
+     */
+    async enrichWithPoliceDepartment(caseData) {
+        if (!caseData.police_dept_id) {
+            console.warn('No police department relation found, using defaults');
+            caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
+            caseData.agency_name = 'Police Department';
+            return caseData;
+        }
+
+        try {
+            // Fetch the related Police Department page
+            const deptPage = await this.notion.pages.retrieve({
+                page_id: caseData.police_dept_id
+            });
+
+            const deptProps = deptPage.properties;
+
+            // Extract email from Police Department database
+            // Try common field names for email
+            caseData.agency_email = this.getProperty(deptProps, 'Email', 'email') ||
+                                   this.getProperty(deptProps, 'Agency Email', 'email') ||
+                                   this.getProperty(deptProps, 'Contact Email', 'email') ||
+                                   this.getProperty(deptProps, 'Email', 'rich_text') ||
+                                   process.env.DEFAULT_TEST_EMAIL ||
+                                   'shadewofficial@gmail.com';
+
+            // Extract agency name from Police Department title
+            const deptTitleProp = Object.values(deptProps).find(p => p.type === 'title');
+            caseData.agency_name = deptTitleProp?.title?.[0]?.plain_text || 'Police Department';
+
+            console.log(`Enriched case with Police Dept: ${caseData.agency_name} (${caseData.agency_email})`);
+
+        } catch (error) {
+            console.error('Error fetching police department details:', error.message);
+            // Fallback to defaults
+            caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
+            caseData.agency_name = 'Police Department';
+        }
+
+        return caseData;
     }
 
     /**
@@ -98,6 +161,13 @@ class NotionService {
                 return prop.date?.start || null;
             case 'number':
                 return prop.number || null;
+            case 'url':
+                return prop.url || '';
+            case 'relation':
+                // For relation fields, we can't get the actual name directly
+                // We would need to fetch the related page
+                // For now, return the first relation ID or empty string
+                return prop.relation?.[0]?.id || '';
             default:
                 return null;
         }
@@ -351,6 +421,9 @@ class NotionService {
 
             // Parse the page
             const notionCase = this.parseNotionPage(page);
+
+            // Enrich with police department data
+            await this.enrichWithPoliceDepartment(notionCase);
 
             // Add page content as additional details if we have it
             if (pageContent && !notionCase.additional_details) {
