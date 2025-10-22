@@ -209,30 +209,43 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
         const requesterName = process.env.REQUESTER_NAME || 'Samuel Hylton';
         const requesterEmail = process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com';
 
-        return `Generate a simple, professional FOIA/public records request with these details:
+        return `Generate a professional FOIA/public records request following the structure in the system prompt.
 
-Jurisdiction: ${caseData.state}
-Agency: ${caseData.agency_name}
-Requester: ${requesterName}
-Email: ${requesterEmail}
-Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
+1. BASIC INFO:
+   - Jurisdiction: ${caseData.state}
+   - Agency: ${caseData.agency_name}
+   - Requester: ${requesterName}
+   - Email: ${requesterEmail}
+   - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
 
-Incident Details: ${incidentDetails}
-${itemDescriptions}
+2. INCIDENT DETAILS:
+   ${incidentDetails}
+   ${itemDescriptions}
 
-INSTRUCTIONS:
-- Use the EXACT format from the example in the system prompt
-- Start with "Hello FOIA Officer,"
-- State the appropriate state law (e.g., "Illinois Freedom of Information Act, 5 ILCS 140/1 et seq.")
-- Briefly describe the incident
-- List 7 items in priority order: 1) Body cameras, 2) Dashcams, 3) Surveillance, 4) 911 calls, 5) Interview video, 6) Reports, 7) Photos
-- Request electronic delivery
-- Agree to reasonable costs up to $50
-- Reference response timeline required by law
-- Sign with full contact info including the Seattle address
-- Keep it short and simple - NO legal jargon or excessive citations
+3. DETAILED FOOTAGE REQUESTS:
+   ${caseData.officer_details ? `- Officers involved: ${caseData.officer_details}` : '- Request footage from all responding officers'}
+   ${caseData.incident_time ? `- Time range: ${caseData.incident_time}` : '- Include appropriate time buffers around incident'}
+   ${caseData.incident_location ? `- Location: ${caseData.incident_location}` : ''}
 
-Generate ONLY the email body. Do NOT add a subject line.`;
+4. LEGAL STYLE: ${styleInstruction}
+
+5. STATE-SPECIFIC CONSIDERATIONS:
+   ${stateGuidance || 'Apply moderate enforcement approach - reference state deadlines and cite relevant cases'}
+
+6. DOCUMENTARY-FOCUSED INSTRUCTIONS:
+   - Emphasize VIDEO FOOTAGE as primary need
+   - Include officer names/badge numbers when provided
+   - Specify exact time ranges and camera angles
+   - Request native digital format with original audio
+   - Include only essential supporting documents (police report)
+   - Use simple language, avoid "no responsive records" loopholes
+   - Cite relevant state law and retention schedules briefly
+   - Mention non-commercial/public interest purpose
+   - Request preservation of footage
+   - Avoid requesting unnecessary administrative documents
+   - Keep total request to 200-400 words
+
+Generate ONLY the email body following the structure. Do NOT add a subject line.`;
     }
 
     /**
