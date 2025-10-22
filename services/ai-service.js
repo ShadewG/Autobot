@@ -403,11 +403,11 @@ Return ONLY the email body text, no subject line or metadata.`;
     }
 
     /**
-     * Research state-specific FOIA laws using deep research
+     * Research state-specific FOIA laws using GPT-5 with web search
      */
     async researchStateLaws(state, denialType) {
         try {
-            console.log(`🔍 Researching ${state} public records laws for ${denialType} denials...`);
+            console.log(`🔍 Researching ${state} public records laws for ${denialType} denials using GPT-5 + web search...`);
 
             const researchPrompt = `Research ${state} state public records laws and FOIA exemptions related to ${denialType} denials.
 
@@ -415,7 +415,7 @@ Find:
 1. Exact statute citations for ${state} public records law
 2. Specific exemption statutes that apply to ${denialType}
 3. Segregability requirements (must release non-exempt portions)
-4. Recent case law or precedents on ${denialType} denials
+4. Recent case law or precedents on ${denialType} denials (search for latest court decisions)
 5. Response timelines and legal deadlines
 6. Fee limitations or public interest waivers if applicable
 
@@ -424,32 +424,50 @@ Focus on:
 - Court interpretations of narrow exemptions
 - Requirements agencies must meet to deny requests
 - Requester rights and agency obligations
+- Use web search to find the most recent case law and statutory updates
 
-Return concise legal citations and key statutory language.`;
+Return concise legal citations and key statutory language with sources.`;
 
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a legal research expert specializing in state public records laws and FOIA litigation. Provide exact citations and statutory language.'
-                    },
-                    {
-                        role: 'user',
-                        content: researchPrompt
-                    }
+            const response = await this.openai.responses.create({
+                model: 'gpt-5',
+                reasoning: { effort: 'medium' },  // Medium reasoning for legal analysis
+                text: { verbosity: 'medium' },
+                tools: [
+                    { type: 'web_search' }  // Enable web search for live legal research
                 ],
-                temperature: 0.3, // Lower for factual accuracy
-                max_tokens: 1500
+                input: researchPrompt
             });
 
-            const research = response.choices[0].message.content;
-            console.log(`✅ Legal research complete (${research.length} chars)`);
+            const research = response.output_text;
+            console.log(`✅ Legal research complete (${research.length} chars) with live web search`);
 
             return research;
         } catch (error) {
-            console.warn('Legal research failed, using fallback strategy:', error.message);
-            return null;
+            console.warn('GPT-5 legal research failed, falling back to GPT-4o:', error.message);
+
+            // Fallback to GPT-4o without web search
+            try {
+                const fallbackResponse = await this.openai.chat.completions.create({
+                    model: 'gpt-4o',
+                    messages: [
+                        {
+                            role: 'system',
+                            content: 'You are a legal research expert specializing in state public records laws and FOIA litigation. Provide exact citations and statutory language.'
+                        },
+                        {
+                            role: 'user',
+                            content: researchPrompt
+                        }
+                    ],
+                    temperature: 0.3,
+                    max_tokens: 1500
+                });
+
+                return fallbackResponse.choices[0].message.content;
+            } catch (fallbackError) {
+                console.error('Fallback research also failed:', fallbackError.message);
+                return null;
+            }
         }
     }
 
@@ -513,25 +531,19 @@ Generate a STRONG, legally-grounded rebuttal that:
 
 Return ONLY the email body text, no subject line.`;
 
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o',
-                messages: [
-                    {
-                        role: 'system',
-                        content: denialResponsePrompts.denialRebuttalSystemPrompt
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
-                    }
-                ],
-                temperature: 0.6, // Slightly lower for consistent legal language
-                max_tokens: 1000
+            // Use GPT-5 with medium reasoning for strategic rebuttal generation
+            const response = await this.openai.responses.create({
+                model: 'gpt-5',
+                reasoning: { effort: 'medium' },  // Medium reasoning for strategic legal writing
+                text: { verbosity: 'medium' },
+                input: `${denialResponsePrompts.denialRebuttalSystemPrompt}
+
+${prompt}`
             });
 
-            const rebuttalText = response.choices[0].message.content;
+            const rebuttalText = response.output_text;
 
-            console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars)`);
+            console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars) with GPT-5`);
 
             return {
                 should_auto_reply: true,
