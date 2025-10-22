@@ -270,14 +270,15 @@ ${messageData.body_text}
 
 Please analyze and provide a JSON response with:
 1. intent: (acknowledgment | question | delivery | denial | fee_request | more_info_needed)
-2. confidence_score: 0.0 to 1.0
-3. sentiment: (positive | neutral | negative | hostile)
-4. key_points: array of important points from the email
-5. extracted_deadline: any deadline mentioned (YYYY-MM-DD format or null)
-6. extracted_fee_amount: any fee amount mentioned (number or null)
-7. requires_action: boolean - does this require a response from us?
-8. suggested_action: what should we do next?
-9. summary: brief 1-2 sentence summary
+2. denial_subtype: if intent is "denial", specify subtype (no_records | ongoing_investigation | privacy_exemption | overly_broad | excessive_fees | wrong_agency | retention_expired | format_issue | null)
+3. confidence_score: 0.0 to 1.0
+4. sentiment: (positive | neutral | negative | hostile)
+5. key_points: array of important points from the email
+6. extracted_deadline: any deadline mentioned (YYYY-MM-DD format or null)
+7. extracted_fee_amount: any fee amount mentioned (number or null)
+8. requires_action: boolean - does this require a response from us?
+9. suggested_action: what should we do next?
+10. summary: brief 1-2 sentence summary
 
 Return ONLY valid JSON, no other text.`;
 
@@ -333,6 +334,16 @@ Return ONLY valid JSON, no other text.`;
 
             // Check if this is a simple case we can auto-reply to
             const simpleIntents = ['acknowledgment', 'fee_request', 'more_info_needed'];
+
+            // Never auto-reply to denials - they need manual review and strategic response
+            if (analysis.intent === 'denial') {
+                return {
+                    should_auto_reply: false,
+                    reason: 'Denials require manual review and strategic response',
+                    denial_subtype: analysis.denial_subtype
+                };
+            }
+
             if (!simpleIntents.includes(analysis.intent)) {
                 return {
                     should_auto_reply: false,

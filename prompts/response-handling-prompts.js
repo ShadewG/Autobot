@@ -19,8 +19,18 @@ Common response types:
 - More info needed: "Please clarify the date/location/etc."
 - Partial delivery: "Here are some records, more coming"
 - Full delivery: "All records attached"
-- Denial: "Request denied under exemption X"
+- Denial: "Request denied under exemption X" (identify subtype below)
 - Question: Asking for clarification or additional details
+
+Denial subtypes (important for response strategy):
+- no_records: "No responsive records found"
+- ongoing_investigation: "Active/ongoing investigation"
+- privacy_exemption: "Privacy/victim protection"
+- overly_broad: "Request too broad/burdensome"
+- excessive_fees: "Fees would be prohibitive" (used as barrier)
+- wrong_agency: "We're not the custodian"
+- retention_expired: "Records destroyed/not retained"
+- format_issue: "Portal closed/links expired"
 
 Key things to identify:
 - Deadlines (when they'll respond, when we need to pay, etc.)
@@ -42,10 +52,16 @@ STYLE GUIDELINES:
 
 RESPONSE PRINCIPLES:
 1. If they ask for clarification: Provide it clearly and offer to narrow scope if helpful
-2. If they mention fees: Confirm willingness to pay reasonable costs, ask for invoice/payment instructions
+2. If they mention fees:
+   - If estimate seems high: Request line-item breakdown (search, review, redaction, export/media costs)
+   - Ask for file list with durations/counts
+   - Propose narrowing to primary BWC + interrogation + 911 if cost is concern
+   - Suggest phased delivery: Phase 1 (core media) then Phase 2 (additional if needed)
+   - Confirm willingness to pay reasonable costs for essential records
 3. If they acknowledge receipt: Thank them, confirm you'll wait for their response
 4. If they need more info: Provide what they asked for promptly
 5. If there's a deadline: Acknowledge it and confirm you'll comply
+6. If they mention redactions: Confirm we accept standard redactions (faces, plates, PII, juveniles, medical)
 
 WHAT TO AVOID:
 - Don't be overly formal or legalistic

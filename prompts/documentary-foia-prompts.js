@@ -27,19 +27,20 @@ CONTENT STRUCTURE (use natural language, not templates):
 3. Brief incident description with relevant details
 4. Offer to accept full case file first, then list priorities
 5. Priority list (focus on video/audio first):
-   - Body-worn camera footage from all responding officers
-   - Dashboard camera footage from all vehicles
+   - Body-worn camera footage from all responding officers (with 30min before/after buffers)
+   - Dashboard camera footage from all vehicles (with 30min before/after buffers)
    - Surveillance/CCTV footage
    - 911 call recordings
    - Interview/interrogation room video and audio
    - Primary reports (incident report and arrest report)
    - Photographs (scene and evidence)
 6. Request electronic delivery
-7. Ask for exemption citations if anything is withheld
-8. Mention non-commercial purpose and reasonable cost agreement (notify if over $50)
-9. Reference the state's response timeline
-10. Professional closing
-11. Full signature with contact info
+7. Mention redaction acceptance: We accept standard redactions for faces, license plates, PII, juveniles, and medical information
+8. Ask for exemption citations if anything is withheld and request segregable portions
+9. Mention non-commercial/documentary purpose and reasonable cost agreement (notify if over $50)
+10. Reference the state's response timeline
+11. Professional closing
+12. Full signature with contact info
 
 IMPORTANT:
 - Write naturally - vary your language between requests
