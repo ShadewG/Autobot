@@ -403,6 +403,57 @@ Return ONLY the email body text, no subject line or metadata.`;
     }
 
     /**
+     * Research state-specific FOIA laws using deep research
+     */
+    async researchStateLaws(state, denialType) {
+        try {
+            console.log(`🔍 Researching ${state} public records laws for ${denialType} denials...`);
+
+            const researchPrompt = `Research ${state} state public records laws and FOIA exemptions related to ${denialType} denials.
+
+Find:
+1. Exact statute citations for ${state} public records law
+2. Specific exemption statutes that apply to ${denialType}
+3. Segregability requirements (must release non-exempt portions)
+4. Recent case law or precedents on ${denialType} denials
+5. Response timelines and legal deadlines
+6. Fee limitations or public interest waivers if applicable
+
+Focus on:
+- Exact statutory language and citations
+- Court interpretations of narrow exemptions
+- Requirements agencies must meet to deny requests
+- Requester rights and agency obligations
+
+Return concise legal citations and key statutory language.`;
+
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a legal research expert specializing in state public records laws and FOIA litigation. Provide exact citations and statutory language.'
+                    },
+                    {
+                        role: 'user',
+                        content: researchPrompt
+                    }
+                ],
+                temperature: 0.3, // Lower for factual accuracy
+                max_tokens: 1500
+            });
+
+            const research = response.choices[0].message.content;
+            console.log(`✅ Legal research complete (${research.length} chars)`);
+
+            return research;
+        } catch (error) {
+            console.warn('Legal research failed, using fallback strategy:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Generate strategic denial rebuttal based on denial subtype
      */
     async generateDenialRebuttal(messageData, analysis, caseData) {
@@ -420,6 +471,9 @@ Return ONLY the email body text, no subject line or metadata.`;
             // Get state info for law citations
             const stateDeadline = await db.getStateDeadline(caseData.state);
             const stateName = stateDeadline?.state_name || caseData.state;
+
+            // Research state-specific laws
+            const legalResearch = await this.researchStateLaws(stateName, denialSubtype);
 
             const prompt = `Generate a strategic FOIA denial rebuttal for this response:
 
@@ -439,17 +493,23 @@ ${strategy.strategy}
 **Example Approach:**
 ${strategy.exampleRebuttal}
 
+${legalResearch ? `**Legal Research for ${stateName}:**
+${legalResearch}
+
+USE THIS RESEARCH to cite EXACT statutes and case law. Quote specific statutory language where powerful.` : ''}
+
 **Additional Context:**
 - Officer details (if known): ${caseData.officer_details || 'Not specified'}
 - Original records requested: Body-worn camera footage, dashcam, 911 calls, incident reports
 
 Generate a STRONG, legally-grounded rebuttal that:
-1. Cites specific ${stateName} public records law
+1. Cites specific ${stateName} public records law (use exact statute numbers from research)
 2. Uses the strategy outlined above
 3. Is assertive but professional (firm, not hostile)
-4. Quotes exact statutory language where helpful
+4. Quotes exact statutory language where helpful (from the research provided)
 5. Shows good faith and willingness to cooperate
-6. Is under 250 words
+6. References relevant case law if provided in research
+7. Is under 250 words
 
 Return ONLY the email body text, no subject line.`;
 
