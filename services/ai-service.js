@@ -3,6 +3,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const db = require('./database');
 const documentaryFOIAPrompts = require('../prompts/documentary-foia-prompts');
 const responseHandlingPrompts = require('../prompts/response-handling-prompts');
+const denialResponsePrompts = require('../prompts/denial-response-prompts');
 const adaptiveLearning = require('./adaptive-learning-service');
 
 class AIService {
@@ -335,13 +336,10 @@ Return ONLY valid JSON, no other text.`;
             // Check if this is a simple case we can auto-reply to
             const simpleIntents = ['acknowledgment', 'fee_request', 'more_info_needed'];
 
-            // Never auto-reply to denials - they need manual review and strategic response
+            // Handle denials with strategic rebuttals (not manual review)
             if (analysis.intent === 'denial') {
-                return {
-                    should_auto_reply: false,
-                    reason: 'Denials require manual review and strategic response',
-                    denial_subtype: analysis.denial_subtype
-                };
+                console.log(`Generating denial rebuttal for subtype: ${analysis.denial_subtype}`);
+                return await this.generateDenialRebuttal(messageData, analysis, caseData);
             }
 
             if (!simpleIntents.includes(analysis.intent)) {
@@ -400,6 +398,90 @@ Return ONLY the email body text, no subject line or metadata.`;
             };
         } catch (error) {
             console.error('Error generating auto-reply:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Generate strategic denial rebuttal based on denial subtype
+     */
+    async generateDenialRebuttal(messageData, analysis, caseData) {
+        try {
+            console.log(`Generating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
+
+            const denialSubtype = analysis.denial_subtype || 'overly_broad';
+            const strategy = denialResponsePrompts.denialStrategies[denialSubtype];
+
+            if (!strategy) {
+                console.warn(`Unknown denial subtype: ${denialSubtype}, using overly_broad strategy`);
+                strategy = denialResponsePrompts.denialStrategies.overly_broad;
+            }
+
+            // Get state info for law citations
+            const stateDeadline = await db.getStateDeadline(caseData.state);
+            const stateName = stateDeadline?.state_name || caseData.state;
+
+            const prompt = `Generate a strategic FOIA denial rebuttal for this response:
+
+**Denial Type:** ${strategy.name}
+**Agency Response:** ${messageData.body_text}
+
+**Case Context:**
+- Subject: ${caseData.subject_name}
+- Agency: ${caseData.agency_name}
+- State: ${stateName}
+- Incident Date: ${caseData.incident_date || 'Unknown'}
+- Incident Location: ${caseData.incident_location || 'Unknown'}
+
+**Strategy to Follow:**
+${strategy.strategy}
+
+**Example Approach:**
+${strategy.exampleRebuttal}
+
+**Additional Context:**
+- Officer details (if known): ${caseData.officer_details || 'Not specified'}
+- Original records requested: Body-worn camera footage, dashcam, 911 calls, incident reports
+
+Generate a STRONG, legally-grounded rebuttal that:
+1. Cites specific ${stateName} public records law
+2. Uses the strategy outlined above
+3. Is assertive but professional (firm, not hostile)
+4. Quotes exact statutory language where helpful
+5. Shows good faith and willingness to cooperate
+6. Is under 250 words
+
+Return ONLY the email body text, no subject line.`;
+
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o',
+                messages: [
+                    {
+                        role: 'system',
+                        content: denialResponsePrompts.denialRebuttalSystemPrompt
+                    },
+                    {
+                        role: 'user',
+                        content: prompt
+                    }
+                ],
+                temperature: 0.6, // Slightly lower for consistent legal language
+                max_tokens: 1000
+            });
+
+            const rebuttalText = response.choices[0].message.content;
+
+            console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars)`);
+
+            return {
+                should_auto_reply: true,
+                reply_text: rebuttalText,
+                confidence: 0.85, // High confidence for strategic rebuttals
+                denial_subtype: denialSubtype,
+                is_denial_rebuttal: true
+            };
+        } catch (error) {
+            console.error('Error generating denial rebuttal:', error);
             throw error;
         }
     }
