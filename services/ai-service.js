@@ -48,6 +48,19 @@ class AIService {
 
                 const requestText = response.choices[0].message.content;
 
+                // Log for debugging
+                console.log('GPT-5 response:', {
+                    hasChoices: !!response.choices,
+                    choicesLength: response.choices?.length,
+                    hasContent: !!requestText,
+                    contentLength: requestText?.length,
+                    firstChars: requestText?.substring(0, 100)
+                });
+
+                if (!requestText || requestText.trim().length === 0) {
+                    throw new Error('GPT-5 returned empty content');
+                }
+
                 // Store generated request with strategy info
                 const modelUsed = process.env.OPENAI_MODEL || 'gpt-5';
                 await db.createGeneratedRequest({
