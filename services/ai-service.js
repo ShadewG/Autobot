@@ -283,23 +283,32 @@ Please analyze and provide a JSON response with:
 
 Return ONLY valid JSON, no other text.`;
 
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'system',
-                        content: responseHandlingPrompts.analysisSystemPrompt
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
+            // Use GPT-5 with medium reasoning for analysis (better at understanding nuance)
+            const response = await this.openai.responses.create({
+                model: 'gpt-5',
+                reasoning: { effort: 'medium' },
+                text: { verbosity: 'low' },  // Low verbosity for JSON output
+                output_schema: {
+                    type: 'object',
+                    properties: {
+                        intent: { type: 'string' },
+                        denial_subtype: { type: 'string' },
+                        confidence_score: { type: 'number' },
+                        sentiment: { type: 'string' },
+                        key_points: { type: 'array', items: { type: 'string' } },
+                        extracted_deadline: { type: 'string' },
+                        extracted_fee_amount: { type: 'number' },
+                        requires_action: { type: 'boolean' },
+                        suggested_action: { type: 'string' },
+                        summary: { type: 'string' }
                     }
-                ],
-                temperature: 0.3,
-                response_format: { type: 'json_object' }
+                },
+                input: `${responseHandlingPrompts.analysisSystemPrompt}
+
+${prompt}`
             });
 
-            const analysis = JSON.parse(response.choices[0].message.content);
+            const analysis = JSON.parse(response.output_text);
 
             // Store analysis in database
             const analysisRecord = await db.createResponseAnalysis({
@@ -371,23 +380,17 @@ Generate an appropriate reply that:
 
 Return ONLY the email body text, no subject line or metadata.`;
 
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'system',
-                        content: responseHandlingPrompts.autoReplySystemPrompt
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
-                    }
-                ],
-                temperature: 0.7,
-                max_tokens: 800
+            // Use GPT-5 with medium reasoning for normal replies
+            const response = await this.openai.responses.create({
+                model: 'gpt-5',
+                reasoning: { effort: 'medium' },  // Medium reasoning for all communication
+                text: { verbosity: 'medium' },
+                input: `${responseHandlingPrompts.autoReplySystemPrompt}
+
+${prompt}`
             });
 
-            const replyText = response.choices[0].message.content;
+            const replyText = response.output_text;
             const confidenceThreshold = parseFloat(process.env.AUTO_REPLY_CONFIDENCE_THRESHOLD) || 0.8;
 
             return {
