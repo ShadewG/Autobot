@@ -4,6 +4,7 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const portalService = require('../services/portal-service');
 const adaptiveLearning = require('../services/adaptive-learning-service');
+const dashboardService = require('../services/dashboard-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
 
 /**
@@ -642,6 +643,68 @@ router.get('/strategy-performance', async (req, res) => {
         });
     } catch (error) {
         console.error('Error getting strategy performance:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * KPI Dashboard - Get comprehensive metrics
+ */
+router.get('/dashboard/kpi', async (req, res) => {
+    try {
+        const metrics = await dashboardService.getKPIMetrics();
+
+        res.json({
+            success: true,
+            metrics
+        });
+    } catch (error) {
+        console.error('Error getting KPI metrics:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * KPI Dashboard - Get latest bot messages
+ */
+router.get('/dashboard/messages', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 20;
+        const messages = await dashboardService.getLatestBotMessages(limit);
+
+        res.json({
+            success: true,
+            count: messages.length,
+            messages
+        });
+    } catch (error) {
+        console.error('Error getting latest messages:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * KPI Dashboard - Get hourly activity
+ */
+router.get('/dashboard/hourly-activity', async (req, res) => {
+    try {
+        const activity = await dashboardService.getHourlyActivity();
+
+        res.json({
+            success: true,
+            activity
+        });
+    } catch (error) {
+        console.error('Error getting hourly activity:', error);
         res.status(500).json({
             success: false,
             error: error.message
