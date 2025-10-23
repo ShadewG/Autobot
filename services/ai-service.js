@@ -198,9 +198,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
             });
         }
 
-        // Get state-specific enforcement guidance (default to moderate)
-        const enforcementStrength = 'moderate'; // Could be enhanced with actual state data lookup
-        const stateGuidance = documentaryFOIAPrompts.stateSpecificGuidance[enforcementStrength] || '';
+        // State-specific guidance removed - using simple documentary style
 
         // Build incident details
         const incidentDetails = `${caseData.case_name || 'Incident'} involving ${caseData.subject_name || 'subject'} on ${caseData.incident_date || 'unknown date'} at ${caseData.incident_location || 'unknown location'}. ${caseData.additional_details || ''}`;
@@ -230,7 +228,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 4. LEGAL STYLE: ${styleInstruction}
 
 5. STATE-SPECIFIC CONSIDERATIONS:
-   ${stateGuidance || 'Apply moderate enforcement approach - reference state deadlines and cite relevant cases'}
+   Apply moderate enforcement approach - reference state deadlines and cite relevant cases
 
 6. DOCUMENTARY-FOCUSED INSTRUCTIONS:
    - Emphasize VIDEO FOOTAGE as primary need
