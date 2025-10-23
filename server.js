@@ -46,8 +46,9 @@ const apiRoutes = require('./routes/api');
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
 
-// Import cron service
+// Import cron service and email queue workers
 const cronService = require('./services/cron-service');
+const { emailWorker, analysisWorker, generateWorker } = require('./queues/email-queue');
 const fs = require('fs');
 
 /**
@@ -156,6 +157,12 @@ async function startServer() {
         console.log('\nStarting automated services...');
         cronService.start();
 
+        // BullMQ workers are automatically started when imported
+        console.log('\nStarting BullMQ workers...');
+        console.log('   ✓ Email worker started');
+        console.log('   ✓ Analysis worker started');
+        console.log('   ✓ Generate worker started');
+
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`\n🤖 Autobot MVP Server Running`);
             console.log(`   Port: ${PORT}`);
@@ -167,6 +174,7 @@ async function startServer() {
             console.log(`   Webhooks: http://localhost:${PORT}/webhooks/inbound`);
             console.log(`\n   ✓ Database migrations applied`);
             console.log(`   ✓ Automated follow-ups enabled`);
+            console.log(`   ✓ BullMQ workers running`);
             console.log(`   ✓ Notion sync every 15 minutes`);
             console.log(`   ✓ Adaptive learning system active`);
             console.log(`   ✓ Ready to receive requests!\n`);
