@@ -26,15 +26,17 @@ You should push back hard on weak denials while showing good faith.`,
         overly_broad: {
             name: "Overly Broad / Undue Burden",
             strategy: `REBUTTAL STRATEGY:
-1. Acknowledge their concern and offer to narrow immediately
-2. Propose specific scope: primary officer BWC + badge/name, exact time window, specific location
-3. Cite state law requirement that agencies assist requesters in narrowing
-4. Offer phased delivery (Phase 1: essential records, Phase 2: additional if needed)
-5. Reference that documentary purpose = public interest
+1. FIRST: Request incident/police report to gather identifying information (officer names, badge numbers, exact times)
+2. Acknowledge their concern and offer to narrow immediately
+3. Propose specific scope: primary officer BWC + badge/name, exact time window, specific location
+4. Cite state law requirement that agencies assist requesters in narrowing
+5. Offer phased delivery (Phase 1: essential records, Phase 2: additional if needed)
+6. Reference that documentary purpose = public interest
 
 TEMPLATE STRUCTURE:
 - Thank them for review
-- Narrow to: Officer [name/badge], [start time] to [end time], [location]
+- REQUEST INCIDENT REPORT FIRST (to get officer names/badges, exact times, CAD number)
+- Then narrow to: Officer [name/badge], [start time] to [end time], [location]
 - Add: interrogation footage (if any) + 911 call
 - Cite segregability requirement
 - Offer to accept redactions (faces, plates, PII, juveniles)
@@ -48,16 +50,20 @@ KEY STATUTES TO CITE (by state):
 
             exampleRebuttal: `Thank you for your response. To address the burden concern, I'm happy to narrow the scope immediately.
 
-Revised request:
-- Body-worn camera footage from the primary responding officer only (if you can provide name/badge, or Officer [Name] if known), from [incident time - 30 min] to [incident time + 30 min], at [specific location]
+First, to help me narrow this request properly, please provide:
+- The Police/Incident Report for this case (case #[number] if known, or incident on [date] at [location])
+- This will help identify the specific responding officers, badge numbers, CAD number, and exact timestamps needed to narrow the request
+
+Once I have this information, I will revise the request to:
+- Body-worn camera footage from the primary responding officer only (using specific name/badge from report), from [incident time - 30 min] to [incident time + 30 min], at [specific location]
 - Any interrogation/interview footage (if it exists)
 - 911 call audio for this incident
 
 Under [State] law [cite statute], agencies must release segregable portions of records even when some content is exempt. We accept standard redactions for faces, license plates, PII, and juveniles.
 
-This narrowed scope focuses on essential documentary footage. If phased delivery would help, we're open to Phase 1 (primary BWC + 911) first.
+This narrowed scope focuses on essential documentary footage. If phased delivery would help, we're open to Phase 1 (incident report + 911 call) first, then Phase 2 (BWC) once narrowed.
 
-Please advise if this scope is manageable.`
+Please provide the incident report to facilitate proper narrowing.`
         },
 
         no_records: {
@@ -187,45 +193,64 @@ Documentary accountability serves the public interest, and these redactions adeq
             strategy: `REBUTTAL STRATEGY:
 1. Request line-item breakdown (search, review, redaction, media)
 2. Request file list with durations/file counts
-3. Challenge unreasonable hourly rates if excessive
-4. Propose narrowing to reduce costs
-5. Cite state law fee limits and public interest waivers
-6. Request fee waiver if available (documentary = public interest)
-7. Compare to other agencies' costs for similar requests
+3. Challenge unreasonable hourly rates if excessive - compare to state minimum wage or standard rates
+4. Propose narrowing to reduce costs (primary officer only)
+5. Cite state law fee limits and public interest waivers AGGRESSIVELY
+6. Request fee waiver citing documentary public interest
+7. If they refuse to reduce: DEMAND public interest waiver or threaten appeal/complaint
+8. Cite specific cases where courts found fees excessive
+9. Request Attorney General review of fees if they won't budge
 
 TEMPLATE STRUCTURE:
 - Request detailed cost breakdown
+- Challenge hourly rates (most states limit to actual direct costs)
 - Request file list to evaluate necessity
 - Propose narrowing (primary officer + essential footage)
-- Cite state law fee restrictions
-- Request public interest fee waiver
-- Note willingness to pay REASONABLE costs
-- Propose phased delivery to reduce upfront costs
+- STRONGLY cite state law fee restrictions
+- DEMAND public interest fee waiver (documentary = strong public interest)
+- If refused: mention appeal rights and AG complaint
+- Note willingness to pay REASONABLE costs only
 
 KEY STATUTES TO CITE:
-- Illinois: 5 ILCS 140/6 - fees limited to actual costs, public interest waiver available
-- California: Gov Code 6253(b) - cannot charge more than direct costs
-- Many states: Documentary/public interest = fee waiver eligibility
-- Cannot use fees as barrier to access`,
+- Illinois: 5 ILCS 140/6 - fees limited to actual costs, public interest waiver REQUIRED for news/documentary
+- California: Gov Code 6253(b) - cannot charge more than direct costs, no hourly rate for review
+- New York: FOIL 87(1)(b)(iii) - fees must be reasonable, commercial use exception doesn't apply to documentary
+- Texas: Gov Code 552.267 - public interest waiver required when disclosure primarily benefits public
+- Cite case law: fees cannot be used as barrier to deter requests
 
-            exampleRebuttal: `Thank you for the estimate. To better understand the costs, please provide:
+AGGRESSIVE TACTICS WHEN THEY WON'T REDUCE:
+- State clearly this is documentary journalism = public interest
+- Cite public accountability mission
+- Note similar requests at other agencies cost far less
+- Threaten administrative appeal of fee determination
+- Request Attorney General or Public Access Counselor review
+- Cite specific case law striking down excessive fees`,
 
-1. Line-item breakdown: search time, review hours, redaction hours, media export costs (with hourly rates)
-2. File list: specific files/footage with durations and file counts
-3. Which officers/cameras are included and estimated duration of each
+            exampleRebuttal: `Thank you for the estimate of $[AMOUNT]. Before proceeding, I must respectfully challenge this fee as potentially excessive under state law.
 
-Under [State statute cite], fees must reflect actual direct costs only and cannot be used as a barrier to access.
+Please provide immediately:
+1. Line-item breakdown: search time, review hours, redaction hours, media export costs (with specific hourly rates for each)
+2. Complete file list: specific files/footage with exact durations, file counts, and file sizes
+3. Which officers/cameras are included and estimated duration of each recording
+4. Justification for hourly rates charged (must not exceed actual direct costs per [State statute])
 
-To reduce costs, I propose narrowing to:
-- Primary responding officer body-worn camera only (Officer [Name/Badge] if known)
+Under [State statute cite], fees must reflect actual direct costs only and cannot include general overhead or be used as a barrier to access. Review time cannot be charged in most states - only search, redaction, and copying costs.
+
+**Fee Waiver Request:**
+This request is for documentary journalism purposes investigating police accountability, which serves a clear and significant public interest. Under [State statute], a public interest fee waiver is REQUIRED when disclosure primarily benefits the general public. This is not a commercial request.
+
+**Proposed Narrowing to Reduce Costs:**
+To reduce costs while fulfilling public interest, I propose narrowing to:
+- Primary responding officer body-worn camera only (Officer [Name/Badge] if identifiable from incident report)
 - 911 call audio
-- Incident report
+- Incident report (minimal cost)
 
-This focuses on essential documentary footage. If the estimate remains high, please consider:
-1. Public interest fee waiver (documentary transparency serves public interest per [statute])
-2. Phased delivery: Phase 1 (essential records) now, Phase 2 (supplemental) if budget allows
+This focuses on essential documentary footage. Even with this narrowed scope, I request a full public interest fee waiver as legally required.
 
-I'm prepared to pay reasonable costs but the current estimate appears to exceed standard rates for similar requests.`
+**If the estimate remains excessive or fee waiver is denied:**
+I reserve the right to file an administrative appeal of this fee determination and request review by the [State Attorney General/Public Access Counselor/relevant oversight body]. Case law in [State] establishes that fees exceeding $[reasonable amount] for similar requests are considered barriers to access.
+
+I'm prepared to pay reasonable actual costs, but the current estimate appears to significantly exceed standard rates and statutory limits. Please reconsider the fee waiver and provide the detailed breakdown requested above.`
         },
 
         wrong_agency: {
