@@ -18,9 +18,9 @@ router.post('/send-and-reply', async (req, res) => {
         const testCase = await db.query(`
             INSERT INTO cases (
                 case_name, subject_name, agency_name, agency_email,
-                state, status, created_at
+                state, status, notion_page_id, created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, NOW()
+                $1, $2, $3, $4, $5, $6, $7, NOW()
             ) RETURNING *
         `, [
             'Auto-Reply Test Case',
@@ -28,7 +28,8 @@ router.post('/send-and-reply', async (req, res) => {
             'Test Agency',
             'overlord1pvp@gmail.com',
             'CA',
-            'ready_to_send'
+            'ready_to_send',
+            'test-' + Date.now() // Unique test notion page ID
         ]);
 
         const caseId = testCase.rows[0].id;

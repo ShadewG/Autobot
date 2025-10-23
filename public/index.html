@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autobot MVP - FOIA Automation</title>
+    <title>Autobot MVP - KPI Dashboard</title>
     <style>
         * {
             margin: 0;
@@ -12,629 +12,690 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
             padding: 20px;
+            min-height: 100vh;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
 
-        .header {
-            background: white;
-            border-radius: 12px;
-            padding: 30px;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-
         h1 {
-            color: #333;
-            font-size: 32px;
+            color: white;
             margin-bottom: 10px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
         }
 
         .subtitle {
-            color: #666;
-            font-size: 16px;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 30px;
+            font-size: 1.1em;
         }
 
-        .card {
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .metric-card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+
+        .metric-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .metric-change {
+            font-size: 0.85em;
+            color: #22c55e;
+        }
+
+        .metric-change.negative {
+            color: #ef4444;
+        }
+
+        .section {
             background: white;
             border-radius: 12px;
             padding: 30px;
-            margin-bottom: 20px;
+            margin-bottom: 30px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
 
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        label {
-            display: block;
+        .section-title {
+            font-size: 1.5em;
             color: #333;
-            font-weight: 600;
-            margin-bottom: 8px;
-            font-size: 14px;
-        }
-
-        input[type="text"] {
-            width: 100%;
-            padding: 12px 16px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 15px;
-            transition: border-color 0.3s;
-        }
-
-        input[type="text"]:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 14px 32px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            width: 100%;
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 12px rgba(102, 126, 234, 0.4);
-        }
-
-        .btn:active {
-            transform: translateY(0);
-        }
-
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .status {
-            padding: 12px 16px;
-            border-radius: 8px;
             margin-bottom: 20px;
-            display: none;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
         }
 
-        .status.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .status.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .status.info {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
-        }
-
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-
-        .stat-card {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 8px;
-            text-align: center;
-        }
-
-        .stat-value {
-            font-size: 32px;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-
-        .stat-label {
-            font-size: 14px;
-            opacity: 0.9;
-        }
-
-        .cases-list {
-            max-height: 500px;
+        .activity-feed {
+            max-height: 600px;
             overflow-y: auto;
         }
 
-        .case-item {
-            border-bottom: 1px solid #e0e0e0;
-            padding: 15px 0;
+        .activity-item {
+            padding: 15px;
+            border-left: 4px solid #667eea;
+            margin-bottom: 15px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            transition: background 0.2s;
         }
 
-        .case-item:last-child {
-            border-bottom: none;
+        .activity-item:hover {
+            background: #e9ecef;
         }
 
-        .case-name {
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 5px;
+        .activity-item.sent {
+            border-left-color: #22c55e;
         }
 
-        .case-details {
+        .activity-item.received {
+            border-left-color: #3b82f6;
+        }
+
+        .activity-item.auto-reply {
+            border-left-color: #f59e0b;
+        }
+
+        .activity-item.denial {
+            border-left-color: #ef4444;
+        }
+
+        .activity-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85em;
             color: #666;
-            font-size: 14px;
             margin-bottom: 8px;
+        }
+
+        .activity-description {
+            color: #333;
+            line-height: 1.5;
         }
 
         .badge {
             display: inline-block;
             padding: 4px 12px;
             border-radius: 12px;
-            font-size: 12px;
+            font-size: 0.75em;
             font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .badge.ready { background: #ffeaa7; color: #2d3436; }
-        .badge.sent { background: #74b9ff; color: #0984e3; }
-        .badge.awaiting { background: #a29bfe; color: #6c5ce7; }
-        .badge.responded { background: #55efc4; color: #00b894; }
-        .badge.completed { background: #00b894; color: white; }
+        .badge.sent {
+            background: #dcfce7;
+            color: #16a34a;
+        }
+
+        .badge.received {
+            background: #dbeafe;
+            color: #2563eb;
+        }
+
+        .badge.auto-reply {
+            background: #fef3c7;
+            color: #d97706;
+        }
+
+        .badge.denial {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+
+        .badge.pending {
+            background: #e0e7ff;
+            color: #6366f1;
+        }
+
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .stat-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .message-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border-left: 4px solid #667eea;
+        }
+
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 10px;
+        }
+
+        .message-subject {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1em;
+        }
+
+        .message-type {
+            font-size: 0.75em;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: #667eea;
+            color: white;
+        }
+
+        .message-meta {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .message-body {
+            color: #555;
+            line-height: 1.6;
+            font-size: 0.9em;
+            max-height: 100px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .last-updated {
+            text-align: center;
+            color: rgba(255,255,255,0.8);
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
 
         .loading {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid #f3f3f3;
-            border-top: 2px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 8px;
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+            font-size: 1.2em;
         }
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .example {
-            background: #f8f9fa;
-            padding: 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            color: #666;
-            margin-top: 8px;
-        }
-
-        .code {
-            font-family: 'Courier New', monospace;
-            background: #f1f3f5;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-size: 12px;
-        }
-
-        .screenshots {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 20px;
-        }
-
-        .screenshot-card {
-            border: 2px solid #e0e0e0;
+        .error {
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 20px;
             border-radius: 8px;
-            overflow: hidden;
+            margin-bottom: 20px;
         }
 
-        .screenshot-card h3 {
-            background: #f8f9fa;
-            padding: 12px 16px;
-            margin: 0;
-            font-size: 14px;
-            color: #333;
-            border-bottom: 2px solid #e0e0e0;
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
         }
 
-        .screenshot-card img {
-            width: 100%;
-            display: block;
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
 
-        .portal-result {
-            background: #f8f9fa;
-            padding: 16px;
+        .test-button {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
             border-radius: 8px;
-            margin-top: 16px;
-        }
-
-        .portal-result h3 {
-            margin-bottom: 12px;
-            color: #333;
-        }
-
-        .result-item {
-            padding: 8px 0;
-            border-bottom: 1px solid #e0e0e0;
-        }
-
-        .result-item:last-child {
-            border-bottom: none;
-        }
-
-        .result-label {
+            font-size: 1em;
             font-weight: 600;
-            color: #666;
-            display: inline-block;
-            min-width: 120px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-bottom: 20px;
         }
 
-        .result-value {
-            color: #333;
+        .test-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        .test-button:active {
+            transform: translateY(0);
+        }
+
+        .test-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .test-result {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .test-result h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .test-result pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .metric-value {
+                font-size: 2em;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <h1>🤖 Autobot MVP</h1>
-            <p class="subtitle">Automated FOIA Request System</p>
+        <h1>🤖 Autobot MVP Dashboard</h1>
+        <p class="subtitle">Real-time monitoring of autonomous FOIA bot activity</p>
+
+        <button id="test-button" class="test-button" onclick="runAutoReplyTest()">
+            🧪 Test Instant Auto-Reply
+        </button>
+        <div id="test-result"></div>
+
+        <div id="error-container"></div>
+
+        <div id="metrics-container" class="metrics-grid">
+            <div class="loading pulse">Loading metrics...</div>
         </div>
 
-        <div class="card">
-            <h2 style="margin-bottom: 20px;">Submit Case from Notion</h2>
-
-            <form id="submitForm">
-                <div class="form-group">
-                    <label for="notionUrl">Notion Page URL</label>
-                    <input
-                        type="text"
-                        id="notionUrl"
-                        placeholder="https://www.notion.so/Case-Name-abc123..."
-                        required
-                    >
-                    <div class="example">
-                        💡 Example: <span class="code">https://www.notion.so/workspace/Case-Name-abc123def456</span>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn" id="submitBtn">
-                    Process This Case
-                </button>
-            </form>
-
-            <div id="status" class="status"></div>
-        </div>
-
-        <div class="card">
-            <h2 style="margin-bottom: 20px;">🌐 Test Portal Automation</h2>
-
-            <form id="portalForm">
-                <div class="form-group">
-                    <label for="portalUrl">Portal URL</label>
-                    <input
-                        type="text"
-                        id="portalUrl"
-                        placeholder="https://example.com/foia-request"
-                        required
-                    >
-                    <div class="example">
-                        💡 Example: <span class="code">https://abilenetxopenrecords.nextrequest.com/requests/new</span>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn" id="portalBtn">
-                    Test Portal (Dry Run - Won't Submit)
-                </button>
-            </form>
-
-            <div id="portalStatus" class="status"></div>
-
-            <div id="portalResults" style="display: none;">
-                <div class="portal-result">
-                    <h3>✅ Portal Test Results</h3>
-                    <div id="portalResultDetails"></div>
-                </div>
-
-                <div class="screenshots" id="screenshots"></div>
+        <div class="section">
+            <h2 class="section-title">📊 Message Statistics</h2>
+            <div id="message-stats" class="stats-row">
+                <div class="loading pulse">Loading...</div>
             </div>
         </div>
 
-        <div class="card">
-            <h2 style="margin-bottom: 20px;">Statistics</h2>
-            <div class="stats-grid" id="stats">
-                <div class="stat-card">
-                    <div class="stat-value">-</div>
-                    <div class="stat-label">Total Cases</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">-</div>
-                    <div class="stat-label">Ready to Send</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">-</div>
-                    <div class="stat-label">Sent</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-value">-</div>
-                    <div class="stat-label">Responded</div>
-                </div>
+        <div class="section">
+            <h2 class="section-title">🎯 Denial Breakdown</h2>
+            <div id="denial-stats" class="stats-row">
+                <div class="loading pulse">Loading...</div>
             </div>
         </div>
 
-        <div class="card">
-            <h2 style="margin-bottom: 20px;">Recent Cases</h2>
-            <div class="cases-list" id="casesList">
-                <p style="color: #999; text-align: center; padding: 40px 0;">
-                    Loading cases...
-                </p>
+        <div class="section">
+            <h2 class="section-title">📬 Latest Bot Messages</h2>
+            <div id="latest-messages">
+                <div class="loading pulse">Loading messages...</div>
             </div>
+        </div>
+
+        <div class="section">
+            <h2 class="section-title">⚡ Recent Activity</h2>
+            <div id="activity-feed" class="activity-feed">
+                <div class="loading pulse">Loading activity...</div>
+            </div>
+        </div>
+
+        <div class="last-updated">
+            Last updated: <span id="last-updated">--</span>
         </div>
     </div>
 
     <script>
-        const API_BASE = window.location.origin;
+        const API_BASE = window.location.origin + '/api';
 
-        // Submit form handler
-        document.getElementById('submitForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
+        async function fetchKPIMetrics() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/kpi`);
+                const data = await response.json();
 
-            const notionUrl = document.getElementById('notionUrl').value;
-            const statusDiv = document.getElementById('status');
-            const submitBtn = document.getElementById('submitBtn');
+                if (!data.success) {
+                    throw new Error(data.error);
+                }
 
-            // Extract page ID from URL
-            const pageId = extractPageId(notionUrl);
-            if (!pageId) {
-                showStatus('error', 'Invalid Notion URL. Please paste the full URL from your browser.');
+                renderMetrics(data.metrics);
+                renderMessageStats(data.metrics.messages);
+                renderDenialStats(data.metrics.denials);
+                renderRecentActivity(data.metrics.recentActivity);
+
+                document.getElementById('last-updated').textContent = new Date(data.metrics.lastUpdated).toLocaleString();
+            } catch (error) {
+                showError('Error loading KPI metrics: ' + error.message);
+            }
+        }
+
+        async function fetchLatestMessages() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/messages?limit=10`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error);
+                }
+
+                renderLatestMessages(data.messages);
+            } catch (error) {
+                showError('Error loading messages: ' + error.message);
+            }
+        }
+
+        function renderMetrics(metrics) {
+            const { totals, responses, autoReplies } = metrics;
+
+            const metricsHTML = `
+                <div class="metric-card">
+                    <div class="metric-label">Total Cases</div>
+                    <div class="metric-value">${totals.total_cases || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Requests Sent</div>
+                    <div class="metric-value">${totals.requests_sent || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Responses Received</div>
+                    <div class="metric-value">${totals.responses_received || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Auto-Replies Sent</div>
+                    <div class="metric-value">${totals.auto_replies_sent || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Denials Received</div>
+                    <div class="metric-value">${totals.denials_received || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Active Threads</div>
+                    <div class="metric-value">${totals.active_threads || 0}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Response Rate</div>
+                    <div class="metric-value">${((responses.cases_with_responses / totals.requests_sent * 100) || 0).toFixed(1)}%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Avg Response Time</div>
+                    <div class="metric-value">${responses.avg_response_time_days || 0}<span style="font-size: 0.5em;"> days</span></div>
+                </div>
+            `;
+
+            document.getElementById('metrics-container').innerHTML = metricsHTML;
+        }
+
+        function renderMessageStats(stats) {
+            const statsHTML = `
+                <div class="stat-item">
+                    <div class="stat-label">Sent (Last 7 Days)</div>
+                    <div class="stat-value">${stats.sent_last_7_days || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Sent (Last 30 Days)</div>
+                    <div class="stat-value">${stats.sent_last_30_days || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Received (Last 7 Days)</div>
+                    <div class="stat-value">${stats.received_last_7_days || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Received (Last 30 Days)</div>
+                    <div class="stat-value">${stats.received_last_30_days || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Auto-Replies (Last 7 Days)</div>
+                    <div class="stat-value">${stats.auto_replies_last_7_days || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Auto-Replies (Last 30 Days)</div>
+                    <div class="stat-value">${stats.auto_replies_last_30_days || 0}</div>
+                </div>
+            `;
+
+            document.getElementById('message-stats').innerHTML = statsHTML;
+        }
+
+        function renderDenialStats(stats) {
+            const total = stats.total_denials || 0;
+
+            const statsHTML = `
+                <div class="stat-item">
+                    <div class="stat-label">Total Denials</div>
+                    <div class="stat-value">${total}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Overly Broad</div>
+                    <div class="stat-value">${stats.overly_broad || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Ongoing Investigation</div>
+                    <div class="stat-value">${stats.ongoing_investigation || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">No Records</div>
+                    <div class="stat-value">${stats.no_records || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Privacy Exemption</div>
+                    <div class="stat-value">${stats.privacy_exemption || 0}</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-label">Excessive Fees</div>
+                    <div class="stat-value">${stats.excessive_fees || 0}</div>
+                </div>
+            `;
+
+            document.getElementById('denial-stats').innerHTML = statsHTML;
+        }
+
+        function renderLatestMessages(messages) {
+            if (!messages || messages.length === 0) {
+                document.getElementById('latest-messages').innerHTML = '<div class="loading">No messages yet</div>';
                 return;
             }
 
-            // Disable button
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<span class="loading"></span>Processing...';
+            const messagesHTML = messages.map(msg => {
+                const messageType = msg.message_type || 'unknown';
+                const badge = messageType === 'auto_reply' ? 'auto-reply' : 'sent';
+                const date = new Date(msg.sent_at).toLocaleString();
+
+                return `
+                    <div class="message-card">
+                        <div class="message-header">
+                            <div class="message-subject">${escapeHtml(msg.subject || 'No Subject')}</div>
+                            <span class="message-type">${messageType.replace(/_/g, ' ').toUpperCase()}</span>
+                        </div>
+                        <div class="message-meta">
+                            <strong>To:</strong> ${escapeHtml(msg.to_email)} |
+                            <strong>Agency:</strong> ${escapeHtml(msg.agency_name || 'N/A')} |
+                            <strong>Sent:</strong> ${date}
+                            ${msg.denial_subtype ? `| <span class="badge denial">${msg.denial_subtype.replace(/_/g, ' ')}</span>` : ''}
+                        </div>
+                        <div class="message-body">${escapeHtml((msg.body_text || '').substring(0, 200))}...</div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('latest-messages').innerHTML = messagesHTML;
+        }
+
+        function renderRecentActivity(activity) {
+            if (!activity || activity.length === 0) {
+                document.getElementById('activity-feed').innerHTML = '<div class="loading">No activity yet</div>';
+                return;
+            }
+
+            const activityHTML = activity.map(item => {
+                const date = new Date(item.created_at).toLocaleString();
+                const eventClass = getEventClass(item.event_type);
+                const badgeClass = getBadgeClass(item.event_type);
+
+                return `
+                    <div class="activity-item ${eventClass}">
+                        <div class="activity-meta">
+                            <span><span class="badge ${badgeClass}">${item.event_type.replace(/_/g, ' ')}</span> ${escapeHtml(item.case_name || 'Unknown Case')}</span>
+                            <span>${date}</span>
+                        </div>
+                        <div class="activity-description">${escapeHtml(item.description || '')}</div>
+                    </div>
+                `;
+            }).join('');
+
+            document.getElementById('activity-feed').innerHTML = activityHTML;
+        }
+
+        function getEventClass(eventType) {
+            if (eventType.includes('sent')) return 'sent';
+            if (eventType.includes('received')) return 'received';
+            if (eventType.includes('auto_reply')) return 'auto-reply';
+            if (eventType.includes('denial')) return 'denial';
+            return '';
+        }
+
+        function getBadgeClass(eventType) {
+            if (eventType.includes('sent')) return 'sent';
+            if (eventType.includes('received')) return 'received';
+            if (eventType.includes('auto_reply')) return 'auto-reply';
+            if (eventType.includes('denial')) return 'denial';
+            return 'pending';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showError(message) {
+            const errorContainer = document.getElementById('error-container');
+            errorContainer.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        async function runAutoReplyTest() {
+            const button = document.getElementById('test-button');
+            const resultDiv = document.getElementById('test-result');
+
+            // Disable button and show loading
+            button.disabled = true;
+            button.textContent = '⏳ Sending test email...';
+
+            resultDiv.innerHTML = `
+                <div class="test-result">
+                    <h3>🧪 Running Auto-Reply Test</h3>
+                    <p>Sending test email to overlord1pvp@gmail.com...</p>
+                </div>
+            `;
 
             try {
-                const response = await fetch(`${API_BASE}/api/process/notion-page`, {
+                // Call the test endpoint
+                const response = await fetch('/api/test/send-and-reply', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ pageId })
-                });
-
-                const data = await response.json();
-
-                if (data.success) {
-                    showStatus('success', `✓ Case "${data.case.case_name}" processed successfully! Email will be sent in ${data.delay_minutes || 'a few'} minutes.`);
-                    document.getElementById('notionUrl').value = '';
-                    loadCases();
-                    loadStats();
-                } else {
-                    showStatus('error', `Error: ${data.error || 'Failed to process case'}`);
-                }
-            } catch (error) {
-                showStatus('error', `Network error: ${error.message}`);
-            } finally {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = 'Process This Case';
-            }
-        });
-
-        // Extract Notion page ID from URL
-        function extractPageId(url) {
-            // Remove hyphens and extract 32-character ID
-            const match = url.match(/([a-f0-9]{32})|([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-            return match ? match[0].replace(/-/g, '') : null;
-        }
-
-        // Show status message
-        function showStatus(type, message) {
-            const statusDiv = document.getElementById('status');
-            statusDiv.className = `status ${type}`;
-            statusDiv.textContent = message;
-            statusDiv.style.display = 'block';
-
-            if (type === 'success') {
-                setTimeout(() => {
-                    statusDiv.style.display = 'none';
-                }, 5000);
-            }
-        }
-
-        // Load statistics
-        async function loadStats() {
-            try {
-                const response = await fetch(`${API_BASE}/api/stats`);
-                const data = await response.json();
-
-                if (data.success) {
-                    const stats = data.cases;
-                    const statsHtml = `
-                        <div class="stat-card">
-                            <div class="stat-value">${stats.total || 0}</div>
-                            <div class="stat-label">Total Cases</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">${stats.ready || 0}</div>
-                            <div class="stat-label">Ready to Send</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">${stats.sent || 0}</div>
-                            <div class="stat-label">Sent</div>
-                        </div>
-                        <div class="stat-card">
-                            <div class="stat-value">${stats.responded || 0}</div>
-                            <div class="stat-label">Responded</div>
-                        </div>
-                    `;
-                    document.getElementById('stats').innerHTML = statsHtml;
-                }
-            } catch (error) {
-                console.error('Failed to load stats:', error);
-            }
-        }
-
-        // Load cases
-        async function loadCases() {
-            try {
-                const response = await fetch(`${API_BASE}/api/cases?limit=10`);
-                const data = await response.json();
-
-                const casesList = document.getElementById('casesList');
-
-                if (data.success && data.cases.length > 0) {
-                    const casesHtml = data.cases.map(c => `
-                        <div class="case-item">
-                            <div class="case-name">${c.case_name}</div>
-                            <div class="case-details">
-                                ${c.agency_name || 'No agency'} • ${c.state || 'No state'}
-                                ${c.send_date ? `• Sent ${new Date(c.send_date).toLocaleDateString()}` : ''}
-                            </div>
-                            <span class="badge ${c.status.replace('_', '-')}">${c.status.replace('_', ' ').toUpperCase()}</span>
-                        </div>
-                    `).join('');
-                    casesList.innerHTML = casesHtml;
-                } else {
-                    casesList.innerHTML = '<p style="color: #999; text-align: center; padding: 40px 0;">No cases yet. Submit a Notion page to get started!</p>';
-                }
-            } catch (error) {
-                console.error('Failed to load cases:', error);
-                document.getElementById('casesList').innerHTML = '<p style="color: #e74c3c; text-align: center; padding: 40px 0;">Failed to load cases</p>';
-            }
-        }
-
-        // Auto-refresh every 10 seconds
-        setInterval(() => {
-            loadStats();
-            loadCases();
-        }, 10000);
-
-        // Portal form handler
-        document.getElementById('portalForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            const portalUrl = document.getElementById('portalUrl').value;
-            const statusDiv = document.getElementById('portalStatus');
-            const portalBtn = document.getElementById('portalBtn');
-            const resultsDiv = document.getElementById('portalResults');
-
-            // Hide previous results
-            resultsDiv.style.display = 'none';
-
-            // Disable button
-            portalBtn.disabled = true;
-            portalBtn.innerHTML = '<span class="loading"></span>Testing portal (this may take 30-60 seconds)...';
-
-            try {
-                const response = await fetch(`${API_BASE}/api/test-portal`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ portalUrl })
-                });
-
-                const data = await response.json();
-
-                if (data.success && data.result) {
-                    const result = data.result;
-
-                    showPortalStatus('success', `✓ Portal test completed! Found ${result.fieldsFound} fields, filled ${result.fieldsFilled}.`);
-
-                    // Show results
-                    const detailsHtml = `
-                        <div class="result-item">
-                            <span class="result-label">Portal URL:</span>
-                            <span class="result-value">${result.url}</span>
-                        </div>
-                        <div class="result-item">
-                            <span class="result-label">Fields Found:</span>
-                            <span class="result-value">${result.fieldsFound}</span>
-                        </div>
-                        <div class="result-item">
-                            <span class="result-label">Fields Filled:</span>
-                            <span class="result-value">${result.fieldsFilled}</span>
-                        </div>
-                        <div class="result-item">
-                            <span class="result-label">Submit Button:</span>
-                            <span class="result-value">${result.submitButtonFound ? '✅ Found: "' + result.submitButtonText + '"' : '❌ Not found'}</span>
-                        </div>
-                        <div class="result-item">
-                            <span class="result-label">Test Mode:</span>
-                            <span class="result-value">🛑 DRY RUN (did not submit)</span>
-                        </div>
-                    `;
-
-                    document.getElementById('portalResultDetails').innerHTML = detailsHtml;
-
-                    // Show screenshots if available
-                    const screenshotsDiv = document.getElementById('screenshots');
-                    if (result.screenshotUrls && (result.screenshotUrls.initial || result.screenshotUrls.filled)) {
-                        let screenshotsHtml = '';
-
-                        if (result.screenshotUrls.initial) {
-                            screenshotsHtml += `
-                                <div class="screenshot-card">
-                                    <h3>📸 Before (Portal Loaded)</h3>
-                                    <img src="${result.screenshotUrls.initial}" alt="Portal initial state" />
-                                </div>
-                            `;
-                        }
-
-                        if (result.screenshotUrls.filled) {
-                            screenshotsHtml += `
-                                <div class="screenshot-card">
-                                    <h3>✅ After (Form Filled)</h3>
-                                    <img src="${result.screenshotUrls.filled}" alt="Portal filled state" />
-                                </div>
-                            `;
-                        }
-
-                        screenshotsDiv.innerHTML = screenshotsHtml;
-                    } else {
-                        screenshotsDiv.innerHTML = '';
+                    headers: {
+                        'Content-Type': 'application/json'
                     }
+                });
 
-                    resultsDiv.style.display = 'block';
+                const data = await response.json();
+
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="test-result">
+                            <h3>✅ Test Email Sent Successfully!</h3>
+                            <p><strong>Case ID:</strong> ${data.case_id}</p>
+                            <p><strong>Sent to:</strong> ${data.sent_to}</p>
+                            <p><strong>Message ID:</strong> ${data.message_id}</p>
+                            <br>
+                            <h4>📋 Next Steps:</h4>
+                            <ol>
+                                ${data.instructions.map(instr => `<li>${instr}</li>`).join('')}
+                            </ol>
+                            <br>
+                            <p><em>⚠️ ${data.note}</em></p>
+                            <br>
+                            <p>Check the "Latest Bot Messages" section below to see when the auto-reply is sent!</p>
+                        </div>
+                    `;
+
+                    // Refresh the dashboard to show the new test message
+                    setTimeout(() => {
+                        fetchKPIMetrics();
+                        fetchLatestMessages();
+                    }, 2000);
                 } else {
-                    showPortalStatus('error', `Error: ${data.error || 'Failed to test portal'}`);
+                    throw new Error(data.error || 'Test failed');
                 }
             } catch (error) {
-                showPortalStatus('error', `Network error: ${error.message}`);
+                resultDiv.innerHTML = `
+                    <div class="test-result" style="border-left: 4px solid #dc2626;">
+                        <h3>❌ Test Failed</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
             } finally {
-                portalBtn.disabled = false;
-                portalBtn.innerHTML = 'Test Portal (Dry Run - Won\'t Submit)';
-            }
-        });
-
-        // Show portal status message
-        function showPortalStatus(type, message) {
-            const statusDiv = document.getElementById('portalStatus');
-            statusDiv.className = `status ${type}`;
-            statusDiv.textContent = message;
-            statusDiv.style.display = 'block';
-
-            if (type === 'success') {
-                setTimeout(() => {
-                    statusDiv.style.display = 'none';
-                }, 10000);
+                // Re-enable button
+                button.disabled = false;
+                button.textContent = '🧪 Test Instant Auto-Reply';
             }
         }
 
-        // Initial load
-        loadStats();
-        loadCases();
+        // Load data on page load
+        fetchKPIMetrics();
+        fetchLatestMessages();
+
+        // Refresh every 30 seconds
+        setInterval(() => {
+            fetchKPIMetrics();
+            fetchLatestMessages();
+        }, 30000);
     </script>
 </body>
 </html>
