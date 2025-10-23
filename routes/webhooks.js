@@ -6,22 +6,16 @@ const { analysisQueue } = require('../queues/email-queue');
 /**
  * SendGrid Inbound Parse Webhook
  * Receives emails sent to your domain
+ * SendGrid sends multipart/form-data, so we use express.urlencoded()
  */
-router.post('/inbound', express.raw({ type: 'application/json', limit: '10mb' }), async (req, res) => {
+router.post('/inbound', express.urlencoded({ extended: true, limit: '10mb' }), async (req, res) => {
     try {
         console.log('Received inbound email webhook from SendGrid');
+        console.log('Content-Type:', req.headers['content-type']);
+        console.log('Body keys:', Object.keys(req.body));
 
-        // Parse the incoming data
-        let inboundData;
-
-        if (req.headers['content-type']?.includes('application/json')) {
-            inboundData = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-        } else if (req.headers['content-type']?.includes('multipart/form-data')) {
-            // SendGrid inbound parse sends multipart data
-            inboundData = req.body;
-        } else {
-            inboundData = req.body;
-        }
+        // SendGrid sends data as form fields
+        const inboundData = req.body;
 
         // Process the inbound email
         const result = await sendgridService.processInboundEmail({
