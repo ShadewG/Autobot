@@ -242,8 +242,8 @@ class NotionService {
                     const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
 
                     if (existing) {
-                        console.log(`Case already exists: ${notionCase.case_name}`);
-                        syncedCases.push(existing);
+                        console.log(`Case already exists (skipping re-send): ${notionCase.case_name}`);
+                        // Don't add to syncedCases - only new cases should be queued
                         continue;
                     }
 
