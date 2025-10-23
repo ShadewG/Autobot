@@ -42,9 +42,11 @@ app.get('/health', async (req, res) => {
 // Import routes
 const webhookRoutes = require('./routes/webhooks');
 const apiRoutes = require('./routes/api');
+const testRoutes = require('./routes/test');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
+app.use('/api/test', testRoutes);
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');

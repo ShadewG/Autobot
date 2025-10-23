@@ -154,8 +154,12 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
             const autoReply = await aiService.generateAutoReply(messageData, analysis, caseData);
 
             if (autoReply.should_auto_reply) {
-                // Add natural delay (2-10 hours) to seem human
-                const naturalDelay = getHumanLikeDelay();
+                // Check if this is a test mode case (instant reply)
+                const isTestMode = messageData.sendgrid_message_id?.includes('test-') ||
+                                  job.data.instantReply === true;
+
+                // Add natural delay (2-10 hours) to seem human, or instant for test mode
+                const naturalDelay = isTestMode ? 0 : getHumanLikeDelay();
 
                 await emailQueue.add('send-auto-reply', {
                     type: 'auto_reply',
@@ -168,7 +172,8 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                     delay: naturalDelay
                 });
 
-                console.log(`Auto-reply queued for case ${caseId} (will send in ${Math.round(naturalDelay / 1000 / 60)} minutes)`);
+                const delayMsg = isTestMode ? 'instantly (TEST MODE)' : `in ${Math.round(naturalDelay / 1000 / 60)} minutes`;
+                console.log(`Auto-reply queued for case ${caseId} (will send ${delayMsg})`);
             } else if (autoReply.requires_approval) {
                 // Store in approval queue
                 await db.query(

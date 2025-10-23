@@ -37,18 +37,26 @@ router.post('/inbound', express.raw({ type: 'application/json', limit: '10mb' })
         if (result.matched) {
             console.log(`Inbound email matched to case ${result.case_id}`);
 
+            // Check if this is a test mode email (instant reply)
+            const isTestMode = inboundData.subject?.includes('[TEST]') ||
+                              inboundData.headers?.['X-Test-Mode'] === 'true';
+
             // Queue for AI analysis
             await analysisQueue.add('analyze-response', {
                 messageId: result.message_id,
-                caseId: result.case_id
+                caseId: result.case_id,
+                instantReply: isTestMode
             }, {
                 delay: 5000 // 5 second delay to ensure DB is updated
             });
 
+            console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);
+
             res.status(200).json({
                 success: true,
                 message: 'Email received and queued for processing',
-                case_id: result.case_id
+                case_id: result.case_id,
+                test_mode: isTestMode
             });
         } else {
             console.warn('Inbound email could not be matched to a case');
