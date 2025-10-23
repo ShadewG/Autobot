@@ -1,18 +1,25 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const sendgridService = require('../services/sendgrid-service');
 const { analysisQueue } = require('../queues/email-queue');
+
+// Configure multer to handle SendGrid's multipart/form-data
+const upload = multer();
 
 /**
  * SendGrid Inbound Parse Webhook
  * Receives emails sent to your domain
- * SendGrid sends multipart/form-data, so we use express.urlencoded()
+ * SendGrid sends multipart/form-data
  */
-router.post('/inbound', express.urlencoded({ extended: true, limit: '10mb' }), async (req, res) => {
+router.post('/inbound', upload.none(), async (req, res) => {
     try {
         console.log('Received inbound email webhook from SendGrid');
         console.log('Content-Type:', req.headers['content-type']);
         console.log('Body keys:', Object.keys(req.body));
+        console.log('From:', req.body.from);
+        console.log('To:', req.body.to);
+        console.log('Subject:', req.body.subject);
 
         // SendGrid sends data as form fields
         const inboundData = req.body;
