@@ -153,9 +153,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 - Consider local retention schedules and deadlines
 - Apply state-specific strategies based on enforcement strength`;
 
-        // Add OpenAI enhancement prompt
-        const enhancementPrompt = documentaryFOIAPrompts.enhancementPrompts.openai ?
-            `\n\n${documentaryFOIAPrompts.enhancementPrompts.openai.prompt}` : '';
+        // Enhancement prompt removed - using simple documentary style
 
         // Add strategy-specific instructions if provided
         let strategyInstructions = '';
@@ -170,7 +168,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 - Urgency: ${modifications.urgency_instruction}`;
         }
 
-        return basePrompt + jurisdictionGuidance + enhancementPrompt + strategyInstructions;
+        return basePrompt + jurisdictionGuidance + strategyInstructions;
     }
 
     /**
@@ -288,21 +286,6 @@ Return ONLY valid JSON, no other text.`;
                 model: 'gpt-5',
                 reasoning: { effort: 'medium' },
                 text: { verbosity: 'low' },  // Low verbosity for JSON output
-                output_schema: {
-                    type: 'object',
-                    properties: {
-                        intent: { type: 'string' },
-                        denial_subtype: { type: 'string' },
-                        confidence_score: { type: 'number' },
-                        sentiment: { type: 'string' },
-                        key_points: { type: 'array', items: { type: 'string' } },
-                        extracted_deadline: { type: 'string' },
-                        extracted_fee_amount: { type: 'number' },
-                        requires_action: { type: 'boolean' },
-                        suggested_action: { type: 'string' },
-                        summary: { type: 'string' }
-                    }
-                },
                 input: `${responseHandlingPrompts.analysisSystemPrompt}
 
 ${prompt}`
