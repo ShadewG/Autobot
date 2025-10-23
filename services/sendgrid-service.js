@@ -272,22 +272,39 @@ class SendGridService {
      */
     async findCaseForInbound(toEmail, fromEmail, references) {
         try {
-            // First try to match by thread references
+            // First try to match by thread references (In-Reply-To or References header)
             if (references) {
-                const messages = await db.query(
-                    'SELECT case_id FROM messages WHERE message_id = $1 OR thread_id = $2 LIMIT 1',
-                    [references, references]
+                // Try to match against message_id directly
+                const messageMatch = await db.query(
+                    'SELECT case_id FROM messages WHERE message_id = $1 LIMIT 1',
+                    [references]
                 );
-                if (messages.rows.length > 0) {
-                    return await db.getCaseById(messages.rows[0].case_id);
+                if (messageMatch.rows.length > 0) {
+                    console.log(`Matched inbound email by message_id: ${references}`);
+                    return await db.getCaseById(messageMatch.rows[0].case_id);
+                }
+
+                // Try to match against email_threads.thread_id
+                const threadMatch = await db.query(
+                    'SELECT case_id FROM email_threads WHERE thread_id = $1 LIMIT 1',
+                    [references]
+                );
+                if (threadMatch.rows.length > 0) {
+                    console.log(`Matched inbound email by thread_id: ${references}`);
+                    return await db.getCaseById(threadMatch.rows[0].case_id);
                 }
             }
 
-            // Try to match by agency email
+            // Try to match by agency email (fallback)
+            console.log(`No thread match found, trying to match by agency email: ${fromEmail}`);
             const cases = await db.query(
                 'SELECT * FROM cases WHERE agency_email = $1 AND status IN ($2, $3) ORDER BY created_at DESC LIMIT 1',
                 [fromEmail, 'sent', 'awaiting_response']
             );
+
+            if (cases.rows.length > 0) {
+                console.log(`Matched inbound email by agency email: ${fromEmail}`);
+            }
 
             return cases.rows[0] || null;
         } catch (error) {
