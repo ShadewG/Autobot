@@ -279,6 +279,56 @@
             animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
 
+        .test-button {
+            background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-bottom: 20px;
+        }
+
+        .test-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        }
+
+        .test-button:active {
+            transform: translateY(0);
+        }
+
+        .test-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .test-result {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .test-result h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .test-result pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 0.9em;
+        }
+
         /* Responsive design */
         @media (max-width: 768px) {
             h1 {
@@ -299,6 +349,11 @@
     <div class="container">
         <h1>🤖 Autobot MVP Dashboard</h1>
         <p class="subtitle">Real-time monitoring of autonomous FOIA bot activity</p>
+
+        <button id="test-button" class="test-button" onclick="runAutoReplyTest()">
+            🧪 Test Instant Auto-Reply
+        </button>
+        <div id="test-result"></div>
 
         <div id="error-container"></div>
 
@@ -563,6 +618,73 @@
         function showError(message) {
             const errorContainer = document.getElementById('error-container');
             errorContainer.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        async function runAutoReplyTest() {
+            const button = document.getElementById('test-button');
+            const resultDiv = document.getElementById('test-result');
+
+            // Disable button and show loading
+            button.disabled = true;
+            button.textContent = '⏳ Sending test email...';
+
+            resultDiv.innerHTML = `
+                <div class="test-result">
+                    <h3>🧪 Running Auto-Reply Test</h3>
+                    <p>Sending test email to overlord1pvp@gmail.com...</p>
+                </div>
+            `;
+
+            try {
+                // Call the test endpoint
+                const response = await fetch('/api/test/send-and-reply', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div class="test-result">
+                            <h3>✅ Test Email Sent Successfully!</h3>
+                            <p><strong>Case ID:</strong> ${data.case_id}</p>
+                            <p><strong>Sent to:</strong> ${data.sent_to}</p>
+                            <p><strong>Message ID:</strong> ${data.message_id}</p>
+                            <br>
+                            <h4>📋 Next Steps:</h4>
+                            <ol>
+                                ${data.instructions.map(instr => `<li>${instr}</li>`).join('')}
+                            </ol>
+                            <br>
+                            <p><em>⚠️ ${data.note}</em></p>
+                            <br>
+                            <p>Check the "Latest Bot Messages" section below to see when the auto-reply is sent!</p>
+                        </div>
+                    `;
+
+                    // Refresh the dashboard to show the new test message
+                    setTimeout(() => {
+                        fetchKPIMetrics();
+                        fetchLatestMessages();
+                    }, 2000);
+                } else {
+                    throw new Error(data.error || 'Test failed');
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="test-result" style="border-left: 4px solid #dc2626;">
+                        <h3>❌ Test Failed</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                // Re-enable button
+                button.disabled = false;
+                button.textContent = '🧪 Test Instant Auto-Reply';
+            }
         }
 
         // Load data on page load
