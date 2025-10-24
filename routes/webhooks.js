@@ -27,13 +27,42 @@ router.post('/inbound', upload.none(), async (req, res) => {
         // SendGrid sends data as form fields
         const inboundData = req.body;
 
+        // Parse the raw email to extract text and HTML
+        let emailText = null;
+        let emailHtml = null;
+
+        if (inboundData.email) {
+            // Extract plain text from multipart email
+            const textMatch = inboundData.email.match(/Content-Type: text\/plain[\s\S]*?\r?\n\r?\n([\s\S]*?)(?=\r?\n--)/);
+            if (textMatch) {
+                // Decode quoted-printable encoding
+                emailText = textMatch[1]
+                    .replace(/=\r?\n/g, '') // Remove soft line breaks
+                    .replace(/=([0-9A-F]{2})/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)))
+                    .trim();
+            }
+
+            // Extract HTML from multipart email
+            const htmlMatch = inboundData.email.match(/Content-Type: text\/html[\s\S]*?\r?\n\r?\n([\s\S]*?)(?=\r?\n--)/);
+            if (htmlMatch) {
+                // Decode quoted-printable encoding
+                emailHtml = htmlMatch[1]
+                    .replace(/=\r?\n/g, '') // Remove soft line breaks
+                    .replace(/=([0-9A-F]{2})/g, (match, hex) => String.fromCharCode(parseInt(hex, 16)))
+                    .trim();
+            }
+        }
+
+        console.log('Extracted text:', emailText ? emailText.substring(0, 100) : 'NULL');
+        console.log('Extracted HTML:', emailHtml ? emailHtml.substring(0, 100) : 'NULL');
+
         // Process the inbound email
         const result = await sendgridService.processInboundEmail({
             from: inboundData.from || inboundData.sender,
             to: inboundData.to || inboundData.recipient,
             subject: inboundData.subject,
-            text: inboundData.text || inboundData.body_text,
-            html: inboundData.html || inboundData.body_html,
+            text: emailText || inboundData.text || inboundData.body_text,
+            html: emailHtml || inboundData.html || inboundData.body_html,
             headers: inboundData.headers || {},
             attachments: inboundData.attachments || []
         });
