@@ -20,6 +20,9 @@ router.post('/inbound', upload.none(), async (req, res) => {
         console.log('From:', req.body.from);
         console.log('To:', req.body.to);
         console.log('Subject:', req.body.subject);
+        console.log('Text field:', req.body.text ? `${req.body.text.substring(0, 100)}...` : 'NULL');
+        console.log('HTML field:', req.body.html ? `${req.body.html.substring(0, 100)}...` : 'NULL');
+        console.log('All body fields:', JSON.stringify(req.body, null, 2));
 
         // SendGrid sends data as form fields
         const inboundData = req.body;
