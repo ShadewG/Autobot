@@ -188,11 +188,27 @@ class SendGridService {
     }
 
     /**
+     * Extract email address from "Name <email@domain.com>" format
+     */
+    extractEmail(emailString) {
+        if (!emailString) return null;
+        const match = emailString.match(/<(.+?)>/);
+        return match ? match[1] : emailString;
+    }
+
+    /**
      * Process inbound email from SendGrid webhook
      */
     async processInboundEmail(inboundData) {
         try {
             console.log('Processing inbound email from:', inboundData.from);
+
+            // Extract email addresses from "Name <email>" format
+            const fromEmail = this.extractEmail(inboundData.from);
+            const toEmail = this.extractEmail(inboundData.to);
+
+            console.log('Extracted from email:', fromEmail);
+            console.log('Extracted to email:', toEmail);
 
             // Extract relevant data
             const messageId = inboundData.headers['Message-ID'] || this.generateMessageId();
@@ -200,7 +216,7 @@ class SendGridService {
             const references = inboundData.headers['References'];
 
             // Find the case this email belongs to
-            const caseData = await this.findCaseForInbound(inboundData.to, inboundData.from, references);
+            const caseData = await this.findCaseForInbound(toEmail, fromEmail, references);
 
             if (!caseData) {
                 console.warn('Could not match inbound email to a case');
@@ -214,7 +230,7 @@ class SendGridService {
                     case_id: caseData.id,
                     thread_id: references || messageId,
                     subject: inboundData.subject,
-                    agency_email: inboundData.from,
+                    agency_email: fromEmail,
                     initial_message_id: messageId,
                     status: 'active'
                 });
@@ -226,8 +242,8 @@ class SendGridService {
                 case_id: caseData.id,
                 message_id: messageId,
                 direction: 'inbound',
-                from_email: inboundData.from,
-                to_email: inboundData.to,
+                from_email: fromEmail,
+                to_email: toEmail,
                 subject: inboundData.subject,
                 body_text: inboundData.text,
                 body_html: inboundData.html,
