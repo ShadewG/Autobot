@@ -231,7 +231,12 @@ router.post('/sync-notion', async (req, res) => {
                 const existingCase = existing.rows[0];
 
                 // If case exists but hasn't been sent yet, queue it
-                if (!existingCase.send_date && existingCase.status === 'ready_to_send') {
+                // Check for both database format and Notion format
+                const isReadyToSend = !existingCase.send_date &&
+                                     (existingCase.status === 'ready_to_send' ||
+                                      existingCase.status === 'Ready to Send');
+
+                if (isReadyToSend) {
                     console.log(`Case exists but not sent yet, queueing: ${existingCase.case_name}`);
 
                     await emailQueue.add('generate-and-send', {
