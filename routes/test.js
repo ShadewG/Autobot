@@ -228,13 +228,35 @@ router.post('/sync-notion', async (req, res) => {
             );
 
             if (existing.rows.length > 0) {
-                console.log(`Case already exists: ${notionCase.case_name}`);
-                skipped++;
-                results.push({
-                    case_name: notionCase.case_name,
-                    status: 'skipped',
-                    reason: 'Already exists in database'
-                });
+                const existingCase = existing.rows[0];
+
+                // If case exists but hasn't been sent yet, queue it
+                if (!existingCase.send_date && existingCase.status === 'ready_to_send') {
+                    console.log(`Case exists but not sent yet, queueing: ${existingCase.case_name}`);
+
+                    await emailQueue.add('generate-and-send', {
+                        type: 'generate_and_send',
+                        caseId: existingCase.id
+                    });
+                    console.log(`Queued existing case ${existingCase.id} for generation and sending`);
+                    queued++;
+
+                    results.push({
+                        case_id: existingCase.id,
+                        case_name: existingCase.case_name,
+                        agency_email: existingCase.agency_email,
+                        status: 'queued',
+                        reason: 'Existing case queued for sending (not sent yet)'
+                    });
+                } else {
+                    console.log(`Case already exists and was sent: ${existingCase.case_name}`);
+                    skipped++;
+                    results.push({
+                        case_name: existingCase.case_name,
+                        status: 'skipped',
+                        reason: 'Already sent'
+                    });
+                }
                 continue;
             }
 
