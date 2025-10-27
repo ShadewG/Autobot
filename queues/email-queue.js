@@ -6,8 +6,30 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 
 // Redis connection
-const connection = new Redis(process.env.REDIS_URL, {
-    maxRetriesPerRequest: null
+if (!process.env.REDIS_URL) {
+    console.error('❌ REDIS_URL environment variable is not set!');
+    console.error('Please set REDIS_URL in Railway environment variables.');
+    console.error('It should look like: redis://default:password@host:port');
+}
+
+const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    maxRetriesPerRequest: null,
+    retryStrategy(times) {
+        if (times > 3) {
+            console.error('❌ Redis connection failed after 3 attempts');
+            return null; // Stop retrying
+        }
+        const delay = Math.min(times * 50, 2000);
+        return delay;
+    }
+});
+
+connection.on('connect', () => {
+    console.log('✅ Redis connected successfully');
+});
+
+connection.on('error', (err) => {
+    console.error('❌ Redis connection error:', err.message);
 });
 
 // Create queues
