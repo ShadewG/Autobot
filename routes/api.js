@@ -712,4 +712,108 @@ router.get('/dashboard/hourly-activity', async (req, res) => {
     }
 });
 
+/**
+ * Get queued messages (pending emails)
+ * Shows what messages are waiting to be sent and when
+ */
+router.get('/queue/pending', async (req, res) => {
+    try {
+        const { Queue } = require('bullmq');
+        const connection = { url: process.env.REDIS_URL };
+
+        const generateQueue = new Queue('generate-queue', { connection });
+        const emailQueue = new Queue('email-queue', { connection });
+
+        // Get all pending jobs from both queues
+        const genActive = await generateQueue.getActive();
+        const genWaiting = await generateQueue.getWaiting();
+        const genDelayed = await generateQueue.getDelayed();
+
+        const emailActive = await emailQueue.getActive();
+        const emailWaiting = await emailQueue.getWaiting();
+        const emailDelayed = await emailQueue.getDelayed();
+
+        const queuedMessages = [];
+
+        // Process generation queue jobs
+        for (const job of [...genActive, ...genWaiting]) {
+            const caseData = await db.getCaseById(job.data.caseId);
+            queuedMessages.push({
+                id: job.id,
+                queue: 'generation',
+                status: await job.getState(),
+                type: 'Generating FOIA Request',
+                case_id: job.data.caseId,
+                case_name: caseData?.case_name || 'Unknown',
+                to: caseData?.agency_email || 'Unknown',
+                subject: `Public Records Request - ${caseData?.subject_name || 'Unknown'}`,
+                scheduled_for: new Date(job.timestamp + (job.delay || 0)),
+                delay_seconds: 0,
+                progress: job.progress || 0
+            });
+        }
+
+        // Process email queue jobs (these have delays for auto-replies)
+        for (const job of [...emailActive, ...emailWaiting, ...emailDelayed]) {
+            const state = await job.getState();
+            const scheduledTime = new Date(job.timestamp + (job.opts?.delay || 0));
+            const now = new Date();
+            const delaySeconds = Math.max(0, Math.floor((scheduledTime - now) / 1000));
+
+            // Get case data if available
+            let caseData = null;
+            if (job.data.caseId) {
+                caseData = await db.getCaseById(job.data.caseId);
+            }
+
+            let messageType = 'Email';
+            if (job.data.type === 'initial_request') messageType = 'Initial FOIA Request';
+            else if (job.data.type === 'auto_reply') messageType = 'Auto-Reply';
+            else if (job.data.type === 'follow_up') messageType = 'Follow-Up';
+
+            queuedMessages.push({
+                id: job.id,
+                queue: 'email',
+                status: state,
+                type: messageType,
+                case_id: job.data.caseId,
+                case_name: caseData?.case_name || 'Unknown',
+                to: job.data.toEmail,
+                subject: job.data.subject,
+                scheduled_for: scheduledTime,
+                delay_seconds: delaySeconds,
+                is_test_mode: job.data.subject?.includes('[TEST]') || false,
+                progress: job.progress || 0
+            });
+        }
+
+        // Sort by scheduled time
+        queuedMessages.sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for));
+
+        res.json({
+            success: true,
+            total: queuedMessages.length,
+            messages: queuedMessages,
+            queue_counts: {
+                generation: {
+                    active: genActive.length,
+                    waiting: genWaiting.length,
+                    delayed: genDelayed.length
+                },
+                email: {
+                    active: emailActive.length,
+                    waiting: emailWaiting.length,
+                    delayed: emailDelayed.length
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error getting queue status:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

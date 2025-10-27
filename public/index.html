@@ -130,6 +130,60 @@
             border-left-color: #ef4444;
         }
 
+        .queue-item {
+            padding: 15px;
+            border-left: 4px solid #f59e0b;
+            margin-bottom: 15px;
+            background: #fff9f0;
+            border-radius: 8px;
+            transition: background 0.2s;
+        }
+
+        .queue-item:hover {
+            background: #fef3c7;
+        }
+
+        .queue-item.generating {
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+        }
+
+        .queue-item.sending-soon {
+            border-left-color: #10b981;
+            background: #f0fdf4;
+        }
+
+        .queue-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .queue-item-type {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .queue-item-time {
+            color: #f59e0b;
+            font-weight: bold;
+            font-size: 0.95em;
+        }
+
+        .queue-item-details {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .queue-empty {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+            font-style: italic;
+        }
+
         .activity-meta {
             display: flex;
             justify-content: space-between;
@@ -382,6 +436,13 @@
         </div>
 
         <div class="section">
+            <h2 class="section-title">⏳ Queued Messages (Pending)</h2>
+            <div id="queued-messages">
+                <div class="loading pulse">Loading queue...</div>
+            </div>
+        </div>
+
+        <div class="section">
             <h2 class="section-title">📬 Latest Bot Messages</h2>
             <div id="latest-messages">
                 <div class="loading pulse">Loading messages...</div>
@@ -436,6 +497,86 @@
             } catch (error) {
                 showError('Error loading messages: ' + error.message);
             }
+        }
+
+        async function fetchQueuedMessages() {
+            try {
+                const response = await fetch(`${API_BASE}/queue/pending`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error);
+                }
+
+                renderQueuedMessages(data.messages, data.queue_counts);
+            } catch (error) {
+                console.error('Error loading queue:', error);
+                document.getElementById('queued-messages').innerHTML = `
+                    <div class="queue-empty">Unable to load queue status</div>
+                `;
+            }
+        }
+
+        function renderQueuedMessages(messages, queueCounts) {
+            const container = document.getElementById('queued-messages');
+
+            if (!messages || messages.length === 0) {
+                container.innerHTML = `
+                    <div class="queue-empty">
+                        ✅ No messages queued - all caught up!
+                    </div>
+                `;
+                return;
+            }
+
+            let html = `
+                <div style="margin-bottom: 15px; padding: 10px; background: #f8fafc; border-radius: 6px;">
+                    <strong>Queue Status:</strong>
+                    ${queueCounts.generation.active + queueCounts.generation.waiting} generating,
+                    ${queueCounts.email.active + queueCounts.email.waiting + queueCounts.email.delayed} waiting to send
+                </div>
+            `;
+
+            messages.forEach(msg => {
+                const scheduledDate = new Date(msg.scheduled_for);
+                const now = new Date();
+                const delayMs = scheduledDate - now;
+
+                let timeDisplay = '';
+                if (msg.queue === 'generation') {
+                    timeDisplay = '<span style="color: #3b82f6;">⚙️ Generating now...</span>';
+                } else if (delayMs <= 0) {
+                    timeDisplay = '<span style="color: #10b981;">📤 Sending now...</span>';
+                } else if (delayMs < 60000) {
+                    timeDisplay = `<span style="color: #10b981;">📤 Sending in ${Math.floor(delayMs / 1000)}s</span>`;
+                } else if (delayMs < 3600000) {
+                    timeDisplay = `<span style="color: #f59e0b;">⏳ Sending in ${Math.floor(delayMs / 60000)} min</span>`;
+                } else {
+                    const hours = Math.floor(delayMs / 3600000);
+                    const mins = Math.floor((delayMs % 3600000) / 60000);
+                    timeDisplay = `<span style="color: #f59e0b;">⏳ Sending in ${hours}h ${mins}m</span>`;
+                }
+
+                const itemClass = msg.queue === 'generation' ? 'generating' : (delayMs < 60000 ? 'sending-soon' : '');
+                const testBadge = msg.is_test_mode ? '<span style="background: #10b981; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.8em; margin-left: 8px;">TEST</span>' : '';
+
+                html += `
+                    <div class="queue-item ${itemClass}">
+                        <div class="queue-item-header">
+                            <div class="queue-item-type">${msg.type}${testBadge}</div>
+                            <div class="queue-item-time">${timeDisplay}</div>
+                        </div>
+                        <div class="queue-item-details">
+                            <strong>Case:</strong> ${msg.case_name}<br>
+                            <strong>To:</strong> ${msg.to}<br>
+                            <strong>Subject:</strong> ${msg.subject}<br>
+                            <small style="color: #999;">Scheduled: ${scheduledDate.toLocaleString()}</small>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
         }
 
         function renderMetrics(metrics) {
@@ -779,12 +920,18 @@
         // Load data on page load
         fetchKPIMetrics();
         fetchLatestMessages();
+        fetchQueuedMessages();
 
-        // Refresh every 30 seconds
+        // Refresh KPIs and messages every 30 seconds
         setInterval(() => {
             fetchKPIMetrics();
             fetchLatestMessages();
         }, 30000);
+
+        // Refresh queue every 5 seconds (more frequent for real-time queue updates)
+        setInterval(() => {
+            fetchQueuedMessages();
+        }, 5000);
     </script>
 </body>
 </html>
