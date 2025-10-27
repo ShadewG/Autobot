@@ -9,6 +9,13 @@ const db = require('./services/database');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Log Redis connection status on startup
+console.log('🔍 Environment Check:');
+console.log('  NODE_ENV:', process.env.NODE_ENV);
+console.log('  PORT:', PORT);
+console.log('  REDIS_URL:', process.env.REDIS_URL ? `${process.env.REDIS_URL.substring(0, 20)}...` : '❌ NOT SET');
+console.log('  DATABASE_URL:', process.env.DATABASE_URL ? '✅ Set' : '❌ NOT SET');
+
 // Middleware
 app.use(helmet({
     contentSecurityPolicy: false // Allow inline scripts for dashboard
