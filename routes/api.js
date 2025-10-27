@@ -719,6 +719,20 @@ router.get('/dashboard/hourly-activity', async (req, res) => {
 router.get('/queue/pending', async (req, res) => {
     try {
         const { Queue } = require('bullmq');
+
+        if (!process.env.REDIS_URL) {
+            return res.json({
+                success: true,
+                total: 0,
+                messages: [],
+                queue_counts: {
+                    generation: { active: 0, waiting: 0, delayed: 0 },
+                    email: { active: 0, waiting: 0, delayed: 0 }
+                },
+                note: 'Redis not configured'
+            });
+        }
+
         const connection = { url: process.env.REDIS_URL };
 
         const generateQueue = new Queue('generate-queue', { connection });
