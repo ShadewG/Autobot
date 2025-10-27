@@ -4,7 +4,7 @@ const sgMail = require('@sendgrid/mail');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
-const { emailQueue } = require('../queues/email-queue');
+const { emailQueue, generateQueue } = require('../queues/email-queue');
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
@@ -239,8 +239,7 @@ router.post('/sync-notion', async (req, res) => {
                 if (isReadyToSend) {
                     console.log(`Case exists but not sent yet, queueing: ${existingCase.case_name}`);
 
-                    await emailQueue.add('generate-and-send', {
-                        type: 'generate_and_send',
+                    await generateQueue.add('generate-foia', {
                         caseId: existingCase.id
                     });
                     console.log(`Queued existing case ${existingCase.id} for generation and sending`);
@@ -271,8 +270,7 @@ router.post('/sync-notion', async (req, res) => {
             imported++;
 
             // Queue for email generation and sending
-            await emailQueue.add('generate-and-send', {
-                type: 'generate_and_send',
+            await generateQueue.add('generate-foia', {
                 caseId: newCase.id
             });
             console.log(`Queued case ${newCase.id} for generation and sending`);
