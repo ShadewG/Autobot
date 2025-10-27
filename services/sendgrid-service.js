@@ -142,19 +142,34 @@ class SendGridService {
         try {
             const messageId = this.generateMessageId();
 
+            // Don't add "Re:" if subject already starts with it
+            const replySubject = subject.startsWith('Re:') ? subject : `Re: ${subject}`;
+
+            // Get thread data to build proper References header
+            const thread = await db.query(
+                'SELECT * FROM email_threads WHERE case_id = $1',
+                [caseId]
+            );
+
+            let referencesHeader = inReplyToMessageId;
+            if (thread.rows.length > 0 && thread.rows[0].initial_message_id) {
+                // Include both the initial message and the one we're replying to
+                referencesHeader = `${thread.rows[0].initial_message_id} ${inReplyToMessageId}`;
+            }
+
             const msg = {
                 to: toEmail,
                 from: {
                     email: this.fromEmail,
                     name: this.fromName
                 },
-                subject: `Re: ${subject}`,
+                subject: replySubject,
                 text: replyText,
                 html: this.formatEmailHtml(replyText),
                 headers: {
                     'Message-ID': messageId,
                     'In-Reply-To': inReplyToMessageId,
-                    'References': inReplyToMessageId
+                    'References': referencesHeader
                 },
                 customArgs: {
                     case_id: caseId.toString(),
@@ -170,7 +185,7 @@ class SendGridService {
                 message_id: messageId,
                 sendgrid_message_id: response[0].headers['x-message-id'],
                 to_email: toEmail,
-                subject: `Re: ${subject}`,
+                subject: replySubject,
                 body_text: replyText,
                 body_html: this.formatEmailHtml(replyText),
                 message_type: 'auto_reply',
