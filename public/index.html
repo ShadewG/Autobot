@@ -350,10 +350,16 @@
         <h1>🤖 Autobot MVP Dashboard</h1>
         <p class="subtitle">Real-time monitoring of autonomous FOIA bot activity</p>
 
-        <button id="test-button" class="test-button" onclick="runAutoReplyTest()">
-            🧪 Test Instant Auto-Reply
-        </button>
+        <div style="display: flex; gap: 15px; margin-bottom: 20px;">
+            <button id="test-button" class="test-button" onclick="runAutoReplyTest()">
+                🧪 Test Instant Auto-Reply
+            </button>
+            <button id="notion-sync-button" class="test-button" onclick="syncNotionNow()" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);">
+                🔄 Sync Notion Now
+            </button>
+        </div>
         <div id="test-result"></div>
+        <div id="notion-sync-result"></div>
 
         <div id="error-container"></div>
 
@@ -684,6 +690,89 @@
                 // Re-enable button
                 button.disabled = false;
                 button.textContent = '🧪 Test Instant Auto-Reply';
+            }
+        }
+
+        async function syncNotionNow() {
+            const button = document.getElementById('notion-sync-button');
+            const resultDiv = document.getElementById('notion-sync-result');
+
+            // Disable button and show loading
+            button.disabled = true;
+            button.textContent = '⏳ Syncing Notion...';
+
+            resultDiv.innerHTML = `
+                <div class="test-result">
+                    <h3>🔄 Syncing Notion Cases</h3>
+                    <p>Fetching cases with status "Ready to Send"...</p>
+                </div>
+            `;
+
+            try {
+                // Call the sync endpoint
+                const response = await fetch('/api/test/sync-notion', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    let resultsHtml = '';
+                    if (data.results && data.results.length > 0) {
+                        resultsHtml = `
+                            <h4>📋 Results:</h4>
+                            <ul>
+                                ${data.results.map(r => `
+                                    <li>
+                                        <strong>${r.case_name || 'Unknown'}</strong>:
+                                        <span style="color: ${r.status === 'queued' ? '#22c55e' : '#666'}">
+                                            ${r.status}
+                                        </span>
+                                        ${r.case_id ? `(Case ID: ${r.case_id})` : ''}
+                                        <br>
+                                        <small>${r.reason}</small>
+                                    </li>
+                                `).join('')}
+                            </ul>
+                        `;
+                    }
+
+                    resultDiv.innerHTML = `
+                        <div class="test-result">
+                            <h3>✅ Notion Sync Complete!</h3>
+                            <p><strong>Total Found:</strong> ${data.summary.total_found} cases</p>
+                            <p><strong>Imported:</strong> ${data.summary.imported} new cases</p>
+                            <p><strong>Queued for Sending:</strong> ${data.summary.queued} cases</p>
+                            <p><strong>Skipped:</strong> ${data.summary.skipped} (already exist)</p>
+                            ${resultsHtml}
+                            <br>
+                            <p><em>📧 Queued cases will be processed shortly. Check "Latest Bot Messages" below!</em></p>
+                        </div>
+                    `;
+
+                    // Refresh the dashboard to show new cases
+                    setTimeout(() => {
+                        fetchKPIMetrics();
+                        fetchLatestMessages();
+                        location.reload(); // Reload to update case list
+                    }, 3000);
+                } else {
+                    throw new Error(data.error || 'Sync failed');
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="test-result" style="border-left: 4px solid #dc2626;">
+                        <h3>❌ Sync Failed</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            } finally {
+                // Re-enable button
+                button.disabled = false;
+                button.textContent = '🔄 Sync Notion Now';
             }
         }
 

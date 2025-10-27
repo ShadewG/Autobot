@@ -3,6 +3,8 @@ const router = express.Router();
 const sgMail = require('@sendgrid/mail');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../services/database');
+const notionService = require('../services/notion-service');
+const { emailQueue } = require('../queues/email-queue');
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
@@ -194,6 +196,84 @@ router.get('/status/:caseId', async (req, res) => {
         });
     } catch (error) {
         console.error('Error getting test status:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Manual Notion sync trigger
+ * POST /api/test/sync-notion
+ */
+router.post('/sync-notion', async (req, res) => {
+    try {
+        console.log('🔄 Manual Notion sync triggered');
+
+        // Fetch cases with status "Ready to Send"
+        const notionCases = await notionService.fetchCasesWithStatus('Ready to Send');
+        console.log(`Found ${notionCases.length} cases in Notion with status "Ready to Send"`);
+
+        let imported = 0;
+        let queued = 0;
+        let skipped = 0;
+        const results = [];
+
+        for (const notionCase of notionCases) {
+            // Check if case already exists in database
+            const existing = await db.query(
+                'SELECT * FROM cases WHERE notion_page_id = $1',
+                [notionCase.notion_page_id]
+            );
+
+            if (existing.rows.length > 0) {
+                console.log(`Case already exists: ${notionCase.case_name}`);
+                skipped++;
+                results.push({
+                    case_name: notionCase.case_name,
+                    status: 'skipped',
+                    reason: 'Already exists in database'
+                });
+                continue;
+            }
+
+            // Import new case
+            const newCase = await db.createCase(notionCase);
+            console.log(`Imported new case: ${newCase.case_name} (ID: ${newCase.id})`);
+            imported++;
+
+            // Queue for email generation and sending
+            await emailQueue.add('generate-and-send', {
+                type: 'generate_and_send',
+                caseId: newCase.id
+            });
+            console.log(`Queued case ${newCase.id} for generation and sending`);
+            queued++;
+
+            results.push({
+                case_id: newCase.id,
+                case_name: newCase.case_name,
+                agency_email: newCase.agency_email,
+                status: 'queued',
+                reason: 'New case imported and queued for sending'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: `Notion sync complete`,
+            summary: {
+                total_found: notionCases.length,
+                imported: imported,
+                queued: queued,
+                skipped: skipped
+            },
+            results: results
+        });
+
+    } catch (error) {
+        console.error('Error syncing Notion:', error);
         res.status(500).json({
             success: false,
             error: error.message
