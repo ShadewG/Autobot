@@ -31,6 +31,7 @@ class SendGridService {
                     email: this.fromEmail,
                     name: this.fromName
                 },
+                replyTo: 'requests@foia.foib-request.com',
                 subject: subject,
                 text: requestText,
                 html: this.formatEmailHtml(requestText),
