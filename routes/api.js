@@ -826,4 +826,47 @@ router.get('/queue/pending', async (req, res) => {
     }
 });
 
+/**
+ * Resend a case (queue it for generation and sending)
+ * POST /api/cases/:caseId/resend
+ */
+router.post('/cases/:caseId/resend', async (req, res) => {
+    try {
+        const { caseId } = req.params;
+
+        // Get the case
+        const caseData = await db.getCaseById(caseId);
+
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${caseId} not found`
+            });
+        }
+
+        // Queue for generation and sending
+        await generateQueue.add('generate-foia', {
+            caseId: parseInt(caseId)
+        });
+
+        console.log(`Queued case ${caseId} (${caseData.case_name}) for resend`);
+
+        res.json({
+            success: true,
+            message: `Case ${caseId} queued for resend`,
+            case: {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                agency_email: caseData.agency_email
+            }
+        });
+    } catch (error) {
+        console.error('Error resending case:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
