@@ -718,9 +718,10 @@ router.get('/dashboard/hourly-activity', async (req, res) => {
  */
 router.get('/queue/pending', async (req, res) => {
     try {
-        const { Queue } = require('bullmq');
+        // Import the existing queues instead of creating new connections
+        const { emailQueue, generateQueue } = require('../queues/email-queue');
 
-        if (!process.env.REDIS_URL) {
+        if (!emailQueue || !generateQueue) {
             return res.json({
                 success: true,
                 total: 0,
@@ -729,14 +730,9 @@ router.get('/queue/pending', async (req, res) => {
                     generation: { active: 0, waiting: 0, delayed: 0 },
                     email: { active: 0, waiting: 0, delayed: 0 }
                 },
-                note: 'Redis not configured'
+                note: 'Queues not initialized'
             });
         }
-
-        const connection = { url: process.env.REDIS_URL };
-
-        const generateQueue = new Queue('generate-queue', { connection });
-        const emailQueue = new Queue('email-queue', { connection });
 
         // Get all pending jobs from both queues
         const genActive = await generateQueue.getActive();
