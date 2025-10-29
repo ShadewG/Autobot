@@ -149,7 +149,8 @@ const emailWorker = new Worker('email-queue', async (job) => {
 
 // ===== ANALYSIS QUEUE WORKER =====
 const analysisWorker = new Worker('analysis-queue', async (job) => {
-    console.log(`Processing analysis job: ${job.id}`);
+    console.log(`🔍 Processing analysis job: ${job.id}`);
+    console.log(`   Message ID: ${job.data.messageId}, Case ID: ${job.data.caseId}`);
 
     const { messageId, caseId } = job.data;
 
@@ -158,22 +159,39 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         const caseData = await db.getCaseById(caseId);
 
         if (!messageData || !caseData) {
+            console.error(`❌ Message or case not found - Message: ${!!messageData}, Case: ${!!caseData}`);
             throw new Error('Message or case not found');
         }
+
+        console.log(`📧 Analyzing message from: ${messageData.from_email}`);
+        console.log(`   Subject: ${messageData.subject}`);
 
         // Analyze the response
         const analysis = await aiService.analyzeResponse(messageData, caseData);
 
+        console.log(`📊 Analysis complete:`);
+        console.log(`   Intent: ${analysis.intent}`);
+        console.log(`   Requires action: ${analysis.requires_action}`);
+        console.log(`   Sentiment: ${analysis.sentiment}`);
+
         // Update Notion with summary
         if (analysis.summary) {
             await notionService.addAISummaryToNotion(caseId, analysis.summary);
+            console.log(`✅ Updated Notion with summary`);
         }
 
         // Check if we should auto-reply (enabled by default)
         const autoReplyEnabled = process.env.ENABLE_AUTO_REPLY !== 'false';
+        console.log(`⚙️ Auto-reply enabled: ${autoReplyEnabled}`);
 
         if (analysis.requires_action && autoReplyEnabled) {
+            console.log(`🤖 Generating auto-reply...`);
             const autoReply = await aiService.generateAutoReply(messageData, analysis, caseData);
+
+            console.log(`📝 Auto-reply generation result:`);
+            console.log(`   Should auto-reply: ${autoReply.should_auto_reply}`);
+            console.log(`   Confidence: ${autoReply.confidence}`);
+            console.log(`   Requires approval: ${autoReply.requires_approval || false}`);
 
             if (autoReply.should_auto_reply) {
                 // Check if this is a test mode case (instant reply)
@@ -195,7 +213,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                 });
 
                 const delayMsg = isTestMode ? 'instantly (TEST MODE)' : `in ${Math.round(naturalDelay / 1000 / 60)} minutes`;
-                console.log(`Auto-reply queued for case ${caseId} (will send ${delayMsg})`);
+                console.log(`✅ Auto-reply queued for case ${caseId} (will send ${delayMsg})`);
             } else if (autoReply.requires_approval) {
                 // Store in approval queue
                 await db.query(
@@ -207,13 +225,26 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                     [messageId, caseId, autoReply.reply_text, autoReply.confidence]
                 );
 
-                console.log(`Auto-reply requires approval for case ${caseId} (confidence: ${autoReply.confidence})`);
+                console.log(`⏸️ Auto-reply requires approval for case ${caseId} (confidence: ${autoReply.confidence})`);
+            } else {
+                console.log(`❌ Auto-reply NOT being sent:`);
+                console.log(`   should_auto_reply: ${autoReply.should_auto_reply}`);
+                console.log(`   confidence: ${autoReply.confidence}`);
+                console.log(`   requires_approval: ${autoReply.requires_approval}`);
+                console.log(`   Full auto-reply object:`, JSON.stringify(autoReply, null, 2));
             }
+        } else {
+            console.log(`⚠️ Skipping auto-reply generation:`);
+            console.log(`   analysis.requires_action: ${analysis.requires_action}`);
+            console.log(`   autoReplyEnabled: ${autoReplyEnabled}`);
+            console.log(`   Full analysis object:`, JSON.stringify(analysis, null, 2));
         }
 
         return analysis;
     } catch (error) {
-        console.error('Analysis job failed:', error);
+        console.error('❌ Analysis job failed:', error);
+        console.error('   Error message:', error.message);
+        console.error('   Error stack:', error.stack);
         throw error;
     }
 }, { connection });
