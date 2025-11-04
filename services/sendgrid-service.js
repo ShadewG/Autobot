@@ -14,7 +14,7 @@ class SendGridService {
     /**
      * Send a FOIA request email
      */
-    async sendFOIARequest(caseId, requestText, subject, toEmail) {
+    async sendFOIARequest(caseId, requestText, subject, toEmail, instantMode = false) {
         try {
             const caseData = await db.getCaseById(caseId);
             if (!caseData) {
@@ -24,6 +24,16 @@ class SendGridService {
             // Generate unique message ID for tracking
             const messageId = this.generateMessageId();
             const threadId = this.generateThreadId(caseId);
+
+            // Build headers - add X-Test-Mode if instant mode
+            const headers = {
+                'Message-ID': messageId,
+                'In-Reply-To': threadId,
+                'References': threadId
+            };
+            if (instantMode) {
+                headers['X-Test-Mode'] = 'true';
+            }
 
             const msg = {
                 to: toEmail,
@@ -35,11 +45,7 @@ class SendGridService {
                 subject: subject,
                 text: requestText,
                 html: this.formatEmailHtml(requestText),
-                headers: {
-                    'Message-ID': messageId,
-                    'In-Reply-To': threadId,
-                    'References': threadId
-                },
+                headers: headers,
                 customArgs: {
                     case_id: caseId.toString(),
                     message_type: 'initial_request'

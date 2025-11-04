@@ -73,14 +73,14 @@ function getHumanLikeDelay() {
 const emailWorker = new Worker('email-queue', async (job) => {
     console.log(`Processing email job: ${job.id}`, job.data);
 
-    const { type, caseId, toEmail, subject, content, originalMessageId } = job.data;
+    const { type, caseId, toEmail, subject, content, originalMessageId, instantReply } = job.data;
 
     try {
         let result;
 
         switch (type) {
             case 'initial_request':
-                result = await sendgridService.sendFOIARequest(caseId, content, subject, toEmail);
+                result = await sendgridService.sendFOIARequest(caseId, content, subject, toEmail, instantReply || false);
 
                 // Update case status
                 await db.updateCaseStatus(caseId, 'sent', {
@@ -253,7 +253,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
 const generateWorker = new Worker('generate-queue', async (job) => {
     console.log(`Processing generation job: ${job.id}`);
 
-    const { caseId } = job.data;
+    const { caseId, instantMode } = job.data;
 
     try {
         const caseData = await db.getCaseById(caseId);
@@ -278,7 +278,8 @@ const generateWorker = new Worker('generate-queue', async (job) => {
             caseId: caseId,
             toEmail: caseData.agency_email,
             subject: subject,
-            content: generated.request_text
+            content: generated.request_text,
+            instantReply: instantMode || false  // Pass instant mode flag
         });
 
         console.log(`Generated and queued email for case ${caseId}, sending immediately`);

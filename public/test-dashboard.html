@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autobot Test Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2d3748;
+            margin-bottom: 8px;
+            font-size: 32px;
+        }
+        .subtitle {
+            color: #718096;
+            margin-bottom: 32px;
+        }
+        .input-group {
+            margin-bottom: 24px;
+        }
+        label {
+            display: block;
+            color: #4a5568;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        input[type="text"], input[type="email"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 24px;
+            padding: 16px;
+            border-radius: 8px;
+            display: none;
+        }
+        .result.success {
+            background: #f0fdf4;
+            border: 2px solid #86efac;
+            color: #166534;
+        }
+        .result.error {
+            background: #fef2f2;
+            border: 2px solid #fca5a5;
+            color: #991b1b;
+        }
+        .result.info {
+            background: #eff6ff;
+            border: 2px solid #93c5fd;
+            color: #1e40af;
+        }
+        .result h3 {
+            margin-bottom: 8px;
+            font-size: 18px;
+        }
+        .result pre {
+            background: rgba(0,0,0,0.05);
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+        .loader {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            margin-left: 12px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status-monitor {
+            margin-top: 24px;
+        }
+        .status-item {
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .badge.pending {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .badge.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .badge.processing {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        .help-text {
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🤖 Autobot Test Dashboard</h1>
+            <p class="subtitle">Test FOIA request processing with instant auto-reply</p>
+
+            <div class="input-group">
+                <label for="notionLink">Notion Page URL or ID</label>
+                <input
+                    type="text"
+                    id="notionLink"
+                    placeholder="https://notion.so/... or just the page ID"
+                >
+                <p class="help-text">Paste a Notion page URL or just the page ID (e.g., 21187c20-070a-8182-a559-fd39408096c5)</p>
+            </div>
+
+            <div class="input-group">
+                <label for="testEmail">Test Email (Optional)</label>
+                <input
+                    type="email"
+                    id="testEmail"
+                    placeholder="overlord1pvp@gmail.com"
+                    value="overlord1pvp@gmail.com"
+                >
+                <p class="help-text">Override the agency email for testing. Leave blank to use the email from Notion.</p>
+            </div>
+
+            <button class="btn" id="startTest" onclick="startTest()">
+                Start Instant Test
+            </button>
+
+            <div id="result" class="result"></div>
+
+            <div id="statusMonitor" class="status-monitor" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        let monitorInterval;
+        let currentCaseId;
+
+        async function startTest() {
+            const notionLink = document.getElementById('notionLink').value.trim();
+            const testEmail = document.getElementById('testEmail').value.trim();
+            const resultDiv = document.getElementById('result');
+            const btn = document.getElementById('startTest');
+
+            if (!notionLink) {
+                showResult('error', 'Error', 'Please enter a Notion page URL or ID');
+                return;
+            }
+
+            // Extract page ID from URL if needed
+            let pageId = notionLink;
+            if (notionLink.includes('notion.so/')) {
+                const match = notionLink.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+                if (match) {
+                    pageId = match[0];
+                } else {
+                    showResult('error', 'Error', 'Could not extract page ID from URL');
+                    return;
+                }
+            }
+
+            // Disable button and show loading
+            btn.disabled = true;
+            btn.innerHTML = 'Processing... <div class="loader"></div>';
+            resultDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/test/process-notion', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        notion_page_id: pageId,
+                        test_email: testEmail || null,
+                        instant_mode: true
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    currentCaseId = data.case_id;
+                    showResult('success', '✅ Test Started!',
+                        `Case ID: ${data.case_id}\n` +
+                        `Email will be sent to: ${data.email}\n\n` +
+                        `Reply to the email and watch for instant auto-reply!`
+                    );
+                    startMonitoring(data.case_id);
+                } else {
+                    showResult('error', 'Error', data.error || 'Unknown error occurred');
+                }
+            } catch (error) {
+                showResult('error', 'Error', `Network error: ${error.message}`);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = 'Start Instant Test';
+            }
+        }
+
+        function showResult(type, title, message) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = `result ${type}`;
+            resultDiv.innerHTML = `
+                <h3>${title}</h3>
+                <pre>${message}</pre>
+            `;
+            resultDiv.style.display = 'block';
+        }
+
+        async function startMonitoring(caseId) {
+            const monitorDiv = document.getElementById('statusMonitor');
+            monitorDiv.style.display = 'block';
+
+            // Clear existing interval
+            if (monitorInterval) {
+                clearInterval(monitorInterval);
+            }
+
+            // Initial check
+            await checkStatus(caseId);
+
+            // Check every 3 seconds
+            monitorInterval = setInterval(() => checkStatus(caseId), 3000);
+        }
+
+        async function checkStatus(caseId) {
+            try {
+                const response = await fetch(`/api/test/status/${caseId}`);
+                const data = await response.json();
+
+                if (!data.success) return;
+
+                const { summary } = data;
+                const monitorDiv = document.getElementById('statusMonitor');
+
+                monitorDiv.innerHTML = `
+                    <h3 style="margin-bottom: 12px; color: #374151;">Live Status</h3>
+                    <div class="status-item">
+                        <span>📤 Emails Sent</span>
+                        <span class="badge ${summary.outbound > 0 ? 'success' : 'pending'}">${summary.outbound}</span>
+                    </div>
+                    <div class="status-item">
+                        <span>📥 Replies Received</span>
+                        <span class="badge ${summary.inbound > 0 ? 'success' : 'pending'}">${summary.inbound}</span>
+                    </div>
+                    <div class="status-item">
+                        <span>🤖 Auto-Replies Sent</span>
+                        <span class="badge ${summary.auto_replies > 0 ? 'success' : 'pending'}">${summary.auto_replies}</span>
+                    </div>
+                `;
+
+                // Stop monitoring if auto-reply was sent
+                if (summary.auto_replies > 0) {
+                    clearInterval(monitorInterval);
+                    showResult('success', '🎉 Complete!',
+                        `Test completed successfully!\n\n` +
+                        `Outbound: ${summary.outbound}\n` +
+                        `Inbound: ${summary.inbound}\n` +
+                        `Auto-replies: ${summary.auto_replies}\n\n` +
+                        `Check your email inbox for the auto-reply!`
+                    );
+                }
+            } catch (error) {
+                console.error('Error checking status:', error);
+            }
+        }
+    </script>
+</body>
+</html>

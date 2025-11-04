@@ -38,6 +38,27 @@ class NotionService {
     }
 
     /**
+     * Fetch a single Notion page by ID
+     */
+    async fetchPageById(pageId) {
+        try {
+            // Remove hyphens if present for API call
+            const cleanPageId = pageId.replace(/-/g, '');
+
+            console.log(`Fetching Notion page: ${cleanPageId}`);
+            const page = await this.notion.pages.retrieve({ page_id: cleanPageId });
+
+            const caseData = this.parseNotionPage(page);
+            const enrichedCase = await this.enrichWithPoliceDepartment(caseData);
+
+            return enrichedCase;
+        } catch (error) {
+            console.error(`Error fetching Notion page ${pageId}:`, error);
+            throw error;
+        }
+    }
+
+    /**
      * Parse a Notion page into our case format
      * Note: This returns a partial case object. Call enrichWithPoliceDepartment()
      * to fetch related police department data including email.

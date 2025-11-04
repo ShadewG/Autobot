@@ -9,6 +9,95 @@ const { emailQueue, generateQueue } = require('../queues/email-queue');
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
 /**
+ * Test endpoint: Process a Notion page with instant mode
+ * POST /api/test/process-notion
+ */
+router.post('/process-notion', async (req, res) => {
+    try {
+        const { notion_page_id, test_email, instant_mode } = req.body;
+
+        if (!notion_page_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'notion_page_id is required'
+            });
+        }
+
+        console.log(`🧪 Test: Processing Notion page ${notion_page_id} with instant mode`);
+
+        // Fetch the page from Notion
+        const notionPage = await notionService.fetchPageById(notion_page_id);
+
+        if (!notionPage) {
+            return res.status(404).json({
+                success: false,
+                error: 'Notion page not found or could not be accessed'
+            });
+        }
+
+        // Check if case already exists
+        const existing = await db.query(
+            'SELECT * FROM cases WHERE notion_page_id = $1',
+            [notion_page_id]
+        );
+
+        let caseId;
+        let caseData;
+
+        if (existing.rows.length > 0) {
+            // Update existing case
+            caseId = existing.rows[0].id;
+            caseData = existing.rows[0];
+
+            // If test_email is provided, update it
+            if (test_email) {
+                await db.query(
+                    'UPDATE cases SET agency_email = $1, status = $2 WHERE id = $3',
+                    [test_email, 'ready_to_send', caseId]
+                );
+                caseData.agency_email = test_email;
+            }
+
+            console.log(`Using existing case ${caseId}, updated for testing`);
+        } else {
+            // Create new case from Notion data
+            const newCase = await db.createCase({
+                ...notionPage,
+                agency_email: test_email || notionPage.agency_email
+            });
+            caseId = newCase.id;
+            caseData = newCase;
+            console.log(`Created new case ${caseId} from Notion`);
+        }
+
+        // Queue for generation and sending with instant mode
+        await generateQueue.add('generate-foia', {
+            caseId: caseId,
+            instantMode: instant_mode || true
+        });
+
+        console.log(`Queued case ${caseId} for instant processing`);
+
+        res.json({
+            success: true,
+            message: 'Case queued for instant processing',
+            case_id: caseId,
+            case_name: caseData.case_name,
+            email: caseData.agency_email,
+            instant_mode: instant_mode || true
+        });
+
+    } catch (error) {
+        console.error('Error processing Notion page:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            details: error.response?.body
+        });
+    }
+});
+
+/**
  * Test endpoint: Send email and enable instant auto-reply
  * POST /api/test/send-and-reply
  */
