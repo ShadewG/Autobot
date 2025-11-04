@@ -464,7 +464,7 @@ Return concise legal citations and key statutory language with sources.`;
             console.log(`Generating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
 
             const denialSubtype = analysis.denial_subtype || 'overly_broad';
-            const strategy = denialResponsePrompts.denialStrategies[denialSubtype];
+            let strategy = denialResponsePrompts.denialStrategies[denialSubtype];
 
             if (!strategy) {
                 console.warn(`Unknown denial subtype: ${denialSubtype}, using overly_broad strategy`);
