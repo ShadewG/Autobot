@@ -292,6 +292,7 @@ ${prompt}`
             const analysis = JSON.parse(response.output_text);
 
             // Store analysis in database
+            // Sanitize values: convert string "null" to actual null
             const analysisRecord = await db.createResponseAnalysis({
                 message_id: messageData.id,
                 case_id: caseData.id,
@@ -299,8 +300,8 @@ ${prompt}`
                 confidence_score: analysis.confidence_score,
                 sentiment: analysis.sentiment,
                 key_points: analysis.key_points,
-                extracted_deadline: analysis.extracted_deadline,
-                extracted_fee_amount: analysis.extracted_fee_amount,
+                extracted_deadline: analysis.extracted_deadline === "null" || !analysis.extracted_deadline ? null : analysis.extracted_deadline,
+                extracted_fee_amount: analysis.extracted_fee_amount === "null" || !analysis.extracted_fee_amount ? null : analysis.extracted_fee_amount,
                 requires_action: analysis.requires_action,
                 suggested_action: analysis.suggested_action,
                 full_analysis_json: analysis
