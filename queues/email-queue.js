@@ -247,7 +247,11 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         console.error('   Error stack:', error.stack);
         throw error;
     }
-}, { connection });
+}, {
+    connection,
+    lockDuration: 300000, // 5 minutes - legal research can take time
+    lockRenewTime: 60000  // Renew lock every minute
+});
 
 // ===== GENERATE QUEUE WORKER =====
 const generateWorker = new Worker('generate-queue', async (job) => {

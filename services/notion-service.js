@@ -339,6 +339,12 @@ class NotionService {
                 return;
             }
 
+            // Skip test cases (they have fake notion_page_ids)
+            if (caseData.notion_page_id?.startsWith('test-')) {
+                console.log(`Skipping Notion sync for test case ${caseId}`);
+                return;
+            }
+
             const updates = {
                 status: this.mapStatusToNotion(caseData.status)
             };
@@ -385,6 +391,12 @@ class NotionService {
         try {
             const caseData = await db.getCaseById(caseId);
             if (!caseData) return;
+
+            // Skip test cases (they have fake notion_page_ids)
+            if (caseData.notion_page_id?.startsWith('test-')) {
+                console.log(`Skipping AI summary sync for test case ${caseId}`);
+                return;
+            }
 
             await this.updatePage(caseData.notion_page_id, {
                 ai_summary: summary
