@@ -395,4 +395,141 @@ router.post('/sync-notion', async (req, res) => {
     }
 });
 
+/**
+ * Clear all cases and start fresh
+ * POST /api/test/clear-all-cases
+ * WARNING: This deletes ALL cases and related data!
+ */
+router.post('/clear-all-cases', async (req, res) => {
+    try {
+        const { confirm } = req.body;
+
+        if (confirm !== 'DELETE_ALL_CASES') {
+            return res.status(400).json({
+                success: false,
+                error: 'Must confirm with: confirm: "DELETE_ALL_CASES"'
+            });
+        }
+
+        console.log('🗑️ Starting database cleanup via API...');
+
+        // Count current data
+        const casesCount = await db.query('SELECT COUNT(*) as count FROM cases');
+        const messagesCount = await db.query('SELECT COUNT(*) as count FROM messages');
+
+        const initialCounts = {
+            cases: parseInt(casesCount.rows[0].count),
+            messages: parseInt(messagesCount.rows[0].count)
+        };
+
+        // Delete all related records (in order of dependencies)
+        await db.query('DELETE FROM auto_reply_queue');
+        await db.query('DELETE FROM response_analysis');
+        await db.query('DELETE FROM follow_up_schedule');
+        await db.query('DELETE FROM generated_requests');
+        await db.query('DELETE FROM messages');
+        await db.query('DELETE FROM email_threads');
+        await db.query('DELETE FROM cases');
+        await db.query('DELETE FROM activity_log');
+
+        // Reset sequences
+        await db.query('ALTER SEQUENCE cases_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE messages_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE email_threads_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE response_analysis_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE follow_up_schedule_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE generated_requests_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE activity_log_id_seq RESTART WITH 1');
+        await db.query('ALTER SEQUENCE auto_reply_queue_id_seq RESTART WITH 1');
+
+        // Verify
+        const finalCount = await db.query('SELECT COUNT(*) as count FROM cases');
+
+        res.json({
+            success: true,
+            message: 'All cases cleared successfully',
+            deleted: initialCounts,
+            remaining: parseInt(finalCount.rows[0].count),
+            note: 'Database is now empty and ready for fresh cases'
+        });
+
+    } catch (error) {
+        console.error('Error clearing cases:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Test portal agent with autonomous form filling
+ * POST /api/test/portal-agent
+ */
+router.post('/portal-agent', async (req, res) => {
+    try {
+        const { portal_url, case_id, max_steps, dry_run } = req.body;
+
+        if (!portal_url) {
+            return res.status(400).json({
+                success: false,
+                error: 'portal_url is required'
+            });
+        }
+
+        console.log(`🤖 Testing portal agent on: ${portal_url}`);
+
+        // Get case data or use test data
+        let caseData;
+        if (case_id) {
+            caseData = await db.getCaseById(case_id);
+            if (!caseData) {
+                return res.status(404).json({
+                    success: false,
+                    error: `Case ${case_id} not found`
+                });
+            }
+        } else {
+            // Use test data
+            caseData = {
+                id: 999,
+                case_name: 'Test Case',
+                subject_name: 'John Doe',
+                agency_name: 'Test Agency',
+                state: 'CA',
+                incident_date: '2024-01-15',
+                incident_location: '123 Main St',
+                requested_records: 'Body camera footage, incident reports',
+                additional_details: 'Test request'
+            };
+        }
+
+        // Import portal agent service
+        const portalAgentService = require('../services/portal-agent-service');
+
+        // Run the agent
+        const result = await portalAgentService.submitToPortal(caseData, portal_url, {
+            maxSteps: max_steps || 30,
+            dryRun: dry_run !== false // Default to dry run
+        });
+
+        // Close browser
+        await portalAgentService.closeBrowser();
+
+        res.json({
+            success: result.success,
+            ...result,
+            note: 'Portal agent uses Anthropic Claude with vision to autonomously navigate and fill forms'
+        });
+
+    } catch (error) {
+        console.error('Error in portal agent test:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
+    }
+});
+
 module.exports = router;
