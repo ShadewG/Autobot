@@ -539,7 +539,7 @@ router.post('/portal-agent', async (req, res) => {
 router.get('/env', async (req, res) => {
     try {
         res.json({
-            ENABLE_AGENT: process.env.ENABLE_AGENT || 'false',
+            ENABLE_AGENT: 'true', // Agent always enabled for complex cases
             ENABLE_NOTIFICATIONS: process.env.ENABLE_NOTIFICATIONS || 'false',
             ENABLE_AUTO_REPLY: process.env.ENABLE_AUTO_REPLY !== 'false'
         });
@@ -654,8 +654,7 @@ router.post('/simulate-reply', async (req, res) => {
 
         console.log(`📊 Analysis complete: ${analysis.intent}`);
 
-        // Check if agent would handle this
-        const useAgent = process.env.ENABLE_AGENT === 'true';
+        // Check if agent should handle this (complex cases only)
         const isComplexCase = (
             analysis.intent === 'denial' ||
             analysis.intent === 'request_info' ||
@@ -664,7 +663,7 @@ router.post('/simulate-reply', async (req, res) => {
         );
 
         let agentResult = null;
-        if (useAgent && isComplexCase) {
+        if (isComplexCase) {
             console.log(`🤖 Triggering agent for complex case...`);
             const foiaCaseAgent = require('../services/foia-case-agent');
             agentResult = await foiaCaseAgent.handleCase(case_id, {
@@ -684,7 +683,7 @@ router.post('/simulate-reply', async (req, res) => {
                 sentiment: analysis.sentiment,
                 requires_action: analysis.requires_action
             },
-            agent_handled: useAgent && isComplexCase,
+            agent_handled: isComplexCase,
             agent_iterations: agentResult?.iterations || 0
         });
     } catch (error) {

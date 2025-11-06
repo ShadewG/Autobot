@@ -495,16 +495,13 @@
             log('🔄 Refreshing statistics...');
 
             try {
-                // Check agent status
-                const envData = await apiCall('/env');
-                const agentEnabled = envData.ENABLE_AGENT === 'true';
-
+                // Agent is always enabled (hardcoded)
                 const statusDiv = document.getElementById('agent-status');
-                statusDiv.className = `status-item ${agentEnabled ? 'active' : 'inactive'}`;
-                statusDiv.querySelector('.status-value').textContent = agentEnabled ? 'ENABLED ✅' : 'DISABLED ⚠️';
+                statusDiv.className = 'status-item active';
+                statusDiv.querySelector('.status-value').textContent = 'ENABLED ✅';
 
                 // Get stats
-                const stats = await apiCall('/stats');
+                const stats = await apiCall('/test/stats');
                 document.getElementById('cases-count').textContent = stats.total_cases || 0;
                 document.getElementById('decisions-count').textContent = stats.agent_decisions || 0;
                 document.getElementById('escalations-count').textContent = stats.escalations || 0;
@@ -518,7 +515,7 @@
         // Load Case Selector
         async function loadCaseSelector() {
             try {
-                const cases = await apiCall('/cases');
+                const cases = await apiCall('/test/cases');
                 const selector = document.getElementById('case-selector');
 
                 selector.innerHTML = '<option value="">Select a case...</option>';
@@ -642,7 +639,7 @@
             log('📊 Loading agent decisions...');
 
             try {
-                const result = await apiCall('/agent/decisions');
+                const result = await apiCall('/test/agent/decisions');
                 const container = document.getElementById('decisions-table');
 
                 if (!result.decisions || result.decisions.length === 0) {
@@ -680,7 +677,7 @@
             log('🚨 Loading escalations...');
 
             try {
-                const result = await apiCall('/agent/escalations');
+                const result = await apiCall('/test/agent/escalations');
                 const container = document.getElementById('escalations-table');
 
                 if (!result.escalations || result.escalations.length === 0) {
@@ -719,7 +716,7 @@
             log('📁 Loading all cases...');
 
             try {
-                const result = await apiCall('/cases');
+                const result = await apiCall('/test/cases');
 
                 if (!result.cases || result.cases.length === 0) {
                     log('No cases found', 'warning');

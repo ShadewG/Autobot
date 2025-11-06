@@ -183,7 +183,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
 
         // ===== HYBRID AGENT APPROACH =====
         // Use agent for complex cases, deterministic flow for simple ones
-        const useAgent = process.env.ENABLE_AGENT === 'true';
+        const useAgent = true; // Agent always enabled for complex cases
 
         // Determine if this is a complex case that should use the agent
         const isComplexCase = (
@@ -195,12 +195,11 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         );
 
         console.log(`\n🤖 Agent Status:`);
-        console.log(`   Agent enabled: ${useAgent}`);
         console.log(`   Complex case: ${isComplexCase}`);
         console.log(`   Reason: ${analysis.intent}${analysis.extracted_fee_amount ? ` ($${analysis.extracted_fee_amount})` : ''}`);
 
-        // If agent is enabled AND this is a complex case, let the agent handle it
-        if (useAgent && isComplexCase) {
+        // If this is a complex case, let the agent handle it
+        if (isComplexCase) {
             console.log(`\n🚀 Delegating to FOIA Agent for complex case handling...`);
 
             try {
@@ -223,7 +222,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                 console.error(`❌ Agent failed, falling back to deterministic flow:`, agentError.message);
                 // Continue with deterministic flow below as fallback
             }
-        } else if (useAgent && !isComplexCase) {
+        } else {
             console.log(`ℹ️  Simple case (${analysis.intent}), using deterministic flow`);
         }
 
