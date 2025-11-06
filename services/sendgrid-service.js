@@ -7,8 +7,9 @@ class SendGridService {
         if (process.env.SENDGRID_API_KEY) {
             sgMail.setApiKey(process.env.SENDGRID_API_KEY);
         }
-        this.fromEmail = process.env.SENDGRID_FROM_EMAIL;
-        this.fromName = process.env.SENDGRID_FROM_NAME || 'FOIA Request Team';
+        // Always use the email address we control for both From and Reply-To
+        this.fromEmail = 'requests@foia.foib-request.com';
+        this.fromName = 'FOIA Request Team';
     }
 
     /**
@@ -41,7 +42,7 @@ class SendGridService {
                     email: this.fromEmail,
                     name: this.fromName
                 },
-                replyTo: 'requests@foia.foib-request.com',
+                replyTo: this.fromEmail,
                 subject: subject,
                 text: requestText,
                 html: this.formatEmailHtml(requestText),
@@ -102,7 +103,7 @@ class SendGridService {
                     email: this.fromEmail,
                     name: this.fromName
                 },
-                replyTo: 'requests@foia.foib-request.com',
+                replyTo: this.fromEmail,
                 subject: `Re: ${subject}`,
                 text: followUpText,
                 html: this.formatEmailHtml(followUpText),
@@ -171,7 +172,7 @@ class SendGridService {
                     email: this.fromEmail,
                     name: this.fromName
                 },
-                replyTo: 'requests@foia.foib-request.com',
+                replyTo: this.fromEmail,
                 subject: replySubject,
                 text: replyText,
                 html: this.formatEmailHtml(replyText),
