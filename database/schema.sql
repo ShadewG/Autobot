@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS generated_requests (
     id SERIAL PRIMARY KEY,
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     request_text TEXT NOT NULL,
-    ai_model VARCHAR(50), -- gpt-4, claude-3-opus, etc.
+    ai_model VARCHAR(50), -- gpt-5, claude-3-opus, etc.
     generation_metadata JSONB, -- Tokens used, cost, etc.
     status VARCHAR(50) DEFAULT 'draft', -- draft, approved, sent
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

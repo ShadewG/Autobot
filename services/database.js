@@ -309,6 +309,31 @@ class DatabaseService {
         return result.rows;
     }
 
+    async getRecentAgentDecisions(limit = 50) {
+        const result = await this.query(
+            `
+            SELECT 
+                ad.id,
+                ad.case_id,
+                c.case_name,
+                c.agency_name,
+                c.status AS case_status,
+                ad.reasoning,
+                ad.action_taken,
+                ad.confidence,
+                ad.trigger_type,
+                ad.outcome,
+                ad.created_at
+            FROM agent_decisions ad
+            JOIN cases c ON ad.case_id = c.id
+            ORDER BY ad.created_at DESC
+            LIMIT $1
+            `,
+            [limit]
+        );
+        return result.rows;
+    }
+
     // State Deadlines
     async getStateDeadline(stateCode) {
         const result = await this.query(

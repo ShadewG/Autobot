@@ -53,7 +53,7 @@ async function generateInitialRequest() {
 Generate ONLY the email body following the structure. Do NOT add a subject line.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5',
         messages: [
             { role: 'system', content: documentaryPrompts.systemPrompt },
             { role: 'user', content: userPrompt }
@@ -185,7 +185,7 @@ Please analyze and provide a JSON response with:
 Return ONLY valid JSON, no other text.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         messages: [
             { role: 'system', content: responsePrompts.analysisSystemPrompt },
             { role: 'user', content: analysisPrompt }
@@ -234,7 +234,7 @@ Generate an appropriate reply that:
 Return ONLY the email body text, no subject line or metadata.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         messages: [
             { role: 'system', content: responsePrompts.autoReplySystemPrompt },
             { role: 'user', content: replyPrompt }

@@ -1,7 +1,6 @@
 const { OpenAI } = require('openai');
 const db = require('./database');
 const aiService = require('./ai-service');
-const notionService = require('./notion-service');
 const notificationService = require('./notification-service');
 const { emailQueue } = require('../queues/email-queue');
 
@@ -364,6 +363,9 @@ Then analyze the situation and decide what action to take.`
             let iteration = 0;
             const maxIterations = 5;
             let completed = false;
+            let decisionLogged = false;
+            let decisionReminderSent = false;
+            let caseContextErrorHandled = false;
 
             // Track expensive tool usage to prevent repeated calls
             let expensiveToolCalls = 0;
@@ -374,7 +376,7 @@ Then analyze the situation and decide what action to take.`
                 console.log(`\n   🔄 Agent iteration ${iteration}/${maxIterations}`);
 
                 const response = await this.openai.chat.completions.create({
-                    model: 'gpt-4o', // Using gpt-4o for now, will upgrade to gpt-5 when available
+                    model: 'gpt-5',
                     messages: messages,
                     tools: this.getToolDefinitions(),
                     tool_choice: 'auto'
@@ -389,7 +391,21 @@ Then analyze the situation and decide what action to take.`
 
                     for (const toolCall of assistantMessage.tool_calls) {
                         const functionName = toolCall.function.name;
-                        const functionArgs = JSON.parse(toolCall.function.arguments);
+                        let functionArgs;
+
+                        try {
+                            functionArgs = JSON.parse(toolCall.function.arguments);
+                        } catch (parseError) {
+                            console.error(`Failed to parse arguments for ${functionName}:`, parseError);
+                            messages.push({
+                                role: 'tool',
+                                tool_call_id: toolCall.id,
+                                content: JSON.stringify({
+                                    error: `Could not parse arguments for ${functionName}: ${parseError.message}`
+                                })
+                            });
+                            continue;
+                        }
 
                         console.log(`      → ${functionName}(${JSON.stringify(functionArgs).substring(0, 100)}...)`);
 
@@ -400,6 +416,18 @@ Then analyze the situation and decide what action to take.`
 
                         // Execute the tool
                         const result = await this.executeTool(functionName, functionArgs);
+
+                        if (functionName === 'log_decision' && !(result && result.error)) {
+                            decisionLogged = true;
+                        }
+
+                        if (functionName === 'fetch_case_context' && result && result.error && !caseContextErrorHandled) {
+                            caseContextErrorHandled = true;
+                            messages.push({
+                                role: 'system',
+                                content: `fetch_case_context returned an error: ${result.error}. Call escalate_to_human with urgency 'high' explaining that the case context could not be loaded.`
+                            });
+                        }
 
                         // Add tool result to conversation
                         messages.push({
@@ -417,6 +445,14 @@ Then analyze the situation and decide what action to take.`
                             content: 'You have already drafted multiple emails. Do not draft another unless there is genuinely new information or a different approach is needed. Consider if you should just send what you have or escalate to human.'
                         });
                     }
+
+                    if (!decisionLogged && !decisionReminderSent) {
+                        decisionReminderSent = true;
+                        messages.push({
+                            role: 'system',
+                            content: 'You have not yet called log_decision. Before finishing, call log_decision with your reasoning, action, and confidence.'
+                        });
+                    }
                 } else {
                     // No more tools to call - agent is done
                     console.log(`   ✅ Agent completed`);
@@ -429,6 +465,21 @@ Then analyze the situation and decide what action to take.`
 
             if (iteration >= maxIterations) {
                 console.log(`   ⚠️  Agent reached max iterations (${maxIterations})`);
+            }
+
+            if (!decisionLogged) {
+                console.log(`   ⚠️  Agent finished without logging a decision, recording fallback entry`);
+                try {
+                    await this.logDecision({
+                        case_id: caseId,
+                        reasoning: 'Agent completed without explicitly calling log_decision.',
+                        action_taken: 'unknown',
+                        confidence: 0.0
+                    });
+                    decisionLogged = true;
+                } catch (fallbackError) {
+                    console.error('Failed to record fallback decision:', fallbackError);
+                }
             }
 
             return {
@@ -455,36 +506,41 @@ Then analyze the situation and decide what action to take.`
      * Execute a tool call
      */
     async executeTool(functionName, args) {
-        switch (functionName) {
-            case 'fetch_case_context':
-                return await this.fetchCaseContext(args.case_id);
+        try {
+            switch (functionName) {
+                case 'fetch_case_context':
+                    return await this.fetchCaseContext(args.case_id);
 
-            case 'draft_denial_rebuttal':
-                return await this.draftDenialRebuttal(args);
+                case 'draft_denial_rebuttal':
+                    return await this.draftDenialRebuttal(args);
 
-            case 'draft_clarification':
-                return await this.draftClarification(args);
+                case 'draft_clarification':
+                    return await this.draftClarification(args);
 
-            case 'draft_followup':
-                return await this.draftFollowup(args);
+                case 'draft_followup':
+                    return await this.draftFollowup(args);
 
-            case 'send_email':
-                return await this.sendEmail(args);
+                case 'send_email':
+                    return await this.sendEmail(args);
 
-            case 'schedule_followup':
-                return await this.scheduleFollowup(args);
+                case 'schedule_followup':
+                    return await this.scheduleFollowup(args);
 
-            case 'update_case_status':
-                return await this.updateCaseStatus(args);
+                case 'update_case_status':
+                    return await this.updateCaseStatus(args);
 
-            case 'escalate_to_human':
-                return await this.escalateToHuman(args);
+                case 'escalate_to_human':
+                    return await this.escalateToHuman(args);
 
-            case 'log_decision':
-                return await this.logDecision(args);
+                case 'log_decision':
+                    return await this.logDecision(args);
 
-            default:
-                throw new Error(`Unknown tool: ${functionName}`);
+                default:
+                    return { error: `Unknown tool: ${functionName}` };
+            }
+        } catch (err) {
+            console.error(`Tool ${functionName} failed:`, err);
+            return { error: `Tool ${functionName} failed: ${err.message}` };
         }
     }
 
@@ -613,7 +669,16 @@ Then analyze the situation and decide what action to take.`
     }
 
     async sendEmail({ case_id, subject, body_html, body_text, delay_hours = 3, message_type }) {
-        console.log(`      📧 Scheduling email for case ${case_id} (${delay_hours}h delay)`);
+        let delay = typeof delay_hours === 'number' ? delay_hours : 3;
+        if (delay < 2) {
+            console.warn(`      ⚠️  delay_hours ${delay} below minimum, clamping to 2`);
+            delay = 2;
+        } else if (delay > 10) {
+            console.warn(`      ⚠️  delay_hours ${delay} above maximum, clamping to 10`);
+            delay = 10;
+        }
+
+        console.log(`      📧 Scheduling email for case ${case_id} (${delay}h delay)`);
 
         const caseData = await db.getCaseById(case_id);
         if (!caseData) {
@@ -621,7 +686,7 @@ Then analyze the situation and decide what action to take.`
         }
 
         // Queue email with delay
-        const sendAt = new Date(Date.now() + delay_hours * 60 * 60 * 1000);
+        const sendAt = new Date(Date.now() + delay * 60 * 60 * 1000);
 
         await emailQueue.add('send-email', {
             caseId: case_id,
@@ -630,13 +695,13 @@ Then analyze the situation and decide what action to take.`
             bodyText: body_text,
             messageType: message_type
         }, {
-            delay: delay_hours * 60 * 60 * 1000 // Convert to milliseconds
+            delay: delay * 60 * 60 * 1000 // Convert to milliseconds
         });
 
         return {
             success: true,
             scheduled_for: sendAt.toISOString(),
-            delay_hours: delay_hours,
+            delay_hours: delay,
             message_type: message_type
         };
     }

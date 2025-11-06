@@ -178,7 +178,7 @@ Please analyze and provide a JSON response with:
 Return ONLY valid JSON, no other text.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5-mini',
         messages: [
             {
                 role: 'system',
@@ -410,7 +410,7 @@ async function runFullCorrespondence() {
     console.log('📈 SUMMARY OF AUTOMATED WORKFLOW:\n');
     console.log('  1. ✅ Bot generated professional FOIA request (GPT-5, low reasoning)');
     console.log('  2. ✅ Agency denied as "overly broad"');
-    console.log('  3. ✅ Bot detected denial type automatically (GPT-4o-mini analysis)');
+    console.log('  3. ✅ Bot detected denial type automatically (GPT-5-mini analysis)');
     console.log('  4. ✅ Bot researched Illinois laws (GPT-5 + web search, ~5 min)');
     console.log('  5. ✅ Bot generated strategic rebuttal with exact statutes + case law');
     console.log('  6. ✅ Agency accepted narrowed scope → records approved');

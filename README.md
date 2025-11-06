@@ -4,7 +4,7 @@ Automated FOIA Request System with AI-powered generation, email tracking, and in
 
 ## Features
 
-- 🤖 **AI-Powered Request Generation** - Automatically generate professional FOIA requests using OpenAI GPT-4
+- 🤖 **AI-Powered Request Generation** - Automatically generate professional FOIA requests using OpenAI GPT-5
 - 📧 **Email Automation** - Send requests via SendGrid with natural delays to appear human
 - 🔄 **Auto Follow-ups** - Intelligently follow up on overdue requests based on state deadlines
 - 📊 **Notion Integration** - Sync cases from Notion database and update status automatically
@@ -224,7 +224,7 @@ GET /api/activity?limit=50
 
 ### 2. Request Generation
 - AI generates professional FOIA request from case details
-- Uses OpenAI GPT-4o (fallback to Claude if needed)
+- Uses OpenAI GPT-5 (fallback to Claude if needed)
 - Stored as draft in database
 
 ### 3. Email Sending
@@ -340,8 +340,8 @@ redis-cli
 - **Railway**: $5-10/month (Hobby plan)
 - **SendGrid**: Free (100 emails/day) or $20/month (50k emails)
 - **OpenAI**: ~$0.10-0.50 per case
-  - GPT-4o for generation: ~$0.30
-  - GPT-4o-mini for analysis: ~$0.01
+  - GPT-5 for generation: ~$0.30
+  - GPT-5-mini for analysis: ~$0.01
 - **Total**: ~$10-35/month + usage-based AI costs
 
 ## Security

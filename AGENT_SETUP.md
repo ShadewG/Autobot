@@ -2,7 +2,7 @@
 
 ## Overview
 
-The FOIA Case Manager Agent is an **autonomous AI system** that handles complex FOIA cases using GPT-4o/GPT-5 with tool calling. It makes strategic decisions about how to respond to agency emails, when to escalate to humans, and how to maximize case success rates.
+The FOIA Case Manager Agent is an **autonomous AI system** that handles complex FOIA cases using GPT-5 family models with tool calling. It makes strategic decisions about how to respond to agency emails, when to escalate to humans, and how to maximize case success rates.
 
 This system uses a **hybrid approach**:
 - **Complex cases** (denials, high fees, hostile responses) → Handled by AI agent
@@ -183,7 +183,7 @@ async handleCase(caseId, trigger) {
 
     // 2. Agent analyzes situation
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5',
         messages: [...systemPrompt, userContext],
         tools: [fetch_context, draft_rebuttal, send_email, escalate, ...]
     });

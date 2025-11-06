@@ -101,6 +101,11 @@
             overflow-y: auto;
         }
 
+        .agent-feed {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
         .activity-item {
             padding: 15px;
             border-left: 4px solid #667eea;
@@ -146,6 +151,94 @@
         .queue-item.generating {
             border-left-color: #3b82f6;
             background: #eff6ff;
+        }
+
+        .agent-item {
+            padding: 18px;
+            border-left: 4px solid #6366f1;
+            margin-bottom: 15px;
+            background: #f5f5ff;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(99, 102, 241, 0.15);
+        }
+
+        .agent-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            color: #4b5563;
+        }
+
+        .agent-case {
+            font-weight: 600;
+            color: #312e81;
+        }
+
+        .agent-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .agent-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            font-size: 0.75em;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            text-transform: uppercase;
+            background: #ede9fe;
+            color: #5b21b6;
+        }
+
+        .agent-badge.confidence-high {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .agent-badge.confidence-medium {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .agent-badge.confidence-low {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .agent-badge.action {
+            background: #dbeafe;
+            color: #1d4ed8;
+        }
+
+        .agent-badge.trigger {
+            background: #ede9fe;
+            color: #5b21b6;
+        }
+
+        .agent-reasoning,
+        .agent-action {
+            color: #312e81;
+            line-height: 1.6;
+            font-size: 0.95em;
+        }
+
+        .agent-action {
+            margin-top: 8px;
+            color: #1e3a8a;
+        }
+
+        .agent-empty {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+            font-style: italic;
         }
 
         .queue-item.sending-soon {
@@ -450,6 +543,13 @@
         </div>
 
         <div class="section">
+            <h2 class="section-title">🧠 Agent Mindstream</h2>
+            <div id="agent-feed" class="agent-feed">
+                <div class="loading pulse">Tuning into agent thoughts...</div>
+            </div>
+        </div>
+
+        <div class="section">
             <h2 class="section-title">⚡ Recent Activity</h2>
             <div id="activity-feed" class="activity-feed">
                 <div class="loading pulse">Loading activity...</div>
@@ -748,6 +848,92 @@
             document.getElementById('activity-feed').innerHTML = activityHTML;
         }
 
+        async function fetchAgentDecisions() {
+            try {
+                const response = await fetch(`${API_BASE}/agent/decisions?limit=40`);
+                const data = await response.json();
+
+                if (!data.success) {
+                    throw new Error(data.error || 'Failed to load agent activity');
+                }
+
+                renderAgentDecisions(data.decisions);
+            } catch (error) {
+                console.error('Failed to fetch agent decisions:', error);
+                document.getElementById('agent-feed').innerHTML = `<div class="agent-empty">Error loading agent thoughts: ${escapeHtml(error.message)}</div>`;
+            }
+        }
+
+        function renderAgentDecisions(decisions) {
+            const container = document.getElementById('agent-feed');
+
+            if (!decisions || decisions.length === 0) {
+                container.innerHTML = '<div class="agent-empty">No autonomous activity recorded yet.</div>';
+                return;
+            }
+
+            const html = decisions.map(decision => {
+                const createdAt = new Date(decision.created_at).toLocaleString();
+                const confidence = decision.confidence !== undefined && decision.confidence !== null
+                    ? parseFloat(decision.confidence)
+                    : null;
+
+                const confidenceBadge = confidence !== null
+                    ? `<span class="agent-badge ${getConfidenceBadgeClass(confidence)}">Confidence ${formatConfidence(confidence)}</span>`
+                    : '';
+
+                const triggerBadge = decision.trigger_type
+                    ? `<span class="agent-badge trigger">Trigger ${escapeHtml(decision.trigger_type.replace(/_/g, ' '))}</span>`
+                    : '';
+
+                const statusBadge = decision.case_status
+                    ? `<span class="agent-badge action">Status ${escapeHtml(decision.case_status.replace(/_/g, ' '))}</span>`
+                    : '';
+
+                const outcomeBadge = decision.outcome
+                    ? `<span class="agent-badge action">Outcome ${escapeHtml(decision.outcome.replace(/_/g, ' '))}</span>`
+                    : '';
+
+                return `
+                    <div class="agent-item">
+                        <div class="agent-meta">
+                            <span>
+                                <span class="agent-case">${escapeHtml(decision.case_name || `Case #${decision.case_id}`)}</span>
+                                ${decision.agency_name ? ` - ${escapeHtml(decision.agency_name)}` : ''}
+                            </span>
+                            <span>${createdAt}</span>
+                        </div>
+                        <div class="agent-tags">
+                            ${confidenceBadge}
+                            ${triggerBadge}
+                            ${statusBadge}
+                            ${outcomeBadge}
+                        </div>
+                        <div class="agent-reasoning">
+                            <strong>Thoughts:</strong> ${formatMultilineText(decision.reasoning)}
+                        </div>
+                        <div class="agent-action">
+                            <strong>Action:</strong> ${formatMultilineText(decision.action_taken)}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        function formatConfidence(value) {
+            if (isNaN(value)) return 'N/A';
+            return `${Math.round(value * 100)}%`;
+        }
+
+        function getConfidenceBadgeClass(value) {
+            if (isNaN(value)) return 'confidence-medium';
+            if (value >= 0.75) return 'confidence-high';
+            if (value >= 0.5) return 'confidence-medium';
+            return 'confidence-low';
+        }
+
         function getEventClass(eventType) {
             if (eventType.includes('sent')) return 'sent';
             if (eventType.includes('received')) return 'received';
@@ -768,6 +954,11 @@
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
+        }
+
+        function formatMultilineText(text) {
+            if (!text) return 'N/A';
+            return escapeHtml(text).replace(/\n/g, '<br>');
         }
 
         function showError(message) {
@@ -928,12 +1119,14 @@
         // Load data on page load
         fetchKPIMetrics();
         fetchLatestMessages();
+        fetchAgentDecisions();
         fetchQueuedMessages();
 
         // Refresh KPIs and messages every 30 seconds
         setInterval(() => {
             fetchKPIMetrics();
             fetchLatestMessages();
+            fetchAgentDecisions();
         }, 30000);
 
         // Refresh queue every 5 seconds (more frequent for real-time queue updates)

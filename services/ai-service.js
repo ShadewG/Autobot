@@ -428,12 +428,12 @@ Return concise legal citations and key statutory language with sources.`;
 
             return research;
         } catch (error) {
-            console.warn('GPT-5 legal research failed, falling back to GPT-4o:', error.message);
+            console.warn('GPT-5 legal research failed, falling back to GPT-5-mini:', error.message);
 
-            // Fallback to GPT-4o without web search
+            // Fallback to GPT-5-mini without web search
             try {
                 const fallbackResponse = await this.openai.chat.completions.create({
-                    model: 'gpt-4o',
+                    model: 'gpt-5-mini',
                     messages: [
                         {
                             role: 'system',
@@ -578,7 +578,7 @@ ${followUpCount > 0 ? '6. Note this is a follow-up and we\'re still awaiting res
 Return ONLY the email body text.`;
 
             const response = await this.openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: 'gpt-5-mini',
                 messages: [
                     {
                         role: 'system',
@@ -616,18 +616,10 @@ Return ONLY the email body text.`;
                 input: 0.000001,  // $0.001 per 1K tokens
                 output: 0.000004,
                 reasoning: 0.000004
-            },
-            'gpt-4o': {
-                input: 0.00001,
-                output: 0.00003
-            },
-            'gpt-4o-mini': {
-                input: 0.00000015,
-                output: 0.0000006
             }
         };
 
-        const modelPrices = prices[model] || prices['gpt-4o-mini'];
+        const modelPrices = prices[model] || prices['gpt-5-mini'];
 
         // GPT-5 and other reasoning models track reasoning tokens separately
         if (model.startsWith('gpt-5')) {

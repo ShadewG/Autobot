@@ -165,6 +165,28 @@ router.get('/cases', async (req, res) => {
 });
 
 /**
+ * Get recent agent decisions feed
+ */
+router.get('/agent/decisions', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+        const decisions = await db.getRecentAgentDecisions(limit);
+
+        res.json({
+            success: true,
+            count: decisions.length,
+            decisions
+        });
+    } catch (error) {
+        console.error('Error fetching agent decisions:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Get a single case with all details
  */
 router.get('/cases/:caseId', async (req, res) => {

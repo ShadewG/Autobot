@@ -136,7 +136,7 @@ async function runAllTests() {
     console.log('\nKey Features Demonstrated:');
     console.log('  ✅ Automatic denial detection');
     console.log('  ✅ Subtype classification (8 types)');
-    console.log('  ✅ LIVE LEGAL RESEARCH using GPT-4o');
+    console.log('  ✅ LIVE LEGAL RESEARCH using GPT-5');
     console.log('  ✅ Exact statute citations (5 ILCS 140/X)');
     console.log('  ✅ State-specific case law references');
     console.log('  ✅ Strategic rebuttals (not manual flagging)');

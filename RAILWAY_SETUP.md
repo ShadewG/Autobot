@@ -231,7 +231,7 @@ When a Notion case is synced:
 
 ### ✅ Auto-Analyze Responses
 When email received via webhook:
-1. GPT-4o-mini analyzes intent
+1. GPT-5-mini analyzes intent
 2. Extracts deadlines, fees, sentiment
 3. Records outcome for learning
 4. Updates Notion automatically

@@ -130,7 +130,7 @@ CREATE TABLE messages (
            │
            ▼
 ┌─────────────────────┐
-│ GPT-4o-mini Analyze │ → Extract intent, sentiment, deadlines
+│ GPT-5-mini Analyze │ → Extract intent, sentiment, deadlines
 └──────────┬──────────┘
            │
            ▼
@@ -140,7 +140,7 @@ CREATE TABLE messages (
 └──────────┬──────────┘
            │
            ├─── YES ──→ ┌─────────────────────┐
-           │            │ Generate Auto-Reply  │ → GPT-4o-mini
+           │            │ Generate Auto-Reply  │ → GPT-5-mini
            │            └──────────┬──────────┘
            │                       │
            │                       ▼
@@ -287,7 +287,7 @@ analysisQueue.add('analyze-response', {
 }, { delay: 5000 })  // 5 second delay
 ```
 
-**6. GPT-4o-mini Analyzes:**
+**6. GPT-5-mini Analyzes:**
 ```json
 {
   "intent": "fee_request",

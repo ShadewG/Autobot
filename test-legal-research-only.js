@@ -29,7 +29,7 @@ Focus on:
 Return concise legal citations and key statutory language.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5',
         messages: [
             {
                 role: 'system',
@@ -98,7 +98,7 @@ Generate a STRONG, legally-grounded rebuttal that:
 Return ONLY the email body text, no subject line.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5',
         messages: [
             {
                 role: 'system',
@@ -182,7 +182,7 @@ async function runTests() {
     console.log('✅ ALL TESTS COMPLETE');
     console.log('═'.repeat(80));
     console.log('\nWhat This Demonstrates:');
-    console.log('  ✅ LIVE legal research using GPT-4o');
+    console.log('  ✅ LIVE legal research using GPT-5');
     console.log('  ✅ Exact statute citations for Illinois (5 ILCS 140/X)');
     console.log('  ✅ Case law references when available');
     console.log('  ✅ Research integrated into rebuttal generation');

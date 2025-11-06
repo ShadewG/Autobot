@@ -18,7 +18,7 @@ The FOIA bot now automatically fights denials with intelligent, legally-grounded
 
 ### 2. **Live Legal Research**
 Before generating each rebuttal, the system:
-- Researches the specific state's public records law using GPT-4o
+- Researches the specific state's public records law using GPT-5
 - Finds exact statute citations (e.g., "5 ILCS 140/7(1)(d)")
 - Locates relevant case law and precedents
 - Identifies segregability requirements
@@ -73,7 +73,7 @@ Each denial type has a specific strategy:
 #### `researchStateLaws(state, denialType)`
 **Location**: `services/ai-service.js:408-454`
 
-Researches state-specific laws using GPT-4o with temperature 0.3 for factual accuracy.
+Researches state-specific laws using GPT-5 with temperature 0.3 for factual accuracy.
 
 Returns:
 - Exact statute citations
@@ -89,7 +89,7 @@ Returns:
 1. Identifies denial subtype from analysis
 2. Loads strategy from `denial-response-prompts.js`
 3. Calls `researchStateLaws()` for state-specific law
-4. Generates rebuttal using GPT-4o with temperature 0.6
+4. Generates rebuttal using GPT-5 with temperature 0.6
 5. Integrates legal research into prompt
 6. Returns auto-reply with high confidence (0.85)
 
@@ -260,7 +260,7 @@ The user mentioned potentially upgrading to OpenAI's Deep Research API for even 
 4. Set `background: true` for long-running research
 5. Configure webhooks for completion notifications
 
-**Current implementation** (GPT-4o with temperature 0.3) provides solid legal research. **Deep Research upgrade** would add live web search for the most recent case law and statutes.
+**Current implementation** (GPT-5 with temperature 0.3) provides solid legal research. **Deep Research upgrade** would add live web search for the most recent case law and statutes.
 
 ## Conclusion
 

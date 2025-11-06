@@ -62,8 +62,8 @@ Autobot MVP/
 - HTML email formatting
 
 **ai-service.js**
-- Generate FOIA requests (GPT-4o)
-- Analyze agency responses (GPT-4o-mini)
+- Generate FOIA requests (GPT-5)
+- Analyze agency responses (GPT-5-mini)
 - Generate auto-replies
 - Generate follow-up emails
 - Claude fallback support
