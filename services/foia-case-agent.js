@@ -1,10 +1,9 @@
 const { OpenAI } = require('openai');
 const db = require('./database');
 const aiService = require('./ai-service');
-const emailService = require('./email-service');
 const notionService = require('./notion-service');
 const notificationService = require('./notification-service');
-const { emailQueue, generateQueue } = require('../queues/email-queue');
+const { emailQueue } = require('../queues/email-queue');
 
 /**
  * FOIA Case Manager Agent
@@ -61,27 +60,36 @@ For no response (follow-ups):
 - Send polite follow-up after reasonable time
 - Escalate after 2-3 attempts with no response
 
+TRIGGER TYPES:
+You will be invoked with different trigger types:
+- "agency_reply" - Agency sent a reply (denial, approval, fee notice, etc.)
+- "time_based_followup" - Scheduled follow-up is due
+- "manual_review" - Human re-invoked you for a second look
+
+Treat these differently. For time_based_followup, focus on deadlines and whether to follow up.
+For agency_reply, analyze the agency's response and decide how to reply.
+
 AVAILABLE TOOLS:
 - fetch_case_context: Get full case details, messages, analysis
-- draft_initial_request: Generate initial FOIA request
 - draft_denial_rebuttal: Research laws + generate rebuttal
 - draft_clarification: Respond to info requests
 - draft_followup: Generate follow-up email
 - send_email: Send email with human-like delay
 - schedule_followup: Schedule future follow-up
-- update_case_status: Update case status
-- escalate_to_human: Flag case for human review
-- log_decision: Log your reasoning
+- update_case_status: Update case status (including 'needs_human_review')
+- escalate_to_human: Flag case for human review (automatically sets status to 'needs_human_review')
+- log_decision: Log your reasoning (REQUIRED at end of every run)
 
 PROCESS:
-1. Fetch case context
+1. Fetch case context first (always)
 2. Analyze current situation
 3. Think through options
 4. Decide best action
 5. Execute tool(s)
-6. Log decision for learning
+6. Log decision for learning (REQUIRED)
 
-Always explain your reasoning before taking action.`;
+Always explain your reasoning before taking action.
+You MUST call log_decision at the end of every run with your reasoning, action, and confidence.`;
     }
 
     /**
@@ -110,7 +118,7 @@ Always explain your reasoning before taking action.`;
                 type: 'function',
                 function: {
                     name: 'draft_denial_rebuttal',
-                    description: 'Research state laws and draft a rebuttal to an agency denial',
+                    description: 'Research state laws and draft a rebuttal to an agency denial. Automatically determines appropriate tone based on denial type and strength.',
                     parameters: {
                         type: 'object',
                         properties: {
@@ -121,11 +129,6 @@ Always explain your reasoning before taking action.`;
                             message_id: {
                                 type: 'number',
                                 description: 'ID of the denial message'
-                            },
-                            tone: {
-                                type: 'string',
-                                enum: ['polite', 'firm', 'escalated'],
-                                description: 'Tone of the rebuttal'
                             }
                         },
                         required: ['case_id', 'message_id']
@@ -251,7 +254,7 @@ Always explain your reasoning before taking action.`;
                             },
                             status: {
                                 type: 'string',
-                                enum: ['ready_to_send', 'sent', 'awaiting_response', 'approved', 'denied', 'needs_rebuttal', 'pending_fee_decision', 'completed'],
+                                enum: ['ready_to_send', 'sent', 'awaiting_response', 'approved', 'denied', 'needs_rebuttal', 'pending_fee_decision', 'needs_human_review', 'completed'],
                                 description: 'New status'
                             },
                             substatus: {
@@ -335,6 +338,7 @@ Always explain your reasoning before taking action.`;
         try {
             // Prepare initial message for agent
             const triggerContext = {
+                case_id: caseId,
                 type: trigger.type,
                 message_id: trigger.messageId || null,
                 timestamp: new Date().toISOString()
@@ -347,7 +351,12 @@ Always explain your reasoning before taking action.`;
                 },
                 {
                     role: 'user',
-                    content: `TRIGGER: ${JSON.stringify(triggerContext, null, 2)}\n\nPlease fetch the case context first using fetch_case_context, then analyze the situation and decide what action to take.`
+                    content: `TRIGGER:
+${JSON.stringify(triggerContext, null, 2)}
+
+The current case ID is ${caseId}.
+First, call fetch_case_context with { "case_id": ${caseId} }.
+Then analyze the situation and decide what action to take.`
                 }
             ];
 
@@ -355,6 +364,10 @@ Always explain your reasoning before taking action.`;
             let iteration = 0;
             const maxIterations = 5;
             let completed = false;
+
+            // Track expensive tool usage to prevent repeated calls
+            let expensiveToolCalls = 0;
+            const expensiveTools = ['draft_denial_rebuttal', 'draft_clarification', 'draft_followup'];
 
             while (!completed && iteration < maxIterations) {
                 iteration++;
@@ -380,6 +393,11 @@ Always explain your reasoning before taking action.`;
 
                         console.log(`      → ${functionName}(${JSON.stringify(functionArgs).substring(0, 100)}...)`);
 
+                        // Track expensive tool calls
+                        if (expensiveTools.includes(functionName)) {
+                            expensiveToolCalls++;
+                        }
+
                         // Execute the tool
                         const result = await this.executeTool(functionName, functionArgs);
 
@@ -388,6 +406,15 @@ Always explain your reasoning before taking action.`;
                             role: 'tool',
                             tool_call_id: toolCall.id,
                             content: JSON.stringify(result)
+                        });
+                    }
+
+                    // Guard rail: Warn if too many expensive drafts
+                    if (expensiveToolCalls > 2) {
+                        console.log(`   ⚠️  Warning: Agent has called expensive tools ${expensiveToolCalls} times`);
+                        messages.push({
+                            role: 'system',
+                            content: 'You have already drafted multiple emails. Do not draft another unless there is genuinely new information or a different approach is needed. Consider if you should just send what you have or escalate to human.'
                         });
                     }
                 } else {
@@ -504,7 +531,7 @@ Always explain your reasoning before taking action.`;
         };
     }
 
-    async draftDenialRebuttal({ case_id, message_id, tone = 'firm' }) {
+    async draftDenialRebuttal({ case_id, message_id }) {
         console.log(`      ✍️  Drafting denial rebuttal for case ${case_id}`);
 
         // Fetch message and case
@@ -532,8 +559,7 @@ Always explain your reasoning before taking action.`;
             success: true,
             subject: `Re: ${caseData.case_name} - Response to Denial`,
             body_html: rebuttal.bodyHtml,
-            body_text: rebuttal.bodyText,
-            tone_used: tone
+            body_text: rebuttal.bodyText
         };
     }
 

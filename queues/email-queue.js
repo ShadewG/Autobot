@@ -205,7 +205,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
 
             try {
                 const agentResult = await foiaCaseAgent.handleCase(caseId, {
-                    type: 'inbound_email',
+                    type: 'agency_reply',  // Using standardized trigger type
                     messageId: messageId
                 });
 
