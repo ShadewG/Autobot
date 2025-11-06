@@ -80,7 +80,12 @@ router.post('/inbound', upload.none(), async (req, res) => {
                 caseId: result.case_id,
                 instantReply: isTestMode
             }, {
-                delay: 5000 // 5 second delay to ensure DB is updated
+                delay: isTestMode ? 0 : 2000, // faster processing, but still ensure DB commit
+                attempts: 3,
+                backoff: {
+                    type: 'exponential',
+                    delay: 3000
+                }
             });
 
             console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);

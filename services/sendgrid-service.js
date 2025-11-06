@@ -220,6 +220,84 @@ class SendGridService {
         return match ? match[1] : emailString;
     }
 
+    normalizeHeaders(rawHeaders) {
+        if (!rawHeaders) {
+            return {};
+        }
+
+        if (typeof rawHeaders === 'object' && !Array.isArray(rawHeaders)) {
+            return Object.entries(rawHeaders).reduce((acc, [key, value]) => {
+                acc[key.toLowerCase()] = value;
+                return acc;
+            }, {});
+        }
+
+        if (typeof rawHeaders === 'string') {
+            const normalized = {};
+            const lines = rawHeaders.split(/\r?\n/);
+            let currentKey = null;
+
+            for (const rawLine of lines) {
+                if (!rawLine.trim()) {
+                    continue;
+                }
+
+                // Header value folded over multiple lines (starts with whitespace)
+                if (/^\s/.test(rawLine) && currentKey) {
+                    normalized[currentKey] = `${normalized[currentKey]} ${rawLine.trim()}`;
+                    continue;
+                }
+
+                const separatorIndex = rawLine.indexOf(':');
+                if (separatorIndex === -1) {
+                    continue;
+                }
+
+                const key = rawLine.slice(0, separatorIndex).trim().toLowerCase();
+                const value = rawLine.slice(separatorIndex + 1).trim();
+
+                if (normalized[key]) {
+                    normalized[key] = `${normalized[key]}, ${value}`;
+                } else {
+                    normalized[key] = value;
+                }
+
+                currentKey = key;
+            }
+
+            return normalized;
+        }
+
+        return {};
+    }
+
+    getHeaderValue(headers, name) {
+        if (!headers) return undefined;
+        const key = name.toLowerCase();
+        return headers[key];
+    }
+
+    extractHeaderIds(headerValue) {
+        if (!headerValue) {
+            return [];
+        }
+
+        if (Array.isArray(headerValue)) {
+            return headerValue.flatMap(value => this.extractHeaderIds(value));
+        }
+
+        const value = String(headerValue);
+        const matches = value.match(/<[^>]+>/g);
+        if (matches && matches.length > 0) {
+            return matches.map(m => m.trim());
+        }
+
+        return value
+            .split(/\s+/)
+            .map(part => part.trim())
+            .filter(Boolean);
+    }
+
     /**
      * Process inbound email from SendGrid webhook
      */
@@ -234,13 +312,46 @@ class SendGridService {
             console.log('Extracted from email:', fromEmail);
             console.log('Extracted to email:', toEmail);
 
-            // Extract relevant data
-            const messageId = inboundData.headers['Message-ID'] || this.generateMessageId();
-            const inReplyTo = inboundData.headers['In-Reply-To'];
-            const references = inboundData.headers['References'];
+            const headers = this.normalizeHeaders(inboundData.headers);
+            const messageId =
+                this.getHeaderValue(headers, 'message-id') ||
+                inboundData['Message-ID'] ||
+                inboundData['message-id'] ||
+                inboundData['messageId'] ||
+                inboundData['message_id'] ||
+                this.generateMessageId();
+
+            const inReplyToHeader =
+                this.getHeaderValue(headers, 'in-reply-to') ||
+                inboundData['In-Reply-To'] ||
+                inboundData['in_reply_to'] ||
+                inboundData['in-reply-to'] ||
+                inboundData['InReplyTo'];
+
+            const referencesHeader =
+                this.getHeaderValue(headers, 'references') ||
+                inboundData.references ||
+                inboundData['References'] ||
+                inboundData['reference'] ||
+                inboundData['Reference'];
+
+            const referenceIds = this.extractHeaderIds(referencesHeader);
+            const inReplyToIds = this.extractHeaderIds(inReplyToHeader);
+            const inReplyToId = inReplyToIds.length > 0 ? inReplyToIds[0] : null;
+
+            console.log('Parsed headers:', {
+                messageId,
+                inReplyTo: inReplyToId,
+                references: referenceIds
+            });
 
             // Find the case this email belongs to
-            const caseData = await this.findCaseForInbound(toEmail, fromEmail, references);
+            const caseData = await this.findCaseForInbound({
+                toEmail,
+                fromEmail,
+                inReplyToId,
+                referenceIds
+            });
 
             if (!caseData) {
                 console.warn('Could not match inbound email to a case');
@@ -250,9 +361,10 @@ class SendGridService {
             // Get or create thread
             let thread = await db.getThreadByCaseId(caseData.id);
             if (!thread) {
+                const threadIdentifier = referenceIds[0] || inReplyToId || messageId;
                 thread = await db.createEmailThread({
                     case_id: caseData.id,
-                    thread_id: references || messageId,
+                    thread_id: threadIdentifier,
                     subject: inboundData.subject,
                     agency_email: fromEmail,
                     initial_message_id: messageId,
@@ -278,9 +390,10 @@ class SendGridService {
             });
 
             // Update thread
+            const currentMessageCount = typeof thread.message_count === 'number' ? thread.message_count : 0;
             await db.updateThread(thread.id, {
                 last_message_at: new Date(),
-                message_count: thread.message_count + 1,
+                message_count: currentMessageCount + 1,
                 status: 'responded'
             });
 
@@ -310,43 +423,84 @@ class SendGridService {
     /**
      * Find which case an inbound email belongs to
      */
-    async findCaseForInbound(toEmail, fromEmail, references) {
+    async findCaseForInbound({ toEmail, fromEmail, inReplyToId, referenceIds = [] }) {
         try {
-            // First try to match by thread references (In-Reply-To or References header)
-            if (references) {
-                // Try to match against message_id directly
+            const lookupIds = Array.from(new Set(
+                [inReplyToId, ...referenceIds].filter(Boolean)
+            ));
+
+            for (const id of lookupIds) {
+                const trimmedId = id.trim();
+                if (!trimmedId) {
+                    continue;
+                }
+
                 const messageMatch = await db.query(
                     'SELECT case_id FROM messages WHERE message_id = $1 LIMIT 1',
-                    [references]
+                    [trimmedId]
                 );
                 if (messageMatch.rows.length > 0) {
-                    console.log(`Matched inbound email by message_id: ${references}`);
+                    console.log(`Matched inbound email by message reference: ${trimmedId}`);
                     return await db.getCaseById(messageMatch.rows[0].case_id);
                 }
 
-                // Try to match against email_threads.thread_id
                 const threadMatch = await db.query(
-                    'SELECT case_id FROM email_threads WHERE thread_id = $1 LIMIT 1',
-                    [references]
+                    'SELECT case_id FROM email_threads WHERE thread_id = $1 OR initial_message_id = $1 LIMIT 1',
+                    [trimmedId]
                 );
                 if (threadMatch.rows.length > 0) {
-                    console.log(`Matched inbound email by thread_id: ${references}`);
+                    console.log(`Matched inbound email by thread reference: ${trimmedId}`);
                     return await db.getCaseById(threadMatch.rows[0].case_id);
                 }
             }
 
             // Try to match by agency email (fallback)
             console.log(`No thread match found, trying to match by agency email: ${fromEmail}`);
+            const activeStatuses = [
+                'sent',
+                'awaiting_response',
+                'needs_rebuttal',
+                'pending_fee_decision',
+                'needs_human_review',
+                'responded'
+            ];
+
             const cases = await db.query(
-                'SELECT * FROM cases WHERE agency_email = $1 AND status IN ($2, $3) ORDER BY created_at DESC LIMIT 1',
-                [fromEmail, 'sent', 'awaiting_response']
+                `
+                SELECT *
+                FROM cases
+                WHERE LOWER(agency_email) = LOWER($1)
+                  AND status = ANY($2)
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                `,
+                [fromEmail, activeStatuses]
             );
 
             if (cases.rows.length > 0) {
                 console.log(`Matched inbound email by agency email: ${fromEmail}`);
+                return cases.rows[0];
             }
 
-            return cases.rows[0] || null;
+            // Final fallback: any status for that agency email
+            const fallback = await db.query(
+                `
+                SELECT *
+                FROM cases
+                WHERE LOWER(agency_email) = LOWER($1)
+                ORDER BY updated_at DESC, created_at DESC
+                LIMIT 1
+                `,
+                [fromEmail]
+            );
+
+            if (fallback.rows.length > 0) {
+                console.log(`Fallback match on agency email regardless of status: ${fromEmail}`);
+                return fallback.rows[0];
+            }
+
+            console.warn(`No matching case found for inbound email from ${fromEmail} to ${toEmail}`);
+            return null;
         } catch (error) {
             console.error('Error finding case for inbound email:', error);
             return null;
