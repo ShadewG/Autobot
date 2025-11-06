@@ -4,6 +4,7 @@ const sendgridService = require('../services/sendgrid-service');
 const aiService = require('../services/ai-service');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
+const foiaCaseAgent = require('../services/foia-case-agent');
 
 // Redis connection
 if (!process.env.REDIS_URL) {
@@ -180,6 +181,53 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
             console.log(`✅ Updated Notion with summary`);
         }
 
+        // ===== HYBRID AGENT APPROACH =====
+        // Use agent for complex cases, deterministic flow for simple ones
+        const useAgent = process.env.ENABLE_AGENT === 'true';
+
+        // Determine if this is a complex case that should use the agent
+        const isComplexCase = (
+            analysis.intent === 'denial' ||
+            analysis.intent === 'request_info' ||
+            (analysis.intent === 'fee_notice' && analysis.extracted_fee_amount > 100) ||
+            (caseData.previous_attempts && caseData.previous_attempts >= 2) ||
+            analysis.sentiment === 'hostile'
+        );
+
+        console.log(`\n🤖 Agent Status:`);
+        console.log(`   Agent enabled: ${useAgent}`);
+        console.log(`   Complex case: ${isComplexCase}`);
+        console.log(`   Reason: ${analysis.intent}${analysis.extracted_fee_amount ? ` ($${analysis.extracted_fee_amount})` : ''}`);
+
+        // If agent is enabled AND this is a complex case, let the agent handle it
+        if (useAgent && isComplexCase) {
+            console.log(`\n🚀 Delegating to FOIA Agent for complex case handling...`);
+
+            try {
+                const agentResult = await foiaCaseAgent.handleCase(caseId, {
+                    type: 'inbound_email',
+                    messageId: messageId
+                });
+
+                console.log(`✅ Agent handling complete`);
+                console.log(`   Iterations: ${agentResult.iterations}`);
+
+                // Mark case as handled by agent
+                await db.query(
+                    'UPDATE cases SET agent_handled = true WHERE id = $1',
+                    [caseId]
+                );
+
+                return agentResult;
+            } catch (agentError) {
+                console.error(`❌ Agent failed, falling back to deterministic flow:`, agentError.message);
+                // Continue with deterministic flow below as fallback
+            }
+        } else if (useAgent && !isComplexCase) {
+            console.log(`ℹ️  Simple case (${analysis.intent}), using deterministic flow`);
+        }
+
+        // ===== DETERMINISTIC FLOW (Original Logic) =====
         // Check if we should auto-reply (enabled by default)
         const autoReplyEnabled = process.env.ENABLE_AUTO_REPLY !== 'false';
         console.log(`⚙️ Auto-reply enabled: ${autoReplyEnabled}`);
