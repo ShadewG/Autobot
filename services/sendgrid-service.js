@@ -102,6 +102,7 @@ class SendGridService {
                     email: this.fromEmail,
                     name: this.fromName
                 },
+                replyTo: 'requests@foia.foib-request.com',
                 subject: `Re: ${subject}`,
                 text: followUpText,
                 html: this.formatEmailHtml(followUpText),
@@ -170,6 +171,7 @@ class SendGridService {
                     email: this.fromEmail,
                     name: this.fromName
                 },
+                replyTo: 'requests@foia.foib-request.com',
                 subject: replySubject,
                 text: replyText,
                 html: this.formatEmailHtml(replyText),
