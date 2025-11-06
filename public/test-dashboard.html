@@ -3,338 +3,812 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autobot Test Dashboard</title>
+    <title>FOIA Agent Test Dashboard</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
+
         .container {
-            max-width: 800px;
+            max-width: 1400px;
             margin: 0 auto;
         }
+
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .header h1 {
+            color: #1a202c;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+
+        .header .subtitle {
+            color: #718096;
+            font-size: 16px;
+        }
+
+        .status-bar {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .status-item {
+            flex: 1;
+            min-width: 200px;
+            padding: 15px;
+            border-radius: 8px;
+            background: #f7fafc;
+        }
+
+        .status-item.active {
+            background: #c6f6d5;
+        }
+
+        .status-item.inactive {
+            background: #fed7d7;
+        }
+
+        .status-label {
+            font-size: 12px;
+            color: #718096;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #1a202c;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
         .card {
             background: white;
-            border-radius: 16px;
-            padding: 32px;
-            margin-bottom: 24px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        h1 {
-            color: #2d3748;
-            margin-bottom: 8px;
-            font-size: 32px;
+
+        .card h2 {
+            color: #1a202c;
+            font-size: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
-        .subtitle {
-            color: #718096;
-            margin-bottom: 32px;
+
+        .card h2::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: #667eea;
+            border-radius: 2px;
         }
-        .input-group {
-            margin-bottom: 24px;
+
+        .button-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
         }
-        label {
-            display: block;
-            color: #4a5568;
-            font-weight: 600;
-            margin-bottom: 8px;
+
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
             font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
-        input[type="text"], input[type="email"] {
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-success {
+            background: #48bb78;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #f56565;
+            color: white;
+        }
+
+        .btn-warning {
+            background: #ed8936;
+            color: white;
+        }
+
+        .btn-info {
+            background: #4299e1;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #718096;
+            color: white;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .output-box {
+            background: #1a202c;
+            color: #e2e8f0;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-top: 15px;
+        }
+
+        .output-box:empty::before {
+            content: 'No output yet...';
+            color: #718096;
+        }
+
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 8px;
+            border-left: 3px solid #667eea;
+            background: #2d3748;
+            border-radius: 4px;
+        }
+
+        .log-entry.success {
+            border-left-color: #48bb78;
+        }
+
+        .log-entry.error {
+            border-left-color: #f56565;
+        }
+
+        .log-entry.warning {
+            border-left-color: #ed8936;
+        }
+
+        .timestamp {
+            color: #a0aec0;
+            font-size: 10px;
+            margin-right: 8px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+
+        .badge.success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+
+        .badge.danger {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+
+        .badge.warning {
+            background: #feebc8;
+            color: #7c2d12;
+        }
+
+        .badge.info {
+            background: #bee3f8;
+            color: #2c5282;
+        }
+
+        .test-case-selector {
+            margin-bottom: 15px;
+        }
+
+        .test-case-selector select {
             width: 100%;
-            padding: 12px 16px;
+            padding: 10px;
             border: 2px solid #e2e8f0;
             border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.2s;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
         }
-        input:focus {
+
+        .test-case-selector select:focus {
             outline: none;
             border-color: #667eea;
         }
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 14px 32px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            width: 100%;
-        }
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
-        }
-        .btn:active {
-            transform: translateY(0);
-        }
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        .result {
-            margin-top: 24px;
-            padding: 16px;
-            border-radius: 8px;
-            display: none;
-        }
-        .result.success {
-            background: #f0fdf4;
-            border: 2px solid #86efac;
-            color: #166534;
-        }
-        .result.error {
-            background: #fef2f2;
-            border: 2px solid #fca5a5;
-            color: #991b1b;
-        }
-        .result.info {
-            background: #eff6ff;
-            border: 2px solid #93c5fd;
-            color: #1e40af;
-        }
-        .result h3 {
-            margin-bottom: 8px;
-            font-size: 18px;
-        }
-        .result pre {
-            background: rgba(0,0,0,0.05);
-            padding: 12px;
-            border-radius: 4px;
-            overflow-x: auto;
-            font-size: 13px;
-            margin-top: 8px;
-        }
-        .loader {
-            border: 3px solid #f3f4f6;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            width: 24px;
-            height: 24px;
-            animation: spin 1s linear infinite;
+
+        .loading {
             display: inline-block;
-            margin-left: 12px;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
         }
+
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            to { transform: rotate(360deg); }
         }
-        .status-monitor {
-            margin-top: 24px;
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
         }
-        .status-item {
+
+        .table th {
+            background: #f7fafc;
             padding: 12px;
-            background: #f9fafb;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .badge {
-            padding: 4px 12px;
-            border-radius: 12px;
+            text-align: left;
             font-size: 12px;
+            color: #718096;
             font-weight: 600;
+            border-bottom: 2px solid #e2e8f0;
         }
-        .badge.pending {
-            background: #fef3c7;
-            color: #92400e;
+
+        .table td {
+            padding: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 14px;
+            color: #2d3748;
         }
-        .badge.success {
-            background: #d1fae5;
-            color: #065f46;
+
+        .table tr:hover {
+            background: #f7fafc;
         }
-        .badge.processing {
-            background: #dbeafe;
-            color: #1e40af;
+
+        .full-width {
+            grid-column: 1 / -1;
         }
-        .help-text {
-            font-size: 13px;
-            color: #6b7280;
-            margin-top: 6px;
+
+        .emoji {
+            font-size: 16px;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="card">
-            <h1>🤖 Autobot Test Dashboard</h1>
-            <p class="subtitle">Test FOIA request processing with instant auto-reply</p>
+        <!-- Header -->
+        <div class="header">
+            <h1>🤖 FOIA Agent Test Dashboard</h1>
+            <p class="subtitle">Test the autonomous agent with real scenarios - no commands needed!</p>
+        </div>
 
-            <div class="input-group">
-                <label for="notionLink">Notion Page URL or ID</label>
-                <input
-                    type="text"
-                    id="notionLink"
-                    placeholder="https://notion.so/... or just the page ID"
-                >
-                <p class="help-text">Paste a Notion page URL or just the page ID (e.g., 21187c20-070a-8182-a559-fd39408096c5)</p>
+        <!-- Status Bar -->
+        <div class="status-bar">
+            <div class="status-item" id="agent-status">
+                <div class="status-label">Agent Status</div>
+                <div class="status-value">Checking...</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Cases Created</div>
+                <div class="status-value" id="cases-count">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Agent Decisions</div>
+                <div class="status-value" id="decisions-count">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Escalations</div>
+                <div class="status-value" id="escalations-count">0</div>
+            </div>
+        </div>
+
+        <!-- Grid Layout -->
+        <div class="grid">
+            <!-- Test Scenarios -->
+            <div class="card">
+                <h2>📧 Send Test Emails</h2>
+                <div class="button-group">
+                    <button class="btn-primary" onclick="sendTestEmail()">
+                        <span class="emoji">📤</span> Send Test Email
+                    </button>
+                    <p style="color: #718096; font-size: 12px; margin-top: 10px;">
+                        Creates a new test case and sends email to overlord1pvp@gmail.com
+                    </p>
+                </div>
             </div>
 
-            <div class="input-group">
-                <label for="testEmail">Test Email (Optional)</label>
-                <input
-                    type="email"
-                    id="testEmail"
-                    placeholder="overlord1pvp@gmail.com"
-                    value="overlord1pvp@gmail.com"
-                >
-                <p class="help-text">Override the agency email for testing. Leave blank to use the email from Notion.</p>
+            <!-- Simulate Replies -->
+            <div class="card">
+                <h2>💬 Simulate Agency Replies</h2>
+                <div class="test-case-selector">
+                    <select id="case-selector">
+                        <option value="">Select a case first...</option>
+                    </select>
+                </div>
+                <div class="button-group">
+                    <button class="btn-danger" onclick="simulateReply('denial')">
+                        <span class="emoji">❌</span> Send Denial
+                    </button>
+                    <button class="btn-warning" onclick="simulateReply('fee')">
+                        <span class="emoji">💰</span> Send High Fee ($500)
+                    </button>
+                    <button class="btn-info" onclick="simulateReply('clarification')">
+                        <span class="emoji">❓</span> Request Clarification
+                    </button>
+                    <button class="btn-success" onclick="simulateReply('approval')">
+                        <span class="emoji">✅</span> Send Approval
+                    </button>
+                </div>
             </div>
 
-            <button class="btn" id="startTest" onclick="startTest()">
-                Start Instant Test
-            </button>
+            <!-- Monitor Agent -->
+            <div class="card">
+                <h2>🔍 Monitor & Control</h2>
+                <div class="button-group">
+                    <button class="btn-info" onclick="refreshStats()">
+                        <span class="emoji">🔄</span> Refresh Stats
+                    </button>
+                    <button class="btn-info" onclick="viewAgentDecisions()">
+                        <span class="emoji">📊</span> View Agent Decisions
+                    </button>
+                    <button class="btn-info" onclick="viewEscalations()">
+                        <span class="emoji">🚨</span> View Escalations
+                    </button>
+                    <button class="btn-secondary" onclick="viewAllCases()">
+                        <span class="emoji">📁</span> View All Cases
+                    </button>
+                </div>
+            </div>
 
-            <div id="result" class="result"></div>
+            <!-- Database Controls -->
+            <div class="card">
+                <h2>🗄️ Database Controls</h2>
+                <div class="button-group">
+                    <button class="btn-warning" onclick="runMigration()">
+                        <span class="emoji">⚙️</span> Run Migration
+                    </button>
+                    <button class="btn-danger" onclick="clearDatabase()">
+                        <span class="emoji">🗑️</span> Clear All Cases
+                    </button>
+                    <p style="color: #718096; font-size: 12px; margin-top: 10px;">
+                        ⚠️ Clear database will delete ALL cases and data!
+                    </p>
+                </div>
+            </div>
 
-            <div id="statusMonitor" class="status-monitor" style="display: none;"></div>
+            <!-- Output Log -->
+            <div class="card full-width">
+                <h2>📝 Activity Log</h2>
+                <div id="output" class="output-box"></div>
+            </div>
+
+            <!-- Agent Decisions Table -->
+            <div class="card full-width">
+                <h2>🤖 Recent Agent Decisions</h2>
+                <div id="decisions-table" style="overflow-x: auto;">
+                    <p style="color: #718096;">Click "View Agent Decisions" to load...</p>
+                </div>
+            </div>
+
+            <!-- Escalations Table -->
+            <div class="card full-width">
+                <h2>🚨 Pending Escalations</h2>
+                <div id="escalations-table" style="overflow-x: auto;">
+                    <p style="color: #718096;">Click "View Escalations" to load...</p>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
-        let monitorInterval;
-        let currentCaseId;
+        let currentCaseId = null;
 
-        async function startTest() {
-            const notionLink = document.getElementById('notionLink').value.trim();
-            const testEmail = document.getElementById('testEmail').value.trim();
-            const resultDiv = document.getElementById('result');
-            const btn = document.getElementById('startTest');
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            log('Dashboard loaded', 'success');
+            refreshStats();
+            loadCaseSelector();
+        });
 
-            if (!notionLink) {
-                showResult('error', 'Error', 'Please enter a Notion page URL or ID');
+        // Logging
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<span class="timestamp">${timestamp}</span>${message}`;
+            output.appendChild(entry);
+            output.scrollTop = output.scrollHeight;
+        }
+
+        function clearLog() {
+            document.getElementById('output').innerHTML = '';
+        }
+
+        // API Calls
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            try {
+                const options = {
+                    method,
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (body) options.body = JSON.stringify(body);
+
+                const response = await fetch(`/api${endpoint}`, options);
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                log(`❌ API Error: ${error.message}`, 'error');
+                throw error;
+            }
+        }
+
+        // Refresh Stats
+        async function refreshStats() {
+            log('🔄 Refreshing statistics...');
+
+            try {
+                // Check agent status
+                const envData = await apiCall('/env');
+                const agentEnabled = envData.ENABLE_AGENT === 'true';
+
+                const statusDiv = document.getElementById('agent-status');
+                statusDiv.className = `status-item ${agentEnabled ? 'active' : 'inactive'}`;
+                statusDiv.querySelector('.status-value').textContent = agentEnabled ? 'ENABLED ✅' : 'DISABLED ⚠️';
+
+                // Get stats
+                const stats = await apiCall('/stats');
+                document.getElementById('cases-count').textContent = stats.total_cases || 0;
+                document.getElementById('decisions-count').textContent = stats.agent_decisions || 0;
+                document.getElementById('escalations-count').textContent = stats.escalations || 0;
+
+                log('✅ Stats refreshed', 'success');
+            } catch (error) {
+                log(`❌ Failed to refresh stats: ${error.message}`, 'error');
+            }
+        }
+
+        // Load Case Selector
+        async function loadCaseSelector() {
+            try {
+                const cases = await apiCall('/cases');
+                const selector = document.getElementById('case-selector');
+
+                selector.innerHTML = '<option value="">Select a case...</option>';
+
+                if (cases.cases && cases.cases.length > 0) {
+                    cases.cases.forEach(c => {
+                        const option = document.createElement('option');
+                        option.value = c.id;
+                        option.textContent = `Case ${c.id}: ${c.case_name} (${c.status})`;
+                        selector.appendChild(option);
+                    });
+
+                    // Auto-select most recent
+                    selector.value = cases.cases[0].id;
+                    currentCaseId = cases.cases[0].id;
+                }
+            } catch (error) {
+                log(`Failed to load cases: ${error.message}`, 'error');
+            }
+        }
+
+        // Update current case when selector changes
+        document.addEventListener('DOMContentLoaded', () => {
+            const selector = document.getElementById('case-selector');
+            if (selector) {
+                selector.addEventListener('change', (e) => {
+                    currentCaseId = e.target.value;
+                    log(`📌 Selected case ${currentCaseId}`);
+                });
+            }
+        });
+
+        // Send Test Email
+        async function sendTestEmail() {
+            const btn = event.target.closest('button');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Sending...';
+
+            log('📤 Sending test email...');
+
+            try {
+                const result = await apiCall('/test/send-and-reply', 'POST');
+
+                if (result.success) {
+                    currentCaseId = result.case_id;
+                    log(`✅ Test email sent! Case ID: ${result.case_id}`, 'success');
+                    log(`📧 Email sent to: ${result.sent_to}`, 'info');
+                    log(`📋 Message ID: ${result.message_id}`, 'info');
+
+                    await loadCaseSelector();
+                    await refreshStats();
+                } else {
+                    log(`❌ Failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span class="emoji">📤</span> Send Test Email';
+            }
+        }
+
+        // Simulate Reply
+        async function simulateReply(type) {
+            const caseId = document.getElementById('case-selector').value;
+
+            if (!caseId) {
+                log('⚠️ Please select a case first!', 'warning');
                 return;
             }
 
-            // Extract page ID from URL if needed
-            let pageId = notionLink;
-            if (notionLink.includes('notion.so/')) {
-                const match = notionLink.match(/([a-f0-9]{32}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
-                if (match) {
-                    pageId = match[0];
-                } else {
-                    showResult('error', 'Error', 'Could not extract page ID from URL');
-                    return;
-                }
-            }
-
-            // Disable button and show loading
+            const btn = event.target.closest('button');
             btn.disabled = true;
-            btn.innerHTML = 'Processing... <div class="loader"></div>';
-            resultDiv.style.display = 'none';
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<span class="loading"></span> Processing...';
+
+            const replyTexts = {
+                denial: "Your request is denied. The records you requested are exempt from disclosure under 5 U.S.C. § 552(b)(7)(A) as they are part of an ongoing law enforcement investigation.",
+                fee: "Your request has been received. The estimated cost for processing and copying the requested records is $500. Please confirm if you wish to proceed with payment.",
+                clarification: "We need more specific information to process your request. Please clarify: 1) What is the exact date range? 2) What specific incident are you referring to? 3) Are you requesting body camera footage or just reports?",
+                approval: "Your request has been approved. The requested records will be provided to you within 10 business days. Thank you for your patience."
+            };
+
+            log(`💬 Simulating ${type} reply for case ${caseId}...`);
 
             try {
-                const response = await fetch('/api/test/process-notion', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        notion_page_id: pageId,
-                        test_email: testEmail || null,
-                        instant_mode: true
-                    })
+                const result = await apiCall('/test/simulate-reply', 'POST', {
+                    case_id: parseInt(caseId),
+                    reply_text: replyTexts[type],
+                    reply_type: type
                 });
 
-                const data = await response.json();
+                if (result.success) {
+                    log(`✅ ${type} reply sent!`, 'success');
+                    log(`📊 Analysis: ${result.analysis?.intent || 'pending'}`, 'info');
 
-                if (data.success) {
-                    currentCaseId = data.case_id;
-                    showResult('success', '✅ Test Started!',
-                        `Case ID: ${data.case_id}\n` +
-                        `Email will be sent to: ${data.email}\n\n` +
-                        `Reply to the email and watch for instant auto-reply!`
-                    );
-                    startMonitoring(data.case_id);
+                    if (result.agent_handled) {
+                        log(`🤖 Agent is handling this case...`, 'info');
+                        log(`🔄 Agent took ${result.agent_iterations || 0} iterations`, 'info');
+                    } else {
+                        log(`📋 Using deterministic flow (agent disabled or simple case)`, 'info');
+                    }
+
+                    await refreshStats();
+
+                    // Auto-refresh decisions after 2 seconds
+                    setTimeout(viewAgentDecisions, 2000);
                 } else {
-                    showResult('error', 'Error', data.error || 'Unknown error occurred');
+                    log(`❌ Failed: ${result.error}`, 'error');
                 }
             } catch (error) {
-                showResult('error', 'Error', `Network error: ${error.message}`);
+                log(`❌ Error: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = 'Start Instant Test';
+                btn.innerHTML = originalHTML;
             }
         }
 
-        function showResult(type, title, message) {
-            const resultDiv = document.getElementById('result');
-            resultDiv.className = `result ${type}`;
-            resultDiv.innerHTML = `
-                <h3>${title}</h3>
-                <pre>${message}</pre>
-            `;
-            resultDiv.style.display = 'block';
-        }
+        // View Agent Decisions
+        async function viewAgentDecisions() {
+            log('📊 Loading agent decisions...');
 
-        async function startMonitoring(caseId) {
-            const monitorDiv = document.getElementById('statusMonitor');
-            monitorDiv.style.display = 'block';
-
-            // Clear existing interval
-            if (monitorInterval) {
-                clearInterval(monitorInterval);
-            }
-
-            // Initial check
-            await checkStatus(caseId);
-
-            // Check every 3 seconds
-            monitorInterval = setInterval(() => checkStatus(caseId), 3000);
-        }
-
-        async function checkStatus(caseId) {
             try {
-                const response = await fetch(`/api/test/status/${caseId}`);
-                const data = await response.json();
+                const result = await apiCall('/agent/decisions');
+                const container = document.getElementById('decisions-table');
 
-                if (!data.success) return;
+                if (!result.decisions || result.decisions.length === 0) {
+                    container.innerHTML = '<p style="color: #718096;">No agent decisions yet. Send a test and simulate a reply!</p>';
+                    return;
+                }
 
-                const { summary } = data;
-                const monitorDiv = document.getElementById('statusMonitor');
+                let html = '<table class="table"><thead><tr>';
+                html += '<th>Case ID</th><th>Case Name</th><th>Action</th><th>Reasoning</th><th>Confidence</th><th>Time</th>';
+                html += '</tr></thead><tbody>';
 
-                monitorDiv.innerHTML = `
-                    <h3 style="margin-bottom: 12px; color: #374151;">Live Status</h3>
-                    <div class="status-item">
-                        <span>📤 Emails Sent</span>
-                        <span class="badge ${summary.outbound > 0 ? 'success' : 'pending'}">${summary.outbound}</span>
-                    </div>
-                    <div class="status-item">
-                        <span>📥 Replies Received</span>
-                        <span class="badge ${summary.inbound > 0 ? 'success' : 'pending'}">${summary.inbound}</span>
-                    </div>
-                    <div class="status-item">
-                        <span>🤖 Auto-Replies Sent</span>
-                        <span class="badge ${summary.auto_replies > 0 ? 'success' : 'pending'}">${summary.auto_replies}</span>
-                    </div>
-                `;
+                result.decisions.forEach(d => {
+                    const confidenceClass = d.confidence >= 0.8 ? 'success' : d.confidence >= 0.5 ? 'warning' : 'danger';
+                    html += '<tr>';
+                    html += `<td>${d.case_id}</td>`;
+                    html += `<td>${d.case_name || 'Unknown'}</td>`;
+                    html += `<td>${d.action_taken}</td>`;
+                    html += `<td>${d.reasoning.substring(0, 100)}...</td>`;
+                    html += `<td><span class="badge ${confidenceClass}">${(d.confidence * 100).toFixed(0)}%</span></td>`;
+                    html += `<td>${new Date(d.created_at).toLocaleString()}</td>`;
+                    html += '</tr>';
+                });
 
-                // Stop monitoring if auto-reply was sent
-                if (summary.auto_replies > 0) {
-                    clearInterval(monitorInterval);
-                    showResult('success', '🎉 Complete!',
-                        `Test completed successfully!\n\n` +
-                        `Outbound: ${summary.outbound}\n` +
-                        `Inbound: ${summary.inbound}\n` +
-                        `Auto-replies: ${summary.auto_replies}\n\n` +
-                        `Check your email inbox for the auto-reply!`
-                    );
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+                log(`✅ Loaded ${result.decisions.length} agent decisions`, 'success');
+            } catch (error) {
+                log(`❌ Failed to load decisions: ${error.message}`, 'error');
+            }
+        }
+
+        // View Escalations
+        async function viewEscalations() {
+            log('🚨 Loading escalations...');
+
+            try {
+                const result = await apiCall('/agent/escalations');
+                const container = document.getElementById('escalations-table');
+
+                if (!result.escalations || result.escalations.length === 0) {
+                    container.innerHTML = '<p style="color: #718096;">No escalations yet. Try sending a high fee reply!</p>';
+                    return;
+                }
+
+                let html = '<table class="table"><thead><tr>';
+                html += '<th>Case ID</th><th>Case Name</th><th>Reason</th><th>Urgency</th><th>Suggested Action</th><th>Status</th><th>Created</th>';
+                html += '</tr></thead><tbody>';
+
+                result.escalations.forEach(e => {
+                    const urgencyClass = e.urgency === 'high' ? 'danger' : e.urgency === 'medium' ? 'warning' : 'info';
+                    html += '<tr>';
+                    html += `<td>${e.case_id}</td>`;
+                    html += `<td>${e.case_name || 'Unknown'}</td>`;
+                    html += `<td>${e.reason}</td>`;
+                    html += `<td><span class="badge ${urgencyClass}">${e.urgency.toUpperCase()}</span></td>`;
+                    html += `<td>${e.suggested_action || 'None'}</td>`;
+                    html += `<td>${e.status}</td>`;
+                    html += `<td>${new Date(e.created_at).toLocaleString()}</td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+                log(`✅ Loaded ${result.escalations.length} escalations`, 'success');
+            } catch (error) {
+                log(`❌ Failed to load escalations: ${error.message}`, 'error');
+            }
+        }
+
+        // View All Cases
+        async function viewAllCases() {
+            log('📁 Loading all cases...');
+
+            try {
+                const result = await apiCall('/cases');
+
+                if (!result.cases || result.cases.length === 0) {
+                    log('No cases found', 'warning');
+                    return;
+                }
+
+                log(`📊 Total cases: ${result.cases.length}`, 'info');
+                result.cases.forEach(c => {
+                    const agentHandled = c.agent_handled ? '🤖' : '📋';
+                    log(`${agentHandled} Case ${c.id}: ${c.case_name} - Status: ${c.status}`, 'info');
+                });
+            } catch (error) {
+                log(`❌ Failed to load cases: ${error.message}`, 'error');
+            }
+        }
+
+        // Run Migration
+        async function runMigration() {
+            if (!confirm('Run database migration? This will create agent_decisions and escalations tables.')) {
+                return;
+            }
+
+            const btn = event.target.closest('button');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Running...';
+
+            log('⚙️ Running database migration...');
+
+            try {
+                const result = await apiCall('/test/run-migration', 'POST');
+
+                if (result.success) {
+                    log('✅ Migration completed successfully!', 'success');
+                    result.tables?.forEach(t => log(`  ✓ Created table: ${t}`, 'success'));
+                    result.views?.forEach(v => log(`  ✓ Created view: ${v}`, 'success'));
+                } else {
+                    log(`❌ Migration failed: ${result.error}`, 'error');
                 }
             } catch (error) {
-                console.error('Error checking status:', error);
+                log(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span class="emoji">⚙️</span> Run Migration';
             }
         }
+
+        // Clear Database
+        async function clearDatabase() {
+            if (!confirm('⚠️ This will DELETE ALL cases, messages, and agent data. Are you sure?')) {
+                return;
+            }
+
+            if (!confirm('Really sure? This cannot be undone!')) {
+                return;
+            }
+
+            const btn = event.target.closest('button');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Clearing...';
+
+            log('🗑️ Clearing database...');
+
+            try {
+                const result = await apiCall('/test/clear-all-cases', 'POST', {
+                    confirm: 'DELETE_ALL_CASES'
+                });
+
+                if (result.success) {
+                    log('✅ Database cleared!', 'success');
+                    log(`📊 Deleted ${result.deleted.cases} cases, ${result.deleted.messages} messages`, 'info');
+
+                    await refreshStats();
+                    await loadCaseSelector();
+
+                    document.getElementById('decisions-table').innerHTML = '<p style="color: #718096;">No decisions yet...</p>';
+                    document.getElementById('escalations-table').innerHTML = '<p style="color: #718096;">No escalations yet...</p>';
+                } else {
+                    log(`❌ Failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span class="emoji">🗑️</span> Clear All Cases';
+            }
+        }
+
+        // Auto-refresh stats every 30 seconds
+        setInterval(refreshStats, 30000);
     </script>
 </body>
 </html>

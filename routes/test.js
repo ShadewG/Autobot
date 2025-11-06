@@ -532,4 +532,288 @@ router.post('/portal-agent', async (req, res) => {
     }
 });
 
+/**
+ * Get environment variables (for dashboard)
+ * GET /api/test/env
+ */
+router.get('/env', async (req, res) => {
+    try {
+        res.json({
+            ENABLE_AGENT: process.env.ENABLE_AGENT || 'false',
+            ENABLE_NOTIFICATIONS: process.env.ENABLE_NOTIFICATIONS || 'false',
+            ENABLE_AUTO_REPLY: process.env.ENABLE_AUTO_REPLY !== 'false'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Get statistics (for dashboard)
+ * GET /api/test/stats
+ */
+router.get('/stats', async (req, res) => {
+    try {
+        const casesResult = await db.query('SELECT COUNT(*) as count FROM cases');
+        const decisionsResult = await db.query('SELECT COUNT(*) as count FROM agent_decisions');
+        const escalationsResult = await db.query('SELECT COUNT(*) as count FROM escalations WHERE status = $1', ['pending']);
+
+        res.json({
+            success: true,
+            total_cases: parseInt(casesResult.rows[0].count),
+            agent_decisions: parseInt(decisionsResult.rows[0].count),
+            escalations: parseInt(escalationsResult.rows[0].count)
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Get all cases (for dashboard)
+ * GET /api/test/cases
+ */
+router.get('/cases', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT id, case_name, agency_name, status, agent_handled, created_at
+            FROM cases
+            ORDER BY created_at DESC
+            LIMIT 50
+        `);
+
+        res.json({
+            success: true,
+            cases: result.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Simulate agency reply (for dashboard testing)
+ * POST /api/test/simulate-reply
+ */
+router.post('/simulate-reply', async (req, res) => {
+    try {
+        const { case_id, reply_text, reply_type } = req.body;
+
+        if (!case_id || !reply_text) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id and reply_text are required'
+            });
+        }
+
+        console.log(`📬 Simulating ${reply_type} reply for case ${case_id}`);
+
+        // Get case data
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Case not found'
+            });
+        }
+
+        // Get thread
+        const thread = await db.getThreadByCaseId(case_id);
+        if (!thread) {
+            return res.status(404).json({
+                success: false,
+                error: 'Email thread not found'
+            });
+        }
+
+        // Create fake message ID
+        const { v4: uuidv4 } = require('uuid');
+        const messageId = `<sim-${Date.now()}-${uuidv4()}@test.com>`;
+
+        // Store inbound message
+        const message = await db.createMessage({
+            thread_id: thread.id,
+            case_id: case_id,
+            message_id: messageId,
+            sendgrid_message_id: `sg-test-${Date.now()}`,
+            direction: 'inbound',
+            from_email: caseData.agency_email || 'test-agency@example.com',
+            to_email: 'requests@foia.foib-request.com',
+            subject: `Re: ${caseData.case_name}`,
+            body_text: reply_text,
+            body_html: `<p>${reply_text}</p>`,
+            message_type: 'agency_response',
+            received_at: new Date()
+        });
+
+        console.log(`✅ Simulated message stored: ${message.id}`);
+
+        // Analyze response
+        const aiService = require('../services/ai-service');
+        const analysis = await aiService.analyzeResponse(message, caseData);
+
+        console.log(`📊 Analysis complete: ${analysis.intent}`);
+
+        // Check if agent would handle this
+        const useAgent = process.env.ENABLE_AGENT === 'true';
+        const isComplexCase = (
+            analysis.intent === 'denial' ||
+            analysis.intent === 'request_info' ||
+            (analysis.intent === 'fee_notice' && analysis.extracted_fee_amount > 100) ||
+            analysis.sentiment === 'hostile'
+        );
+
+        let agentResult = null;
+        if (useAgent && isComplexCase) {
+            console.log(`🤖 Triggering agent for complex case...`);
+            const foiaCaseAgent = require('../services/foia-case-agent');
+            agentResult = await foiaCaseAgent.handleCase(case_id, {
+                type: 'agency_reply',
+                messageId: message.id
+            });
+
+            // Mark as agent-handled
+            await db.query('UPDATE cases SET agent_handled = true WHERE id = $1', [case_id]);
+        }
+
+        res.json({
+            success: true,
+            message_id: message.id,
+            analysis: {
+                intent: analysis.intent,
+                sentiment: analysis.sentiment,
+                requires_action: analysis.requires_action
+            },
+            agent_handled: useAgent && isComplexCase,
+            agent_iterations: agentResult?.iterations || 0
+        });
+    } catch (error) {
+        console.error('Error simulating reply:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Get agent decisions (for dashboard)
+ * GET /api/test/agent/decisions
+ */
+router.get('/agent/decisions', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                ad.id,
+                ad.case_id,
+                c.case_name,
+                ad.reasoning,
+                ad.action_taken,
+                ad.confidence,
+                ad.created_at
+            FROM agent_decisions ad
+            LEFT JOIN cases c ON ad.case_id = c.id
+            ORDER BY ad.created_at DESC
+            LIMIT 20
+        `);
+
+        res.json({
+            success: true,
+            decisions: result.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Get escalations (for dashboard)
+ * GET /api/test/agent/escalations
+ */
+router.get('/agent/escalations', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                e.id,
+                e.case_id,
+                c.case_name,
+                e.reason,
+                e.urgency,
+                e.suggested_action,
+                e.status,
+                e.created_at
+            FROM escalations e
+            LEFT JOIN cases c ON e.case_id = c.id
+            WHERE e.status = 'pending'
+            ORDER BY
+                CASE e.urgency
+                    WHEN 'high' THEN 1
+                    WHEN 'medium' THEN 2
+                    WHEN 'low' THEN 3
+                END,
+                e.created_at DESC
+            LIMIT 20
+        `);
+
+        res.json({
+            success: true,
+            escalations: result.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Run database migration (for dashboard)
+ * POST /api/test/run-migration
+ */
+router.post('/run-migration', async (req, res) => {
+    try {
+        const fs = require('fs');
+        const path = require('path');
+
+        console.log('🔄 Running agent tables migration...');
+
+        // Read migration file
+        const migrationPath = path.join(__dirname, '..', 'migrations', 'add-agent-tables.sql');
+        const sql = fs.readFileSync(migrationPath, 'utf8');
+
+        // Execute migration
+        await db.query(sql);
+
+        console.log('✅ Migration completed');
+
+        // Verify tables exist
+        const tables = await db.query(`
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+            AND table_name IN ('agent_decisions', 'escalations')
+            ORDER BY table_name
+        `);
+
+        const views = await db.query(`
+            SELECT table_name
+            FROM information_schema.views
+            WHERE table_schema = 'public'
+            AND table_name IN ('pending_escalations', 'agent_performance')
+            ORDER BY table_name
+        `);
+
+        res.json({
+            success: true,
+            message: 'Migration completed successfully',
+            tables: tables.rows.map(r => r.table_name),
+            views: views.rows.map(r => r.table_name)
+        });
+    } catch (error) {
+        console.error('Migration error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
