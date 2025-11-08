@@ -389,6 +389,8 @@ Then analyze the situation and decide what action to take.`
                 if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
                     console.log(`   🛠️  Agent calling ${assistantMessage.tool_calls.length} tool(s)`);
 
+                    const respondedToolIds = new Set();
+
                     for (const toolCall of assistantMessage.tool_calls) {
                         const functionName = toolCall.function.name;
                         let functionArgs;
@@ -404,6 +406,7 @@ Then analyze the situation and decide what action to take.`
                                     error: `Could not parse arguments for ${functionName}: ${parseError.message}`
                                 })
                             });
+                            respondedToolIds.add(toolCall.id);
                             continue;
                         }
 
@@ -435,6 +438,23 @@ Then analyze the situation and decide what action to take.`
                             tool_call_id: toolCall.id,
                             content: JSON.stringify(result)
                         });
+                        respondedToolIds.add(toolCall.id);
+                    }
+
+                    const missingResponses = assistantMessage.tool_calls
+                        .filter(call => !respondedToolIds.has(call.id));
+
+                    if (missingResponses.length > 0) {
+                        console.warn(`   ⚠️  Missing tool responses detected, adding fallback errors for: ${missingResponses.map(c => c.function?.name || c.id).join(', ')}`);
+                        for (const missingCall of missingResponses) {
+                            messages.push({
+                                role: 'tool',
+                                tool_call_id: missingCall.id,
+                                content: JSON.stringify({
+                                    error: `Tool execution skipped due to internal error. Please retry ${missingCall.function?.name || 'the tool'}.`
+                                })
+                            });
+                        }
                     }
 
                     // Guard rail: Warn if too many expensive drafts
@@ -574,7 +594,13 @@ Then analyze the situation and decide what action to take.`
 
         // Get scheduled follow-ups
         const followUps = await db.query(
-            'SELECT * FROM follow_up_schedule WHERE case_id = $1 AND sent_at IS NULL ORDER BY send_at ASC',
+            `
+            SELECT *
+            FROM follow_up_schedule
+            WHERE case_id = $1
+              AND status = 'scheduled'
+            ORDER BY next_followup_date ASC
+            `,
             [caseId]
         );
 
