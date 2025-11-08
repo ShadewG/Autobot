@@ -701,21 +701,32 @@ Then analyze the situation and decide what action to take.`
     }
 
     async sendEmail({ case_id, subject, body_html, body_text, delay_hours = 3, message_type }) {
-        let delay = typeof delay_hours === 'number' ? delay_hours : 3;
-        if (delay < 2) {
-            console.warn(`      ⚠️  delay_hours ${delay} below minimum, clamping to 2`);
-            delay = 2;
-        } else if (delay > 10) {
-            console.warn(`      ⚠️  delay_hours ${delay} above maximum, clamping to 10`);
-            delay = 10;
-        }
-
-        console.log(`      📧 Scheduling email for case ${case_id} (${delay}h delay)`);
-
         const caseData = await db.getCaseById(case_id);
         if (!caseData) {
             return { error: 'Case not found' };
         }
+
+        const isTestCase =
+            (caseData.notion_page_id && caseData.notion_page_id.startsWith('test-')) ||
+            (caseData.case_name && caseData.case_name.toLowerCase().includes('test')) ||
+            (subject && subject.includes('[TEST]'));
+
+        let delay = typeof delay_hours === 'number' ? delay_hours : 3;
+
+        if (isTestCase) {
+            console.log(`      ⚡ Test case detected for case ${case_id}, sending immediately`);
+            delay = 0;
+        } else {
+            if (delay < 2) {
+                console.warn(`      ⚠️  delay_hours ${delay} below minimum, clamping to 2`);
+                delay = 2;
+            } else if (delay > 10) {
+                console.warn(`      ⚠️  delay_hours ${delay} above maximum, clamping to 10`);
+                delay = 10;
+            }
+        }
+
+        console.log(`      📧 Scheduling email for case ${case_id} (${delay}h delay)`);
 
         // Queue email with delay
         const sendAt = new Date(Date.now() + delay * 60 * 60 * 1000);
@@ -742,21 +753,27 @@ Then analyze the situation and decide what action to take.`
     async scheduleFollowup({ case_id, days_from_now, reason = 'No response' }) {
         console.log(`      📅 Scheduling follow-up for case ${case_id} in ${days_from_now} days`);
 
-        const sendAt = new Date(Date.now() + days_from_now * 24 * 60 * 60 * 1000);
+        const nextDate = new Date(Date.now() + days_from_now * 24 * 60 * 60 * 1000);
+        const thread = await db.getThreadByCaseId(case_id);
 
-        await db.query(`
-            INSERT INTO follow_up_schedule (case_id, send_at, reason)
-            VALUES ($1, $2, $3)
-        `, [case_id, sendAt, reason]);
+        await db.createFollowUpSchedule({
+            case_id: case_id,
+            thread_id: thread ? thread.id : null,
+            next_followup_date: nextDate,
+            followup_count: 0,
+            auto_send: true,
+            status: 'scheduled'
+        });
 
         await db.logActivity('followup_scheduled', `Follow-up scheduled for ${days_from_now} days`, {
             case_id: case_id,
-            send_at: sendAt.toISOString()
+            next_followup_date: nextDate.toISOString(),
+            reason: reason
         });
 
         return {
             success: true,
-            scheduled_for: sendAt.toISOString(),
+            scheduled_for: nextDate.toISOString(),
             days_from_now: days_from_now
         };
     }
