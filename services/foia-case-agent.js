@@ -731,13 +731,40 @@ Then analyze the situation and decide what action to take.`
         // Queue email with delay
         const sendAt = new Date(Date.now() + delay * 60 * 60 * 1000);
 
+        const latestInbound = await db.query(
+            `
+            SELECT message_id
+            FROM messages
+            WHERE case_id = $1 AND direction = 'inbound'
+            ORDER BY created_at DESC
+            LIMIT 1
+            `,
+            [case_id]
+        );
+
+        let originalMessageId = latestInbound.rows[0]?.message_id || null;
+        if (!originalMessageId) {
+            const threadFallback = await db.getThreadByCaseId(case_id);
+            originalMessageId = threadFallback?.initial_message_id || null;
+        }
+
+        if (!originalMessageId) {
+            console.warn(`      ⚠️  No inbound message found to reply to for case ${case_id}`);
+        }
+
         const queue = getEmailQueue();
+        const jobType = (message_type === 'follow_up' || message_type === 'followup')
+            ? 'follow_up'
+            : 'auto_reply';
+
         await queue.add('send-email', {
+            type: jobType,
             caseId: case_id,
+            toEmail: caseData.agency_email,
             subject: subject,
-            bodyHtml: body_html,
-            bodyText: body_text,
-            messageType: message_type
+            content: body_text,
+            originalMessageId: originalMessageId,
+            instantReply: isTestCase
         }, {
             delay: delay * 60 * 60 * 1000 // Convert to milliseconds
         });
