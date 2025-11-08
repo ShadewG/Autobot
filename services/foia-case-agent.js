@@ -2,7 +2,13 @@ const { OpenAI } = require('openai');
 const db = require('./database');
 const aiService = require('./ai-service');
 const notificationService = require('./notification-service');
-const { emailQueue } = require('../queues/email-queue');
+let emailQueueInstance = null;
+function getEmailQueue() {
+    if (!emailQueueInstance) {
+        ({ emailQueue: emailQueueInstance } = require('../queues/email-queue'));
+    }
+    return emailQueueInstance;
+}
 
 /**
  * FOIA Case Manager Agent
@@ -714,7 +720,8 @@ Then analyze the situation and decide what action to take.`
         // Queue email with delay
         const sendAt = new Date(Date.now() + delay * 60 * 60 * 1000);
 
-        await emailQueue.add('send-email', {
+        const queue = getEmailQueue();
+        await queue.add('send-email', {
             caseId: case_id,
             subject: subject,
             bodyHtml: body_html,
