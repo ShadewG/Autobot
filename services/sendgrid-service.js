@@ -7,8 +7,8 @@ class SendGridService {
         if (process.env.SENDGRID_API_KEY) {
             sgMail.setApiKey(process.env.SENDGRID_API_KEY);
         }
-        // Always use the email address we control for both From and Reply-To
-        this.fromEmail = 'requests@foia.foib-request.com';
+        // Use the authenticated SendGrid domain (em7571.foib-request.com)
+        this.fromEmail = 'requests@em7571.foib-request.com';
         this.fromName = 'FOIA Request Team';
     }
 
