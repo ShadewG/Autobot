@@ -733,7 +733,7 @@ Then analyze the situation and decide what action to take.`
 
         const latestInbound = await db.query(
             `
-            SELECT message_id
+            SELECT message_id, from_email
             FROM messages
             WHERE case_id = $1 AND direction = 'inbound'
             ORDER BY created_at DESC
@@ -743,6 +743,7 @@ Then analyze the situation and decide what action to take.`
         );
 
         let originalMessageId = latestInbound.rows[0]?.message_id || null;
+        const inboundFromEmail = latestInbound.rows[0]?.from_email || null;
         if (!originalMessageId) {
             const threadFallback = await db.getThreadByCaseId(case_id);
             originalMessageId = threadFallback?.initial_message_id || null;
@@ -752,6 +753,8 @@ Then analyze the situation and decide what action to take.`
             console.warn(`      ⚠️  No inbound message found to reply to for case ${case_id}`);
         }
 
+        const recipientEmail = inboundFromEmail || caseData.agency_email;
+
         const queue = getEmailQueue();
         const jobType = (message_type === 'follow_up' || message_type === 'followup')
             ? 'follow_up'
@@ -760,7 +763,7 @@ Then analyze the situation and decide what action to take.`
         await queue.add('send-email', {
             type: jobType,
             caseId: case_id,
-            toEmail: caseData.agency_email,
+            toEmail: recipientEmail,
             subject: subject,
             content: body_text,
             originalMessageId: originalMessageId,
