@@ -6,6 +6,13 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
 
+const FORCE_INSTANT_EMAILS = (() => {
+    if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
+    if (process.env.FORCE_INSTANT_EMAILS === 'false') return false;
+    if (process.env.TESTING_MODE === 'true') return true;
+    return true;
+})();
+
 // Redis connection
 if (!process.env.REDIS_URL) {
     console.error('❌ REDIS_URL environment variable is not set!');
@@ -44,6 +51,11 @@ const generateQueue = new Queue('generate-queue', { connection });
  * Set AUTO_REPLY_DELAY_MINUTES env var to override (use 0 for immediate testing)
  */
 function getHumanLikeDelay() {
+    if (FORCE_INSTANT_EMAILS) {
+        console.log('FORCE_INSTANT_EMAILS enabled, skipping human-like delay');
+        return 0;
+    }
+
     // Check for testing override
     if (process.env.AUTO_REPLY_DELAY_MINUTES !== undefined) {
         const minutes = parseInt(process.env.AUTO_REPLY_DELAY_MINUTES);
@@ -246,7 +258,8 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                                   job.data.instantReply === true;
 
                 // Add natural delay (2-10 hours) to seem human, or instant for test mode
-                const naturalDelay = isTestMode ? 0 : getHumanLikeDelay();
+                const instantAutoReply = FORCE_INSTANT_EMAILS || isTestMode;
+                const naturalDelay = instantAutoReply ? 0 : getHumanLikeDelay();
 
                 await emailQueue.add('send-auto-reply', {
                     type: 'auto_reply',
@@ -259,7 +272,9 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                     delay: naturalDelay
                 });
 
-                const delayMsg = isTestMode ? 'instantly (TEST MODE)' : `in ${Math.round(naturalDelay / 1000 / 60)} minutes`;
+                const delayMsg = naturalDelay === 0
+                    ? (isTestMode ? 'instantly (TEST MODE)' : 'instantly (FORCE_INSTANT_EMAILS)')
+                    : `in ${Math.round(naturalDelay / 1000 / 60)} minutes`;
                 console.log(`✅ Auto-reply queued for case ${caseId} (will send ${delayMsg})`);
             } else if (autoReply.requires_approval) {
                 // Store in approval queue

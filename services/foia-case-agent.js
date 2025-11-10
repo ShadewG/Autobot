@@ -2,6 +2,13 @@ const { OpenAI } = require('openai');
 const db = require('./database');
 const aiService = require('./ai-service');
 const notificationService = require('./notification-service');
+
+const FORCE_INSTANT_EMAILS = (() => {
+    if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
+    if (process.env.FORCE_INSTANT_EMAILS === 'false') return false;
+    if (process.env.TESTING_MODE === 'true') return true;
+    return true; // default: no delays during active testing period
+})();
 let emailQueueInstance = null;
 function getEmailQueue() {
     if (!emailQueueInstance) {
@@ -711,10 +718,15 @@ Then analyze the situation and decide what action to take.`
             (caseData.case_name && caseData.case_name.toLowerCase().includes('test')) ||
             (subject && subject.includes('[TEST]'));
 
+        const forceInstant = FORCE_INSTANT_EMAILS || isTestCase;
         let delay = typeof delay_hours === 'number' ? delay_hours : 3;
 
-        if (isTestCase) {
-            console.log(`      ⚡ Test case detected for case ${case_id}, sending immediately`);
+        if (forceInstant) {
+            if (!isTestCase) {
+                console.log(`      ⚡ FORCE_INSTANT_EMAILS enabled, overriding delay for case ${case_id}`);
+            } else {
+                console.log(`      ⚡ Test case detected for case ${case_id}, sending immediately`);
+            }
             delay = 0;
         } else {
             if (delay < 2) {
@@ -726,7 +738,11 @@ Then analyze the situation and decide what action to take.`
             }
         }
 
-        console.log(`      📧 Scheduling email for case ${case_id} (${delay}h delay)`);
+        if (delay === 0) {
+            console.log(`      📧 Scheduling email for case ${case_id} (sending immediately)`);
+        } else {
+            console.log(`      📧 Scheduling email for case ${case_id} (${delay}h delay)`);
+        }
 
         // Queue email with delay
         const sendAt = new Date(Date.now() + delay * 60 * 60 * 1000);
@@ -767,7 +783,7 @@ Then analyze the situation and decide what action to take.`
             subject: subject,
             content: body_text,
             originalMessageId: originalMessageId,
-            instantReply: isTestCase
+            instantReply: forceInstant
         }, {
             delay: delay * 60 * 60 * 1000 // Convert to milliseconds
         });

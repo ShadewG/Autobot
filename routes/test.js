@@ -575,16 +575,163 @@ router.get('/stats', async (req, res) => {
  */
 router.get('/cases', async (req, res) => {
     try {
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const search = req.query.search ? `%${req.query.search.trim()}%` : null;
+        const statusFilter = req.query.status && req.query.status !== 'all'
+            ? req.query.status.trim()
+            : null;
+
+        const conditions = [];
+        const values = [];
+        let paramIndex = 1;
+
+        if (search) {
+            conditions.push(`(
+                c.case_name ILIKE $${paramIndex} OR
+                c.agency_name ILIKE $${paramIndex} OR
+                c.agency_email ILIKE $${paramIndex}
+            )`);
+            values.push(search);
+            paramIndex++;
+        }
+
+        if (statusFilter) {
+            conditions.push(`c.status = $${paramIndex}`);
+            values.push(statusFilter);
+            paramIndex++;
+        }
+
+        const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+        values.push(limit);
+
         const result = await db.query(`
-            SELECT id, case_name, agency_name, status, agent_handled, created_at
+            SELECT
+                c.id,
+                c.case_name,
+                c.agency_name,
+                c.agency_email,
+                c.status,
+                c.substatus,
+                c.agent_handled,
+                c.created_at,
+                c.updated_at,
+                COALESCE(last_msg.message_timestamp, c.updated_at, c.created_at) AS last_activity_at,
+                COALESCE(stats.total_messages, 0) AS total_messages,
+                stats.last_inbound_at,
+                stats.last_outbound_at,
+                last_msg.direction AS last_message_direction,
+                last_msg.subject AS last_message_subject,
+                last_msg.preview_text AS last_message_preview,
+                last_msg.message_timestamp AS last_message_at,
+                followup.next_followup_date,
+                followup.status AS followup_status
+            FROM cases c
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) AS total_messages,
+                    MAX(CASE WHEN direction = 'inbound' THEN COALESCE(received_at, created_at) END) AS last_inbound_at,
+                    MAX(CASE WHEN direction = 'outbound' THEN COALESCE(sent_at, created_at) END) AS last_outbound_at
+                FROM messages m
+                WHERE m.case_id = c.id
+            ) stats ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    m.id,
+                    m.direction,
+                    m.subject,
+                    LEFT(
+                        COALESCE(
+                            NULLIF(TRIM(m.body_text), ''),
+                            REGEXP_REPLACE(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g')
+                        ),
+                        280
+                    ) AS preview_text,
+                    COALESCE(m.sent_at, m.received_at, m.created_at) AS message_timestamp
+                FROM messages m
+                WHERE m.case_id = c.id
+                ORDER BY message_timestamp DESC
+                LIMIT 1
+            ) last_msg ON true
+            LEFT JOIN LATERAL (
+                SELECT next_followup_date, status
+                FROM follow_up_schedule f
+                WHERE f.case_id = c.id
+                ORDER BY next_followup_date ASC
+                LIMIT 1
+            ) followup ON true
+            ${whereClause}
+            ORDER BY COALESCE(last_msg.message_timestamp, c.updated_at, c.created_at) DESC
+            LIMIT $${paramIndex}
+        `, values);
+
+        res.json({ success: true, cases: result.rows });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Get full message history for a case (dashboard)
+ * GET /api/test/cases/:caseId/messages
+ */
+router.get('/cases/:caseId/messages', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId, 10);
+        if (Number.isNaN(caseId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid case ID'
+            });
+        }
+
+        const caseResult = await db.query(`
+            SELECT id, case_name, agency_name, agency_email, status, substatus, agent_handled, created_at, updated_at
             FROM cases
-            ORDER BY created_at DESC
-            LIMIT 50
-        `);
+            WHERE id = $1
+        `, [caseId]);
+
+        if (caseResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Case not found'
+            });
+        }
+
+        const messagesResult = await db.query(`
+            SELECT
+                id,
+                direction,
+                from_email,
+                to_email,
+                subject,
+                body_text,
+                body_html,
+                message_type,
+                sendgrid_message_id,
+                COALESCE(sent_at, received_at, created_at) AS message_timestamp
+            FROM messages
+            WHERE case_id = $1
+            ORDER BY message_timestamp ASC
+        `, [caseId]);
+
+        const stats = await db.query(`
+            SELECT
+                COUNT(*) AS total_messages,
+                MAX(CASE WHEN direction = 'inbound' THEN COALESCE(received_at, created_at) END) AS last_inbound_at,
+                MAX(CASE WHEN direction = 'outbound' THEN COALESCE(sent_at, created_at) END) AS last_outbound_at
+            FROM messages
+            WHERE case_id = $1
+        `, [caseId]);
 
         res.json({
             success: true,
-            cases: result.rows
+            case: caseResult.rows[0],
+            messages: messagesResult.rows,
+            stats: {
+                total_messages: parseInt(stats.rows[0].total_messages || 0, 10),
+                last_inbound_at: stats.rows[0].last_inbound_at,
+                last_outbound_at: stats.rows[0].last_outbound_at
+            }
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

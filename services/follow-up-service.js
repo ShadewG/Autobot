@@ -4,6 +4,13 @@ const aiService = require('./ai-service');
 const { emailQueue } = require('../queues/email-queue');
 const notionService = require('./notion-service');
 
+const FORCE_INSTANT_EMAILS = (() => {
+    if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
+    if (process.env.FORCE_INSTANT_EMAILS === 'false') return false;
+    if (process.env.TESTING_MODE === 'true') return true;
+    return true;
+})();
+
 class FollowUpService {
     constructor() {
         this.maxFollowups = parseInt(process.env.MAX_FOLLOWUPS) || 2;
@@ -215,8 +222,8 @@ class FollowUpService {
      * Get random delay for follow-up (2-10 minutes)
      */
     getRandomDelay() {
-        // No delay in testing mode
-        if (process.env.TESTING_MODE === 'true' || process.env.NODE_ENV === 'development') {
+        // No delay when explicitly forced (testing) or in dev
+        if (FORCE_INSTANT_EMAILS || process.env.NODE_ENV === 'development') {
             return 0;
         }
 
