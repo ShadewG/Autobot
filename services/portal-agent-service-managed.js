@@ -17,7 +17,7 @@ class PortalAgentServiceManaged {
      * Submit to portal using Hyperbrowser's managed Claude agent
      */
     async submitToPortal(caseData, portalUrl, options = {}) {
-        const { maxSteps = 25, dryRun = false, llm = 'claude-haiku-4-5-20251001' } = options;
+        const { maxSteps = 100, dryRun = false, llm = 'claude-haiku-4-5-20251001' } = options;
 
         try {
             console.log(`🤖 Starting Hyperbrowser managed agent for case: ${caseData.case_name}`);

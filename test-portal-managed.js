@@ -40,7 +40,7 @@ async function testPortalAgent() {
 
     try {
         const result = await portalAgentService.submitToPortal(testCase, portalUrl, {
-            maxSteps: 25,      // Max steps allowed by Hyperbrowser plan
+            maxSteps: 100,     // Increased from 25 to allow completion
             dryRun: true,      // Don't actually submit (just fill form)
             llm: 'claude-haiku-4-5-20251001'  // Fast and cheap
             // llm: 'claude-sonnet-4-5'  // Use this if Haiku struggles
