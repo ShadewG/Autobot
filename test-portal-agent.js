@@ -4,29 +4,34 @@ const portalAgentService = require('./services/portal-agent-service');
 /**
  * Test the autonomous portal agent
  *
+ * Usage: node test-portal-agent.js "https://portal-url-here.com/form"
+ *
  * This will open a browser window (visible) and you can watch the AI agent
  * autonomously navigate and fill out the FOIA portal.
  */
 async function testPortalAgent() {
     console.log('🚀 Testing Portal Agent with Anthropic Computer Use\n');
 
+    // Get portal URL from command line or use default
+    const portalUrl = process.argv[2] || 'https://example.com/foia-request-form';
+
     // Sample case data
     const testCase = {
         id: 999,
-        case_name: 'Test Case - Portal Agent Demo',
-        subject_name: 'John Doe',
-        agency_name: 'San Francisco Police Department',
-        state: 'CA',
+        case_name: 'Michael Allen Pritchard - Florida Man Murder Case',
+        subject_name: 'Michael Allen Pritchard',
+        agency_name: 'Collier County Sheriff\'s Office',
+        state: 'FL',
         incident_date: '2024-01-15',
-        incident_location: '123 Main St, San Francisco, CA',
-        requested_records: 'Body-worn camera footage, dashcam footage, incident reports, 911 calls',
-        additional_details: 'Request relates to incident at 123 Main St on January 15, 2024'
+        incident_location: 'Collier County, FL',
+        requested_records: 'Body-worn camera footage, dashcam footage, incident reports, 911 calls, arrest reports, booking photos',
+        additional_details: 'Request relates to the Michael Allen Pritchard murder case. Requesting all records related to the investigation, arrest, and prosecution of Michael Allen Pritchard for the murder of his roommate, including but not limited to: police reports, witness statements, forensic evidence, body camera footage, dashcam footage, 911 calls, and any other relevant documentation.'
     };
 
-    // Example portal URL (replace with real portal)
-    const portalUrl = 'https://example.com/foia-request-form';
-    // OR use a test form:
-    // const portalUrl = 'https://formspree.io/f/YOUR_FORM_ID'; // Create free test form
+    if (!process.argv[2]) {
+        console.log('⚠️  No portal URL provided, using example URL');
+        console.log('   Usage: node test-portal-agent.js "https://portal-url-here.com/form"\n');
+    }
 
     console.log('Case:', testCase.case_name);
     console.log('Portal:', portalUrl);
