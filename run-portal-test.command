@@ -32,6 +32,13 @@ if [ ! -d "node_modules" ]; then
     echo ""
 fi
 
+# Install Playwright browsers if needed
+if ! npx playwright --version &> /dev/null || [ ! -d "$HOME/.cache/ms-playwright" ]; then
+    echo "🌐 Installing Playwright browsers (one-time setup)..."
+    npx playwright install chromium
+    echo ""
+fi
+
 # Load environment variables from .env file if it exists
 if [ -f ".env" ]; then
     echo "📄 Loading environment variables from .env file..."

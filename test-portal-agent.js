@@ -114,6 +114,18 @@ async function testPortalAgent() {
     } catch (error) {
         console.error('\n💥 Test failed:', error.message);
         console.error(error.stack);
+
+        // Save error details to log
+        const fs = require('fs');
+        const logPath = './portal-agent-log.json';
+        const errorLog = {
+            success: false,
+            error: error.message,
+            stack: error.stack,
+            stepLog: []
+        };
+        fs.writeFileSync(logPath, JSON.stringify(errorLog, null, 2));
+        console.log(`\n📝 Error log saved: ${logPath}`);
     } finally {
         await portalAgentService.closeBrowser();
         console.log('\n🏁 Test complete!');
