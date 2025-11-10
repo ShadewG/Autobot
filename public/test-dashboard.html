@@ -490,6 +490,50 @@
             color: #1a202c;
             white-space: pre-wrap;
         }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        .form-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-field label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #4a5568;
+        }
+
+        .form-field input {
+            padding: 10px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+
+        .form-field input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .inline-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #4a5568;
+        }
+
+        .inline-checkbox input {
+            width: auto;
+        }
     </style>
 </head>
 <body>
@@ -594,6 +638,36 @@
                 </div>
             </div>
 
+            <!-- Notion Launch -->
+            <div class="card full-width">
+                <h2>🗂️ Launch Outreach From Notion</h2>
+                <div class="form-grid">
+                    <div class="form-field" style="grid-column: span 2;">
+                        <label for="notion-link-input">Notion Page Link or ID</label>
+                        <input id="notion-link-input" type="text" placeholder="https://www.notion.so/... or 6f5c2d90c0b24b3e9f6a..." />
+                    </div>
+                    <div class="form-field">
+                        <label for="notion-email-input">Override Agency Email (optional)</label>
+                        <input id="notion-email-input" type="email" placeholder="agency@example.gov" />
+                    </div>
+                    <div class="form-field">
+                        <label>Send Mode</label>
+                        <div class="inline-checkbox">
+                            <input id="notion-instant-checkbox" type="checkbox" checked />
+                            <span>Instant mode (no delay)</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button class="btn-success" onclick="processNotionCase(event)">
+                        <span class="emoji">🚀</span> Launch Outreach
+                    </button>
+                    <p style="color: #718096; font-size: 12px;">
+                        Paste any Notion request card link/ID to queue drafting + sending automatically. Finished case will appear in the Live Case Monitor below.
+                    </p>
+                </div>
+            </div>
+
             <!-- Live Case Monitor -->
             <div class="card full-width">
                 <h2>📡 Live Case Monitor</h2>
@@ -661,6 +735,7 @@
             refreshStats();
             loadCaseSelector();
             setupCaseMonitorControls();
+            setupNotionFormControls();
             loadCaseMonitor();
             scheduleCaseMonitorRefresh();
 
@@ -712,6 +787,20 @@
             }
         }
 
+        function setupNotionFormControls() {
+            const notionInput = document.getElementById('notion-link-input');
+            const emailInput = document.getElementById('notion-email-input');
+
+            [notionInput, emailInput].forEach((input) => {
+                if (!input) return;
+                input.addEventListener('keyup', (event) => {
+                    if (event.key === 'Enter') {
+                        processNotionCase(event);
+                    }
+                });
+            });
+        }
+
         function scheduleCaseMonitorRefresh() {
             if (caseMonitorTimer) {
                 clearInterval(caseMonitorTimer);
@@ -741,6 +830,40 @@
             const date = new Date(value);
             if (Number.isNaN(date.getTime())) return '—';
             return date.toLocaleString();
+        }
+
+        function extractNotionPageId(input) {
+            if (!input) return null;
+            const trimmed = input.trim();
+            if (!trimmed) return null;
+
+            const hyphenated = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+            if (hyphenated) {
+                return hyphenated[0].replace(/-/g, '').toLowerCase();
+            }
+
+            const plain = trimmed.match(/[0-9a-f]{32}/i);
+            if (plain) {
+                return plain[0].toLowerCase();
+            }
+
+            const queryIndex = trimmed.indexOf('?');
+            if (queryIndex !== -1) {
+                try {
+                    const search = new URLSearchParams(trimmed.substring(queryIndex + 1));
+                    const paramId = search.get('p') || search.get('pageId');
+                    if (paramId) {
+                        const cleaned = paramId.replace(/-/g, '');
+                        if (/^[0-9a-f]{32}$/i.test(cleaned)) {
+                            return cleaned.toLowerCase();
+                        }
+                    }
+                } catch {
+                    // ignore malformed query params
+                }
+            }
+
+            return null;
         }
 
         function escapeHtml(str = '') {
@@ -773,6 +896,59 @@
             const dir = direction === 'inbound' ? 'inbound' : direction === 'outbound' ? 'outbound' : 'neutral';
             const label = direction.charAt(0).toUpperCase() + direction.slice(1);
             return `<span class="message-direction ${dir}">${label}</span>`;
+        }
+
+        async function processNotionCase(clickEvent) {
+            const notionInput = document.getElementById('notion-link-input');
+            const emailInput = document.getElementById('notion-email-input');
+            const instantCheckbox = document.getElementById('notion-instant-checkbox');
+
+            if (!notionInput || !notionInput.value.trim()) {
+                log('❌ Please paste a Notion link or ID first.', 'error');
+                return;
+            }
+
+            const pageId = extractNotionPageId(notionInput.value);
+            if (!pageId) {
+                log('❌ Could not parse a Notion page ID from that input.', 'error');
+                return;
+            }
+
+            const payload = {
+                notion_page_id: pageId,
+                instant_mode: instantCheckbox ? instantCheckbox.checked : true
+            };
+
+            if (emailInput && emailInput.value.trim()) {
+                payload.test_email = emailInput.value.trim();
+            }
+
+            const btn = clickEvent?.target?.closest('button');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading"></span> Launching...';
+            }
+
+            log(`🚀 Launching outreach for Notion page ${pageId}...`);
+
+            try {
+                const result = await apiCall('/test/process-notion', 'POST', payload);
+                if (result.success) {
+                    log(`✅ Case ${result.case_id} queued (instant mode: ${result.instant_mode})`, 'success');
+                    await refreshStats();
+                    await loadCaseSelector();
+                    await loadCaseMonitor({ manual: true });
+                } else {
+                    log(`❌ Failed to queue case: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error launching outreach: ${error.message}`, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="emoji">🚀</span> Launch Outreach';
+                }
+            }
         }
 
         async function loadCaseMonitor(options = {}) {
