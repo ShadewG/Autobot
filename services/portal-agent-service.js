@@ -85,9 +85,9 @@ class PortalAgentService {
                 const pageState = await agentKit.getPageState();
 
                 // Call Claude with vision to decide next action
-                // Using Claude 3 Opus (fallback from 3.5 Sonnet if API key lacks access)
+                // Using Claude 3 Haiku (only model available with this API key)
                 const response = await this.anthropic.messages.create({
-                    model: 'claude-3-opus-20240229',
+                    model: 'claude-3-haiku-20240307',
                     max_tokens: 4096,
                     messages: [
                         ...conversationHistory,
