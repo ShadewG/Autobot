@@ -6,7 +6,10 @@ ALTER TABLE cases
     ADD COLUMN IF NOT EXISTS last_portal_status_at TIMESTAMP,
     ADD COLUMN IF NOT EXISTS last_portal_engine VARCHAR(50),
     ADD COLUMN IF NOT EXISTS last_portal_run_id VARCHAR(255),
-    ADD COLUMN IF NOT EXISTS last_portal_details TEXT;
+    ADD COLUMN IF NOT EXISTS last_portal_details TEXT,
+    ADD COLUMN IF NOT EXISTS last_fee_quote_amount DECIMAL(10,2),
+    ADD COLUMN IF NOT EXISTS last_fee_quote_currency VARCHAR(10),
+    ADD COLUMN IF NOT EXISTS last_fee_quote_at TIMESTAMP;
 
 -- Add portal notification columns to messages
 ALTER TABLE messages

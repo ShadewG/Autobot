@@ -1,5 +1,6 @@
 const sgMail = require('@sendgrid/mail');
 const db = require('./database');
+const notionService = require('./notion-service');
 const crypto = require('crypto');
 
 const PORTAL_PROVIDERS = [
@@ -462,6 +463,15 @@ class SendGridService {
                 });
             }
 
+            const feeQuote = this.detectFeeQuote({
+                subject: inboundData.subject || '',
+                text: inboundData.text || inboundData.body_text || inboundData.html || ''
+            });
+
+            if (feeQuote) {
+                caseData = await this.handleFeeQuote(caseData, feeQuote, message.id);
+            }
+
             // Log activity
             await db.logActivity('email_received', `Received response for case: ${caseData.case_name}`, {
                 case_id: caseData.id,
@@ -594,6 +604,83 @@ class SendGridService {
         return null;
     }
 
+    detectFeeQuote({ subject = '', text = '' }) {
+        const haystack = `${subject}\n${text}`.toLowerCase();
+        if (!/fee|cost|estimate|invoice|payment|charge/.test(haystack)) {
+            return null;
+        }
+
+        const currencyRegex = /(?:usd|us\$|\$)\s?([\d,]+(?:\.\d{1,2})?)/gi;
+        let match;
+        let highest = 0;
+
+        while ((match = currencyRegex.exec(subject + ' ' + text)) !== null) {
+            const amount = parseFloat(match[1].replace(/,/g, ''));
+            if (!isNaN(amount) && amount > highest) {
+                highest = amount;
+            }
+        }
+
+        if (highest <= 0) {
+            return null;
+        }
+
+        return {
+            amount: highest,
+            currency: 'USD'
+        };
+    }
+
+    async handleFeeQuote(caseData, feeQuote, messageId) {
+        const amount = feeQuote.amount;
+        let action = 'review';
+
+        if (amount <= FEE_AUTO_APPROVE_MAX) {
+            action = 'auto_approve';
+        } else if (amount >= FEE_ESCALATE_MIN) {
+            action = 'escalate';
+        } else {
+            action = 'negotiate';
+        }
+
+        let newStatus = caseData.status || 'awaiting_response';
+        let substatus = caseData.substatus || '';
+        let note = '';
+
+        if (action === 'auto_approve') {
+            substatus = `Fee auto-approved ($${amount.toFixed(2)})`;
+            note = 'Fee within auto-approve threshold. Proceed with payment or request confirmation.';
+        } else if (action === 'negotiate') {
+            newStatus = 'fee_negotiation';
+            substatus = `Fee quoted: $${amount.toFixed(2)} (negotiate scope)`;
+            note = 'Fee above auto-approve threshold. Attempt to narrow scope or request breakdown.';
+        } else {
+            newStatus = 'needs_human_fee_approval';
+            substatus = `Fee quoted: $${amount.toFixed(2)} (awaiting approval)`;
+            note = 'Fee exceeds escalation threshold. Human decision required.';
+        }
+
+        const updatedCase = await db.updateCaseStatus(caseData.id, newStatus, {
+            substatus,
+            last_fee_quote_amount: amount,
+            last_fee_quote_currency: feeQuote.currency,
+            last_fee_quote_at: new Date()
+        });
+
+        await notionService.syncStatusToNotion(caseData.id);
+
+        await db.logActivity('fee_quote_detected', `Fee quote $${amount.toFixed(2)} (${action})`, {
+            case_id: caseData.id,
+            message_id: messageId,
+            fee_amount: amount,
+            fee_currency: feeQuote.currency,
+            action_recommended: action,
+            note
+        });
+
+        return updatedCase;
+    }
+
     /**
      * Log a sent message to database
      */
@@ -702,3 +789,5 @@ class SendGridService {
 }
 
 module.exports = new SendGridService();
+const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100');
+const FEE_ESCALATE_MIN = parseFloat(process.env.FEE_ESCALATE_MIN || '300');
