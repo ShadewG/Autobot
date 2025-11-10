@@ -129,6 +129,8 @@ Guidelines:
 
     async performClick(target) {
         if (!target) throw new Error('Click action missing target');
+
+        // Handle JSON payload for text-based clicking
         if (target.startsWith('{') || target.startsWith('[')) {
             const payload = JSON.parse(target);
             if (payload.text) {
@@ -136,7 +138,39 @@ Guidelines:
                 return;
             }
         }
-        await this.page.click(target, { timeout: 10000 });
+
+        // Try multiple strategies for robustness
+        try {
+            // Strategy 1: Direct click with scroll into view
+            await this.page.click(target, { timeout: 10000 });
+        } catch (firstError) {
+            console.log(`      ⚠️  Direct click failed, trying fallback strategies...`);
+
+            try {
+                // Strategy 2: Try as text locator (case-insensitive)
+                const textMatch = target.match(/.*text[=\(]["'](.+?)["']\)?/i);
+                if (textMatch) {
+                    const text = textMatch[1];
+                    console.log(`      🔄 Trying text-based click: "${text}"`);
+                    await this.page.getByText(text, { exact: false }).first().click({ timeout: 10000 });
+                    return;
+                }
+            } catch (secondError) {
+                // Ignore and try next strategy
+            }
+
+            try {
+                // Strategy 3: Try scrolling page down and retry
+                console.log(`      📜 Scrolling page down and retrying...`);
+                await this.page.mouse.wheel(0, 500);
+                await this.page.waitForTimeout(500);
+                await this.page.click(target, { timeout: 10000 });
+                return;
+            } catch (thirdError) {
+                // All strategies failed, throw original error
+                throw firstError;
+            }
+        }
     }
 
     async performType(target, value) {
