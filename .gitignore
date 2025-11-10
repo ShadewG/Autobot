@@ -40,3 +40,8 @@ temp/
 
 # Railway
 .railway/
+
+# Portal agent screenshots and logs
+portal-screenshots/
+portal-agent-result.png
+portal-agent-log.json

@@ -62,12 +62,54 @@ async function testPortalAgent() {
         }
 
         // Save screenshots
+        const fs = require('fs');
+        const path = require('path');
+
+        // Create screenshots directory
+        const screenshotsDir = './portal-screenshots';
+        if (!fs.existsSync(screenshotsDir)) {
+            fs.mkdirSync(screenshotsDir, { recursive: true });
+        }
+
+        // Save step-by-step screenshots
+        if (result.stepLog && result.stepLog.length > 0) {
+            console.log(`\n📸 Saving ${result.stepLog.length} step screenshots...`);
+            result.stepLog.forEach((step, index) => {
+                if (step.screenshot) {
+                    const filename = `step-${String(index + 1).padStart(2, '0')}-${step.action.type}.png`;
+                    const filepath = path.join(screenshotsDir, filename);
+                    fs.writeFileSync(filepath, Buffer.from(step.screenshot, 'base64'));
+                    console.log(`   ✅ Saved: ${filename}`);
+                }
+            });
+        }
+
+        // Save final screenshot
         if (result.finalScreenshot) {
-            const fs = require('fs');
             const screenshotPath = './portal-agent-result.png';
             fs.writeFileSync(screenshotPath, Buffer.from(result.finalScreenshot, 'base64'));
-            console.log(`\n📸 Screenshot saved: ${screenshotPath}`);
+            console.log(`\n📸 Final screenshot saved: ${screenshotPath}`);
         }
+
+        // Save detailed JSON log
+        const logPath = './portal-agent-log.json';
+        const logData = {
+            success: result.success,
+            caseId: result.caseId,
+            portalUrl: result.portalUrl,
+            stepsCompleted: result.stepsCompleted,
+            finalUrl: result.finalUrl,
+            dryRun: result.dryRun,
+            stepLog: result.stepLog.map(step => ({
+                step: step.step,
+                action: step.action,
+                result: step.result,
+                url: step.url
+                // Exclude screenshot from JSON (too large)
+            }))
+        };
+        fs.writeFileSync(logPath, JSON.stringify(logData, null, 2));
+        console.log(`📝 Detailed log saved: ${logPath}`);
 
     } catch (error) {
         console.error('\n💥 Test failed:', error.message);
