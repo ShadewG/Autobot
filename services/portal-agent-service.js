@@ -85,9 +85,9 @@ class PortalAgentService {
                 const pageState = await agentKit.getPageState();
 
                 // Call Claude with vision to decide next action
-                // Using Claude Sonnet 4.5 - most capable model for complex portal navigation
+                // Testing Claude Haiku 4.5 - faster and cheaper, let's see if it's capable enough!
                 const response = await this.anthropic.messages.create({
-                    model: 'claude-sonnet-4-5-20250929',
+                    model: 'claude-haiku-4-5-20251001',
                     max_tokens: 4096,
                     messages: [
                         ...conversationHistory,
