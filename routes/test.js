@@ -570,6 +570,32 @@ router.get('/stats', async (req, res) => {
 });
 
 /**
+ * Get recent portal runs (activity log)
+ * GET /api/test/portal-runs
+ */
+router.get('/portal-runs', async (req, res) => {
+    try {
+        const result = await db.query(
+            `
+            SELECT id, event_type, description, metadata, created_at
+            FROM activity_log
+            WHERE event_type IN ('portal_run_started', 'portal_run_completed', 'portal_run_failed')
+            ORDER BY created_at DESC
+            LIMIT 50
+            `
+        );
+
+        res.json({
+            success: true,
+            runs: result.rows
+        });
+    } catch (error) {
+        console.error('Error fetching portal runs:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * Get all cases (for dashboard)
  * GET /api/test/cases
  */

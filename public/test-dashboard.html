@@ -619,6 +619,9 @@
                     <button class="btn-secondary" onclick="viewAllCases()">
                         <span class="emoji">📁</span> View All Cases
                     </button>
+                    <button class="btn-secondary" onclick="viewPortalRuns()">
+                        <span class="emoji">🌐</span> Portal Runs
+                    </button>
                 </div>
             </div>
 
@@ -709,6 +712,14 @@
                 <h2>🚨 Pending Escalations</h2>
                 <div id="escalations-table" style="overflow-x: auto;">
                     <p style="color: #718096;">Click "View Escalations" to load...</p>
+                </div>
+            </div>
+
+            <!-- Portal Runs Table -->
+            <div class="card full-width">
+                <h2>🌐 Portal Automation Runs</h2>
+                <div id="portal-runs-table" style="overflow-x: auto;">
+                    <p style="color: #718096;">Click "Portal Runs" to load...</p>
                 </div>
             </div>
         </div>
@@ -1352,6 +1363,51 @@
         async function viewAllCases() {
             await loadCaseMonitor({ manual: true, announce: true });
             log('📁 Scroll to the Live Case Monitor table for full details.', 'info');
+        }
+
+        // View Portal Runs
+        async function viewPortalRuns() {
+            log('🌐 Loading portal automation runs...');
+
+            try {
+                const result = await apiCall('/test/portal-runs');
+                const container = document.getElementById('portal-runs-table');
+
+                if (!result.runs || result.runs.length === 0) {
+                    container.innerHTML = '<p style="color: #718096;">No portal runs yet. Trigger one from the CLI.</p>';
+                    return;
+                }
+
+                let html = '<table class="table"><thead><tr>';
+                html += '<th>Time</th><th>Status</th><th>Engine</th><th>Case</th><th>Portal</th><th>Details</th>';
+                html += '</tr></thead><tbody>';
+
+                result.runs.forEach(run => {
+                    const meta = run.metadata || {};
+                    const status = run.event_type.replace('portal_run_', '');
+                    const statusClass = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'info';
+                    const caseLabel = meta.case_id ? `Case ${meta.case_id}` : 'Test';
+                    const portalLabel = meta.portal_url || 'Unknown';
+                    const details = meta.error || meta.final_url || run.description || '';
+                    const engineLabel = meta.engine || '—';
+
+                    html += '<tr>';
+                    html += `<td>${new Date(run.created_at).toLocaleString()}</td>`;
+                    html += `<td><span class="badge ${statusClass}">${status.toUpperCase()}</span></td>`;
+                    html += `<td>${engineLabel}</td>`;
+                    html += `<td>${caseLabel}</td>`;
+                    html += `<td style="word-break: break-all;">${portalLabel}</td>`;
+                    html += `<td>${details}</td>`;
+                    html += '</tr>';
+                });
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+
+                log(`✅ Loaded ${result.runs.length} portal runs`, 'success');
+            } catch (error) {
+                log(`❌ Failed to load portal runs: ${error.message}`, 'error');
+            }
         }
 
         // Run Migration

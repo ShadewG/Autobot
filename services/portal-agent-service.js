@@ -1,6 +1,8 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { chromium } = require('playwright');
+const { v4: uuidv4 } = require('uuid');
 const PortalAgentKit = require('../agentkit/portal-agent-kit');
+const db = require('./database');
 
 /**
  * Portal Agent using Anthropic Computer Use
@@ -40,12 +42,26 @@ class PortalAgentService {
 
         let context, page;
         const stepLog = [];
+        const runId = uuidv4();
 
         try {
             console.log(`🤖 Starting autonomous portal submission for case: ${caseData.case_name}`);
             console.log(`   Portal: ${portalUrl}`);
             console.log(`   Max steps: ${maxSteps}`);
             console.log(`   Dry run: ${dryRun}`);
+
+            await db.logActivity(
+                'portal_run_started',
+                `Portal automation started for ${caseData.case_name}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    dry_run: dryRun,
+                    max_steps: maxSteps,
+                    run_id: runId,
+                    engine: 'playwright'
+                }
+            );
 
             const browser = await this.launchBrowser();
             context = await browser.newContext({
@@ -178,7 +194,7 @@ class PortalAgentService {
             // Final screenshot
             const finalScreenshot = await page.screenshot({ fullPage: true });
 
-            return {
+            const result = {
                 success: true,
                 caseId: caseData.id,
                 portalUrl: portalUrl,
@@ -186,8 +202,26 @@ class PortalAgentService {
                 stepLog: stepLog,
                 finalScreenshot: finalScreenshot.toString('base64'),
                 finalUrl: page.url(),
-                dryRun
+                dryRun,
+                runId
             };
+
+            await db.logActivity(
+                'portal_run_completed',
+                `Portal automation completed for ${caseData.case_name}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    dry_run: dryRun,
+                    max_steps: maxSteps,
+                    run_id: runId,
+                    steps_completed: currentStep,
+                    final_url: page.url(),
+                    engine: 'playwright'
+                }
+            );
+
+            return result;
 
         } catch (error) {
             console.error('❌ Portal agent failed:', error);
@@ -202,12 +236,30 @@ class PortalAgentService {
                 }
             }
 
-            return {
+            const result = {
                 success: false,
                 error: error.message,
                 stepLog: stepLog,
-                errorScreenshot
+                errorScreenshot,
+                runId
             };
+
+            await db.logActivity(
+                'portal_run_failed',
+                `Portal automation failed for ${caseData.case_name}: ${error.message}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    dry_run: dryRun,
+                    max_steps: maxSteps,
+                    run_id: runId,
+                    steps_completed: stepLog.length,
+                    error: error.message,
+                    engine: 'playwright'
+                }
+            );
+
+            return result;
         } finally {
             if (page) await page.close();
             if (context) await context.close();

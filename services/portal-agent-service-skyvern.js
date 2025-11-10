@@ -1,5 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
+const { v4: uuidv4 } = require('uuid');
 const database = require('./database');
 
 /**
@@ -43,12 +44,27 @@ class PortalAgentServiceSkyvern {
             throw new Error('SKYVERN_API_KEY not set! Get your key from https://app.skyvern.com');
         }
 
+        const runId = uuidv4();
+
         try {
             console.log(`🤖 Starting Skyvern agent for case: ${caseData.case_name}`);
             console.log(`   Portal: ${portalUrl}`);
             console.log(`   Max steps: ${maxSteps}`);
             console.log(`   Dry run: ${dryRun}`);
             console.log(`   API: ${this.baseUrl}`);
+
+            await database.logActivity(
+                'portal_run_started',
+                `Skyvern portal automation started for ${caseData.case_name}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    dry_run: dryRun,
+                    max_steps: maxSteps,
+                    run_id: runId,
+                    engine: 'skyvern'
+                }
+            );
 
             // Check if we have existing portal credentials
             console.log(`\n🔍 Checking for existing portal account...`);
@@ -182,7 +198,7 @@ class PortalAgentServiceSkyvern {
                     }
                 }
 
-                return {
+                const result = {
                     success: true,
                     caseId: caseData.id,
                     portalUrl: portalUrl,
@@ -193,25 +209,83 @@ class PortalAgentServiceSkyvern {
                     steps: finalTask.actions?.length || finalTask.steps || 0,
                     dryRun,
                     usedExistingAccount: !!existingAccount,
-                    savedNewAccount: !existingAccount && !!accountPassword
+                    savedNewAccount: !existingAccount && !!accountPassword,
+                    runId
                 };
+
+                await database.logActivity(
+                    'portal_run_completed',
+                    `Skyvern portal automation completed for ${caseData.case_name}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        dry_run: dryRun,
+                        max_steps: maxSteps,
+                        run_id: runId,
+                        engine: 'skyvern',
+                        task_id: taskId,
+                        recording_url: result.recording_url,
+                        steps_completed: result.steps
+                    }
+                );
+
+                return result;
             } else if (finalTask.status === 'failed') {
-                return {
+                const result = {
                     success: false,
                     error: finalTask.failure_reason || 'Task failed',
                     taskId: taskId,
                     recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
-                    steps: finalTask.actions?.length || finalTask.steps || 0
+                    steps: finalTask.actions?.length || finalTask.steps || 0,
+                    runId
                 };
+
+                await database.logActivity(
+                    'portal_run_failed',
+                    `Skyvern portal automation failed for ${caseData.case_name}: ${result.error}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        dry_run: dryRun,
+                        max_steps: maxSteps,
+                        run_id: runId,
+                        engine: 'skyvern',
+                        task_id: taskId,
+                        recording_url: result.recording_url,
+                        steps_completed: result.steps,
+                        error: result.error
+                    }
+                );
+
+                return result;
             } else {
                 // Task still running or other status
-                return {
+                const result = {
                     success: false,
                     error: `Task ended with status: ${finalTask.status}`,
                     taskId: taskId,
                     status: finalTask.status,
-                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`
+                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                    runId
                 };
+
+                await database.logActivity(
+                    'portal_run_failed',
+                    `Skyvern portal automation ended with status ${finalTask.status} for ${caseData.case_name}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        dry_run: dryRun,
+                        max_steps: maxSteps,
+                        run_id: runId,
+                        engine: 'skyvern',
+                        task_id: taskId,
+                        recording_url: result.recording_url,
+                        error: result.error
+                    }
+                );
+
+                return result;
             }
 
         } catch (error) {
@@ -225,10 +299,27 @@ class PortalAgentServiceSkyvern {
                 console.error(`   Details: ${JSON.stringify(error.response.data, null, 2)}`);
             }
 
-            return {
+            const result = {
                 success: false,
-                error: errorMessage
+                error: errorMessage,
+                runId
             };
+
+            await database.logActivity(
+                'portal_run_failed',
+                `Skyvern portal automation crashed for ${caseData.case_name}: ${errorMessage}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    dry_run: dryRun,
+                    max_steps: maxSteps,
+                    run_id: runId,
+                    engine: 'skyvern',
+                    error: errorMessage
+                }
+            );
+
+            return result;
         }
     }
 
