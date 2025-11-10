@@ -141,12 +141,19 @@ Guidelines:
 
         let explicitTarget = target;
 
-        if (target.startsWith('{') || target.startsWith('[')) {
-            const payload = JSON.parse(target);
-            if (payload.text) {
-                explicitTarget = null;
-                await this.page.getByText(payload.text, { exact: payload.exact || false }).first().click();
-                return;
+        // Try to parse as JSON only if it looks like valid JSON
+        // (not a CSS selector like [aria-label="..."])
+        if (target.startsWith('{') || (target.startsWith('[') && !target.includes('='))) {
+            try {
+                const payload = JSON.parse(target);
+                if (payload.text) {
+                    explicitTarget = null;
+                    await this.page.getByText(payload.text, { exact: payload.exact || false }).first().click();
+                    return;
+                }
+            } catch (jsonError) {
+                // Not valid JSON, treat as CSS selector
+                console.log(`      ℹ️  Not valid JSON, treating as CSS selector: ${target}`);
             }
         }
 
