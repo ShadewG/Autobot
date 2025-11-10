@@ -760,13 +760,30 @@ Then analyze the situation and decide what action to take.`
 
         let originalMessageId = latestInbound.rows[0]?.message_id || null;
         const inboundFromEmail = latestInbound.rows[0]?.from_email || null;
+
+        // If no inbound message, use thread's initial message or latest outbound message
         if (!originalMessageId) {
             const threadFallback = await db.getThreadByCaseId(case_id);
-            originalMessageId = threadFallback?.initial_message_id || null;
+            if (threadFallback?.initial_message_id) {
+                originalMessageId = threadFallback.initial_message_id;
+                console.log(`      📎 Using thread initial message ID for threading: ${originalMessageId}`);
+            } else {
+                // Try latest outbound message as last resort
+                const latestOutbound = await db.query(
+                    'SELECT message_id FROM messages WHERE case_id = $1 AND direction = \'outbound\' ORDER BY created_at DESC LIMIT 1',
+                    [case_id]
+                );
+                if (latestOutbound.rows[0]?.message_id) {
+                    originalMessageId = latestOutbound.rows[0].message_id;
+                    console.log(`      📎 Using latest outbound message ID for threading: ${originalMessageId}`);
+                }
+            }
         }
 
         if (!originalMessageId) {
-            console.warn(`      ⚠️  No inbound message found to reply to for case ${case_id}`);
+            console.warn(`      ⚠️  No message found for threading - reply will start new thread for case ${case_id}`);
+        } else {
+            console.log(`      ✅ Threading reply to message: ${originalMessageId}`);
         }
 
         const recipientEmail = inboundFromEmail || caseData.agency_email;

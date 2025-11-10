@@ -15,7 +15,7 @@ STYLE GUIDELINES:
 
 REQUESTER INFO (always include at end):
 Name: Samuel Hylton
-Email: Samuel@matcher.com
+Email: requests@foib-request.com
 Address:
 3021 21st Ave W
 Apt 202
