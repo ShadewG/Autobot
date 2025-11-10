@@ -5,6 +5,7 @@ const aiService = require('../services/ai-service');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
+const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
 
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
@@ -44,6 +45,7 @@ connection.on('error', (err) => {
 const emailQueue = new Queue('email-queue', { connection });
 const analysisQueue = new Queue('analysis-queue', { connection });
 const generateQueue = new Queue('generate-queue', { connection });
+const portalQueue = new Queue('portal-queue', { connection });
 
 /**
  * Generate human-like delay for auto-replies (2-10 hours)
@@ -362,6 +364,71 @@ const generateWorker = new Worker('generate-queue', async (job) => {
     }
 }, { connection });
 
+const portalWorker = new Worker('portal-queue', async (job) => {
+    console.log(`Processing portal job: ${job.id}`, job.data);
+
+    const { caseId, portalUrl, provider, messageId, notificationType } = job.data;
+
+    try {
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            throw new Error(`Case ${caseId} not found`);
+        }
+
+        const targetUrl = portalUrl || caseData.portal_url;
+        if (!targetUrl) {
+            throw new Error(`No portal URL available for case ${caseId}`);
+        }
+
+        const result = await portalAgentSkyvern.checkPortalStatus(caseData, targetUrl, {
+            provider
+        });
+
+        if (!result.success) {
+            throw new Error(result.error || 'Portal status check failed');
+        }
+
+        const statusText =
+            result.statusText ||
+            result.extracted_data?.status ||
+            result.extracted_data?.status_text ||
+            'Portal responded';
+
+        await db.updateCasePortalStatus(caseId, {
+            portal_url: targetUrl,
+            portal_provider: provider || caseData.portal_provider || null,
+            last_portal_status: statusText,
+            last_portal_status_at: new Date(),
+            last_portal_engine: 'skyvern',
+            last_portal_run_id: result.taskId || result.runId || null,
+            last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null
+        });
+
+        await db.logActivity('portal_status_synced', `Portal status updated: ${statusText}`, {
+            case_id: caseId,
+            portal_url: targetUrl,
+            portal_provider: provider,
+            notification_type: notificationType,
+            message_id: messageId,
+            run_id: result.taskId || result.runId || null
+        });
+
+        await notionService.syncStatusToNotion(caseId);
+
+        return result;
+    } catch (error) {
+        console.error(`Portal job ${job.id} failed:`, error);
+        await db.logActivity('portal_status_failed', `Portal status refresh failed: ${error.message}`, {
+            case_id: caseId,
+            portal_url: portalUrl,
+            portal_provider: provider,
+            notification_type: notificationType,
+            message_id: messageId
+        });
+        throw error;
+    }
+}, { connection, concurrency: 1 });
+
 // Error handlers
 emailWorker.on('failed', (job, err) => {
     console.error(`Email job ${job.id} failed:`, err);
@@ -373,6 +440,9 @@ analysisWorker.on('failed', (job, err) => {
 
 generateWorker.on('failed', (job, err) => {
     console.error(`Generation job ${job.id} failed:`, err);
+});
+portalWorker.on('failed', (job, err) => {
+    console.error(`Portal job ${job.id} failed:`, err);
 });
 
 // Success handlers
@@ -387,13 +457,18 @@ analysisWorker.on('completed', (job) => {
 generateWorker.on('completed', (job) => {
     console.log(`Generation job ${job.id} completed successfully`);
 });
+portalWorker.on('completed', (job) => {
+    console.log(`Portal job ${job.id} completed successfully`);
+});
 
 // Exports
 module.exports = {
     emailQueue,
     analysisQueue,
     generateQueue,
+    portalQueue,
     emailWorker,
     analysisWorker,
-    generateWorker
+    generateWorker,
+    portalWorker
 };

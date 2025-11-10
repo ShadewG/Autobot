@@ -2,6 +2,27 @@ const sgMail = require('@sendgrid/mail');
 const db = require('./database');
 const crypto = require('crypto');
 
+const PORTAL_PROVIDERS = [
+    {
+        name: 'govqa',
+        domains: ['govqa.us', 'custhelp.com', 'mycusthelp.com'],
+        keywords: ['govqa', 'public records center', 'my request center', 'request center notification'],
+        defaultPath: '/WEBAPP/_rs/(S(0))/RequestLogin.aspx?rqst=4'
+    },
+    {
+        name: 'nextrequest',
+        domains: ['nextrequest.com'],
+        keywords: ['nextrequest', 'public records request portal'],
+        defaultPath: '/'
+    },
+    {
+        name: 'justfoia',
+        domains: ['justfoia.com'],
+        keywords: ['justfoia', 'govbuilt'],
+        defaultPath: '/'
+    }
+];
+
 class SendGridService {
     constructor() {
         if (process.env.SENDGRID_API_KEY) {
@@ -403,6 +424,44 @@ class SendGridService {
                 last_response_date: new Date()
             });
 
+            // Portal notification detection
+            let portalNotificationInfo = null;
+            const portalDetection = this.detectPortalNotification({
+                fromEmail,
+                subject: inboundData.subject,
+                text: inboundData.text || inboundData.body_text || ''
+            });
+
+            if (portalDetection) {
+                await db.markMessagePortalNotification(message.id, {
+                    type: portalDetection.type,
+                    provider: portalDetection.provider
+                });
+
+                const portalUrl = caseData.portal_url || portalDetection.portal_url || null;
+                portalNotificationInfo = {
+                    ...portalDetection,
+                    portal_url: portalUrl
+                };
+
+                // If we inferred a portal URL and case is missing one, update it
+                if (portalUrl && !caseData.portal_url) {
+                    await db.updateCasePortalStatus(caseData.id, {
+                        portal_url: portalUrl,
+                        portal_provider: portalDetection.provider
+                    });
+                    caseData.portal_url = portalUrl;
+                }
+
+                await db.logActivity('portal_notification', `Portal update (${portalDetection.provider}) received for ${caseData.case_name}`, {
+                    case_id: caseData.id,
+                    message_id: message.id,
+                    portal_url: portalUrl,
+                    portal_provider: portalDetection.provider,
+                    notification_type: portalDetection.type
+                });
+            }
+
             // Log activity
             await db.logActivity('email_received', `Received response for case: ${caseData.case_name}`, {
                 case_id: caseData.id,
@@ -413,7 +472,9 @@ class SendGridService {
                 matched: true,
                 case_id: caseData.id,
                 message_id: message.id,
-                thread_id: thread.id
+                thread_id: thread.id,
+                case_portal_url: caseData.portal_url,
+                portal_notification: portalNotificationInfo
             };
         } catch (error) {
             console.error('Error processing inbound email:', error);
@@ -506,6 +567,31 @@ class SendGridService {
             console.error('Error finding case for inbound email:', error);
             return null;
         }
+    }
+
+    detectPortalNotification({ fromEmail, subject = '', text = '' }) {
+        const emailDomain = (fromEmail || '').split('@')[1]?.toLowerCase() || '';
+        const haystack = `${subject} ${text}`.toLowerCase();
+
+        for (const provider of PORTAL_PROVIDERS) {
+            const domainMatch = provider.domains.some((domain) => emailDomain.includes(domain));
+            const keywordMatch = provider.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
+
+            if (domainMatch || keywordMatch) {
+                const inferredDomain = domainMatch ? emailDomain.split('>').shift() : null;
+                const portalUrl = inferredDomain
+                    ? `https://${inferredDomain}${provider.defaultPath}`
+                    : null;
+
+                return {
+                    provider: provider.name,
+                    type: 'status_update',
+                    portal_url: portalUrl
+                };
+            }
+        }
+
+        return null;
     }
 
     /**

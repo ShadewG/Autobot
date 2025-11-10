@@ -20,6 +20,81 @@ class PortalAgentServiceSkyvern {
         this.apiKey = process.env.SKYVERN_API_KEY;
     }
 
+    async _createTaskAndPoll({ portalUrl, navigationGoal, navigationPayload, maxSteps }) {
+        console.log(`\n📝 Navigation Goal:\n${navigationGoal}\n`);
+        console.log(`⏳ Creating task...\n`);
+
+        const response = await axios.post(
+            `${this.baseUrl}/tasks`,
+            {
+                url: portalUrl,
+                navigation_goal: navigationGoal,
+                navigation_payload: navigationPayload,
+                max_steps_override: maxSteps,
+                engine: 'skyvern-2.0'
+            },
+            {
+                headers: {
+                    'x-api-key': this.apiKey,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        const task = response.data;
+        console.log(`✅ Task created!`);
+        console.log(`   Task ID: ${task.task_id || task.id || 'unknown'}`);
+        console.log(`\n📊 Full API Response:`);
+        console.log(JSON.stringify(task, null, 2));
+
+        const taskId = task.task_id || task.id;
+        if (!taskId) {
+            throw new Error('No task ID returned from API');
+        }
+
+        console.log(`\n⏳ Polling for task completion (max 10 minutes)...`);
+
+        const maxPolls = 120;
+        let polls = 0;
+        let finalTask = null;
+
+        while (polls < maxPolls) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            polls++;
+
+            try {
+                const statusResponse = await axios.get(
+                    `${this.baseUrl}/tasks/${taskId}`,
+                    {
+                        headers: {
+                            'x-api-key': this.apiKey
+                        }
+                    }
+                );
+
+                finalTask = statusResponse.data;
+                const status = finalTask.status;
+
+                console.log(`   Poll ${polls}: Status = ${status}`);
+
+                if (status === 'completed' || status === 'failed' || status === 'terminated') {
+                    break;
+                }
+            } catch (pollError) {
+                console.log(`   Poll ${polls}: Error polling - ${pollError.message}`);
+            }
+        }
+
+        if (!finalTask) {
+            throw new Error('Failed to get task status');
+        }
+
+        console.log(`\n✅ Task finished!`);
+        console.log(`   Status: ${finalTask.status}`);
+
+        return { finalTask, taskId };
+    }
+
     /**
      * Generate a secure password for new accounts
      */
@@ -96,81 +171,12 @@ class PortalAgentServiceSkyvern {
                 navigationPayload = this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword);
             }
 
-            console.log(`\n📝 Navigation Goal:\n${navigationGoal}\n`);
-            console.log(`⏳ Creating task...\n`);
-
-            // Create task via Skyvern API
-            const response = await axios.post(
-                `${this.baseUrl}/tasks`,
-                {
-                    url: portalUrl,
-                    navigation_goal: navigationGoal,
-                    navigation_payload: navigationPayload,
-                    max_steps_override: maxSteps,
-                    engine: 'skyvern-2.0'  // Use latest engine
-                },
-                {
-                    headers: {
-                        'x-api-key': this.apiKey,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-
-            const task = response.data;
-
-            console.log(`✅ Task created!`);
-            console.log(`   Task ID: ${task.task_id || task.id || 'unknown'}`);
-
-            // Log full response for debugging
-            console.log(`\n📊 Full API Response:`);
-            console.log(JSON.stringify(task, null, 2));
-
-            // Task is async - need to poll for completion
-            const taskId = task.task_id || task.id;
-            if (!taskId) {
-                throw new Error('No task ID returned from API');
-            }
-
-            console.log(`\n⏳ Polling for task completion (max 10 minutes)...`);
-
-            const maxPolls = 120; // 10 minutes (5 seconds per poll)
-            let polls = 0;
-            let finalTask = null;
-
-            while (polls < maxPolls) {
-                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-                polls++;
-
-                try {
-                    const statusResponse = await axios.get(
-                        `${this.baseUrl}/tasks/${taskId}`,
-                        {
-                            headers: {
-                                'x-api-key': this.apiKey
-                            }
-                        }
-                    );
-
-                    finalTask = statusResponse.data;
-                    const status = finalTask.status;
-
-                    console.log(`   Poll ${polls}: Status = ${status}`);
-
-                    if (status === 'completed' || status === 'failed' || status === 'terminated') {
-                        break;
-                    }
-                } catch (pollError) {
-                    console.log(`   Poll ${polls}: Error polling - ${pollError.message}`);
-                }
-            }
-
-            if (!finalTask) {
-                throw new Error('Failed to get task status');
-            }
-
-            console.log(`\n✅ Task finished!`);
-            console.log(`   Status: ${finalTask.status}`);
+            const { finalTask, taskId } = await this._createTaskAndPoll({
+                portalUrl,
+                navigationGoal,
+                navigationPayload,
+                maxSteps
+            });
 
             // Check if task completed successfully
             if (finalTask.status === 'completed') {
@@ -212,6 +218,12 @@ class PortalAgentServiceSkyvern {
                     savedNewAccount: !existingAccount && !!accountPassword,
                     runId
                 };
+
+                await database.updateCasePortalStatus(caseData.id, {
+                    portal_url: portalUrl,
+                    portal_provider: existingAccount?.portal_type || 'Auto-detected',
+                    last_portal_run_id: taskId
+                });
 
                 await database.logActivity(
                     'portal_run_completed',
@@ -474,6 +486,74 @@ Be thorough and fill out every available field with the provided information. Th
             }
         );
         return response.data;
+    }
+
+    async checkPortalStatus(caseData, portalUrl, options = {}) {
+        const { maxSteps = 20 } = options;
+
+        if (!this.apiKey) {
+            throw new Error('SKYVERN_API_KEY not set! Get your key from https://app.skyvern.com');
+        }
+
+        const account = await database.getPortalAccountByUrl(portalUrl);
+        if (!account) {
+            throw new Error('No saved portal account found for this portal');
+        }
+        await database.updatePortalAccountLastUsed(account.id);
+
+        console.log(`🤖 Skyvern status check for case: ${caseData.case_name}`);
+        console.log(`   Portal: ${portalUrl}`);
+
+        const navigationGoal = this.buildStatusCheckGoal(caseData, account);
+        const navigationPayload = this.buildNavigationPayloadWithLogin(caseData, account);
+
+        const { finalTask, taskId } = await this._createTaskAndPoll({
+            portalUrl,
+            navigationGoal,
+            navigationPayload,
+            maxSteps
+        });
+
+        if (finalTask.status !== 'completed') {
+            return {
+                success: false,
+                error: finalTask.failure_reason || `Task ended with status: ${finalTask.status}`,
+                taskId,
+                recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                extracted_data: finalTask.extracted_information
+            };
+        }
+
+        const extracted = finalTask.extracted_information || {};
+        const statusText = extracted.status || extracted.status_text || extracted.summary || null;
+        const dueDate = extracted.due_date || extracted.deadline || null;
+
+        return {
+            success: true,
+            taskId,
+            recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+            extracted_data: extracted,
+            statusText,
+            dueDate,
+            raw: finalTask
+        };
+    }
+
+    buildStatusCheckGoal(caseData, account) {
+        return `You are checking the status of a FOIA records request in an online portal.
+
+INSTRUCTIONS:
+1. Log in using the provided email (${account.email}) and password.
+2. Navigate to the section that lists outstanding or submitted requests (e.g., "My Request Center").
+3. Locate the request associated with "${caseData.case_name}" or the most recent request.
+4. Record the request status, any due dates, last update timestamps, and summary notes.
+5. Use the "Set Extracted Information" tool to return a JSON object with keys:
+   - status_text
+   - status_detail
+   - status_updated_at
+   - due_date
+   - portal_link
+6. Do NOT submit or create any new requests. This is read-only status checking.`;
     }
 }
 

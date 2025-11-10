@@ -95,6 +95,32 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async updateCasePortalStatus(caseId, portalData = {}) {
+        const fields = {
+            portal_url: portalData.portal_url,
+            portal_provider: portalData.portal_provider,
+            last_portal_status: portalData.last_portal_status,
+            last_portal_status_at: portalData.last_portal_status_at,
+            last_portal_engine: portalData.last_portal_engine,
+            last_portal_run_id: portalData.last_portal_run_id,
+            last_portal_details: portalData.last_portal_details
+        };
+
+        const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
+
+        if (entries.length === 0) {
+            return await this.getCaseById(caseId);
+        }
+
+        const setClauseParts = entries.map(([key], i) => `${key} = $${i + 2}`);
+        setClauseParts.push(`updated_at = CURRENT_TIMESTAMP`);
+
+        const values = [caseId, ...entries.map(([, value]) => value)];
+        const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
+        const result = await this.query(query, values);
+        return result.rows[0];
+    }
+
     // Email Threads
     async createEmailThread(threadData) {
         const query = `
@@ -140,8 +166,9 @@ class DatabaseService {
             INSERT INTO messages (
                 thread_id, case_id, message_id, sendgrid_message_id, direction,
                 from_email, to_email, cc_emails, subject, body_text, body_html,
-                has_attachments, attachment_count, message_type, sent_at, received_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                has_attachments, attachment_count, message_type, portal_notification,
+                portal_notification_type, portal_notification_provider, sent_at, received_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING *
         `;
         const values = [
@@ -159,6 +186,9 @@ class DatabaseService {
             messageData.has_attachments || false,
             messageData.attachment_count || 0,
             messageData.message_type,
+            messageData.portal_notification || false,
+            messageData.portal_notification_type || null,
+            messageData.portal_notification_provider || null,
             messageData.sent_at,
             messageData.received_at
         ];
@@ -176,6 +206,24 @@ class DatabaseService {
 
     async getMessageById(id) {
         const result = await this.query('SELECT * FROM messages WHERE id = $1', [id]);
+        return result.rows[0];
+    }
+
+    async markMessagePortalNotification(messageId, notificationData = {}) {
+        const query = `
+            UPDATE messages
+            SET portal_notification = true,
+                portal_notification_type = COALESCE($2, portal_notification_type),
+                portal_notification_provider = COALESCE($3, portal_notification_provider)
+            WHERE id = $1
+            RETURNING *
+        `;
+        const values = [
+            messageId,
+            notificationData.type || null,
+            notificationData.provider || null
+        ];
+        const result = await this.query(query, values);
         return result.rows[0];
     }
 

@@ -14,6 +14,13 @@ CREATE TABLE IF NOT EXISTS cases (
     requested_records TEXT[], -- Array of record types
     additional_details TEXT,
     status VARCHAR(50) DEFAULT 'ready_to_send', -- ready_to_send, sent, awaiting_response, responded, completed, error
+    portal_url VARCHAR(1000),
+    portal_provider VARCHAR(100),
+    last_portal_status VARCHAR(255),
+    last_portal_status_at TIMESTAMP,
+    last_portal_engine VARCHAR(50),
+    last_portal_run_id VARCHAR(255),
+    last_portal_details TEXT,
     send_date TIMESTAMP,
     last_response_date TIMESTAMP,
     days_overdue INTEGER DEFAULT 0,
@@ -54,6 +61,9 @@ CREATE TABLE IF NOT EXISTS messages (
     has_attachments BOOLEAN DEFAULT FALSE,
     attachment_count INTEGER DEFAULT 0,
     message_type VARCHAR(50), -- initial_request, follow_up, response, auto_reply
+    portal_notification BOOLEAN DEFAULT FALSE,
+    portal_notification_type VARCHAR(100),
+    portal_notification_provider VARCHAR(100),
     sent_at TIMESTAMP,
     received_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

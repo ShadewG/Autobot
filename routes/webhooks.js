@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const sendgridService = require('../services/sendgrid-service');
-const { analysisQueue } = require('../queues/email-queue');
+const { analysisQueue, portalQueue } = require('../queues/email-queue');
 
 // Configure multer to handle SendGrid's multipart/form-data
 const upload = multer();
@@ -89,6 +89,30 @@ router.post('/inbound', upload.none(), async (req, res) => {
             });
 
             console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);
+
+            if (result.portal_notification) {
+                const portalJobData = {
+                    caseId: result.case_id,
+                    portalUrl: result.portal_notification.portal_url,
+                    provider: result.portal_notification.provider,
+                    messageId: result.message_id,
+                    notificationType: result.portal_notification.type
+                };
+
+                if (portalJobData.portalUrl) {
+                    await portalQueue.add('portal-refresh', portalJobData, {
+                        attempts: 3,
+                        backoff: {
+                            type: 'exponential',
+                            delay: 60000
+                        }
+                    });
+
+                    console.log(`🌐 Portal refresh queued for case ${result.case_id} (${portalJobData.provider})`);
+                } else {
+                    console.warn(`🌐 Portal notification detected but no portal URL stored for case ${result.case_id}`);
+                }
+            }
 
             res.status(200).json({
                 success: true,

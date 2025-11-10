@@ -892,6 +892,30 @@
             return temp.textContent || temp.innerText || '';
         }
 
+        function normalizePortalUrl(url) {
+            if (!url) return null;
+            if (/^https?:\/\//i.test(url)) {
+                return url;
+            }
+            return `https://${url}`;
+        }
+
+        function renderPortalStatusCell(c) {
+            const status = c.last_portal_status ? escapeHtml(c.last_portal_status) : '—';
+            const metaParts = [];
+            if (c.last_portal_status_at) {
+                metaParts.push(formatRelativeTime(c.last_portal_status_at));
+            }
+            if (c.last_portal_engine) {
+                metaParts.push(`via ${escapeHtml(c.last_portal_engine)}`);
+            }
+            const metaHtml = metaParts.length ? `<div class="case-meta">${metaParts.join(' • ')}</div>` : '';
+            const portalUrl = normalizePortalUrl(c.portal_url);
+            const provider = c.portal_provider ? `<div class="case-meta">Provider: ${escapeHtml(c.portal_provider)}</div>` : '';
+            const linkHtml = portalUrl ? `<div class="case-meta"><a href="${portalUrl}" target="_blank" rel="noopener">Open Portal</a></div>` : '';
+            return `<div class="case-title">${status}</div>${metaHtml}${provider}${linkHtml}`;
+        }
+
         function renderStatusPill(status, substatus) {
             if (!status) return '<span class="status-pill">Unknown</span>';
             const className = `status-pill ${status}`;
@@ -1017,7 +1041,7 @@
             }
 
             let html = '<table class="table"><thead><tr>';
-            html += '<th>Case</th><th>Agency</th><th>Status</th><th>Last Response</th><th>Messages</th><th>Next Step</th><th>Actions</th>';
+            html += '<th>Case</th><th>Agency</th><th>Status</th><th>Portal</th><th>Last Response</th><th>Messages</th><th>Next Step</th><th>Actions</th>';
             html += '</tr></thead><tbody>';
 
             cases.forEach((c) => {
@@ -1040,7 +1064,10 @@
                 html += '<tr>';
                 html += `<td><div class="case-title">${name}</div><div class="case-meta">#${c.id} • Created ${formatRelativeTime(c.created_at)}</div></td>`;
                 html += `<td><div class="case-title">${agency}</div><div class="case-meta">${escapeHtml(c.agency_email || '—')}</div></td>`;
+                const portalCell = renderPortalStatusCell(c);
+
                 html += `<td>${statusHtml}</td>`;
+                html += `<td>${portalCell}</td>`;
                 html += `<td>${directionBadge}<div class="case-meta">${lastActivity}</div><div class="case-preview">${preview}</div></td>`;
                 html += `<td><div class="case-title">${totalMessages} message${totalMessages === 1 ? '' : 's'}</div><div class="case-meta">Inbound: ${inboundMeta} • Outbound: ${outboundMeta}</div></td>`;
                 html += `<td><div class="case-title">${followupText}</div>${followupStatus}</td>`;
