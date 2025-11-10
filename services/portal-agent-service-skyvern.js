@@ -51,53 +51,100 @@ class PortalAgentServiceSkyvern {
                     navigation_goal: navigationGoal,
                     navigation_payload: navigationPayload,
                     max_steps_override: maxSteps,
-                    wait_for_completion: true,  // Block until complete
                     engine: 'skyvern-2.0'  // Use latest engine
                 },
                 {
                     headers: {
                         'x-api-key': this.apiKey,
                         'Content-Type': 'application/json'
-                    },
-                    timeout: 300000  // 5 minute timeout
+                    }
                 }
             );
 
             const task = response.data;
 
             console.log(`✅ Task created!`);
-            console.log(`   Task ID: ${task.task_id}`);
-            console.log(`   Status: ${task.status}`);
+            console.log(`   Task ID: ${task.task_id || task.id || 'unknown'}`);
+
+            // Log full response for debugging
+            console.log(`\n📊 Full API Response:`);
+            console.log(JSON.stringify(task, null, 2));
+
+            // Task is async - need to poll for completion
+            const taskId = task.task_id || task.id;
+            if (!taskId) {
+                throw new Error('No task ID returned from API');
+            }
+
+            console.log(`\n⏳ Polling for task completion (max 5 minutes)...`);
+
+            const maxPolls = 60; // 5 minutes (5 seconds per poll)
+            let polls = 0;
+            let finalTask = null;
+
+            while (polls < maxPolls) {
+                await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+                polls++;
+
+                try {
+                    const statusResponse = await axios.get(
+                        `${this.baseUrl}/tasks/${taskId}`,
+                        {
+                            headers: {
+                                'x-api-key': this.apiKey
+                            }
+                        }
+                    );
+
+                    finalTask = statusResponse.data;
+                    const status = finalTask.status;
+
+                    console.log(`   Poll ${polls}: Status = ${status}`);
+
+                    if (status === 'completed' || status === 'failed' || status === 'terminated') {
+                        break;
+                    }
+                } catch (pollError) {
+                    console.log(`   Poll ${polls}: Error polling - ${pollError.message}`);
+                }
+            }
+
+            if (!finalTask) {
+                throw new Error('Failed to get task status');
+            }
+
+            console.log(`\n✅ Task finished!`);
+            console.log(`   Status: ${finalTask.status}`);
 
             // Check if task completed successfully
-            if (task.status === 'completed') {
+            if (finalTask.status === 'completed') {
                 return {
                     success: true,
                     caseId: caseData.id,
                     portalUrl: portalUrl,
-                    taskId: task.task_id,
-                    status: task.status,
-                    recording_url: task.recording_url,
-                    extracted_data: task.extracted_information,
-                    steps: task.actions?.length || 0,
+                    taskId: taskId,
+                    status: finalTask.status,
+                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                    extracted_data: finalTask.extracted_information,
+                    steps: finalTask.actions?.length || finalTask.steps || 0,
                     dryRun
                 };
-            } else if (task.status === 'failed') {
+            } else if (finalTask.status === 'failed') {
                 return {
                     success: false,
-                    error: task.failure_reason || 'Task failed',
-                    taskId: task.task_id,
-                    recording_url: task.recording_url,
-                    steps: task.actions?.length || 0
+                    error: finalTask.failure_reason || 'Task failed',
+                    taskId: taskId,
+                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                    steps: finalTask.actions?.length || finalTask.steps || 0
                 };
             } else {
                 // Task still running or other status
                 return {
                     success: false,
-                    error: `Task ended with status: ${task.status}`,
-                    taskId: task.task_id,
-                    status: task.status,
-                    recording_url: task.recording_url
+                    error: `Task ended with status: ${finalTask.status}`,
+                    taskId: taskId,
+                    status: finalTask.status,
+                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`
                 };
             }
 
