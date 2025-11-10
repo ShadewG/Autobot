@@ -1,6 +1,6 @@
-# Portal Automation - Two Versions
+# Portal Automation - Three Versions
 
-This project includes **two versions** of the portal automation agent:
+This project includes **three versions** of the portal automation agent:
 
 ## 1. Local Playwright Version
 
@@ -73,6 +73,53 @@ node test-portal-hyperbrowser.js "https://portal-url-here.com"
 
 ---
 
+## 3. Hyperbrowser Managed Agent Version ⭐ **RECOMMENDED**
+
+**Files:**
+- `services/portal-agent-service-managed.js`
+- `test-portal-managed.js`
+- `run-portal-managed.command`
+
+**How it works:**
+- 🎯 Uses Hyperbrowser's **built-in Claude Computer Use agent**
+- 📝 You just provide a **natural language task description**
+- 🤖 Hyperbrowser handles ALL the complexity (session, actions, parsing)
+- ☁️ Browser runs in the cloud
+- 🎥 Get a live URL to watch the session recording
+
+**Pros:**
+- **Simplest code** - no manual agent loop!
+- **Most reliable** - Hyperbrowser's proven agent logic
+- **Natural language** - just describe what you want
+- Built-in error recovery
+- No need to manage selectors or actions
+- Live session recording
+
+**Cons:**
+- Costs money (uses Hyperbrowser + Anthropic credits)
+- Can't watch browser in real-time (but can watch recording)
+- Depends on Hyperbrowser service
+
+**Usage:**
+```bash
+# One-click run:
+./run-portal-managed.command
+
+# Or manually:
+node test-portal-managed.js "https://portal-url-here.com"
+```
+
+**Example task description:**
+```
+Navigate to the portal, create an account if needed using
+email@example.com, fill out the FOIA request form with the
+provided information, and stop before submitting (dry run).
+```
+
+Hyperbrowser figures out HOW to do it - you just describe WHAT you want!
+
+---
+
 ## Environment Variables
 
 Add to your `.env` file:
@@ -96,14 +143,26 @@ npm install
 npx playwright install chromium
 ```
 
-### For Hyperbrowser Version:
+### For Hyperbrowser Manual Version:
 ```bash
 npm install @hyperbrowser/sdk playwright-core
+```
+
+### For Hyperbrowser Managed Version (recommended):
+```bash
+npm install @hyperbrowser/sdk
 ```
 
 ---
 
 ## Which One Should You Use?
+
+### Use **Hyperbrowser Managed** ⭐ if:
+- 🎯 You want the **simplest, most reliable** solution
+- 📝 You prefer describing tasks in natural language
+- ☁️ You're okay with cloud costs
+- 🚀 You want **production-ready** automation
+- 🤖 You don't want to manage selectors/actions
 
 ### Use **Local Playwright** if:
 - 🐛 You want to debug and watch the browser work
@@ -111,31 +170,30 @@ npm install @hyperbrowser/sdk playwright-core
 - 🖥️ You have a reliable local environment
 - 🎓 You're developing/testing locally
 
-### Use **Hyperbrowser** if:
-- ⚡ You need reliability and speed
-- ☁️ You want to run in production/cloud
-- 🔄 You need to scale (multiple sessions)
+### Use **Hyperbrowser Manual** if:
+- 🔧 You need custom action logic
+- 🎛️ You want fine control over each step
 - 🚫 Local Playwright is causing issues
-- 🤖 You want built-in anti-detection features
+- 📸 You need step-by-step screenshots
 
 ---
 
 ## Screenshots & Logs
 
-Both versions save:
-- 📸 Step-by-step screenshots
-- 📋 Final screenshot
-- 📝 Detailed JSON log
-
 **Local Playwright:**
-- `./portal-screenshots/`
-- `./portal-agent-result.png`
-- `./portal-agent-log.json`
+- 📸 Step-by-step screenshots: `./portal-screenshots/`
+- 📋 Final screenshot: `./portal-agent-result.png`
+- 📝 Detailed JSON log: `./portal-agent-log.json`
 
-**Hyperbrowser:**
-- `./portal-screenshots-hyperbrowser/`
-- `./portal-agent-result-hyperbrowser.png`
-- `./portal-agent-log-hyperbrowser.json`
+**Hyperbrowser Manual:**
+- 📸 Step-by-step screenshots: `./portal-screenshots-hyperbrowser/`
+- 📋 Final screenshot: `./portal-agent-result-hyperbrowser.png`
+- 📝 Detailed JSON log: `./portal-agent-log-hyperbrowser.json`
+
+**Hyperbrowser Managed:**
+- 🎥 **Live session recording URL** (in console output)
+- 📝 Detailed JSON log: `./portal-agent-managed-log.json`
+- 💡 No local screenshots - watch the recording instead!
 
 ---
 
@@ -168,11 +226,18 @@ Portal URL: Collier County GovQA Portal (hardcoded in run scripts)
 - Check browser compatibility
 - Try headless: true if visible browser fails
 
-### Hyperbrowser Issues:
+### Hyperbrowser Manual Issues:
 - Verify API key is correct
 - Check Hyperbrowser dashboard for session status
 - Review error screenshots if test fails
 - Check credit balance
+
+### Hyperbrowser Managed Issues:
+- Verify both API keys are set (Anthropic + Hyperbrowser)
+- Check the live URL to see what went wrong
+- Review the task description - be more specific
+- Increase maxSteps if task is complex
+- Try Claude Sonnet 4.5 instead of Haiku if Haiku struggles
 
 ---
 
