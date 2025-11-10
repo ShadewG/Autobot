@@ -115,14 +115,47 @@ async function testPortalAgent() {
         console.error('\n💥 Test failed:', error.message);
         console.error(error.stack);
 
-        // Save error details to log
+        // Try to get result from portal agent service even on error
+        // (might have partial stepLog with screenshots)
+        let partialResult = null;
+        try {
+            // Check if error object has result data attached
+            if (error.result) {
+                partialResult = error.result;
+            }
+        } catch (_) {
+            // Ignore
+        }
+
+        // Save error details and any screenshots we captured
         const fs = require('fs');
+        const path = require('path');
+
+        // Create screenshots directory
+        const screenshotsDir = './portal-screenshots';
+        if (!fs.existsSync(screenshotsDir)) {
+            fs.mkdirSync(screenshotsDir, { recursive: true });
+        }
+
+        // Save any screenshots we got before failure
+        if (partialResult && partialResult.stepLog && partialResult.stepLog.length > 0) {
+            console.log(`\n📸 Saving ${partialResult.stepLog.length} screenshots from failed attempt...`);
+            partialResult.stepLog.forEach((step, index) => {
+                if (step.screenshot) {
+                    const filename = `step-${String(index + 1).padStart(2, '0')}-${step.action.type}.png`;
+                    const filepath = path.join(screenshotsDir, filename);
+                    fs.writeFileSync(filepath, Buffer.from(step.screenshot, 'base64'));
+                    console.log(`   ✅ Saved: ${filename}`);
+                }
+            });
+        }
+
         const logPath = './portal-agent-log.json';
         const errorLog = {
             success: false,
             error: error.message,
             stack: error.stack,
-            stepLog: []
+            stepLog: partialResult?.stepLog || []
         };
         fs.writeFileSync(logPath, JSON.stringify(errorLog, null, 2));
         console.log(`\n📝 Error log saved: ${logPath}`);

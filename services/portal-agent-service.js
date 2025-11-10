@@ -137,8 +137,21 @@ class PortalAgentService {
                     throw new Error(action.message);
                 }
 
-                // Execute the action
-                const actionResult = await agentKit.executeAction(action);
+                // Execute the action (with error handling to save screenshot even on failure)
+                let actionResult;
+                try {
+                    actionResult = await agentKit.executeAction(action);
+                } catch (actionError) {
+                    // Save screenshot even when action fails
+                    stepLog.push({
+                        step: currentStep,
+                        action: action,
+                        result: { error: actionError.message },
+                        screenshot: screenshotBase64,
+                        url: page.url()
+                    });
+                    throw actionError; // Re-throw to fail the test
+                }
 
                 stepLog.push({
                     step: currentStep,
