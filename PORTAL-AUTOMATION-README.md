@@ -1,6 +1,6 @@
-# Portal Automation - Three Versions
+# Portal Automation - Four Versions
 
-This project includes **three versions** of the portal automation agent:
+This project includes **four versions** of the portal automation agent:
 
 ## 1. Local Playwright Version
 
@@ -120,17 +120,74 @@ Hyperbrowser figures out HOW to do it - you just describe WHAT you want!
 
 ---
 
+## 4. Skyvern AI Version 🌟 **OPEN SOURCE**
+
+**Files:**
+- `services/portal-agent-service-skyvern.js`
+- `test-portal-skyvern.js`
+- `run-portal-skyvern.command`
+
+**How it works:**
+- 🌟 **Open-source** browser automation platform
+- 🧠 Uses **LLMs + computer vision** (similar to Claude Computer Use)
+- 🎯 Can be **self-hosted** (Docker/pip install) or use cloud API
+- 📝 Natural language goals + structured data payload
+- 🏆 **85.85% accuracy on WebVoyager benchmark**
+
+**Pros:**
+- **Open source** - can self-host for free
+- **Vision-based** - doesn't rely on brittle selectors
+- Works on previously unseen websites
+- Natural language instructions
+- Recording URLs to watch what happened
+- Can use cloud API or self-host
+- Very resilient to website changes
+
+**Cons:**
+- Cloud API costs money (per step)
+- Self-hosting requires infrastructure
+- Python-based (we use REST API from Node.js)
+
+**Usage:**
+```bash
+# One-click run:
+./run-portal-skyvern.command
+
+# Or manually:
+node test-portal-skyvern.js "https://portal-url-here.com"
+```
+
+**Key advantages:**
+- Open source with active development
+- Can be deployed on your own infrastructure
+- State-of-the-art accuracy (85.85% WebVoyager)
+- Vision + LLM approach (no selector maintenance)
+- Cloud API available for quick start
+
+**Get API Key:**
+1. Go to https://app.skyvern.com
+2. Sign up/login
+3. Settings → Reveal API key
+4. Add to `.env`: `SKYVERN_API_KEY=sk-...`
+
+---
+
 ## Environment Variables
 
 Add to your `.env` file:
 
 ```bash
-# Required for both versions
-ANTHROPIC_API_KEY=sk-ant-api03-...
+# Required for all versions
 REQUESTS_INBOX=requests@foib-request.com
 
-# Required ONLY for Hyperbrowser version
+# Required for local Playwright and Hyperbrowser versions
+ANTHROPIC_API_KEY=sk-ant-api03-...
+
+# Required for Hyperbrowser versions
 HYPERBROWSER_API_KEY=hb_...
+
+# Required for Skyvern version
+SKYVERN_API_KEY=sk-...
 ```
 
 ---
@@ -151,6 +208,19 @@ npm install @hyperbrowser/sdk playwright-core
 ### For Hyperbrowser Managed Version (recommended):
 ```bash
 npm install @hyperbrowser/sdk
+```
+
+### For Skyvern Version:
+```bash
+npm install axios
+```
+
+Or self-host Skyvern:
+```bash
+pip install skyvern
+skyvern quickstart
+skyvern run all
+# Then set SKYVERN_API_URL=http://localhost:8000/api/v1 in .env
 ```
 
 ---
@@ -176,6 +246,14 @@ npm install @hyperbrowser/sdk
 - 🚫 Local Playwright is causing issues
 - 📸 You need step-by-step screenshots
 
+### Use **Skyvern** 🌟 if:
+- 🌟 You want **open-source** solution
+- 🏠 You want to **self-host** for privacy/cost
+- 🏆 You want **best-in-class accuracy** (85.85%)
+- 🔓 You need source code access
+- 🛠️ You might want to customize the agent
+- 💰 You want to avoid vendor lock-in
+
 ---
 
 ## Screenshots & Logs
@@ -194,6 +272,12 @@ npm install @hyperbrowser/sdk
 - 🎥 **Live session recording URL** (in console output)
 - 📝 Detailed JSON log: `./portal-agent-managed-log.json`
 - 💡 No local screenshots - watch the recording instead!
+
+**Skyvern:**
+- 🎥 **Task recording URL** (in console output and log)
+- 📝 Detailed JSON log: `./portal-agent-skyvern-log.json`
+- 📊 Extracted data (if data_extraction_schema provided)
+- 💡 No local screenshots - watch the recording in Skyvern dashboard
 
 ---
 
@@ -239,12 +323,34 @@ Portal URL: Collier County GovQA Portal (hardcoded in run scripts)
 - Increase maxSteps if task is complex
 - Try Claude Sonnet 4.5 instead of Haiku if Haiku struggles
 
+### Skyvern Issues:
+- Verify SKYVERN_API_KEY is set correctly
+- Check the recording URL to see what went wrong
+- Review navigation_goal - be more specific
+- Increase max_steps_override if needed
+- Check if API quota/credits are available
+- For self-hosted: ensure Skyvern service is running
+
 ---
 
 ## Contributing
 
 When modifying portal automation:
-1. Test both versions
-2. Keep them in sync (same logic, different browser source)
-3. Update screenshots in both folders
-4. Document any API changes
+1. Test all versions that you're modifying
+2. Keep test cases consistent across versions
+3. Update documentation when adding features
+4. Document API changes and new requirements
+
+## Version Comparison Matrix
+
+| Feature | Playwright | Hyperbrowser Manual | Hyperbrowser Managed | Skyvern |
+|---------|-----------|---------------------|---------------------|---------|
+| **Cost** | Free | $ (cloud) | $$ (cloud+agent) | $ (cloud) or Free (self-host) |
+| **Setup** | Complex | Medium | Simple | Medium |
+| **Code** | Custom loop | Custom loop | Natural language | Natural language |
+| **Reliability** | Medium | High | Highest | High |
+| **Open Source** | ✅ | ❌ | ❌ | ✅ |
+| **Self-Hostable** | ✅ | ❌ | ❌ | ✅ |
+| **Live View** | ✅ | ❌ | ❌ | ❌ |
+| **Recordings** | ❌ | ❌ | ✅ | ✅ |
+| **Best For** | Local dev | Custom logic | Production | Open-source needs |
