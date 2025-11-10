@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Response Tester - FOIA Negotiations</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 900px;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 20px 20px 0 0;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .scenario-selector {
+            padding: 15px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .scenario-btn {
+            padding: 8px 16px;
+            border: 2px solid #667eea;
+            background: white;
+            color: #667eea;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        .scenario-btn:hover {
+            background: #667eea;
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        .scenario-btn.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            display: flex;
+            margin-bottom: 15px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 18px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            line-height: 1.5;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant .message-bubble {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .message-meta {
+            font-size: 11px;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 12px 20px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .message-input:focus {
+            border-color: #667eea;
+        }
+
+        .send-btn {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 5px;
+            padding: 15px;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes bounce {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .clear-btn {
+            padding: 8px 16px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .clear-btn:hover {
+            background: #c0392b;
+        }
+
+        .context-info {
+            background: #e3f2fd;
+            padding: 10px 15px;
+            border-radius: 10px;
+            font-size: 13px;
+            color: #1976d2;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 AI Response Tester</h1>
+            <p>Test FOIA negotiation scenarios • Powered by Claude Sonnet 4.5</p>
+        </div>
+
+        <div class="scenario-selector">
+            <button class="scenario-btn" onclick="setScenario('general')">General</button>
+            <button class="scenario-btn" onclick="setScenario('denial')">Denial Response</button>
+            <button class="scenario-btn" onclick="setScenario('fee')">Fee Negotiation</button>
+            <button class="scenario-btn" onclick="setScenario('clarification')">Need Clarification</button>
+            <button class="scenario-btn" onclick="setScenario('hostile')">Hostile Agency</button>
+            <button class="clear-btn" onclick="clearChat()">Clear Chat</button>
+        </div>
+
+        <div class="chat-container" id="chat">
+            <div class="context-info" id="context-info">
+                💡 Select a scenario above to test AI responses in different situations
+            </div>
+        </div>
+
+        <div class="input-container">
+            <input
+                type="text"
+                class="message-input"
+                id="messageInput"
+                placeholder="Type your message..."
+                onkeypress="handleKeyPress(event)"
+            >
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        let currentScenario = 'general';
+        let conversationHistory = [];
+
+        const scenarioContexts = {
+            general: {
+                name: 'General Chat',
+                systemPrompt: 'You are a helpful FOIA assistant testing responses.',
+                info: '💬 General conversation mode'
+            },
+            denial: {
+                name: 'Denial Response',
+                systemPrompt: 'You are an AI assistant helping draft responses to FOIA denials. The agency has denied a records request. Your job is to analyze the denial and craft a persuasive, legally-sound response that challenges weak denials or escalates strong ones.',
+                info: '📋 Testing denial rebuttal responses'
+            },
+            fee: {
+                name: 'Fee Negotiation',
+                systemPrompt: 'You are an AI assistant helping negotiate FOIA fees. The agency has quoted a fee that may be excessive. Your job is to negotiate the fee down, request a fee waiver, or suggest ways to narrow the request to reduce costs.',
+                info: '💰 Testing fee negotiation strategies'
+            },
+            clarification: {
+                name: 'Need Clarification',
+                systemPrompt: 'You are an AI assistant helping respond to agency requests for clarification. The agency needs more information about the FOIA request. Your job is to provide clear, helpful clarifications while keeping the request scope narrow and specific.',
+                info: '❓ Testing clarification responses'
+            },
+            hostile: {
+                name: 'Hostile Agency',
+                systemPrompt: 'You are an AI assistant dealing with a hostile or uncooperative agency. They may be using delay tactics, making unreasonable demands, or being intentionally unhelpful. Your job is to remain professional but firm, citing legal requirements and escalation options when necessary.',
+                info: '⚠️ Testing responses to hostile agencies'
+            }
+        };
+
+        function setScenario(scenario) {
+            currentScenario = scenario;
+
+            // Update button states
+            document.querySelectorAll('.scenario-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+
+            // Update context info
+            const context = scenarioContexts[scenario];
+            document.getElementById('context-info').textContent = context.info;
+
+            // Add system message
+            addMessage('assistant', `Switched to: ${context.name}. ${context.info}`, true);
+        }
+
+        function addMessage(role, content, isSystem = false) {
+            const chat = document.getElementById('chat');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.textContent = content;
+
+            if (!isSystem) {
+                const metaDiv = document.createElement('div');
+                metaDiv.className = 'message-meta';
+                metaDiv.textContent = new Date().toLocaleTimeString();
+                bubbleDiv.appendChild(metaDiv);
+            }
+
+            messageDiv.appendChild(bubbleDiv);
+            chat.appendChild(messageDiv);
+
+            // Scroll to bottom
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function showTyping() {
+            const chat = document.getElementById('chat');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message assistant';
+            typingDiv.id = 'typing-indicator';
+            typingDiv.innerHTML = `
+                <div class="message-bubble">
+                    <div class="typing-indicator">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                </div>
+            `;
+            chat.appendChild(typingDiv);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function hideTyping() {
+            const typing = document.getElementById('typing-indicator');
+            if (typing) typing.remove();
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            // Add user message
+            addMessage('user', message);
+            conversationHistory.push({ role: 'user', content: message });
+
+            // Clear input
+            input.value = '';
+
+            // Disable send button
+            const sendBtn = document.getElementById('sendBtn');
+            sendBtn.disabled = true;
+
+            // Show typing indicator
+            showTyping();
+
+            try {
+                // Get scenario context
+                const context = scenarioContexts[currentScenario];
+
+                // Call backend endpoint instead of direct API
+                const response = await fetch('/api/test/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        scenario: currentScenario,
+                        systemPrompt: context.systemPrompt,
+                        conversationHistory: conversationHistory
+                    })
+                });
+
+                const data = await response.json();
+
+                hideTyping();
+
+                if (data.success && data.response) {
+                    addMessage('assistant', data.response);
+                    conversationHistory.push({ role: 'assistant', content: data.response });
+                } else {
+                    addMessage('assistant', `❌ Error: ${data.error || 'Could not get response from AI'}`);
+                }
+
+            } catch (error) {
+                hideTyping();
+                addMessage('assistant', `❌ Error: ${error.message}`);
+                console.error('Error:', error);
+            }
+
+            // Re-enable send button
+            sendBtn.disabled = false;
+            input.focus();
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function clearChat() {
+            const chat = document.getElementById('chat');
+            chat.innerHTML = '<div class="context-info" id="context-info">💡 Select a scenario above to test AI responses in different situations</div>';
+            conversationHistory = [];
+        }
+
+        // Focus input on load
+        document.getElementById('messageInput').focus();
+    </script>
+</body>
+</html>

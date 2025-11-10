@@ -111,8 +111,17 @@ Guidelines:
                 await this.performClick(action.target);
                 return { clicked: action.target };
             case 'type':
-                await this.performType(action.target, action.value || '');
+                await this.performType(action.target, action.value || '', action.reason);
                 return { typed: action.value };
+            case 'fill':
+                await this.performType(
+                    action.target && action.target !== 'auto'
+                        ? action.target
+                        : this.buildAdaptiveSelector(action.reason, 'input'),
+                    action.value || '',
+                    action.reason
+                );
+                return { filled: action.value };
             case 'select':
                 await this.performSelect(action.target, action.value);
                 return { selected: action.value };
@@ -130,52 +139,127 @@ Guidelines:
     async performClick(target) {
         if (!target) throw new Error('Click action missing target');
 
-        // Handle JSON payload for text-based clicking
+        let explicitTarget = target;
+
         if (target.startsWith('{') || target.startsWith('[')) {
             const payload = JSON.parse(target);
             if (payload.text) {
+                explicitTarget = null;
                 await this.page.getByText(payload.text, { exact: payload.exact || false }).first().click();
                 return;
             }
         }
 
-        // Try multiple strategies for robustness
+        const textHint = this.extractTextHint(explicitTarget);
+
         try {
-            // Strategy 1: Direct click with scroll into view
-            await this.page.click(target, { timeout: 10000 });
-        } catch (firstError) {
-            console.log(`      ⚠️  Direct click failed, trying fallback strategies...`);
-
-            try {
-                // Strategy 2: Try as text locator (case-insensitive)
-                const textMatch = target.match(/.*text[=\(]["'](.+?)["']\)?/i);
-                if (textMatch) {
-                    const text = textMatch[1];
-                    console.log(`      🔄 Trying text-based click: "${text}"`);
-                    await this.page.getByText(text, { exact: false }).first().click({ timeout: 10000 });
-                    return;
-                }
-            } catch (secondError) {
-                // Ignore and try next strategy
-            }
-
-            try {
-                // Strategy 3: Try scrolling page down and retry
-                console.log(`      📜 Scrolling page down and retrying...`);
-                await this.page.mouse.wheel(0, 500);
-                await this.page.waitForTimeout(500);
-                await this.page.click(target, { timeout: 10000 });
+            if (explicitTarget) {
+                await this.page.click(explicitTarget, { timeout: 5000 });
                 return;
-            } catch (thirdError) {
-                // All strategies failed, throw original error
-                throw firstError;
+            }
+        } catch (_) {
+            console.warn(`      ⚠️  Direct click failed, trying fallback strategies...`);
+        }
+
+        await this.page.mouse.wheel(0, 400);
+        await this.page.waitForTimeout(300);
+
+        const fallbacks = [];
+        if (textHint) {
+            const regex = new RegExp(textHint, 'i');
+            fallbacks.push(
+                () => this.page.getByRole('button', { name: regex }).first().click({ timeout: 4000 }),
+                () => this.page.getByRole('link', { name: regex }).first().click({ timeout: 4000 }),
+                () => this.page.getByText(regex).first().click({ timeout: 4000 }),
+                () => this.page.locator(`button:has-text("${textHint}")`).first().click({ timeout: 4000 }),
+                () => this.page.locator(`input[value*="${textHint}"]`).first().click({ timeout: 4000 }),
+                () => this.page.locator(`input[title*="${textHint}"]`).first().click({ timeout: 4000 }),
+                () => this.page.locator(`input[alt*="${textHint}"]`).first().click({ timeout: 4000 }),
+                () => this.page.locator(`text=${textHint}`).first().click({ timeout: 4000 }),
+                () => this.clickViaEvaluate(textHint)
+            );
+        }
+
+        fallbacks.push(
+            () => this.page.locator('input[id*="btnnew"]').first().click({ timeout: 4000 }),
+            () => this.page.locator('input[type="submit"][value*="Create"]').first().click({ timeout: 4000 })
+        );
+
+        if (explicitTarget) {
+            fallbacks.push(() => this.page.locator(explicitTarget).click({ timeout: 4000, force: true }));
+        }
+
+        for (const attempt of fallbacks) {
+            try {
+                console.log(`      🔁 Trying fallback click...`);
+                await attempt();
+                return;
+            } catch (_) {
+                continue;
             }
         }
+
+        if (textHint) {
+            const regex = new RegExp(textHint, 'i');
+            const button = await this.page.getByRole('button', { name: regex }).first();
+            if (await button.count()) {
+                await button.click({ timeout: 4000, force: true });
+                return;
+            }
+            const link = await this.page.getByRole('link', { name: regex }).first();
+            if (await link.count()) {
+                await link.click({ timeout: 4000, force: true });
+                return;
+            }
+            const input = await this.page.locator(`input[value*="${textHint}"]`).first();
+            if (await input.count()) {
+                await input.click({ timeout: 4000, force: true });
+                return;
+            }
+        }
+
+        if (explicitTarget) {
+            await this.page.locator(explicitTarget).click({ timeout: 4000, force: true });
+            return;
+        }
+
+        // Last resort: click via bounding box of text hint
+        if (textHint) {
+            const element = this.page.getByText(new RegExp(textHint, 'i')).first();
+            if (await element.count()) {
+                const box = await element.boundingBox();
+                if (box) {
+                    await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+                    return;
+                }
+            }
+        }
+
+        throw new Error(`Unable to click target: ${target}`);
     }
 
-    async performType(target, value) {
+    async performType(target, value, reason = '') {
         if (!target) throw new Error('Type action missing target');
-        await this.page.fill(target, value || '', { timeout: 10000 });
+
+        const selectors = [target, ...this.buildSelectorFallbacks(target, reason)];
+        let lastError = null;
+
+        for (const selector of selectors) {
+            if (!selector) {
+                continue;
+            }
+
+            try {
+                await this.page.fill(selector, value || '', { timeout: 10000 });
+                return;
+            } catch (err) {
+                lastError = err;
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
     }
 
     async performSelect(target, value) {
@@ -198,6 +282,93 @@ Guidelines:
         });
 
         return { code };
+    }
+
+    buildSelectorFallbacks(target, reason = '') {
+        const hints = [];
+        const lowerTarget = target ? target.toLowerCase() : '';
+        const lowerReason = (reason || '').toLowerCase();
+        const text = `${lowerTarget} ${lowerReason}`;
+
+        const labelToXpath = (label) => `xpath=//span[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), "${label}")]/ancestor::tr[1]//input`;
+
+        if (text.includes('first')) {
+            hints.push(
+                'input[id*="First"]',
+                'input[name*="First"]',
+                'input[aria-label*="First"]',
+                'input[placeholder*="First"]',
+                labelToXpath('first name'),
+                'table input[id*="RequesDetailsFormLayout"][id$="_I"]'
+            );
+        }
+
+        if (text.includes('last')) {
+            hints.push(
+                'input[id*="Last"]',
+                'input[name*="Last"]',
+                'input[aria-label*="Last"]',
+                'input[placeholder*="Last"]',
+                labelToXpath('last name'),
+                'table input[id*="RequesDetailsFormLayout"][id$="_I"]'
+            );
+        }
+
+        if (text.includes('email')) {
+            hints.push(
+                'input[id*="Email"]',
+                'input[name*="Email"]'
+            );
+        }
+
+        if (text.includes('password')) {
+            hints.push(
+                'input[type="password"]'
+            );
+        }
+
+        if (text.includes('confirm')) {
+            hints.push(
+                'input[id*="Confirm"]',
+                'input[name*="Confirm"]'
+            );
+        }
+
+        return hints;
+    }
+
+    extractTextHint(selector) {
+        if (!selector || typeof selector !== 'string') return null;
+
+        const titleMatch = selector.match(/title\s*=\s*["']([^"']+)["']/i);
+        if (titleMatch) return titleMatch[1].trim();
+
+        const textMatch = selector.match(/text\s*=?\s*["']([^"']+)["']/i);
+        if (textMatch) return textMatch[1].trim();
+
+        const ariaMatch = selector.match(/aria-label\s*=\s*["']([^"']+)["']/i);
+        if (ariaMatch) return ariaMatch[1].trim();
+
+        if (/create[\s-]?account/i.test(selector)) {
+            return 'Create Account';
+        }
+
+        return null;
+    }
+
+    async clickViaEvaluate(text) {
+        if (!text) return;
+        await this.page.evaluate((hint) => {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, null);
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                const content = (node.textContent || '').trim().toLowerCase();
+                if (content.includes(hint.toLowerCase())) {
+                    node.click();
+                    return;
+                }
+            }
+        }, text);
     }
 }
 

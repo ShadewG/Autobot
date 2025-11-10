@@ -335,6 +335,13 @@ redis-cli
 2. Verify follow-up schedules exist: `SELECT * FROM follow_up_schedule`
 3. Check `ENABLE_AUTO_FOLLOWUP=true` in env
 
+## OpenAI AgentKit Portal Automation (Experimental)
+
+1. Create a Browser-enabled automation inside the [OpenAI](https://platform.openai.com/) dashboard (AgentKit) so the model can open Chrome instances on your behalf.
+2. Copy the automation ID and add it as `OPENAI_PORTAL_AUTOMATION_ID` alongside your `OPENAI_API_KEY`.
+3. Run `node test-portal-agentkit.js <portal-url> [caseId]` to compare the AgentKit workflow with the built-in Playwright portal agent.
+4. Use AgentKit for especially tricky portals (GovQA, Tyler, NIC, etc.) where DOM selectors are brittle—the model can reason over rendered UI elements and images automatically.
+
 ## Cost Estimate
 
 - **Railway**: $5-10/month (Hobby plan)

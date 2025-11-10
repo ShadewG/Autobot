@@ -962,4 +962,56 @@ router.post('/run-migration', async (req, res) => {
     }
 });
 
+/**
+ * Chat endpoint for testing AI responses
+ * POST /api/test/chat
+ */
+router.post('/chat', async (req, res) => {
+    try {
+        const { scenario, systemPrompt, conversationHistory } = req.body;
+
+        if (!conversationHistory || !Array.isArray(conversationHistory)) {
+            return res.status(400).json({
+                success: false,
+                error: 'conversationHistory is required'
+            });
+        }
+
+        // Use OpenAI for chat testing
+        const OpenAI = require('openai');
+        const openai = new OpenAI({
+            apiKey: process.env.OPENAI_API_KEY
+        });
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt || 'You are a helpful FOIA assistant.' },
+                ...conversationHistory
+            ],
+            temperature: 0.7,
+            max_tokens: 500
+        });
+
+        const aiResponse = response.choices[0]?.message?.content;
+
+        if (!aiResponse) {
+            throw new Error('No response from AI');
+        }
+
+        res.json({
+            success: true,
+            response: aiResponse,
+            scenario: scenario
+        });
+
+    } catch (error) {
+        console.error('Chat error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
