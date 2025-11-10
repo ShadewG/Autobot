@@ -1,4 +1,6 @@
 const axios = require('axios');
+const crypto = require('crypto');
+const database = require('./database');
 
 /**
  * Portal Agent using Skyvern AI
@@ -18,6 +20,20 @@ class PortalAgentServiceSkyvern {
     }
 
     /**
+     * Generate a secure password for new accounts
+     */
+    _generateSecurePassword() {
+        const length = 16;
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
+        let password = '';
+        const randomBytes = crypto.randomBytes(length);
+        for (let i = 0; i < length; i++) {
+            password += chars[randomBytes[i] % chars.length];
+        }
+        return password;
+    }
+
+    /**
      * Submit to portal using Skyvern
      */
     async submitToPortal(caseData, portalUrl, options = {}) {
@@ -34,11 +50,35 @@ class PortalAgentServiceSkyvern {
             console.log(`   Dry run: ${dryRun}`);
             console.log(`   API: ${this.baseUrl}`);
 
-            // Build navigation goal
-            const navigationGoal = this.buildNavigationGoal(caseData, dryRun);
+            // Check if we have existing portal credentials
+            console.log(`\n🔍 Checking for existing portal account...`);
+            const existingAccount = await database.getPortalAccountByUrl(portalUrl);
 
-            // Build navigation payload (data to fill in)
-            const navigationPayload = this.buildNavigationPayload(caseData);
+            let navigationGoal, navigationPayload, accountPassword;
+
+            if (existingAccount) {
+                console.log(`✅ Found existing account: ${existingAccount.email}`);
+                console.log(`   Account ID: ${existingAccount.id}`);
+                console.log(`   Last used: ${existingAccount.last_used_at || 'Never'}`);
+
+                // Build instructions to LOG IN with existing credentials
+                navigationGoal = this.buildNavigationGoalWithLogin(caseData, existingAccount, dryRun);
+                navigationPayload = this.buildNavigationPayloadWithLogin(caseData, existingAccount);
+                accountPassword = null; // We're not creating a new account
+
+                // Update last used timestamp
+                await database.updatePortalAccountLastUsed(existingAccount.id);
+            } else {
+                console.log(`❌ No existing account found - will create new account`);
+
+                // Generate a password that we'll tell Skyvern to use
+                accountPassword = this._generateSecurePassword();
+                console.log(`   Generated password for new account`);
+
+                // Build instructions to CREATE ACCOUNT
+                navigationGoal = this.buildNavigationGoalWithAccountCreation(caseData, dryRun, accountPassword);
+                navigationPayload = this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword);
+            }
 
             console.log(`\n📝 Navigation Goal:\n${navigationGoal}\n`);
             console.log(`⏳ Creating task...\n`);
@@ -118,6 +158,30 @@ class PortalAgentServiceSkyvern {
 
             // Check if task completed successfully
             if (finalTask.status === 'completed') {
+                // If we created a new account, save credentials to database
+                if (!existingAccount && accountPassword) {
+                    console.log(`\n💾 Saving new portal account credentials...`);
+                    try {
+                        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+                        const savedAccount = await database.createPortalAccount({
+                            portal_url: portalUrl,
+                            email: email,
+                            password: accountPassword,
+                            first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
+                            last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
+                            portal_type: 'Auto-detected',
+                            additional_info: {
+                                case_id: caseData.id,
+                                created_by_task: taskId
+                            }
+                        });
+                        console.log(`   ✅ Saved account ID: ${savedAccount.id}`);
+                    } catch (saveError) {
+                        console.error(`   ⚠️  Failed to save account: ${saveError.message}`);
+                        // Continue anyway - don't fail the whole task
+                    }
+                }
+
                 return {
                     success: true,
                     caseId: caseData.id,
@@ -127,7 +191,9 @@ class PortalAgentServiceSkyvern {
                     recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
                     extracted_data: finalTask.extracted_information,
                     steps: finalTask.actions?.length || finalTask.steps || 0,
-                    dryRun
+                    dryRun,
+                    usedExistingAccount: !!existingAccount,
+                    savedNewAccount: !existingAccount && !!accountPassword
                 };
             } else if (finalTask.status === 'failed') {
                 return {
@@ -167,21 +233,19 @@ class PortalAgentServiceSkyvern {
     }
 
     /**
-     * Build navigation goal (natural language instructions)
+     * Build navigation goal for LOGIN (existing account)
      */
-    buildNavigationGoal(caseData, dryRun) {
-        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-
+    buildNavigationGoalWithLogin(caseData, existingAccount, dryRun) {
         return `You are filling out a FOIA (Freedom of Information Act) records request on a government portal.
 
 INSTRUCTIONS:
-1. If the portal requires account creation or login:
-   - Create a new account using the email: ${email}
-   - Generate a secure password
-   - Fill in any required account information
-   - Complete any email verification if needed
+1. LOG IN to the portal using these credentials:
+   - Email: ${existingAccount.email}
+   - Password: ${existingAccount.password}
 
-2. Once on the request form, fill out ALL fields using the data provided in the navigation_payload
+   If you see a login form, enter these credentials and log in.
+
+2. Once logged in, fill out the FOIA request form with ALL fields using the data provided in the navigation_payload
 
 3. Key fields to look for and fill:
    - Requester name/contact information
@@ -199,15 +263,90 @@ Be thorough and fill out every available field with the provided information. Th
     }
 
     /**
-     * Build navigation payload (structured data for form filling)
+     * Build navigation goal for ACCOUNT CREATION (new account)
      */
-    buildNavigationPayload(caseData) {
+    buildNavigationGoalWithAccountCreation(caseData, dryRun, password) {
+        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+
+        return `You are filling out a FOIA (Freedom of Information Act) records request on a government portal.
+
+INSTRUCTIONS:
+1. CREATE A NEW ACCOUNT on the portal:
+   - Email: ${email}
+   - Password: ${password}
+   - IMPORTANT: Use exactly this password: ${password}
+   - Fill in any required account information (name, state, etc.)
+   - Complete any email verification if needed
+
+2. Once the account is created and you're logged in, fill out the FOIA request form with ALL fields using the data provided in the navigation_payload
+
+3. Key fields to look for and fill:
+   - Requester name/contact information
+   - Agency name
+   - Request description/subject
+   - Records being requested (detailed list)
+   - Date range or incident information
+   - Email for correspondence
+   - Delivery format preference (electronic/email)
+   - Fee waiver request (if available, request as press/media)
+
+4. ${dryRun ? 'STOP before clicking the final submit button (this is a test/dry run)' : 'Complete the full submission by clicking the submit button'}
+
+Be thorough and fill out every available field with the provided information. The goal is to create a complete, detailed FOIA request.`;
+    }
+
+    /**
+     * Build navigation payload for LOGIN (existing account)
+     */
+    buildNavigationPayloadWithLogin(caseData, existingAccount) {
+        return {
+            // Login credentials
+            login_email: existingAccount.email,
+            login_password: existingAccount.password,
+
+            // Contact Information
+            email: existingAccount.email,
+            requester_name: caseData.subject_name || existingAccount.first_name + ' ' + existingAccount.last_name,
+            requester_email: existingAccount.email,
+
+            // Case Information
+            case_name: caseData.case_name || 'Records Request',
+            subject_name: caseData.subject_name || '',
+            agency_name: caseData.agency_name || '',
+
+            // Location & Date
+            state: caseData.state || '',
+            incident_date: caseData.incident_date || '',
+            incident_location: caseData.incident_location || '',
+
+            // Request Details
+            records_requested: caseData.requested_records || 'Body-worn camera footage, dashcam footage, incident reports, 911 calls, arrest reports, booking photos',
+            request_description: caseData.additional_details || 'Requesting all records related to this incident including police reports, witness statements, forensic evidence, and any other relevant documentation.',
+
+            // Additional fields
+            delivery_format: 'electronic',
+            fee_waiver_requested: true,
+            fee_waiver_reason: 'Request as member of press/media for public interest reporting'
+        };
+    }
+
+    /**
+     * Build navigation payload for ACCOUNT CREATION (new account)
+     */
+    buildNavigationPayloadWithAccountCreation(caseData, password) {
         const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
 
         return {
+            // Account Creation fields
+            account_email: email,
+            account_password: password,
+            account_password_confirm: password,
+            first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
+            last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
+
             // Contact Information
             email: email,
-            requester_name: caseData.subject_name || 'Samuel Hylton',
+            requester_name: caseData.subject_name || 'FOIB Request',
             requester_email: email,
 
             // Case Information

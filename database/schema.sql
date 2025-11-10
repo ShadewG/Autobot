@@ -154,6 +154,24 @@ INSERT INTO state_deadlines (state_code, state_name, response_days, statute_cita
 ('MI', 'Michigan', 5, 'Michigan Freedom of Information Act')
 ON CONFLICT (state_code) DO NOTHING;
 
+-- Portal accounts (store credentials for reuse)
+CREATE TABLE IF NOT EXISTS portal_accounts (
+    id SERIAL PRIMARY KEY,
+    portal_url VARCHAR(1000) NOT NULL, -- Full portal URL
+    portal_domain VARCHAR(255) NOT NULL, -- Extracted domain (e.g., "colliercountyshofl.govqa.us")
+    portal_type VARCHAR(100), -- e.g., "GovQA", "NextRequest", "Custom"
+    email VARCHAR(255) NOT NULL,
+    password_encrypted TEXT NOT NULL, -- Encrypted password
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    additional_info JSONB, -- Any other account details
+    account_status VARCHAR(50) DEFAULT 'active', -- active, inactive, locked
+    last_used_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(portal_domain, email)
+);
+
 -- Activity log for monitoring
 CREATE TABLE IF NOT EXISTS activity_log (
     id SERIAL PRIMARY KEY,
@@ -174,3 +192,5 @@ CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction);
 CREATE INDEX IF NOT EXISTS idx_followup_schedule_date ON follow_up_schedule(next_followup_date);
 CREATE INDEX IF NOT EXISTS idx_activity_log_event ON activity_log(event_type);
 CREATE INDEX IF NOT EXISTS idx_activity_log_created ON activity_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_portal_accounts_domain ON portal_accounts(portal_domain);
+CREATE INDEX IF NOT EXISTS idx_portal_accounts_status ON portal_accounts(account_status);

@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 class DatabaseService {
     constructor() {
@@ -341,6 +342,127 @@ class DatabaseService {
             [stateCode]
         );
         return result.rows[0];
+    }
+
+    // Portal Accounts - Password Encryption Helpers
+    _getEncryptionKey() {
+        // Use environment variable or fallback (in production, ALWAYS use env var)
+        const key = process.env.PORTAL_ENCRYPTION_KEY || 'default-key-change-in-production-32';
+        return crypto.createHash('sha256').update(key).digest();
+    }
+
+    _encryptPassword(password) {
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv('aes-256-cbc', this._getEncryptionKey(), iv);
+        let encrypted = cipher.update(password, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return iv.toString('hex') + ':' + encrypted;
+    }
+
+    _decryptPassword(encrypted) {
+        const parts = encrypted.split(':');
+        const iv = Buffer.from(parts[0], 'hex');
+        const encryptedText = parts[1];
+        const decipher = crypto.createDecipheriv('aes-256-cbc', this._getEncryptionKey(), iv);
+        let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    }
+
+    _extractDomain(url) {
+        try {
+            const urlObj = new URL(url);
+            return urlObj.hostname;
+        } catch (error) {
+            // If URL parsing fails, try to extract domain manually
+            const match = url.match(/(?:https?:\/\/)?(?:www\.)?([^\/]+)/);
+            return match ? match[1] : url;
+        }
+    }
+
+    // Portal Accounts CRUD
+    async createPortalAccount(accountData) {
+        const query = `
+            INSERT INTO portal_accounts (
+                portal_url, portal_domain, portal_type, email, password_encrypted,
+                first_name, last_name, additional_info, account_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING id, portal_url, portal_domain, portal_type, email, first_name, last_name,
+                      additional_info, account_status, created_at, updated_at
+        `;
+        const domain = this._extractDomain(accountData.portal_url);
+        const encryptedPassword = this._encryptPassword(accountData.password);
+
+        const values = [
+            accountData.portal_url,
+            domain,
+            accountData.portal_type || null,
+            accountData.email,
+            encryptedPassword,
+            accountData.first_name || null,
+            accountData.last_name || null,
+            accountData.additional_info || null,
+            accountData.account_status || 'active'
+        ];
+
+        const result = await this.query(query, values);
+        return result.rows[0];
+    }
+
+    async getPortalAccountByDomain(domain, email = null) {
+        let query = 'SELECT * FROM portal_accounts WHERE portal_domain = $1';
+        const params = [domain];
+
+        if (email) {
+            query += ' AND email = $2';
+            params.push(email);
+        }
+
+        query += ' AND account_status = \'active\' ORDER BY created_at DESC LIMIT 1';
+
+        const result = await this.query(query, params);
+        if (result.rows.length > 0) {
+            const account = result.rows[0];
+            // Decrypt password for use
+            account.password = this._decryptPassword(account.password_encrypted);
+            delete account.password_encrypted; // Don't expose encrypted version
+            return account;
+        }
+        return null;
+    }
+
+    async getPortalAccountByUrl(portalUrl) {
+        const domain = this._extractDomain(portalUrl);
+        return await this.getPortalAccountByDomain(domain);
+    }
+
+    async updatePortalAccountLastUsed(accountId) {
+        const query = `
+            UPDATE portal_accounts
+            SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING *
+        `;
+        const result = await this.query(query, [accountId]);
+        return result.rows[0];
+    }
+
+    async updatePortalAccountStatus(accountId, status) {
+        const query = `
+            UPDATE portal_accounts
+            SET account_status = $2, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING *
+        `;
+        const result = await this.query(query, [accountId, status]);
+        return result.rows[0];
+    }
+
+    async getAllPortalAccounts() {
+        const result = await this.query(
+            'SELECT id, portal_url, portal_domain, portal_type, email, first_name, last_name, account_status, last_used_at, created_at FROM portal_accounts ORDER BY created_at DESC'
+        );
+        return result.rows;
     }
 
     // Utility
