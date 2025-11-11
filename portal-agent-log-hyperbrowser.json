@@ -1,0 +1,35 @@
+{
+  "success": false,
+  "sessionId": "9ad952e9-19c8-4ec4-acfe-d056058dc3f7",
+  "stepLog": [
+    {
+      "step": 1,
+      "action": {
+        "type": "scroll",
+        "target": "{\"x\":0,\"y\":300}",
+        "value": null,
+        "reason": "To see if there's a \"Create an Account\" link below the current login form"
+      },
+      "result": {
+        "scrolled": {
+          "x": 0,
+          "y": 300
+        }
+      },
+      "url": "https://colliercountyshofl.govqa.us/WEBAPP/_rs/(S(40bmt2z4fqa2vj4qjeprylkk))/RequestLogin.aspx?sSessionID=&rqst=4&target=ZwpfxNlipoMF2Ut+o/ukfVBzG+KwiVYui6tQ4jBaoyEbXnRUsppuaM9gxkGUAiqmY6bx2x6s+8GPrd0Llw+EPhizz6Hs8jVNfkAsIs+6AqFfxaZ3pTScuE+r1HIM68Lo"
+    },
+    {
+      "step": 2,
+      "action": {
+        "type": "click",
+        "target": "[aria-label=\"Create Account\"] , button:has-text(\"Create Account\")",
+        "value": null,
+        "reason": "To create a new account for first-time FOIA request submission"
+      },
+      "result": {
+        "error": "Unexpected token 'a', \"[aria-label\"... is not valid JSON"
+      },
+      "url": "https://colliercountyshofl.govqa.us/WEBAPP/_rs/(S(40bmt2z4fqa2vj4qjeprylkk))/RequestLogin.aspx?sSessionID=&rqst=4&target=ZwpfxNlipoMF2Ut+o/ukfVBzG+KwiVYui6tQ4jBaoyEbXnRUsppuaM9gxkGUAiqmY6bx2x6s+8GPrd0Llw+EPhizz6Hs8jVNfkAsIs+6AqFfxaZ3pTScuE+r1HIM68Lo"
+    }
+  ]
+}

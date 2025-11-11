@@ -632,6 +632,9 @@
                     <button class="btn-warning" onclick="runMigration()">
                         <span class="emoji">⚙️</span> Run Migration
                     </button>
+                    <button class="btn-info" onclick="runMigration007()">
+                        <span class="emoji">🔧</span> Fix Auto-Reply Queue
+                    </button>
                     <button class="btn-danger" onclick="clearDatabase()">
                         <span class="emoji">🗑️</span> Clear All Cases
                     </button>
@@ -1493,6 +1496,38 @@
                 }
             } catch (error) {
                 log(`❌ Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Run Migration 007
+        async function runMigration007() {
+            if (!confirm('Run migration 007? This will add UNIQUE constraint to auto_reply_queue.message_id to fix the auto-reply error.')) {
+                return;
+            }
+
+            const btn = event.target.closest('button');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Running...';
+
+            log('🔧 Running migration 007...');
+
+            try {
+                const result = await apiCall('/test/run-migration-007', 'POST');
+
+                if (result.success) {
+                    log('✅ Migration 007 completed!', 'success');
+                    log(`   ${result.message}`, 'success');
+                    if (result.note) {
+                        log(`   ${result.note}`, 'info');
+                    }
+                } else {
+                    log(`❌ Migration failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<span class="emoji">🔧</span> Fix Auto-Reply Queue';
             }
         }
 

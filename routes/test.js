@@ -1119,4 +1119,46 @@ router.post('/retrigger-analysis', async (req, res) => {
     }
 });
 
+/**
+ * Run migration 007: Add UNIQUE constraint to auto_reply_queue
+ * POST /api/test/run-migration-007
+ */
+router.post('/run-migration-007', async (req, res) => {
+    try {
+        console.log('🔧 Running migration 007...');
+
+        const migrationSQL = `
+            -- Add UNIQUE constraint to auto_reply_queue.message_id
+            ALTER TABLE auto_reply_queue
+            ADD CONSTRAINT auto_reply_queue_message_id_unique UNIQUE (message_id);
+        `;
+
+        await db.query(migrationSQL);
+
+        console.log('✅ Migration 007 completed!');
+
+        res.json({
+            success: true,
+            message: 'Migration 007 completed: Added UNIQUE constraint to auto_reply_queue.message_id'
+        });
+
+    } catch (error) {
+        console.error('Migration 007 error:', error);
+
+        // If constraint already exists, that's fine
+        if (error.message.includes('already exists')) {
+            return res.json({
+                success: true,
+                message: 'Constraint already exists (skipped)',
+                note: 'This is expected if migration was already run'
+            });
+        }
+
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

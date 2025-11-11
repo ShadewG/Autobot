@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS follow_up_schedule (
 -- Auto-reply queue (for manual approval if needed)
 CREATE TABLE IF NOT EXISTS auto_reply_queue (
     id SERIAL PRIMARY KEY,
-    message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+    message_id INTEGER UNIQUE REFERENCES messages(id) ON DELETE CASCADE,
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
     generated_reply TEXT NOT NULL,
     confidence_score DECIMAL(3,2),
