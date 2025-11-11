@@ -1342,6 +1342,9 @@
                                     <option value="change">Change</option>
                                 </select>
                                 <input data-review-next-status="${item.id}" placeholder="Next status (optional)" style="padding:8px;border-radius:8px;border:1px solid #cbd5f5;" />
+                                <button class="btn-secondary" onclick="openThreadModal(${item.id})">
+                                    <span class="emoji">📨</span> View Thread
+                                </button>
                                 <button class="btn-success" onclick="submitHumanReviewDecision(${item.id}, this)">
                                     <span class="emoji">✅</span> Submit Decision
                                 </button>
@@ -1423,12 +1426,15 @@
                             <div style="margin-top:8px; font-size:12px; color:#2d3748;">${original}</div>
                         </details>
                         <div class="fee-actions">
-                            <textarea data-fee-instructions="${item.id}" placeholder="Add instructions before regenerating...">${escapeHtml(instructions)}</textarea>
+                            <textarea data-fee-instructions="${item.id}" data-original-instructions="${escapeHtml(instructions)}" placeholder="Add instructions before regenerating...">${escapeHtml(instructions)}</textarea>
                             <div style="display:flex; flex-direction:column; gap:8px; min-width:180px;">
                                 <label style="font-size:12px; text-transform:uppercase; color:#4a5568;">Action</label>
-                                <select data-fee-action="${item.id}">
+                                <select data-fee-action="${item.id}" data-original-action="${metadata.recommended_action || 'negotiate'}">
                                     ${['accept','negotiate','escalate'].map(opt => `<option value="${opt}" ${ (metadata.recommended_action || 'negotiate') === opt ? 'selected' : '' }>${opt.charAt(0).toUpperCase() + opt.slice(1)}</option>`).join('')}
                                 </select>
+                                <button class="btn-secondary" onclick="openThreadModal(${item.case_id})">
+                                    <span class="emoji">📨</span> View Thread
+                                </button>
                                 <button class="btn-info" onclick="regenerateFeeResponse(${item.id}, this)">
                                     <span class="emoji">♻️</span> Regenerate
                                 </button>
@@ -1445,8 +1451,28 @@
         }
 
         async function approveFeeResponse(id, buttonEl) {
-            const btn = buttonEl || event.target.closest('button');
+            const btn = buttonEl || null;
             if (!btn) return;
+
+            const instructionsEl = document.querySelector(`[data-fee-instructions="${id}"]`);
+            const actionEl = document.querySelector(`[data-fee-action="${id}"]`);
+            const currentInstructions = instructionsEl ? instructionsEl.value.trim() : '';
+            const originalInstructions = instructionsEl ? (instructionsEl.dataset.originalInstructions || '') : '';
+            const currentAction = actionEl ? actionEl.value : null;
+            const originalAction = actionEl ? (actionEl.dataset.originalAction || 'negotiate') : 'negotiate';
+
+            if ((currentInstructions !== originalInstructions) || (currentAction !== originalAction)) {
+                log('✏️ Detected changes to instructions/action. Regenerating draft before sending...', 'warning');
+                const regenSuccess = await regenerateFeeResponse(id, null, {
+                    instructions: currentInstructions,
+                    action: currentAction,
+                    silent: true
+                });
+                if (regenSuccess) {
+                    log('📝 Draft updated. Review the new text, then click "Approve & Send" when ready.', 'info');
+                }
+                return;
+            }
 
             const original = btn.innerHTML;
             btn.disabled = true;
@@ -1469,18 +1495,23 @@
             }
         }
 
-        async function regenerateFeeResponse(id, buttonEl) {
+        async function regenerateFeeResponse(id, buttonEl, opts = {}) {
             const instructionsEl = document.querySelector(`[data-fee-instructions="${id}"]`);
             const actionEl = document.querySelector(`[data-fee-action="${id}"]`);
-            const instructions = instructionsEl ? instructionsEl.value.trim() : '';
-            const action = actionEl ? actionEl.value : null;
+            const instructions = opts.instructions !== undefined
+                ? opts.instructions
+                : (instructionsEl ? instructionsEl.value.trim() : '');
+            const action = opts.action !== undefined
+                ? opts.action
+                : (actionEl ? actionEl.value : null);
+            const silent = opts.silent === true;
 
-            const btn = buttonEl || event.target.closest('button');
-            if (!btn) return;
-
-            const original = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '<span class="loading"></span> Updating...';
+            const btn = buttonEl || null;
+            const original = btn ? btn.innerHTML : null;
+            if (!silent && btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading"></span> Updating...';
+            }
 
             try {
                 const result = await apiCall(`/test/fee-responses/${id}/regenerate`, 'POST', {
@@ -1489,16 +1520,23 @@
                 });
 
                 if (result.success) {
-                    log(`♻️ Fee response ${id} regenerated`, 'info');
+                    if (!silent) {
+                        log(`♻️ Fee response ${id} regenerated`, 'info');
+                    }
                     await loadFeeResponses();
+                    return true;
                 } else {
                     log(`❌ Failed to regenerate: ${result.error}`, 'error');
+                    return false;
                 }
             } catch (error) {
                 log(`❌ Error regenerating fee response: ${error.message}`, 'error');
+                return false;
             } finally {
-                btn.disabled = false;
-                btn.innerHTML = original;
+                if (!silent && btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = original;
+                }
             }
         }
 

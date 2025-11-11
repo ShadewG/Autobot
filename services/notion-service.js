@@ -356,6 +356,80 @@ class NotionService {
                 }
             }
 
+            if (updates.live_status) {
+                if (propSet.has('Live Status')) {
+                    properties['Live Status'] = {
+                        select: { name: updates.live_status }
+                    };
+                } else {
+                    missingProps('Live Status');
+                }
+            }
+
+            if (updates.live_substatus !== undefined) {
+                if (propSet.has('Live Substatus')) {
+                    properties['Live Substatus'] = {
+                        rich_text: updates.live_substatus
+                            ? [{ text: { content: updates.live_substatus } }]
+                            : []
+                    };
+                } else {
+                    missingProps('Live Substatus');
+                }
+            }
+
+            if (updates.last_portal_status_text) {
+                if (propSet.has('Last Portal Status')) {
+                    properties['Last Portal Status'] = {
+                        rich_text: [{
+                            text: { content: updates.last_portal_status_text }
+                        }]
+                    };
+                } else {
+                    missingProps('Last Portal Status');
+                }
+            }
+
+            if (updates.last_portal_updated_at) {
+                if (propSet.has('Last Portal Updated')) {
+                    properties['Last Portal Updated'] = {
+                        date: { start: updates.last_portal_updated_at }
+                    };
+                } else {
+                    missingProps('Last Portal Updated');
+                }
+            }
+
+            if (updates.portal_task_url) {
+                if (propSet.has('Portal Task URL')) {
+                    properties['Portal Task URL'] = {
+                        url: updates.portal_task_url
+                    };
+                } else {
+                    missingProps('Portal Task URL');
+                }
+            }
+
+            if (updates.portal_login_email) {
+                if (propSet.has('Portal Login Email')) {
+                    properties['Portal Login Email'] = {
+                        email: updates.portal_login_email
+                    };
+                } else {
+                    missingProps('Portal Login Email');
+                }
+            }
+
+            if (updates.needs_human_review !== undefined) {
+                if (propSet.has('Needs Human Review')) {
+                    properties['Needs Human Review'] = {
+                        checkbox: !!updates.needs_human_review
+                    };
+                } else {
+                    missingProps('Needs Human Review');
+                }
+            }
+
             if (Object.keys(properties).length === 0) {
                 console.warn(`No valid Notion properties to update for page ${pageId}`);
                 return null;
@@ -487,6 +561,27 @@ class NotionService {
             if (caseData.days_overdue) {
                 updates.days_overdue = caseData.days_overdue;
             }
+
+            const liveStatus = this.mapStatusToNotion(caseData.status) || caseData.status;
+            if (liveStatus) {
+                updates.live_status = liveStatus;
+            }
+            if (caseData.substatus !== undefined) {
+                updates.live_substatus = caseData.substatus || '';
+            }
+            if (caseData.last_portal_status) {
+                updates.last_portal_status_text = caseData.last_portal_status;
+            }
+            if (caseData.last_portal_status_at) {
+                updates.last_portal_updated_at = caseData.last_portal_status_at;
+            }
+            if (caseData.last_portal_task_url || caseData.last_portal_recording_url) {
+                updates.portal_task_url = caseData.last_portal_task_url || caseData.last_portal_recording_url;
+            }
+            if (caseData.last_portal_account_email) {
+                updates.portal_login_email = caseData.last_portal_account_email;
+            }
+            updates.needs_human_review = ['needs_human_review', 'needs_human_fee_approval'].includes(caseData.status);
 
             await this.updatePage(caseData.notion_page_id, updates);
             console.log(`Updated Notion page for case: ${caseData.case_name}`);
