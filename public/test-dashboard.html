@@ -605,6 +605,14 @@
         .inline-checkbox input {
             width: auto;
         }
+
+        .dry-run-input {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 2px solid #e2e8f0;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -648,6 +656,24 @@
                         Creates a new test case and sends email to overlord1pvp@gmail.com
                     </p>
                 </div>
+            </div>
+
+            <!-- Dry Run Portal -->
+            <div class="card">
+                <h2>🧪 Dry Run Portal</h2>
+                <div class="form-field">
+                    <label for="dry-run-portal-input">Portal URL</label>
+                    <input id="dry-run-portal-input" type="url" class="dry-run-input" placeholder="https://example.govqa.us/..." />
+                </div>
+                <div class="button-group">
+                    <button class="btn-secondary" onclick="runDryRunPortal(event)">
+                        <span class="emoji">🧪</span> Run Dry Portal Test
+                    </button>
+                    <p style="color:#718096; font-size:12px; margin-top:10px;">
+                        Fills the portal form using test data, stops before final submission, and gives you a link to review the Skyvern replay.
+                    </p>
+                </div>
+                <div id="dry-run-portal-result" class="case-meta" style="margin-top:10px;"></div>
             </div>
 
             <!-- Notion Launch -->
@@ -1273,6 +1299,61 @@
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<span class="emoji">📤</span> Send Test Email';
+            }
+        }
+
+        async function runDryRunPortal(event) {
+            const input = document.getElementById('dry-run-portal-input');
+            const resultBox = document.getElementById('dry-run-portal-result');
+            const btn = event.target.closest('button');
+
+            if (!input || !input.value.trim()) {
+                log('⚠️ Please enter a portal URL to dry run.', 'warning');
+                return;
+            }
+
+            btn.disabled = true;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="loading"></span> Running...';
+            resultBox.textContent = 'Dry run in progress...';
+
+            try {
+                const portalUrl = input.value.trim();
+                const payload = {
+                    portal_url: portalUrl,
+                    dry_run: true
+                };
+                const result = await apiCall('/test/portal-agent', 'POST', payload);
+
+                if (result.success === false && !result.taskId) {
+                    resultBox.innerHTML = `<span style="color:#e53e3e;">Failed to run: ${escapeHtml(result.error || 'Unknown error')}</span>`;
+                    log(`❌ Dry run failed: ${result.error || 'Unknown error'}`, 'error');
+                    return;
+                }
+
+                const lines = [];
+                lines.push(`Status: ${escapeHtml(result.status || (result.success ? 'completed' : 'stopped'))}`);
+                if (result.portalUrl) {
+                    lines.push(`Portal: <a href="${result.portalUrl}" target="_blank" rel="noopener">${escapeHtml(result.portalUrl)}</a>`);
+                }
+                if (result.taskId) {
+                    const taskLink = `https://app.skyvern.com/tasks/${result.taskId}`;
+                    lines.push(`Skyvern Task: <a href="${taskLink}" target="_blank" rel="noopener">${taskLink}</a>`);
+                }
+                if (result.recording_url) {
+                    lines.push(`Replay: <a href="${result.recording_url}" target="_blank" rel="noopener">${result.recording_url}</a>`);
+                }
+                lines.push(`Steps Completed: ${result.steps || 0}`);
+                lines.push(`Dry Run: ${result.dryRun === false ? 'No' : 'Yes'}`);
+
+                resultBox.innerHTML = lines.map(line => `<div>${line}</div>`).join('');
+                log('✅ Portal dry run finished. Check the links for the full walkthrough.', 'success');
+            } catch (error) {
+                resultBox.innerHTML = `<span style="color:#e53e3e;">${escapeHtml(error.message)}</span>`;
+                log(`❌ Dry run error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
             }
         }
 
