@@ -200,8 +200,25 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 
         // State-specific guidance removed - using simple documentary style
 
-        // Build incident details
-        const incidentDetails = `${caseData.case_name || 'Incident'} involving ${caseData.subject_name || 'subject'} on ${caseData.incident_date || 'unknown date'} at ${caseData.incident_location || 'unknown location'}. ${caseData.additional_details || ''}`;
+        // Build incident details WITHOUT case_name (it's just an internal reference, not for the actual request)
+        let incidentDescription = '';
+        if (caseData.subject_name && caseData.subject_name !== caseData.case_name) {
+            incidentDescription += `Incident involving ${caseData.subject_name}`;
+        } else {
+            incidentDescription += 'Incident';
+        }
+
+        if (caseData.incident_date) {
+            incidentDescription += ` on ${caseData.incident_date}`;
+        }
+
+        if (caseData.incident_location) {
+            incidentDescription += ` at ${caseData.incident_location}`;
+        }
+
+        if (caseData.additional_details) {
+            incidentDescription += `. ${caseData.additional_details}`;
+        }
 
         // Get requester info from env or use defaults
         const requesterName = process.env.REQUESTER_NAME || 'Samuel Hylton';
@@ -217,7 +234,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
 
 2. INCIDENT DETAILS:
-   ${incidentDetails}
+   ${incidentDescription}
    ${itemDescriptions}
 
 3. DETAILED FOOTAGE REQUESTS:
