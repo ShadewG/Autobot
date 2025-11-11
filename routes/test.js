@@ -1517,4 +1517,96 @@ router.post('/delete-test-cases', async (req, res) => {
     }
 });
 
+/**
+ * Force sync from Notion and process all "Ready to Send" cases
+ * POST /api/test/force-notion-sync
+ */
+router.post('/force-notion-sync', async (req, res) => {
+    try {
+        console.log('🔄 Force syncing cases from Notion...');
+
+        // Sync cases with "Ready to Send" status
+        const cases = await notionService.syncCasesFromNotion('Ready to Send');
+
+        if (cases.length === 0) {
+            return res.json({
+                success: true,
+                message: 'No new "Ready to Send" cases found in Notion',
+                synced_count: 0,
+                queued_count: 0
+            });
+        }
+
+        console.log(`✅ Synced ${cases.length} cases from Notion`);
+
+        let queuedCount = 0;
+        let reviewCount = 0;
+        const results = [];
+
+        // Process each case
+        for (const caseData of cases) {
+            const result = {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                status: null,
+                message: null
+            };
+
+            // Check if case has contact info (portal URL or email)
+            const hasPortal = caseData.portal_url && caseData.portal_url.trim().length > 0;
+            const hasEmail = caseData.agency_email && caseData.agency_email.trim().length > 0;
+
+            if (!hasPortal && !hasEmail) {
+                // No contact info - flag for human review
+                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: 'Missing contact information (no portal URL or email)'
+                });
+                await notionService.syncStatusToNotion(caseData.id);
+                await db.logActivity('contact_missing', `Case ${caseData.id} flagged for human review - missing contact info`, {
+                    case_id: caseData.id
+                });
+
+                result.status = 'needs_human_review';
+                result.message = 'Missing contact info - flagged for review';
+                reviewCount++;
+            } else {
+                // Has contact info - queue for processing
+                await generateQueue.add('generate-and-send', {
+                    caseId: caseData.id,
+                    instantMode: true
+                });
+
+                result.status = 'queued';
+                result.message = hasPortal ? 'Queued for portal submission' : 'Queued for email';
+                queuedCount++;
+            }
+
+            results.push(result);
+            console.log(`  ${result.status === 'queued' ? '✅' : '⚠️'} Case ${caseData.id}: ${result.message}`);
+        }
+
+        await db.logActivity('notion_force_sync', `Force synced ${cases.length} cases from Notion`, {
+            synced_count: cases.length,
+            queued_count: queuedCount,
+            review_count: reviewCount
+        });
+
+        res.json({
+            success: true,
+            message: `Synced ${cases.length} cases from Notion`,
+            synced_count: cases.length,
+            queued_count: queuedCount,
+            review_count: reviewCount,
+            results: results
+        });
+
+    } catch (error) {
+        console.error('Force Notion sync error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

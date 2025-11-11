@@ -676,6 +676,20 @@
                 <div id="dry-run-portal-result" class="case-meta" style="margin-top:10px;"></div>
             </div>
 
+            <!-- Force Notion Sync -->
+            <div class="card">
+                <h2>🔄 Force Notion Sync</h2>
+                <div class="button-group">
+                    <button class="btn-success" onclick="forceNotionSync(event)">
+                        <span class="emoji">🔄</span> Sync & Send All Cases
+                    </button>
+                    <p style="color:#718096; font-size:12px; margin-top:10px;">
+                        Syncs all "Ready to Send" cases from Notion and immediately queues them for sending. Cases missing contact info will be flagged for review.
+                    </p>
+                </div>
+                <div id="force-sync-result" style="margin-top:10px;"></div>
+            </div>
+
             <!-- Notion Launch -->
             <div class="card full-width">
                 <h2>🗂️ Launch Outreach From Notion</h2>
@@ -1351,6 +1365,57 @@
             } catch (error) {
                 resultBox.innerHTML = `<span style="color:#e53e3e;">${escapeHtml(error.message)}</span>`;
                 log(`❌ Dry run error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Force Notion Sync
+        async function forceNotionSync(event) {
+            const btn = event.target.closest('button');
+            const resultBox = document.getElementById('force-sync-result');
+
+            if (!confirm('Sync all "Ready to Send" cases from Notion and queue them for sending?')) {
+                return;
+            }
+
+            btn.disabled = true;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="loading"></span> Syncing...';
+            resultBox.innerHTML = '<p style="color:#718096;">Syncing from Notion...</p>';
+
+            try {
+                log('🔄 Force syncing cases from Notion...', 'info');
+                const result = await apiCall('/test/force-notion-sync', 'POST', {});
+
+                if (result.success) {
+                    const lines = [];
+                    lines.push(`<strong>✅ Synced ${result.synced_count} cases from Notion</strong>`);
+                    lines.push(`📤 Queued for sending: ${result.queued_count}`);
+                    lines.push(`⚠️ Flagged for review: ${result.review_count}`);
+
+                    if (result.results && result.results.length > 0) {
+                        lines.push('<br><strong>Details:</strong>');
+                        result.results.forEach(r => {
+                            const icon = r.status === 'queued' ? '✅' : '⚠️';
+                            lines.push(`${icon} Case ${r.id}: ${escapeHtml(r.case_name || 'Untitled')} - ${escapeHtml(r.message)}`);
+                        });
+                    }
+
+                    resultBox.innerHTML = lines.map(line => `<div style="margin-bottom:4px;">${line}</div>`).join('');
+                    log(`✅ Synced ${result.synced_count} cases - ${result.queued_count} queued, ${result.review_count} flagged`, 'success');
+
+                    // Refresh the case monitor
+                    await loadCaseMonitor({ manual: true });
+                    await refreshStats();
+                } else {
+                    resultBox.innerHTML = `<span style="color:#e53e3e;">Failed: ${escapeHtml(result.error || 'Unknown error')}</span>`;
+                    log(`❌ Force sync failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                resultBox.innerHTML = `<span style="color:#e53e3e;">${escapeHtml(error.message)}</span>`;
+                log(`❌ Force sync error: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
