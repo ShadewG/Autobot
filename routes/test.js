@@ -597,6 +597,103 @@ router.get('/portal-runs', async (req, res) => {
 });
 
 /**
+ * Get recent activity log entries (test dashboard)
+ */
+router.get('/activity', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+        const activity = await db.getRecentActivity(limit);
+        res.json({
+            success: true,
+            activity
+        });
+    } catch (error) {
+        console.error('Error fetching activity log:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Human review queue
+ */
+router.get('/human-reviews', async (req, res) => {
+    try {
+        const reviews = await db.getHumanReviewCases(100);
+        res.json({
+            success: true,
+            cases: reviews
+        });
+    } catch (error) {
+        console.error('Error fetching human review cases:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+router.post('/human-reviews/:caseId/decision', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId, 10);
+        const { action, note, next_status } = req.body || {};
+
+        if (!['approve', 'reject', 'change'].includes(action)) {
+            return res.status(400).json({
+                success: false,
+                error: 'action must be approve, reject, or change'
+            });
+        }
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Case not found'
+            });
+        }
+
+        let newStatus = caseData.status;
+        let substatus = caseData.substatus || '';
+
+        if (action === 'approve') {
+            newStatus = next_status || 'ready_to_send';
+            substatus = note ? `Approved: ${note}` : 'Approved by human reviewer';
+        } else if (action === 'reject') {
+            newStatus = next_status || 'needs_manual_processing';
+            substatus = note ? `Rejected: ${note}` : 'Rejected by human reviewer';
+        } else if (action === 'change') {
+            newStatus = next_status || caseData.status;
+            substatus = note ? `Change requested: ${note}` : 'Human requested changes';
+        }
+
+        await db.updateCaseStatus(caseId, newStatus, { substatus });
+        await notionService.syncStatusToNotion(caseId);
+
+        await db.logActivity('human_review_decision', `Human review ${action} for ${caseData.case_name}`, {
+            case_id: caseId,
+            action,
+            note,
+            next_status: newStatus
+        });
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            status: newStatus
+        });
+    } catch (error) {
+        console.error('Error recording human review decision:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Get all cases (for dashboard)
  * GET /api/test/cases
  */
@@ -644,6 +741,10 @@ router.get('/cases', async (req, res) => {
                 c.last_portal_status,
                 c.last_portal_status_at,
                 c.last_portal_engine,
+                c.last_portal_run_id,
+                c.last_portal_task_url,
+                c.last_portal_recording_url,
+                c.last_portal_account_email,
                 c.agent_handled,
                 c.created_at,
                 c.updated_at,

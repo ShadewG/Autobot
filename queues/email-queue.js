@@ -7,6 +7,7 @@ const notionService = require('../services/notion-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
 const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
+const { isValidEmail } = require('../utils/contact-utils');
 
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100');
 
@@ -82,6 +83,26 @@ function getHumanLikeDelay() {
     tomorrow.setHours(9 + Math.random() * 2, Math.random() * 60, 0, 0); // 9-11am
 
     return tomorrow.getTime() - now.getTime();
+}
+
+function pickBestEmail(caseData) {
+    const candidates = [];
+
+    if (caseData.agency_email && isValidEmail(caseData.agency_email)) {
+        candidates.push(caseData.agency_email.trim());
+    }
+
+    if (caseData.alternate_agency_email && isValidEmail(caseData.alternate_agency_email)) {
+        candidates.push(caseData.alternate_agency_email.trim());
+    }
+
+    const testingMode = process.env.TESTING_MODE === 'true';
+    const defaultEmail = process.env.DEFAULT_TEST_EMAIL;
+    if (testingMode && defaultEmail && isValidEmail(defaultEmail)) {
+        candidates.push(defaultEmail.trim());
+    }
+
+    return candidates[0] || null;
 }
 
 // Delays removed for initial requests - send immediately
@@ -341,6 +362,7 @@ const generateWorker = new Worker('generate-queue', async (job) => {
         }
 
         const portalUrl = normalizePortalUrl(caseData.portal_url);
+        const contactEmail = pickBestEmail(caseData);
         let portalHandled = false;
         let portalError = null;
 
@@ -412,6 +434,25 @@ const generateWorker = new Worker('generate-queue', async (job) => {
             if (portalError) {
                 console.log(`📧 Continuing with email for case ${caseId} after portal error.`);
             }
+
+            if (!contactEmail) {
+                console.warn(`❌ No valid email contact for case ${caseId}. Marking for human review.`);
+                await db.updateCaseStatus(caseId, 'needs_human_review', {
+                    substatus: 'No valid portal or email contact detected'
+                });
+                await notionService.syncStatusToNotion(caseId);
+                await db.logActivity('contact_missing', 'No portal/email contact available. Pending human review.', {
+                    case_id: caseId
+                });
+
+                return {
+                    success: false,
+                    case_id: caseId,
+                    queued_for_send: false,
+                    sent_via_portal: false,
+                    missing_contact: true
+                };
+            }
             // Generate FOIA request
             const generated = await aiService.generateFOIARequest(caseData);
 
@@ -426,7 +467,7 @@ const generateWorker = new Worker('generate-queue', async (job) => {
             await emailQueue.add('send-initial-request', {
                 type: 'initial_request',
                 caseId: caseId,
-                toEmail: caseData.agency_email,
+                toEmail: contactEmail,
                 subject: subject,
                 content: generated.request_text,
                 instantReply: instantMode || false  // Pass instant mode flag
@@ -478,6 +519,8 @@ const portalWorker = new Worker('portal-queue', async (job) => {
             result.extracted_data?.status_text ||
             'Portal responded';
 
+        const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
+
         await db.updateCasePortalStatus(caseId, {
             portal_url: targetUrl,
             portal_provider: provider || caseData.portal_provider || null,
@@ -485,7 +528,10 @@ const portalWorker = new Worker('portal-queue', async (job) => {
             last_portal_status_at: new Date(),
             last_portal_engine: 'skyvern',
             last_portal_run_id: result.taskId || result.runId || null,
-            last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null
+            last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
+            last_portal_task_url: taskUrl,
+            last_portal_recording_url: result.recording_url || taskUrl,
+            last_portal_account_email: result.accountEmail || caseData.last_portal_account_email || null
         });
 
         await db.logActivity('portal_status_synced', `Portal status updated: ${statusText}`, {
@@ -494,7 +540,9 @@ const portalWorker = new Worker('portal-queue', async (job) => {
             portal_provider: provider,
             notification_type: notificationType,
             message_id: messageId,
-            run_id: result.taskId || result.runId || null
+            run_id: result.taskId || result.runId || null,
+            recording_url: result.recording_url || taskUrl,
+            task_url: taskUrl
         });
 
         await notionService.syncStatusToNotion(caseId);

@@ -103,7 +103,10 @@ class DatabaseService {
             last_portal_status_at: portalData.last_portal_status_at,
             last_portal_engine: portalData.last_portal_engine,
             last_portal_run_id: portalData.last_portal_run_id,
-            last_portal_details: portalData.last_portal_details
+            last_portal_details: portalData.last_portal_details,
+            last_portal_task_url: portalData.last_portal_task_url,
+            last_portal_recording_url: portalData.last_portal_recording_url,
+            last_portal_account_email: portalData.last_portal_account_email
         };
 
         const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
@@ -328,6 +331,42 @@ class DatabaseService {
 
         const result = await this.query(query, values);
         return result.rows[0];
+    }
+
+    async getHumanReviewCases(limit = 50) {
+        const reviewStatuses = ['needs_human_review', 'needs_human_fee_approval'];
+
+        const query = `
+            SELECT
+                c.*,
+                la.description AS last_activity_description,
+                la.created_at AS last_activity_at,
+                lm.subject AS last_message_subject,
+                lm.body_text AS last_message_body,
+                lm.received_at AS last_message_received_at,
+                lm.sent_at AS last_message_sent_at
+            FROM cases c
+            LEFT JOIN LATERAL (
+                SELECT description, created_at
+                FROM activity_log
+                WHERE case_id = c.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) la ON true
+            LEFT JOIN LATERAL (
+                SELECT subject, body_text, received_at, sent_at
+                FROM messages
+                WHERE case_id = c.id
+                ORDER BY COALESCE(received_at, sent_at, created_at) DESC
+                LIMIT 1
+            ) lm ON true
+            WHERE c.status = ANY($1)
+            ORDER BY c.updated_at DESC
+            LIMIT $2
+        `;
+
+        const result = await this.query(query, [reviewStatuses, limit]);
+        return result.rows;
     }
 
     async getAutoReplyQueueEntryById(id) {

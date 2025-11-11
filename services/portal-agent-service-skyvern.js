@@ -120,6 +120,7 @@ class PortalAgentServiceSkyvern {
         }
 
         const runId = uuidv4();
+        const defaultPortalEmail = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
 
         try {
             console.log(`🤖 Starting Skyvern agent for case: ${caseData.case_name}`);
@@ -146,12 +147,13 @@ class PortalAgentServiceSkyvern {
             const existingAccount = await database.getPortalAccountByUrl(portalUrl);
 
             let navigationGoal, navigationPayload, accountPassword;
+            let accountEmailUsed = defaultPortalEmail;
 
             if (existingAccount) {
                 console.log(`✅ Found existing account: ${existingAccount.email}`);
                 console.log(`   Account ID: ${existingAccount.id}`);
                 console.log(`   Last used: ${existingAccount.last_used_at || 'Never'}`);
-
+                accountEmailUsed = existingAccount.email;
                 // Build instructions to LOG IN with existing credentials
                 navigationGoal = this.buildNavigationGoalWithLogin(caseData, existingAccount, dryRun);
                 navigationPayload = this.buildNavigationPayloadWithLogin(caseData, existingAccount);
@@ -167,8 +169,8 @@ class PortalAgentServiceSkyvern {
                 console.log(`   Generated password for new account`);
 
                 // Build instructions to CREATE ACCOUNT
-                navigationGoal = this.buildNavigationGoalWithAccountCreation(caseData, dryRun, accountPassword);
-                navigationPayload = this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword);
+                navigationGoal = this.buildNavigationGoalWithAccountCreation(caseData, dryRun, accountPassword, accountEmailUsed);
+                navigationPayload = this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword, accountEmailUsed);
             }
 
             const { finalTask, taskId } = await this._createTaskAndPoll({
@@ -184,10 +186,9 @@ class PortalAgentServiceSkyvern {
                 if (!existingAccount && accountPassword) {
                     console.log(`\n💾 Saving new portal account credentials...`);
                     try {
-                        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
                         const savedAccount = await database.createPortalAccount({
                             portal_url: portalUrl,
-                            email: email,
+                            email: accountEmailUsed,
                             password: accountPassword,
                             first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
                             last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
@@ -204,13 +205,14 @@ class PortalAgentServiceSkyvern {
                     }
                 }
 
+                const taskUrl = `https://app.skyvern.com/tasks/${taskId}`;
                 const result = {
                     success: true,
                     caseId: caseData.id,
                     portalUrl: portalUrl,
                     taskId: taskId,
                     status: finalTask.status,
-                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                    recording_url: finalTask.recording_url || taskUrl,
                     extracted_data: finalTask.extracted_information,
                     steps: finalTask.actions?.length || finalTask.steps || 0,
                     dryRun,
@@ -222,7 +224,11 @@ class PortalAgentServiceSkyvern {
                 await database.updateCasePortalStatus(caseData.id, {
                     portal_url: portalUrl,
                     portal_provider: existingAccount?.portal_type || 'Auto-detected',
-                    last_portal_run_id: taskId
+                    last_portal_run_id: taskId,
+                    last_portal_engine: 'skyvern',
+                    last_portal_task_url: taskUrl,
+                    last_portal_recording_url: result.recording_url,
+                    last_portal_account_email: accountEmailUsed
                 });
 
                 await database.logActivity(
@@ -236,6 +242,7 @@ class PortalAgentServiceSkyvern {
                         run_id: runId,
                         engine: 'skyvern',
                         task_id: taskId,
+                        task_url: taskUrl,
                         recording_url: result.recording_url,
                         steps_completed: result.steps
                     }
@@ -243,11 +250,12 @@ class PortalAgentServiceSkyvern {
 
                 return result;
             } else if (finalTask.status === 'failed') {
+                const failureTaskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
                 const result = {
                     success: false,
                     error: finalTask.failure_reason || 'Task failed',
                     taskId: taskId,
-                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                    recording_url: finalTask.recording_url || failureTaskUrl,
                     steps: finalTask.actions?.length || finalTask.steps || 0,
                     runId
                 };
@@ -263,6 +271,7 @@ class PortalAgentServiceSkyvern {
                         run_id: runId,
                         engine: 'skyvern',
                         task_id: taskId,
+                        task_url: failureTaskUrl,
                         recording_url: result.recording_url,
                         steps_completed: result.steps,
                         error: result.error
@@ -272,12 +281,13 @@ class PortalAgentServiceSkyvern {
                 return result;
             } else {
                 // Task still running or other status
+                const taskUrlFallback = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
                 const result = {
                     success: false,
                     error: `Task ended with status: ${finalTask.status}`,
                     taskId: taskId,
                     status: finalTask.status,
-                    recording_url: finalTask.recording_url || `https://app.skyvern.com/tasks/${taskId}`,
+                    recording_url: finalTask.recording_url || taskUrlFallback,
                     runId
                 };
 
@@ -292,6 +302,7 @@ class PortalAgentServiceSkyvern {
                         run_id: runId,
                         engine: 'skyvern',
                         task_id: taskId,
+                        task_url: taskUrlFallback,
                         recording_url: result.recording_url,
                         error: result.error
                     }
@@ -327,6 +338,7 @@ class PortalAgentServiceSkyvern {
                     max_steps: maxSteps,
                     run_id: runId,
                     engine: 'skyvern',
+                    task_url: null,
                     error: errorMessage
                 }
             );
@@ -368,9 +380,7 @@ Be thorough and fill out every available field with the provided information. Th
     /**
      * Build navigation goal for ACCOUNT CREATION (new account)
      */
-    buildNavigationGoalWithAccountCreation(caseData, dryRun, password) {
-        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-
+    buildNavigationGoalWithAccountCreation(caseData, dryRun, password, email) {
         return `You are filling out a FOIA (Freedom of Information Act) records request on a government portal.
 
 INSTRUCTIONS:
@@ -436,9 +446,7 @@ Be thorough and fill out every available field with the provided information. Th
     /**
      * Build navigation payload for ACCOUNT CREATION (new account)
      */
-    buildNavigationPayloadWithAccountCreation(caseData, password) {
-        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-
+    buildNavigationPayloadWithAccountCreation(caseData, password, email) {
         return {
             // Account Creation fields
             account_email: email,
@@ -535,7 +543,8 @@ Be thorough and fill out every available field with the provided information. Th
             extracted_data: extracted,
             statusText,
             dueDate,
-            raw: finalTask
+            raw: finalTask,
+            accountEmail: account.email
         };
     }
 

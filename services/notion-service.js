@@ -1,5 +1,7 @@
 const { Client } = require('@notionhq/client');
 const db = require('./database');
+const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
+const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 
 class NotionService {
     constructor() {
@@ -71,8 +73,9 @@ class NotionService {
         const titleProp = Object.values(props).find(p => p.type === 'title');
         const caseName = titleProp?.title?.[0]?.plain_text || 'Untitled Case';
 
-        // Get portal URL if available
-        const portalUrl = this.getProperty(props, 'Portal', 'url');
+        // Get portal URL if available (fall back to other portal-labeled fields)
+        const portalUrl = this.getProperty(props, 'Portal', 'url') ||
+                          this.findPortalInProperties(props);
 
         // Get Police Department relation ID
         const policeDeptRelation = props['Police Department'];
@@ -136,16 +139,27 @@ class NotionService {
 
             const deptProps = deptPage.properties;
 
-            // Extract email from Police Department database
-            // "Contact Email" is the actual field name in the Police Department database (rich_text type)
-            caseData.agency_email = this.getProperty(deptProps, 'Contact Email', 'rich_text') ||
-                                   this.getProperty(deptProps, 'Email', 'email') ||
-                                   this.getProperty(deptProps, 'Agency Email', 'email') ||
-                                   this.getProperty(deptProps, 'Email', 'rich_text') ||
-                                   process.env.DEFAULT_TEST_EMAIL ||
-                                   'shadewofficial@gmail.com';
+            const contactValues = [
+                this.getProperty(deptProps, 'Contact Email', 'rich_text'),
+                this.getProperty(deptProps, 'Contact Email', 'email'),
+                this.getProperty(deptProps, 'Email', 'email'),
+                this.getProperty(deptProps, 'Agency Email', 'email'),
+                this.getProperty(deptProps, 'Email', 'rich_text'),
+                caseData.portal_url // seed so normalization retains existing
+            ].filter(Boolean);
 
-            // Extract agency name from Police Department title
+            const { emailCandidate, portalCandidate } = this.detectContactChannels(contactValues);
+
+            if (emailCandidate) {
+                caseData.agency_email = emailCandidate;
+            } else {
+                caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
+            }
+
+            if (!caseData.portal_url && portalCandidate) {
+                caseData.portal_url = portalCandidate;
+            }
+
             const deptTitleProp = Object.values(deptProps).find(p => p.type === 'title');
             caseData.agency_name = deptTitleProp?.title?.[0]?.plain_text || 'Police Department';
 
@@ -193,6 +207,87 @@ class NotionService {
             default:
                 return null;
         }
+    }
+
+    detectContactChannels(values = []) {
+        const emails = [];
+        const portals = [];
+
+        values.forEach((value) => {
+            if (!value) {
+                return;
+            }
+
+            extractEmails(value).forEach(email => {
+                if (isValidEmail(email)) {
+                    emails.push(email.trim());
+                }
+            });
+
+            const urls = extractUrls(value);
+            urls.forEach(url => {
+                const normalized = normalizePortalUrl(url);
+                if (normalized && !portals.includes(normalized)) {
+                    portals.push(normalized);
+                }
+            });
+
+            if (!urls.length) {
+                const raw = (Array.isArray(value) ? value.join(' ') : String(value)).trim();
+                if (raw) {
+                    raw.split(/[\s,;]+/).forEach((token) => {
+                        if (!token) return;
+                        const cleanToken = token.replace(/[),.]+$/, '');
+                        if (cleanToken.includes('.') && !cleanToken.includes('@')) {
+                            const normalizedToken = normalizePortalUrl(cleanToken);
+                            if (normalizedToken && !portals.includes(normalizedToken)) {
+                                portals.push(normalizedToken);
+                            }
+                        }
+                    });
+                }
+            }
+        });
+
+        return {
+            emailCandidate: emails[0] || null,
+            portalCandidate: portals.find(url => isSupportedPortalUrl(url)) || portals[0] || null
+        };
+    }
+
+    findPortalInProperties(properties = {}) {
+        for (const [name, prop] of Object.entries(properties)) {
+            const lowerName = name.toLowerCase();
+            if (!lowerName.includes('portal') && !lowerName.includes('request link') && !lowerName.includes('submission')) {
+                continue;
+            }
+
+            let candidate = null;
+            switch (prop.type) {
+                case 'url':
+                    candidate = prop.url;
+                    break;
+                case 'rich_text':
+                    candidate = prop.rich_text?.map(t => t.plain_text).join(' ');
+                    break;
+                case 'title':
+                    candidate = prop.title?.map(t => t.plain_text).join(' ');
+                    break;
+                default:
+                    break;
+            }
+
+            if (!candidate) {
+                continue;
+            }
+
+            const portalCandidate = this.detectContactChannels([candidate]).portalCandidate;
+            if (portalCandidate) {
+                return portalCandidate;
+            }
+        }
+
+        return null;
     }
 
     /**

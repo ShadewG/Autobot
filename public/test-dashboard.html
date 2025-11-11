@@ -691,6 +691,13 @@
                 </div>
             </div>
 
+            <div class="card full-width">
+                <h2>🧑‍⚖️ Human Review Queue</h2>
+                <div id="human-review-container">
+                    <p style="color:#718096;">No cases need human review.</p>
+                </div>
+            </div>
+
             <!-- Live Case Monitor -->
             <div class="card full-width">
                 <h2>📡 Live Case Monitor</h2>
@@ -776,6 +783,7 @@
             loadEscalations();
             loadPortalRuns();
             loadFeeResponses();
+            loadHumanReviews();
             setupCaseMonitorControls();
             setupNotionFormControls();
             loadCaseMonitor();
@@ -951,8 +959,20 @@
             const metaHtml = metaParts.length ? `<div class="case-meta">${metaParts.join(' • ')}</div>` : '';
             const portalUrl = normalizePortalUrl(c.portal_url);
             const provider = c.portal_provider ? `<div class="case-meta">Provider: ${escapeHtml(c.portal_provider)}</div>` : '';
-            const linkHtml = portalUrl ? `<div class="case-meta"><a href="${portalUrl}" target="_blank" rel="noopener">Open Portal</a></div>` : '';
-            return `<div class="case-title">${status}</div>${metaHtml}${provider}${linkHtml}`;
+            const links = [];
+            if (portalUrl) {
+                links.push(`<a href="${portalUrl}" target="_blank" rel="noopener">Portal</a>`);
+            }
+            if (c.last_portal_task_url) {
+                links.push(`<a href="${c.last_portal_task_url}" target="_blank" rel="noopener">Skyvern Task</a>`);
+            } else if (c.last_portal_recording_url) {
+                links.push(`<a href="${c.last_portal_recording_url}" target="_blank" rel="noopener">Skyvern Replay</a>`);
+            }
+            const linksHtml = links.length ? `<div class="case-meta">${links.join(' • ')}</div>` : '';
+            const accountHtml = c.last_portal_account_email
+                ? `<div class="case-meta">Login Email: ${escapeHtml(c.last_portal_account_email)} (password stored securely)</div>`
+                : '';
+            return `<div class="case-title">${status}</div>${metaHtml}${provider}${linksHtml}${accountHtml}`;
         }
 
         function renderStatusPill(status, substatus) {
@@ -1266,6 +1286,111 @@
             }
         }
 
+        async function loadHumanReviews() {
+            try {
+                const result = await apiCall('/test/human-reviews');
+                renderHumanReviews(result.cases || []);
+            } catch (error) {
+                const container = document.getElementById('human-review-container');
+                if (container) {
+                    container.innerHTML = `<p style="color:#e53e3e;">Failed to load human reviews: ${escapeHtml(error.message)}</p>`;
+                }
+            }
+        }
+
+        function renderHumanReviews(items) {
+            const container = document.getElementById('human-review-container');
+            if (!container) return;
+
+            if (!items.length) {
+                container.innerHTML = '<p style="color:#718096;">No cases are waiting for human review.</p>';
+                return;
+            }
+
+            const html = items.map(item => {
+                const caseMeta = `
+                    <div class="case-meta">
+                        <strong>Status:</strong> ${escapeHtml(item.status)} •
+                        <strong>Substatus:</strong> ${escapeHtml(item.substatus || '—')}
+                    </div>
+                    <div class="case-meta">
+                        <strong>Agency:</strong> ${escapeHtml(item.agency_name || 'Unknown')} — ${escapeHtml(item.agency_email || 'No email')}
+                    </div>
+                `;
+
+                const lastActivity = item.last_activity_description
+                    ? `<div class="case-meta"><strong>Last Activity:</strong> ${escapeHtml(item.last_activity_description)}</div>`
+                    : '';
+
+                const lastMessage = item.last_message_body
+                    ? `<details><summary style="cursor:pointer;font-size:12px;color:#4a5568;">Latest message</summary><div style="margin-top:6px;font-size:12px;color:#2d3748;">${escapeHtml(item.last_message_body.substring(0, 400))}${item.last_message_body.length > 400 ? '…' : ''}</div></details>`
+                    : '';
+
+                return `
+                    <div class="fee-card" id="human-review-${item.id}">
+                        <h4>Case ${item.id}: ${escapeHtml(item.case_name || 'Untitled')}</h4>
+                        ${caseMeta}
+                        ${lastActivity}
+                        ${lastMessage}
+                        <div class="fee-actions">
+                            <textarea data-review-note="${item.id}" placeholder="Add context or instructions..."></textarea>
+                            <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
+                                <label style="font-size:12px;text-transform:uppercase;color:#4a5568;">Decision</label>
+                                <select data-review-action="${item.id}">
+                                    <option value="approve">Approve</option>
+                                    <option value="reject">Reject</option>
+                                    <option value="change">Change</option>
+                                </select>
+                                <input data-review-next-status="${item.id}" placeholder="Next status (optional)" style="padding:8px;border-radius:8px;border:1px solid #cbd5f5;" />
+                                <button class="btn-success" onclick="submitHumanReviewDecision(${item.id}, this)">
+                                    <span class="emoji">✅</span> Submit Decision
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `<div class="fee-card-grid">${html}</div>`;
+        }
+
+        async function submitHumanReviewDecision(caseId, buttonEl) {
+            const noteEl = document.querySelector(`[data-review-note="${caseId}"]`);
+            const actionEl = document.querySelector(`[data-review-action="${caseId}"]`);
+            const nextStatusEl = document.querySelector(`[data-review-next-status="${caseId}"]`);
+
+            const payload = {
+                action: actionEl ? actionEl.value : 'approve',
+                note: noteEl ? noteEl.value.trim() : '',
+                next_status: nextStatusEl && nextStatusEl.value.trim() ? nextStatusEl.value.trim() : undefined
+            };
+
+            const btn = buttonEl || event.target.closest('button');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="loading"></span> Saving...';
+            }
+
+            try {
+                const result = await apiCall(`/test/human-reviews/${caseId}/decision`, 'POST', payload);
+                if (result.success) {
+                    log(`✅ Recorded human review decision for case ${caseId}`, 'success');
+                    await loadHumanReviews();
+                    await loadCaseMonitor({ manual: true });
+                    await loadActivityLog();
+                } else {
+                    log(`❌ Failed to record decision: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error recording decision: ${error.message}`, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span class="emoji">✅</span> Submit Decision';
+                }
+            }
+        }
+
         function renderFeeResponses(items) {
             const container = document.getElementById('fee-response-container');
             if (!container) return;
@@ -1380,7 +1505,7 @@
         // Activity feed
         async function loadActivityLog() {
             try {
-                const result = await apiCall('/activity?limit=50');
+                const result = await apiCall('/test/activity?limit=50');
                 renderActivityLog(result.activity || []);
             } catch (error) {
                 const container = document.getElementById('activity-log-list');
@@ -1513,7 +1638,16 @@
                     const statusClass = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'info';
                     const caseLabel = meta.case_id ? `Case ${meta.case_id}` : 'Test';
                     const portalLabel = meta.portal_url || 'Unknown';
-                    const details = meta.error || meta.final_url || run.description || '';
+                    const detailText = meta.error || meta.final_url || run.description || '';
+                    const detailHtml = detailText ? `<div>${escapeHtml(detailText)}</div>` : '';
+                    const linkParts = [];
+                    if (meta.task_url) {
+                        linkParts.push(`<a href="${meta.task_url}" target="_blank" rel="noopener">Skyvern Task</a>`);
+                    } else if (meta.recording_url) {
+                        linkParts.push(`<a href="${meta.recording_url}" target="_blank" rel="noopener">Skyvern Replay</a>`);
+                    }
+                    const linksHtml = linkParts.length ? `<div class="case-meta">${linkParts.join(' • ')}</div>` : '';
+                    const details = `${detailHtml}${linksHtml}`;
                     const engineLabel = meta.engine || '—';
 
                     html += '<tr>';
@@ -1522,7 +1656,7 @@
                     html += `<td>${engineLabel}</td>`;
                     html += `<td>${caseLabel}</td>`;
                     html += `<td style="word-break: break-all;">${portalLabel}</td>`;
-                    html += `<td>${escapeHtml(details)}</td>`;
+                    html += `<td>${details}</td>`;
                     html += '</tr>';
                 });
 
@@ -1651,6 +1785,7 @@
 
                     await refreshStats();
                     await loadCaseMonitor({ manual: true });
+                    await loadHumanReviews();
                     await loadActivityLog();
                     await loadAgentDecisions();
                     await loadEscalations();
@@ -1669,6 +1804,7 @@
         // Auto-refresh stats + data
         setInterval(refreshStats, 30000);
         setInterval(loadFeeResponses, 45000);
+        setInterval(loadHumanReviews, 45000);
         setInterval(loadActivityLog, 60000);
         setInterval(loadAgentDecisions, 60000);
         setInterval(loadEscalations, 60000);
