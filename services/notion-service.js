@@ -158,43 +158,43 @@ class NotionService {
 
             const deptProps = deptPage.properties;
 
-            // Search ALL text and URL fields in the PD database for contact info
-            const contactValues = [
-                this.getProperty(deptProps, 'Contact Email', 'rich_text'),
-                this.getProperty(deptProps, 'Contact Email', 'email'),
-                this.getProperty(deptProps, 'Email', 'email'),
-                this.getProperty(deptProps, 'Agency Email', 'email'),
-                this.getProperty(deptProps, 'Email', 'rich_text'),
-                this.getProperty(deptProps, 'Portal', 'url'),
-                this.getProperty(deptProps, 'Portal Link', 'url'),
-                this.getProperty(deptProps, 'Request Link', 'url'),
-                this.getProperty(deptProps, 'Website', 'url'),
-                caseData.portal_url // seed so normalization retains existing
-            ].filter(Boolean);
-
-            // Explicitly check Notes field (commonly used for contact info)
-            if (deptProps['Notes']?.rich_text) {
-                const notesText = deptProps['Notes'].rich_text
-                    .map(t => t.plain_text)
-                    .join(' ');
-                if (notesText) contactValues.push(notesText);
-            }
-
-            // Also scan ALL rich_text and url fields for additional contacts
-            Object.entries(deptProps).forEach(([name, prop]) => {
-                if (prop.type === 'rich_text' && prop.rich_text && prop.rich_text.length > 0) {
-                    // Join ALL text blocks, not just the first one
-                    const fullText = prop.rich_text
-                        .map(t => t.plain_text || '')
-                        .join(' ')
-                        .trim();
-                    if (fullText) contactValues.push(fullText);
-                } else if (prop.type === 'url' && prop.url) {
-                    contactValues.push(prop.url);
+            // Export ALL fields from Police Department database for AI analysis
+            const allFieldsData = {};
+            Object.entries(deptProps).forEach(([fieldName, prop]) => {
+                let value = null;
+                switch (prop.type) {
+                    case 'title':
+                        value = prop.title?.map(t => t.plain_text).join('') || null;
+                        break;
+                    case 'rich_text':
+                        value = prop.rich_text?.map(t => t.plain_text).join(' ').trim() || null;
+                        break;
+                    case 'email':
+                        value = prop.email || null;
+                        break;
+                    case 'url':
+                        value = prop.url || null;
+                        break;
+                    case 'select':
+                        value = prop.select?.name || null;
+                        break;
+                    case 'multi_select':
+                        value = prop.multi_select?.map(s => s.name).join(', ') || null;
+                        break;
+                    case 'number':
+                        value = prop.number?.toString() || null;
+                        break;
+                    case 'phone_number':
+                        value = prop.phone_number || null;
+                        break;
+                }
+                if (value) {
+                    allFieldsData[fieldName] = value;
                 }
             });
 
-            const { emailCandidate, portalCandidate } = this.detectContactChannels(contactValues);
+            // Use GPT-5 to intelligently extract and prioritize contact info
+            const { emailCandidate, portalCandidate } = await this.extractContactsWithAI(allFieldsData, caseData);
 
             // NO FALLBACK - return null if not found
             caseData.agency_email = emailCandidate || null;
@@ -284,6 +284,62 @@ class NotionService {
                 return prop.relation?.[0]?.id || '';
             default:
                 return null;
+        }
+    }
+
+    /**
+     * Use GPT-5 to intelligently extract contact info from ALL PD fields
+     * Prioritizes portal > email, and finds the best contact method
+     */
+    async extractContactsWithAI(allFieldsData, caseData) {
+        try {
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const prompt = `You are analyzing a Police Department database record to find contact information for submitting public records requests.
+
+POLICE DEPARTMENT FIELDS:
+${JSON.stringify(allFieldsData, null, 2)}
+
+AGENCY NAME: ${caseData.agency_name || 'Unknown'}
+
+TASK:
+Extract and prioritize contact methods for submitting FOIA/public records requests.
+
+PRIORITY ORDER:
+1. Portal/Online submission URL (highest priority - govqa.us, nextrequest.com, etc.)
+2. Records request email address
+3. General agency email
+
+Return ONLY valid, working contact information. Do not return example/placeholder emails or broken links.
+
+Respond with JSON:
+{
+  "portal_url": "full portal URL or null",
+  "email": "best email address or null",
+  "confidence": "high/medium/low",
+  "reasoning": "brief explanation of what you found"
+}`;
+
+            const response = await openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }],
+                response_format: { type: 'json_object' }
+            });
+
+            const result = JSON.parse(response.choices[0].message.content);
+            console.log(`AI contact extraction: ${result.reasoning}`);
+
+            return {
+                portalCandidate: result.portal_url || null,
+                emailCandidate: result.email || null
+            };
+
+        } catch (error) {
+            console.error('AI contact extraction failed, falling back to regex:', error.message);
+            // Fallback to original regex-based detection
+            const allValues = Object.values(allFieldsData);
+            return this.detectContactChannels(allValues);
         }
     }
 
