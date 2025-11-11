@@ -291,6 +291,58 @@ class NotionService {
     }
 
     /**
+     * Get full page plain text content from all blocks
+     */
+    async getFullPagePlainText(pageId) {
+        try {
+            const blocks = await this.notion.blocks.children.list({
+                block_id: pageId.replace(/-/g, '')
+            });
+
+            let text = '';
+            for (const block of blocks.results) {
+                const blockText = this.extractTextFromBlock(block);
+                if (blockText) text += blockText + ' ';
+            }
+
+            return text.trim();
+        } catch (error) {
+            console.error('Error getting page text:', error.message);
+            return '';
+        }
+    }
+
+    /**
+     * Extract text from a Notion block
+     */
+    extractTextFromBlock(block) {
+        if (!block) return '';
+
+        switch (block.type) {
+            case 'paragraph':
+                return block.paragraph?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'heading_1':
+                return block.heading_1?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'heading_2':
+                return block.heading_2?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'heading_3':
+                return block.heading_3?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'bulleted_list_item':
+                return block.bulleted_list_item?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'numbered_list_item':
+                return block.numbered_list_item?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'to_do':
+                return block.to_do?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'quote':
+                return block.quote?.rich_text?.map(t => t.plain_text).join('') || '';
+            case 'callout':
+                return block.callout?.rich_text?.map(t => t.plain_text).join('') || '';
+            default:
+                return '';
+        }
+    }
+
+    /**
      * Extract US state from page content using AI
      */
     async extractStateWithAI(caseData, pageContent) {
