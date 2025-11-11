@@ -77,6 +77,15 @@ class NotionService {
             const filterKey = statusPropertyInfo.type === 'status' ? 'status' : 'select';
             const normalizedStatusValue = this.normalizeStatusValue(status, statusPropertyInfo);
 
+            console.log(`\n=== NOTION QUERY DEBUG ===`);
+            console.log(`Input status: "${status}"`);
+            console.log(`Property name: "${statusPropertyName}"`);
+            console.log(`Property type: "${statusPropertyInfo.type}"`);
+            console.log(`Filter key: "${filterKey}"`);
+            console.log(`Normalized value: "${normalizedStatusValue}"`);
+            console.log(`Property options:`, JSON.stringify(statusPropertyInfo[statusPropertyInfo.type]?.options, null, 2));
+            console.log(`=========================\n`);
+
             const response = await this.notion.databases.query({
                 database_id: this.databaseId,
                 filter: {
@@ -1069,6 +1078,7 @@ Respond with JSON:
 
     normalizeStatusValue(value, propertyInfo) {
         if (!value || !propertyInfo) {
+            console.log(`[normalizeStatusValue] Early return - value: ${value}, propertyInfo: ${propertyInfo}`);
             return value;
         }
 
@@ -1077,13 +1087,25 @@ Respond with JSON:
         const optionsContainer = propertyInfo[propertyInfo.type];
         const options = optionsContainer?.options || [];
 
+        console.log(`[normalizeStatusValue] Input: "${value}" -> Canonical: "${target}"`);
+        console.log(`[normalizeStatusValue] Available options:`, options.map(o => `"${o.name}"`));
+
         const directMatch = options.find(opt => opt?.name === value);
         if (directMatch) {
+            console.log(`[normalizeStatusValue] Direct match found: "${directMatch.name}"`);
             return directMatch.name;
         }
 
-        const canonicalMatch = options.find(opt => canon(opt?.name) === target);
+        console.log(`[normalizeStatusValue] No direct match, trying canonical...`);
+        const canonicalMatch = options.find(opt => {
+            const optCanon = canon(opt?.name);
+            const matches = optCanon === target;
+            console.log(`[normalizeStatusValue]   "${opt.name}" -> "${optCanon}" === "${target}": ${matches}`);
+            return matches;
+        });
+
         if (canonicalMatch) {
+            console.log(`[normalizeStatusValue] Canonical match found: "${canonicalMatch.name}"`);
             return canonicalMatch.name;
         }
 
