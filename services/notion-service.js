@@ -61,29 +61,22 @@ class NotionService {
      */
     async fetchCasesWithStatus(status = 'Ready to Send') {
         try {
-            let statusPropertyName = this.liveStatusProperty;
-            let statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
-            if (!statusPropertyInfo) {
-                console.warn(`Live status property "${this.liveStatusProperty}" not found; falling back to legacy status property "${this.legacyStatusProperty}"`);
-                statusPropertyName = this.legacyStatusProperty;
-                statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
-            }
+            console.log(`Querying Notion for status: "${status}"`);
+            console.log(`Using property: "${this.liveStatusProperty}"`);
+            console.log(`Database ID: ${this.databaseId}`);
 
-            if (!statusPropertyInfo) {
-                throw new Error(`No status-like property found on Notion database ${this.databaseId}`);
-            }
-
-            const filterKey = statusPropertyInfo?.type === 'status' ? 'status' : 'select';
-
+            // Simple query - "Live Status" is a select property
             const response = await this.notion.databases.query({
                 database_id: this.databaseId,
                 filter: {
-                    property: statusPropertyName,
-                    [filterKey]: {
+                    property: this.liveStatusProperty,
+                    select: {
                         equals: status
                     }
                 }
             });
+
+            console.log(`Found ${response.results.length} pages with status "${status}"`);
 
             // Parse pages and enrich with police department data
             const cases = [];
