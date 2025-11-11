@@ -1757,78 +1757,94 @@ router.post('/complete-reset', async (req, res) => {
             }
         }
 
-        // Reset ALL Notion statuses to "Ready to Send"
-        const databaseId = process.env.NOTION_CASES_DATABASE_ID;
-        let allPages = [];
-        let hasMore = true;
-        let startCursor = undefined;
-
-        while (hasMore) {
-            const response = await notion.databases.query({
-                database_id: databaseId,
-                start_cursor: startCursor
-            });
-            allPages = allPages.concat(response.results);
-            hasMore = response.has_more;
-            startCursor = response.next_cursor;
-        }
-
-        let updatedCount = 0;
-        for (const page of allPages) {
-            try {
-                await notion.pages.update({
-                    page_id: page.id,
-                    properties: {
-                        Status: { status: { name: 'Ready to Send' } }
-                    }
-                });
-                updatedCount++;
-            } catch (e) {
-                // Skip pages that can't be updated
-            }
-        }
-
-        // Sync from Notion
-        const cases = await notionService.syncCasesFromNotion('Ready to Send');
-
-        // Process and queue cases
-        let queuedCount = 0;
-        let reviewCount = 0;
-        const results = [];
-
-        for (const caseData of cases) {
-            const hasPortal = caseData.portal_url && caseData.portal_url.trim().length > 0;
-            const hasEmail = caseData.agency_email && caseData.agency_email.trim().length > 0;
-
-            if (!hasPortal && !hasEmail) {
-                await db.query(
-                    'UPDATE cases SET status = $1, substatus = $2 WHERE id = $3',
-                    ['needs_human_review', 'Missing contact information', caseData.id]
-                );
-                reviewCount++;
-                results.push({ id: caseData.id, status: 'needs_review', reason: 'No contact info' });
-            } else {
-                await generateQueue.add('generate-and-send', {
-                    caseId: caseData.id,
-                    instantMode: false
-                }, {
-                    delay: queuedCount * 15000
-                });
-                queuedCount++;
-                results.push({ id: caseData.id, status: 'queued', case_name: caseData.case_name });
-            }
-        }
-
+        // Respond immediately, then continue in background
         res.json({
             success: true,
-            message: 'Complete reset finished',
-            cleared_jobs: clearedCount,
-            notion_pages_updated: updatedCount,
-            synced_count: cases.length,
-            queued_count: queuedCount,
-            review_count: reviewCount,
-            results: results
+            message: 'Database cleared, Notion sync and queueing started in background',
+            cleared_jobs: clearedCount
         });
+
+        // Continue in background (no await on client)
+        (async () => {
+            try {
+                console.log('📋 Querying all Notion pages...');
+                // Reset ALL Notion statuses to "Ready to Send"
+                const databaseId = process.env.NOTION_CASES_DATABASE_ID;
+                let allPages = [];
+                let hasMore = true;
+                let startCursor = undefined;
+
+                while (hasMore) {
+                    const response = await notion.databases.query({
+                        database_id: databaseId,
+                        start_cursor: startCursor
+                    });
+                    allPages = allPages.concat(response.results);
+                    hasMore = response.has_more;
+                    startCursor = response.next_cursor;
+                }
+
+                console.log(`📄 Found ${allPages.length} pages, updating statuses...`);
+                let updatedCount = 0;
+                for (const page of allPages) {
+                    try {
+                        await notion.pages.update({
+                            page_id: page.id,
+                            properties: {
+                                Status: { status: { name: 'Ready to Send' } }
+                            }
+                        });
+                        updatedCount++;
+                    } catch (e) {
+                        // Skip pages that can't be updated
+                    }
+                }
+
+                console.log(`✅ Updated ${updatedCount} pages to "Ready to Send"`);
+                console.log('🔄 Syncing from Notion with AI extraction...');
+
+                // Sync from Notion
+                const cases = await notionService.syncCasesFromNotion('Ready to Send');
+                console.log(`✅ Synced ${cases.length} cases`);
+
+                // Process and queue cases
+                let queuedCount = 0;
+                let reviewCount = 0;
+
+                for (const caseData of cases) {
+                    const hasPortal = caseData.portal_url && caseData.portal_url.trim().length > 0;
+                    const hasEmail = caseData.agency_email && caseData.agency_email.trim().length > 0;
+
+                    if (!hasPortal && !hasEmail) {
+                        await db.query(
+                            'UPDATE cases SET status = $1, substatus = $2 WHERE id = $3',
+                            ['needs_human_review', 'Missing contact information', caseData.id]
+                        );
+                        reviewCount++;
+                        console.log(`⚠️  Case #${caseData.id} flagged for review (no contact info)`);
+                    } else {
+                        await generateQueue.add('generate-and-send', {
+                            caseId: caseData.id,
+                            instantMode: false
+                        }, {
+                            delay: queuedCount * 15000
+                        });
+                        queuedCount++;
+                        console.log(`✅ Case #${caseData.id} queued: ${caseData.case_name}`);
+                    }
+                }
+
+                console.log('\n' + '='.repeat(80));
+                console.log('🎉 COMPLETE RESET FINISHED');
+                console.log('='.repeat(80));
+                console.log(`✅ Queued for sending: ${queuedCount} cases`);
+                console.log(`⚠️  Flagged for review: ${reviewCount} cases`);
+                console.log('='.repeat(80));
+
+            } catch (bgError) {
+                console.error('❌ Background reset error:', bgError);
+            }
+        })();
 
     } catch (error) {
         console.error('Complete reset error:', error);
