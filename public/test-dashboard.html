@@ -1071,7 +1071,10 @@
                 html += `<td>${directionBadge}<div class="case-meta">${lastActivity}</div><div class="case-preview">${preview}</div></td>`;
                 html += `<td><div class="case-title">${totalMessages} message${totalMessages === 1 ? '' : 's'}</div><div class="case-meta">Inbound: ${inboundMeta} • Outbound: ${outboundMeta}</div></td>`;
                 html += `<td><div class="case-title">${followupText}</div>${followupStatus}</td>`;
-                html += `<td><button class="table-btn" onclick="openThreadModal(${c.id})">View Thread</button></td>`;
+                html += `<td>
+                    <button class="table-btn" onclick="openThreadModal(${c.id})">View Thread</button>
+                    <button class="table-btn" onclick="retriggerAnalysis(${c.id})" style="background: #ed8936; margin-top: 5px;">Retrigger</button>
+                </td>`;
                 html += '</tr>';
             });
 
@@ -1464,6 +1467,32 @@
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '<span class="emoji">⚙️</span> Run Migration';
+            }
+        }
+
+        // Retrigger Analysis
+        async function retriggerAnalysis(caseId) {
+            if (!confirm(`Re-trigger analysis and auto-reply for case #${caseId}?`)) {
+                return;
+            }
+
+            log(`🔄 Re-triggering analysis for case #${caseId}...`);
+
+            try {
+                const result = await apiCall('/test/retrigger-analysis', 'POST', {
+                    case_id: caseId
+                });
+
+                if (result.success) {
+                    log(`✅ Case #${caseId} re-queued for analysis!`, 'success');
+                    log(`   From: ${result.from_email}`, 'info');
+                    log(`   Subject: ${result.subject}`, 'info');
+                    log(`   ${result.note}`, 'info');
+                } else {
+                    log(`❌ Failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error: ${error.message}`, 'error');
             }
         }
 
