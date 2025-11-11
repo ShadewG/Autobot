@@ -172,10 +172,23 @@ class NotionService {
                 caseData.portal_url // seed so normalization retains existing
             ].filter(Boolean);
 
-            // Also scan all rich_text and url fields for additional contacts
+            // Explicitly check Notes field (commonly used for contact info)
+            if (deptProps['Notes']?.rich_text) {
+                const notesText = deptProps['Notes'].rich_text
+                    .map(t => t.plain_text)
+                    .join(' ');
+                if (notesText) contactValues.push(notesText);
+            }
+
+            // Also scan ALL rich_text and url fields for additional contacts
             Object.entries(deptProps).forEach(([name, prop]) => {
-                if (prop.type === 'rich_text' && prop.rich_text?.[0]?.plain_text) {
-                    contactValues.push(prop.rich_text[0].plain_text);
+                if (prop.type === 'rich_text' && prop.rich_text && prop.rich_text.length > 0) {
+                    // Join ALL text blocks, not just the first one
+                    const fullText = prop.rich_text
+                        .map(t => t.plain_text || '')
+                        .join(' ')
+                        .trim();
+                    if (fullText) contactValues.push(fullText);
                 } else if (prop.type === 'url' && prop.url) {
                     contactValues.push(prop.url);
                 }
