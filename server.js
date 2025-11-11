@@ -57,6 +57,7 @@ app.use('/api/test', testRoutes);
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
+const discordService = require('./services/discord-service');
 const { emailWorker, analysisWorker, generateWorker } = require('./queues/email-queue');
 const fs = require('fs');
 
@@ -161,6 +162,10 @@ async function startServer() {
         // Run migrations automatically
         console.log('\nRunning database migrations...');
         await runMigrations();
+
+        // Initialize Discord notifications
+        console.log('\nInitializing Discord notifications...');
+        await discordService.initialize();
 
         // Start cron jobs
         console.log('\nStarting automated services...');

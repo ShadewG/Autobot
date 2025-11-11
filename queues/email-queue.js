@@ -4,6 +4,7 @@ const sendgridService = require('../services/sendgrid-service');
 const aiService = require('../services/ai-service');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
+const discordService = require('../services/discord-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
 const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
@@ -129,8 +130,11 @@ const emailWorker = new Worker('email-queue', async (job) => {
                 // Update Notion
                 await notionService.syncStatusToNotion(caseId);
 
-                // Schedule follow-up
+                // Notify Discord
                 const caseData = await db.getCaseById(caseId);
+                await discordService.notifyRequestSent(caseData, 'email');
+
+                // Schedule follow-up
                 const thread = await db.getThreadByCaseId(caseId);
 
                 if (thread) {
@@ -173,6 +177,10 @@ const emailWorker = new Worker('email-queue', async (job) => {
                 await db.logActivity('auto_reply_sent', `Sent auto-reply for case ${caseId}`, {
                     case_id: caseId
                 });
+
+                // Notify Discord
+                const caseDataAutoReply = await db.getCaseById(caseId);
+                await discordService.notifyAutoReplySent(caseDataAutoReply, 'Standard');
                 break;
 
             default:
@@ -218,6 +226,9 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
             await notionService.addAISummaryToNotion(caseId, analysis.summary);
             console.log(`✅ Updated Notion with summary`);
         }
+
+        // Notify Discord about response received
+        await discordService.notifyResponseReceived(caseData, analysis);
 
         // ===== HYBRID AGENT APPROACH =====
         // Use agent for complex cases, deterministic flow for simple ones
@@ -397,6 +408,14 @@ const generateWorker = new Worker('generate-queue', async (job) => {
                         engine: 'skyvern',
                         run_id: portalResult.taskId || portalResult.runId || null
                     });
+
+                    // Notify Discord about portal submission
+                    await discordService.notifyPortalSubmission(caseData, {
+                        success: true,
+                        portalUrl: portalUrl,
+                        steps: portalResult.steps || 0
+                    });
+                    await discordService.notifyRequestSent(caseData, 'portal');
 
                     portalHandled = true;
                     console.log(`✅ Portal submission succeeded for case ${caseId}`);

@@ -4,6 +4,7 @@ const sgMail = require('@sendgrid/mail');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
+const discordService = require('../services/discord-service');
 const aiService = require('../services/ai-service');
 const { emailQueue, generateQueue } = require('../queues/email-queue');
 
@@ -1590,6 +1591,9 @@ router.post('/force-notion-sync', async (req, res) => {
             queued_count: queuedCount,
             review_count: reviewCount
         });
+
+        // Notify Discord about bulk sync
+        await discordService.notifyBulkSync(cases.length, queuedCount, reviewCount);
 
         res.json({
             success: true,
