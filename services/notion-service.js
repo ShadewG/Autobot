@@ -5,6 +5,7 @@ class NotionService {
     constructor() {
         this.notion = new Client({ auth: process.env.NOTION_API_KEY });
         this.databaseId = process.env.NOTION_CASES_DATABASE_ID;
+        this.pagePropertyCache = new Map();
     }
 
     /**
@@ -199,39 +200,70 @@ class NotionService {
      */
     async updatePage(pageId, updates) {
         try {
+            const availableProperties = await this.getPagePropertyNames(pageId);
+            const propSet = new Set(availableProperties);
             const properties = {};
+
+            const missingProps = (name) => {
+                console.warn(`Skipping Notion update: property "${name}" not found on page ${pageId}`);
+            };
 
             // Convert our updates to Notion property format
             if (updates.status) {
-                properties.Status = {
-                    select: { name: updates.status }
-                };
+                if (propSet.has('Status')) {
+                    properties.Status = {
+                        select: { name: updates.status }
+                    };
+                } else {
+                    missingProps('Status');
+                }
             }
 
             if (updates.send_date) {
-                properties['Send Date'] = {
-                    date: { start: updates.send_date }
-                };
+                if (propSet.has('Send Date')) {
+                    properties['Send Date'] = {
+                        date: { start: updates.send_date }
+                    };
+                } else {
+                    missingProps('Send Date');
+                }
             }
 
             if (updates.last_response_date) {
-                properties['Last Response'] = {
-                    date: { start: updates.last_response_date }
-                };
+                if (propSet.has('Last Response')) {
+                    properties['Last Response'] = {
+                        date: { start: updates.last_response_date }
+                    };
+                } else {
+                    missingProps('Last Response');
+                }
             }
 
             if (updates.days_overdue !== undefined) {
-                properties['Days Overdue'] = {
-                    number: updates.days_overdue
-                };
+                if (propSet.has('Days Overdue')) {
+                    properties['Days Overdue'] = {
+                        number: updates.days_overdue
+                    };
+                } else {
+                    missingProps('Days Overdue');
+                }
             }
 
             if (updates.ai_summary) {
-                properties['AI Summary'] = {
-                    rich_text: [{
-                        text: { content: updates.ai_summary }
-                    }]
-                };
+                if (propSet.has('AI Summary')) {
+                    properties['AI Summary'] = {
+                        rich_text: [{
+                            text: { content: updates.ai_summary }
+                        }]
+                    };
+                } else {
+                    missingProps('AI Summary');
+                }
+            }
+
+            if (Object.keys(properties).length === 0) {
+                console.warn(`No valid Notion properties to update for page ${pageId}`);
+                return null;
             }
 
             const response = await this.notion.pages.update({
@@ -378,7 +410,12 @@ class NotionService {
             'awaiting_response': 'Awaiting Response',
             'responded': 'Responded',
             'completed': 'Completed',
-            'error': 'Error'
+            'error': 'Error',
+            'fee_negotiation': 'Fee Negotiation',
+            'needs_human_fee_approval': 'Needs Human Approval',
+            'needs_human_review': 'Needs Human Review',
+            'portal_in_progress': 'Portal Submission',
+            'portal_submission_failed': 'Portal Issue'
         };
 
         return statusMap[internalStatus] || internalStatus;
@@ -404,6 +441,22 @@ class NotionService {
         } catch (error) {
             console.error('Error adding AI summary to Notion:', error);
         }
+    }
+
+    async getPagePropertyNames(pageId) {
+        const cacheEntry = this.pagePropertyCache.get(pageId);
+        const now = Date.now();
+        if (cacheEntry && (now - cacheEntry.cachedAt) < 5 * 60 * 1000) {
+            return cacheEntry.properties;
+        }
+
+        const page = await this.notion.pages.retrieve({ page_id: pageId });
+        const properties = Object.keys(page.properties || {});
+        this.pagePropertyCache.set(pageId, {
+            properties,
+            cachedAt: now
+        });
+        return properties;
     }
 
     /**

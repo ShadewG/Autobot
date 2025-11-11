@@ -6,31 +6,9 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
 const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
+const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 
-const SUPPORTED_PORTAL_DOMAINS = [
-    'govqa.us',
-    'mycusthelp.com',
-    'custhelp.com',
-    'nextrequest.com',
-    'justfoia.com'
-];
-
-function normalizePortalUrl(url) {
-    if (!url) return null;
-    if (/^https?:\/\//i.test(url)) return url;
-    return `https://${url}`;
-}
-
-function isSupportedPortal(url) {
-    try {
-        const normalized = normalizePortalUrl(url);
-        if (!normalized) return false;
-        const hostname = new URL(normalized).hostname.toLowerCase();
-        return SUPPORTED_PORTAL_DOMAINS.some(domain => hostname.includes(domain));
-    } catch (error) {
-        return false;
-    }
-}
+const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100');
 
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
@@ -224,18 +202,24 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         // Use agent for complex cases, deterministic flow for simple ones
         const useAgent = true; // Agent always enabled for complex cases
 
+        const feeAmount = parseFloat(analysis.extracted_fee_amount || '0') || 0;
+        const needsFeeNegotiation = (
+            analysis.intent === 'fee_request' &&
+            feeAmount > FEE_AUTO_APPROVE_MAX
+        );
+
         // Determine if this is a complex case that should use the agent
         const isComplexCase = (
             analysis.intent === 'denial' ||
-            analysis.intent === 'request_info' ||
-            (analysis.intent === 'fee_notice' && analysis.extracted_fee_amount > 100) ||
+            analysis.intent === 'more_info_needed' ||
+            needsFeeNegotiation ||
             (caseData.previous_attempts && caseData.previous_attempts >= 2) ||
             analysis.sentiment === 'hostile'
         );
 
         console.log(`\n🤖 Agent Status:`);
         console.log(`   Complex case: ${isComplexCase}`);
-        console.log(`   Reason: ${analysis.intent}${analysis.extracted_fee_amount ? ` ($${analysis.extracted_fee_amount})` : ''}`);
+        console.log(`   Reason: ${analysis.intent}${feeAmount ? ` ($${feeAmount})` : ''}`);
 
         // If this is a complex case, let the agent handle it
         if (isComplexCase) {
@@ -360,7 +344,7 @@ const generateWorker = new Worker('generate-queue', async (job) => {
         let portalHandled = false;
         let portalError = null;
 
-        if (portalUrl && isSupportedPortal(portalUrl)) {
+        if (portalUrl && isSupportedPortalUrl(portalUrl)) {
             console.log(`🌐 Attempting portal submission for case ${caseId} via ${portalUrl}`);
             try {
                 const portalResult = await portalAgentSkyvern.submitToPortal(caseData, portalUrl, {
@@ -414,6 +398,13 @@ const generateWorker = new Worker('generate-queue', async (job) => {
             }
         } else if (portalUrl) {
             console.log(`⚠️ Portal URL provided for case ${caseId} but domain unsupported. Falling back to email.`);
+            await db.logActivity(
+                'portal_unsupported_domain',
+                `Portal URL present but unsupported for case ${caseId}`,
+                { case_id: caseId, portal_url: portalUrl }
+            );
+        } else {
+            console.log(`ℹ️ No portal URL for case ${caseId}. Proceeding with email flow.`);
         }
 
         // If portal submission did not occur/succeed, fall back to email flow

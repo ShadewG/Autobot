@@ -69,28 +69,33 @@ router.post('/inbound', upload.none(), async (req, res) => {
 
         if (result.matched) {
             console.log(`Inbound email matched to case ${result.case_id}`);
+            const alreadyProcessed = result.already_processed === true;
 
             // Check if this is a test mode email (instant reply)
             const isTestMode = inboundData.subject?.includes('[TEST]') ||
                               inboundData.headers?.['X-Test-Mode'] === 'true';
 
-            // Queue for AI analysis
-            await analysisQueue.add('analyze-response', {
-                messageId: result.message_id,
-                caseId: result.case_id,
-                instantReply: isTestMode
-            }, {
-                delay: isTestMode ? 0 : 2000, // faster processing, but still ensure DB commit
-                attempts: 3,
-                backoff: {
-                    type: 'exponential',
-                    delay: 3000
-                }
-            });
+            if (alreadyProcessed) {
+                console.log(`Duplicate inbound detected for case ${result.case_id}; skipping analysis queue.`);
+            } else {
+                // Queue for AI analysis
+                await analysisQueue.add('analyze-response', {
+                    messageId: result.message_id,
+                    caseId: result.case_id,
+                    instantReply: isTestMode
+                }, {
+                    delay: isTestMode ? 0 : 2000, // faster processing, but still ensure DB commit
+                    attempts: 3,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 3000
+                    }
+                });
 
-            console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);
+                console.log(`Analysis queued for case ${result.case_id}${isTestMode ? ' (TEST MODE - instant reply)' : ''}`);
+            }
 
-            if (result.portal_notification) {
+            if (!alreadyProcessed && result.portal_notification) {
                 const portalJobData = {
                     caseId: result.case_id,
                     portalUrl: result.portal_notification.portal_url,

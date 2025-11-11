@@ -121,6 +121,25 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async updateCase(caseId, updates = {}) {
+        if (!updates || Object.keys(updates).length === 0) {
+            return await this.getCaseById(caseId);
+        }
+
+        const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+        if (entries.length === 0) {
+            return await this.getCaseById(caseId);
+        }
+
+        const setClauseParts = entries.map(([key], idx) => `${key} = $${idx + 2}`);
+        setClauseParts.push('updated_at = CURRENT_TIMESTAMP');
+
+        const values = [caseId, ...entries.map(([, value]) => value)];
+        const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
+        const result = await this.query(query, values);
+        return result.rows[0];
+    }
+
     // Email Threads
     async createEmailThread(threadData) {
         const query = `
@@ -179,7 +198,7 @@ class DatabaseService {
             messageData.direction,
             messageData.from_email,
             messageData.to_email,
-            messageData.cc_emails,
+            messageData.cc_emails || null,
             messageData.subject,
             messageData.body_text,
             messageData.body_html,
@@ -189,10 +208,18 @@ class DatabaseService {
             messageData.portal_notification || false,
             messageData.portal_notification_type || null,
             messageData.portal_notification_provider || null,
-            messageData.sent_at,
-            messageData.received_at
+            messageData.sent_at || null,
+            messageData.received_at || null
         ];
         const result = await this.query(query, values);
+        return result.rows[0];
+    }
+
+    async getMessageByMessageIdentifier(messageIdentifier) {
+        const result = await this.query(
+            'SELECT * FROM messages WHERE message_id = $1 LIMIT 1',
+            [messageIdentifier]
+        );
         return result.rows[0];
     }
 

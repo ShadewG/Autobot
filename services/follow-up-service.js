@@ -3,6 +3,11 @@ const db = require('./database');
 const aiService = require('./ai-service');
 const { emailQueue } = require('../queues/email-queue');
 const notionService = require('./notion-service');
+const {
+    normalizePortalUrl,
+    detectPortalProviderByUrl,
+    isSupportedPortalUrl
+} = require('../utils/portal-utils');
 
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
@@ -72,7 +77,7 @@ class FollowUpService {
      */
     async sendFollowUp(followupSchedule) {
         try {
-            const caseData = await db.getCaseById(followupSchedule.case_id);
+            let caseData = await db.getCaseById(followupSchedule.case_id);
             const thread = await db.getThreadById(followupSchedule.thread_id);
 
             if (!caseData || !thread) {
@@ -95,6 +100,11 @@ class FollowUpService {
                 );
 
                 return;
+            }
+
+            // Run research before first follow-up to see if a better portal/contact exists
+            if (followupSchedule.followup_count === 0) {
+                caseData = await this.ensureFirstFollowUpResearch(caseData);
             }
 
             // Generate follow-up text
@@ -147,6 +157,61 @@ class FollowUpService {
             console.error('Error sending follow-up:', error);
             throw error;
         }
+    }
+
+    async ensureFirstFollowUpResearch(caseData) {
+        if (caseData.last_contact_research_at) {
+            return caseData;
+        }
+
+        console.log(`🔎 Running pre-follow-up contact research for case ${caseData.id}`);
+
+        const research = await aiService.researchAlternateContacts(caseData);
+        if (!research) {
+            console.log('No research result returned; marking as checked to avoid loops.');
+            return await db.updateCase(caseData.id, {
+                last_contact_research_at: new Date(),
+                contact_research_notes: 'Research attempted but no data returned.'
+            });
+        }
+
+        const updates = {
+            last_contact_research_at: new Date(),
+            contact_research_notes: research.notes || null
+        };
+
+        if (research.contact_email && research.contact_email !== caseData.agency_email) {
+            updates.alternate_agency_email = research.contact_email;
+        }
+
+        if (research.portal_url) {
+            const normalizedPortal = normalizePortalUrl(research.portal_url);
+            if (normalizedPortal && isSupportedPortalUrl(normalizedPortal)) {
+                const provider =
+                    research.portal_provider ||
+                    detectPortalProviderByUrl(normalizedPortal)?.name ||
+                    null;
+                updates.portal_url = normalizedPortal;
+                updates.portal_provider = provider;
+            } else {
+                console.log(`Research suggested portal ${research.portal_url} but it is unsupported.`);
+            }
+        }
+
+        const updatedCase = await db.updateCase(caseData.id, updates);
+
+        await db.logActivity('contact_research_completed', `Contact research completed before follow-up for case ${caseData.case_name}`, {
+            case_id: caseData.id,
+            suggested_portal: updates.portal_url || caseData.portal_url || null,
+            alternate_contact: updates.alternate_agency_email || null,
+            notes: research.notes || null,
+            confidence: research.confidence || null
+        });
+
+        // Ensure Notion reflects any new status info (especially if portal was added)
+        await notionService.syncStatusToNotion(caseData.id);
+
+        return updatedCase;
     }
 
     /**

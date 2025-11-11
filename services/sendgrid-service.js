@@ -2,27 +2,7 @@ const sgMail = require('@sendgrid/mail');
 const db = require('./database');
 const notionService = require('./notion-service');
 const crypto = require('crypto');
-
-const PORTAL_PROVIDERS = [
-    {
-        name: 'govqa',
-        domains: ['govqa.us', 'custhelp.com', 'mycusthelp.com'],
-        keywords: ['govqa', 'public records center', 'my request center', 'request center notification'],
-        defaultPath: '/WEBAPP/_rs/(S(0))/RequestLogin.aspx?rqst=4'
-    },
-    {
-        name: 'nextrequest',
-        domains: ['nextrequest.com'],
-        keywords: ['nextrequest', 'public records request portal'],
-        defaultPath: '/'
-    },
-    {
-        name: 'justfoia',
-        domains: ['justfoia.com'],
-        keywords: ['justfoia', 'govbuilt'],
-        defaultPath: '/'
-    }
-];
+const { PORTAL_PROVIDERS } = require('../utils/portal-utils');
 
 class SendGridService {
     constructor() {
@@ -395,30 +375,70 @@ class SendGridService {
                 });
             }
 
-            // Store the received message
-            const message = await db.createMessage({
-                thread_id: thread.id,
-                case_id: caseData.id,
-                message_id: messageId,
-                direction: 'inbound',
-                from_email: fromEmail,
-                to_email: toEmail,
-                subject: inboundData.subject,
-                body_text: inboundData.text,
-                body_html: inboundData.html,
-                has_attachments: (inboundData.attachments && inboundData.attachments.length > 0),
-                attachment_count: inboundData.attachments?.length || 0,
-                message_type: 'response',
-                received_at: new Date()
-            });
+            let messageAlreadyExists = false;
+            let message = null;
 
-            // Update thread
+            try {
+                // Store the received message
+                message = await db.createMessage({
+                    thread_id: thread.id,
+                    case_id: caseData.id,
+                    message_id: messageId,
+                    direction: 'inbound',
+                    from_email: fromEmail,
+                    to_email: toEmail,
+                    subject: inboundData.subject,
+                    body_text: inboundData.text,
+                    body_html: inboundData.html,
+                    has_attachments: (inboundData.attachments && inboundData.attachments.length > 0),
+                    attachment_count: inboundData.attachments?.length || 0,
+                    message_type: 'response',
+                    received_at: new Date()
+                });
+            } catch (error) {
+                if (error.code === '23505') {
+                    messageAlreadyExists = true;
+                    console.warn(`Duplicate inbound message_id detected (${messageId}), reusing existing record`);
+                    message = await db.getMessageByMessageIdentifier(messageId);
+                    if (!message) {
+                        throw error; // Should never happen, but fail loudly if it does
+                    }
+                } else {
+                    throw error;
+                }
+            }
+
+            if (!message) {
+                throw new Error('Failed to persist inbound message');
+            }
+
+            // If this is a duplicate and we've already analyzed it, short-circuit to avoid double processing
+            if (messageAlreadyExists) {
+                const existingAnalysis = await db.getAnalysisByMessageId(message.id);
+                if (existingAnalysis) {
+                    console.log(`Inbound message ${messageId} already analyzed (analysis #${existingAnalysis.id}), skipping duplicate processing`);
+                    return {
+                        matched: true,
+                        case_id: caseData.id,
+                        message_id: message.id,
+                        thread_id: thread.id,
+                        case_portal_url: caseData.portal_url,
+                        portal_notification: null,
+                        already_processed: true
+                    };
+                }
+            }
+
+            // Update thread metadata (only bump message_count when this is a brand-new message)
             const currentMessageCount = typeof thread.message_count === 'number' ? thread.message_count : 0;
-            await db.updateThread(thread.id, {
+            const threadUpdate = {
                 last_message_at: new Date(),
-                message_count: currentMessageCount + 1,
                 status: 'responded'
-            });
+            };
+            if (!messageAlreadyExists) {
+                threadUpdate.message_count = currentMessageCount + 1;
+            }
+            await db.updateThread(thread.id, threadUpdate);
 
             // Update case
             await db.updateCaseStatus(caseData.id, 'responded', {
@@ -475,7 +495,8 @@ class SendGridService {
             // Log activity
             await db.logActivity('email_received', `Received response for case: ${caseData.case_name}`, {
                 case_id: caseData.id,
-                message_id: message.id
+                message_id: message.id,
+                deduplicated_retry: messageAlreadyExists
             });
 
             return {
@@ -484,7 +505,8 @@ class SendGridService {
                 message_id: message.id,
                 thread_id: thread.id,
                 case_portal_url: caseData.portal_url,
-                portal_notification: portalNotificationInfo
+                portal_notification: portalNotificationInfo,
+                already_processed: false
             };
         } catch (error) {
             console.error('Error processing inbound email:', error);
