@@ -7,6 +7,31 @@ const notionService = require('../services/notion-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
 const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
 
+const SUPPORTED_PORTAL_DOMAINS = [
+    'govqa.us',
+    'mycusthelp.com',
+    'custhelp.com',
+    'nextrequest.com',
+    'justfoia.com'
+];
+
+function normalizePortalUrl(url) {
+    if (!url) return null;
+    if (/^https?:\/\//i.test(url)) return url;
+    return `https://${url}`;
+}
+
+function isSupportedPortal(url) {
+    try {
+        const normalized = normalizePortalUrl(url);
+        if (!normalized) return false;
+        const hostname = new URL(normalized).hostname.toLowerCase();
+        return SUPPORTED_PORTAL_DOMAINS.some(domain => hostname.includes(domain));
+    } catch (error) {
+        return false;
+    }
+}
+
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
     if (process.env.FORCE_INSTANT_EMAILS === 'false') return false;
@@ -231,7 +256,8 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                     [caseId]
                 );
 
-                return agentResult;
+                // Don't return early - let auto-reply logic also run
+                console.log(`ℹ️  Agent completed, now running auto-reply logic...`);
             } catch (agentError) {
                 console.error(`❌ Agent failed, falling back to deterministic flow:`, agentError.message);
                 // Continue with deterministic flow below as fallback
@@ -330,34 +356,101 @@ const generateWorker = new Worker('generate-queue', async (job) => {
             throw new Error(`Case ${caseId} not found`);
         }
 
-        // Generate FOIA request
-        const generated = await aiService.generateFOIARequest(caseData);
+        const portalUrl = normalizePortalUrl(caseData.portal_url);
+        let portalHandled = false;
+        let portalError = null;
 
-        // Create simple subject line (just the person's name, no extra details)
-        const simpleName = (caseData.subject_name || 'Information Request')
-            .split(' - ')[0]  // Take only the name part before any dash
-            .split('(')[0]    // Remove any parenthetical info
-            .trim();
-        const subject = `Public Records Request - ${simpleName}`;
+        if (portalUrl && isSupportedPortal(portalUrl)) {
+            console.log(`🌐 Attempting portal submission for case ${caseId} via ${portalUrl}`);
+            try {
+                const portalResult = await portalAgentSkyvern.submitToPortal(caseData, portalUrl, {
+                    maxSteps: 50,
+                    dryRun: false
+                });
 
-        // Queue the email to be sent immediately (no delays)
-        await emailQueue.add('send-initial-request', {
-            type: 'initial_request',
-            caseId: caseId,
-            toEmail: caseData.agency_email,
-            subject: subject,
-            content: generated.request_text,
-            instantReply: instantMode || false  // Pass instant mode flag
-        });
+                if (portalResult && portalResult.success) {
+                    await db.updateCaseStatus(caseId, 'sent', {
+                        substatus: `Portal submission completed (${portalResult.status || 'submitted'})`,
+                        send_date: new Date()
+                    });
+                    await db.updateCasePortalStatus(caseId, {
+                        portal_url: portalUrl,
+                        portal_provider: caseData.portal_provider || 'Auto-detected',
+                        last_portal_status: 'Submission completed',
+                        last_portal_status_at: new Date(),
+                        last_portal_engine: 'skyvern',
+                        last_portal_run_id: portalResult.taskId || portalResult.runId || null
+                    });
 
-        console.log(`Generated and queued email for case ${caseId}, sending immediately`);
+                    await notionService.syncStatusToNotion(caseId);
 
-        return {
-            success: true,
-            case_id: caseId,
-            queued_for_send: true,
-            delay_minutes: 0
-        };
+                    await db.logActivity('portal_submission', `Portal submission completed for case ${caseId}`, {
+                        case_id: caseId,
+                        portal_url: portalUrl,
+                        portal_provider: caseData.portal_provider || 'Auto-detected',
+                        engine: 'skyvern',
+                        run_id: portalResult.taskId || portalResult.runId || null
+                    });
+
+                    portalHandled = true;
+                    console.log(`✅ Portal submission succeeded for case ${caseId}`);
+
+                    return {
+                        success: true,
+                        case_id: caseId,
+                        queued_for_send: false,
+                        sent_via_portal: true,
+                        portal_engine: 'skyvern'
+                    };
+                }
+            } catch (error) {
+                portalError = error;
+                console.error(`⚠️ Portal submission failed for case ${caseId}, falling back to email:`, error.message);
+                await db.logActivity('portal_submission_failed', `Portal submission failed for case ${caseId}: ${error.message}`, {
+                    case_id: caseId,
+                    portal_url: portalUrl,
+                    error: error.message
+                });
+            }
+        } else if (portalUrl) {
+            console.log(`⚠️ Portal URL provided for case ${caseId} but domain unsupported. Falling back to email.`);
+        }
+
+        // If portal submission did not occur/succeed, fall back to email flow
+        if (!portalHandled) {
+            if (portalError) {
+                console.log(`📧 Continuing with email for case ${caseId} after portal error.`);
+            }
+            // Generate FOIA request
+            const generated = await aiService.generateFOIARequest(caseData);
+
+            // Create simple subject line (just the person's name, no extra details)
+            const simpleName = (caseData.subject_name || 'Information Request')
+                .split(' - ')[0]  // Take only the name part before any dash
+                .split('(')[0]    // Remove any parenthetical info
+                .trim();
+            const subject = `Public Records Request - ${simpleName}`;
+
+            // Queue the email to be sent immediately (no delays)
+            await emailQueue.add('send-initial-request', {
+                type: 'initial_request',
+                caseId: caseId,
+                toEmail: caseData.agency_email,
+                subject: subject,
+                content: generated.request_text,
+                instantReply: instantMode || false  // Pass instant mode flag
+            });
+
+            console.log(`Generated and queued email for case ${caseId}, sending immediately`);
+
+            return {
+                success: true,
+                case_id: caseId,
+                queued_for_send: true,
+                delay_minutes: 0,
+                sent_via_portal: false
+            };
+        }
     } catch (error) {
         console.error('Generation job failed:', error);
         throw error;
