@@ -1730,8 +1730,12 @@ router.post('/complete-reset', async (req, res) => {
 
         let clearedCount = 0;
         for (const job of [...waitingJobs, ...delayedJobs, ...activeJobs]) {
-            await job.remove();
-            clearedCount++;
+            try {
+                await job.remove();
+                clearedCount++;
+            } catch (e) {
+                console.log(`   ⚠️  Could not remove job ${job.id}: ${e.message}`);
+            }
         }
 
         // Delete all database records (ignore errors if table doesn't exist)
@@ -1851,8 +1855,12 @@ router.post('/nuclear-reset', async (req, res) => {
 
         let clearedCount = 0;
         for (const job of [...waitingJobs, ...delayedJobs, ...activeJobs]) {
-            await job.remove();
-            clearedCount++;
+            try {
+                await job.remove();
+                clearedCount++;
+            } catch (e) {
+                console.log(`   ⚠️  Could not remove job ${job.id}: ${e.message}`);
+            }
         }
 
         // Delete all database records (ignore errors if table doesn't exist)

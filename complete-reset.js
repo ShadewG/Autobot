@@ -23,8 +23,12 @@ async function completeReset() {
 
         let clearedCount = 0;
         for (const job of [...waitingJobs, ...delayedJobs, ...activeJobs]) {
-            await job.remove();
-            clearedCount++;
+            try {
+                await job.remove();
+                clearedCount++;
+            } catch (e) {
+                console.log(`   ⚠️  Could not remove job ${job.id}: ${e.message}`);
+            }
         }
         console.log(`   ✅ Cleared ${clearedCount} pending jobs\n`);
 
