@@ -289,6 +289,73 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    // Auto reply queue helpers
+    async createAutoReplyQueueEntry(entry) {
+        const query = `
+            INSERT INTO auto_reply_queue (
+                message_id,
+                case_id,
+                generated_reply,
+                confidence_score,
+                status,
+                requires_approval,
+                response_type,
+                metadata,
+                last_regenerated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (message_id) DO UPDATE SET
+                generated_reply = EXCLUDED.generated_reply,
+                confidence_score = COALESCE(EXCLUDED.confidence_score, auto_reply_queue.confidence_score),
+                status = 'pending',
+                requires_approval = EXCLUDED.requires_approval,
+                response_type = EXCLUDED.response_type,
+                metadata = EXCLUDED.metadata,
+                last_regenerated_at = EXCLUDED.last_regenerated_at
+            RETURNING *
+        `;
+
+        const values = [
+            entry.message_id,
+            entry.case_id,
+            entry.generated_reply,
+            entry.confidence_score || null,
+            entry.status || 'pending',
+            entry.requires_approval !== false,
+            entry.response_type || 'general',
+            entry.metadata || null,
+            entry.last_regenerated_at || null
+        ];
+
+        const result = await this.query(query, values);
+        return result.rows[0];
+    }
+
+    async getAutoReplyQueueEntryById(id) {
+        const result = await this.query(
+            'SELECT * FROM auto_reply_queue WHERE id = $1',
+            [id]
+        );
+        return result.rows[0];
+    }
+
+    async updateAutoReplyQueueEntry(id, updates = {}) {
+        if (!updates || Object.keys(updates).length === 0) {
+            return await this.getAutoReplyQueueEntryById(id);
+        }
+
+        const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+        if (entries.length === 0) {
+            return await this.getAutoReplyQueueEntryById(id);
+        }
+
+        const setClauseParts = entries.map(([key], idx) => `${key} = $${idx + 2}`);
+
+        const values = [id, ...entries.map(([, value]) => value)];
+        const query = `UPDATE auto_reply_queue SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
+        const result = await this.query(query, values);
+        return result.rows[0];
+    }
+
     // Follow-up Schedule
     async createFollowUpSchedule(scheduleData) {
         const query = `

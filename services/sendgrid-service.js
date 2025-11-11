@@ -1,6 +1,7 @@
 const sgMail = require('@sendgrid/mail');
 const db = require('./database');
 const notionService = require('./notion-service');
+const aiService = require('./ai-service');
 const crypto = require('crypto');
 const { PORTAL_PROVIDERS } = require('../utils/portal-utils');
 
@@ -655,35 +656,16 @@ class SendGridService {
 
     async handleFeeQuote(caseData, feeQuote, messageId) {
         const amount = feeQuote.amount;
-        let action = 'review';
+        let recommendedAction = 'negotiate';
 
         if (amount <= FEE_AUTO_APPROVE_MAX) {
-            action = 'auto_approve';
+            recommendedAction = 'accept';
         } else if (amount >= FEE_ESCALATE_MIN) {
-            action = 'escalate';
-        } else {
-            action = 'negotiate';
+            recommendedAction = 'escalate';
         }
 
-        let newStatus = caseData.status || 'awaiting_response';
-        let substatus = caseData.substatus || '';
-        let note = '';
-
-        if (action === 'auto_approve') {
-            substatus = `Fee auto-approved ($${amount.toFixed(2)})`;
-            note = 'Fee within auto-approve threshold. Proceed with payment or request confirmation.';
-        } else if (action === 'negotiate') {
-            newStatus = 'fee_negotiation';
-            substatus = `Fee quoted: $${amount.toFixed(2)} (negotiate scope)`;
-            note = 'Fee above auto-approve threshold. Attempt to narrow scope or request breakdown.';
-        } else {
-            newStatus = 'needs_human_fee_approval';
-            substatus = `Fee quoted: $${amount.toFixed(2)} (awaiting approval)`;
-            note = 'Fee exceeds escalation threshold. Human decision required.';
-        }
-
-        const updatedCase = await db.updateCaseStatus(caseData.id, newStatus, {
-            substatus,
+        const updatedCase = await db.updateCaseStatus(caseData.id, 'needs_human_fee_approval', {
+            substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
             last_fee_quote_amount: amount,
             last_fee_quote_currency: feeQuote.currency,
             last_fee_quote_at: new Date()
@@ -691,16 +673,68 @@ class SendGridService {
 
         await notionService.syncStatusToNotion(caseData.id);
 
-        await db.logActivity('fee_quote_detected', `Fee quote $${amount.toFixed(2)} (${action})`, {
+        await this.queueFeeResponseDraft({
+            caseData: updatedCase,
+            feeQuote,
+            messageId,
+            recommendedAction
+        });
+
+        await db.logActivity('fee_quote_detected', `Fee quote $${amount.toFixed(2)} (${recommendedAction})`, {
             case_id: caseData.id,
             message_id: messageId,
             fee_amount: amount,
             fee_currency: feeQuote.currency,
-            action_recommended: action,
-            note
+            action_recommended: recommendedAction
         });
 
         return updatedCase;
+    }
+
+    async queueFeeResponseDraft({ caseData, feeQuote, messageId, recommendedAction = 'negotiate', instructions = null }) {
+        try {
+            const draft = await aiService.generateFeeResponse(caseData, {
+                feeAmount: feeQuote.amount,
+                currency: feeQuote.currency,
+                recommendedAction,
+                instructions
+            });
+
+            const metadata = {
+                fee_amount: feeQuote.amount,
+                fee_currency: feeQuote.currency,
+                recommended_action: recommendedAction,
+                instructions: instructions,
+                generated_at: new Date().toISOString()
+            };
+
+            const entry = await db.createAutoReplyQueueEntry({
+                message_id: messageId,
+                case_id: caseData.id,
+                generated_reply: draft.reply_text,
+                confidence_score: 0.9,
+                requires_approval: true,
+                response_type: 'fee_negotiation',
+                metadata: metadata,
+                last_regenerated_at: new Date()
+            });
+
+            await db.logActivity('fee_response_prepared', `Fee response draft queued (${recommendedAction})`, {
+                case_id: caseData.id,
+                message_id: messageId,
+                auto_reply_queue_id: entry.id,
+                metadata
+            });
+
+            return entry;
+        } catch (error) {
+            console.error('Error queueing fee response draft:', error);
+            await db.logActivity('fee_response_failed', `Failed to draft fee response: ${error.message}`, {
+                case_id: caseData.id,
+                message_id: messageId
+            });
+            throw error;
+        }
     }
 
     /**

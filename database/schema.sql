@@ -130,6 +130,9 @@ CREATE TABLE IF NOT EXISTS auto_reply_queue (
     approved_by VARCHAR(100),
     approved_at TIMESTAMP,
     sent_at TIMESTAMP,
+    response_type VARCHAR(50) DEFAULT 'general',
+    metadata JSONB,
+    last_regenerated_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

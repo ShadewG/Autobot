@@ -252,23 +252,31 @@
             color: #2c5282;
         }
 
-        .test-case-selector {
-            margin-bottom: 15px;
+        .activity-log-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 360px;
+            overflow-y: auto;
         }
 
-        .test-case-selector select {
-            width: 100%;
-            padding: 10px;
-            border: 2px solid #e2e8f0;
+        .activity-log-entry {
+            padding: 10px 12px;
             border-radius: 8px;
-            font-size: 14px;
-            background: white;
-            cursor: pointer;
+            background: #f7fafc;
+            border-left: 4px solid #667eea;
         }
 
-        .test-case-selector select:focus {
-            outline: none;
-            border-color: #667eea;
+        .activity-log-entry h4 {
+            margin: 0 0 4px 0;
+            font-size: 14px;
+            color: #1a202c;
+        }
+
+        .activity-log-entry p {
+            margin: 0;
+            font-size: 13px;
+            color: #2d3748;
         }
 
         .loading {
@@ -363,6 +371,69 @@
         .case-preview {
             margin-top: 6px;
             color: #2d3748;
+            font-size: 13px;
+        }
+
+        .fee-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .fee-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .fee-card h4 {
+            margin: 0;
+            font-size: 16px;
+            color: #1a202c;
+        }
+
+        .fee-metadata {
+            font-size: 12px;
+            color: #4a5568;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .fee-response-preview {
+            background: #f7fafc;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 13px;
+            color: #2d3748;
+            white-space: pre-wrap;
+        }
+
+        .fee-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .fee-actions textarea {
+            flex: 1;
+            min-height: 80px;
+            border-radius: 8px;
+            border: 1px solid #cbd5f5;
+            padding: 10px;
+            font-size: 13px;
+            resize: vertical;
+        }
+
+        .fee-actions select {
+            border-radius: 8px;
+            border: 1px solid #cbd5f5;
+            padding: 8px;
             font-size: 13px;
         }
 
@@ -579,71 +650,6 @@
                 </div>
             </div>
 
-            <!-- Simulate Replies -->
-            <div class="card">
-                <h2>💬 Simulate Agency Replies</h2>
-                <div class="test-case-selector">
-                    <select id="case-selector">
-                        <option value="">Select a case first...</option>
-                    </select>
-                </div>
-                <div class="button-group">
-                    <button class="btn-danger" onclick="simulateReply('denial')">
-                        <span class="emoji">❌</span> Send Denial
-                    </button>
-                    <button class="btn-warning" onclick="simulateReply('fee')">
-                        <span class="emoji">💰</span> Send High Fee ($500)
-                    </button>
-                    <button class="btn-info" onclick="simulateReply('clarification')">
-                        <span class="emoji">❓</span> Request Clarification
-                    </button>
-                    <button class="btn-success" onclick="simulateReply('approval')">
-                        <span class="emoji">✅</span> Send Approval
-                    </button>
-                </div>
-            </div>
-
-            <!-- Monitor Agent -->
-            <div class="card">
-                <h2>🔍 Monitor & Control</h2>
-                <div class="button-group">
-                    <button class="btn-info" onclick="refreshStats()">
-                        <span class="emoji">🔄</span> Refresh Stats
-                    </button>
-                    <button class="btn-info" onclick="viewAgentDecisions()">
-                        <span class="emoji">📊</span> View Agent Decisions
-                    </button>
-                    <button class="btn-info" onclick="viewEscalations()">
-                        <span class="emoji">🚨</span> View Escalations
-                    </button>
-                    <button class="btn-secondary" onclick="viewAllCases()">
-                        <span class="emoji">📁</span> View All Cases
-                    </button>
-                    <button class="btn-secondary" onclick="viewPortalRuns()">
-                        <span class="emoji">🌐</span> Portal Runs
-                    </button>
-                </div>
-            </div>
-
-            <!-- Database Controls -->
-            <div class="card">
-                <h2>🗄️ Database Controls</h2>
-                <div class="button-group">
-                    <button class="btn-warning" onclick="runMigration()">
-                        <span class="emoji">⚙️</span> Run Migration
-                    </button>
-                    <button class="btn-info" onclick="runMigration007()">
-                        <span class="emoji">🔧</span> Fix Auto-Reply Queue
-                    </button>
-                    <button class="btn-danger" onclick="clearDatabase()">
-                        <span class="emoji">🗑️</span> Clear All Cases
-                    </button>
-                    <p style="color: #718096; font-size: 12px; margin-top: 10px;">
-                        ⚠️ Clear database will delete ALL cases and data!
-                    </p>
-                </div>
-            </div>
-
             <!-- Notion Launch -->
             <div class="card full-width">
                 <h2>🗂️ Launch Outreach From Notion</h2>
@@ -674,6 +680,17 @@
                 </div>
             </div>
 
+            <div class="card full-width">
+                <h2>💰 Pending Fee Responses</h2>
+                <p class="muted">
+                    Every time an agency sends a fee estimate the AI drafts a reply, but nothing is sent until you approve it here.
+                    Add guidance, regenerate, or approve to send instantly.
+                </p>
+                <div id="fee-response-container">
+                    <p style="color:#718096;">No fee responses queued yet.</p>
+                </div>
+            </div>
+
             <!-- Live Case Monitor -->
             <div class="card full-width">
                 <h2>📡 Live Case Monitor</h2>
@@ -696,10 +713,18 @@
                 </div>
             </div>
 
-            <!-- Output Log -->
+            <!-- Activity Log -->
             <div class="card full-width">
                 <h2>📝 Activity Log</h2>
-                <div id="output" class="output-box"></div>
+                <div id="activity-log-list" class="activity-log-list">
+                    <p style="color:#718096;">Loading recent activity...</p>
+                </div>
+            </div>
+
+            <!-- Console Output -->
+            <div class="card full-width">
+                <h2>🛠 Console</h2>
+                <div id="console-output" class="output-box"></div>
             </div>
 
             <!-- Agent Decisions Table -->
@@ -739,7 +764,6 @@
     </div>
 
     <script>
-        let currentCaseId = null;
         let caseMonitorTimer = null;
         let latestCaseMonitorCount = 0;
 
@@ -747,7 +771,11 @@
         document.addEventListener('DOMContentLoaded', () => {
             log('Dashboard loaded', 'success');
             refreshStats();
-            loadCaseSelector();
+            loadActivityLog();
+            loadAgentDecisions();
+            loadEscalations();
+            loadPortalRuns();
+            loadFeeResponses();
             setupCaseMonitorControls();
             setupNotionFormControls();
             loadCaseMonitor();
@@ -769,9 +797,14 @@
             }
         });
 
-        // Logging
+        // Logging / Console
         function log(message, type = 'info') {
-            const output = document.getElementById('output');
+            const output = document.getElementById('console-output');
+            if (!output) {
+                console[type === 'error' ? 'error' : 'log'](message);
+                return;
+            }
+
             const timestamp = new Date().toLocaleTimeString();
             const entry = document.createElement('div');
             entry.className = `log-entry ${type}`;
@@ -781,7 +814,10 @@
         }
 
         function clearLog() {
-            document.getElementById('output').innerHTML = '';
+            const output = document.getElementById('console-output');
+            if (output) {
+                output.innerHTML = '';
+            }
         }
 
         function setupCaseMonitorControls() {
@@ -974,7 +1010,6 @@
                 if (result.success) {
                     log(`✅ Case ${result.case_id} queued (instant mode: ${result.instant_mode})`, 'success');
                     await refreshStats();
-                    await loadCaseSelector();
                     await loadCaseMonitor({ manual: true });
                 } else {
                     log(`❌ Failed to queue case: ${result.error}`, 'error');
@@ -1193,42 +1228,6 @@
             }
         }
 
-        // Load Case Selector
-        async function loadCaseSelector() {
-            try {
-                const cases = await apiCall('/test/cases');
-                const selector = document.getElementById('case-selector');
-
-                selector.innerHTML = '<option value="">Select a case...</option>';
-
-                if (cases.cases && cases.cases.length > 0) {
-                    cases.cases.forEach(c => {
-                        const option = document.createElement('option');
-                        option.value = c.id;
-                        option.textContent = `Case ${c.id}: ${c.case_name} (${c.status})`;
-                        selector.appendChild(option);
-                    });
-
-                    // Auto-select most recent
-                    selector.value = cases.cases[0].id;
-                    currentCaseId = cases.cases[0].id;
-                }
-            } catch (error) {
-                log(`Failed to load cases: ${error.message}`, 'error');
-            }
-        }
-
-        // Update current case when selector changes
-        document.addEventListener('DOMContentLoaded', () => {
-            const selector = document.getElementById('case-selector');
-            if (selector) {
-                selector.addEventListener('change', (e) => {
-                    currentCaseId = e.target.value;
-                    log(`📌 Selected case ${currentCaseId}`);
-                });
-            }
-        });
-
         // Send Test Email
         async function sendTestEmail() {
             const btn = event.target.closest('button');
@@ -1241,12 +1240,10 @@
                 const result = await apiCall('/test/send-and-reply', 'POST');
 
                 if (result.success) {
-                    currentCaseId = result.case_id;
                     log(`✅ Test email sent! Case ID: ${result.case_id}`, 'success');
                     log(`📧 Email sent to: ${result.sent_to}`, 'info');
                     log(`📋 Message ID: ${result.message_id}`, 'info');
 
-                    await loadCaseSelector();
                     await refreshStats();
                 } else {
                     log(`❌ Failed: ${result.error}`, 'error');
@@ -1259,86 +1256,188 @@
             }
         }
 
-        // Simulate Reply
-        async function simulateReply(type) {
-            const caseId = document.getElementById('case-selector').value;
-
-            if (!caseId) {
-                log('⚠️ Please select a case first!', 'warning');
-                return;
-            }
-
-            const btn = event.target.closest('button');
-            btn.disabled = true;
-            const originalHTML = btn.innerHTML;
-            btn.innerHTML = '<span class="loading"></span> Processing...';
-
-            const replyTexts = {
-                denial: "Your request is denied. The records you requested are exempt from disclosure under 5 U.S.C. § 552(b)(7)(A) as they are part of an ongoing law enforcement investigation.",
-                fee: "Your request has been received. The estimated cost for processing and copying the requested records is $500. Please confirm if you wish to proceed with payment.",
-                clarification: "We need more specific information to process your request. Please clarify: 1) What is the exact date range? 2) What specific incident are you referring to? 3) Are you requesting body camera footage or just reports?",
-                approval: "Your request has been approved. The requested records will be provided to you within 10 business days. Thank you for your patience."
-            };
-
-            log(`💬 Simulating ${type} reply for case ${caseId}...`);
-
+        // Fee response workflow
+        async function loadFeeResponses() {
             try {
-                const result = await apiCall('/test/simulate-reply', 'POST', {
-                    case_id: parseInt(caseId),
-                    reply_text: replyTexts[type],
-                    reply_type: type
-                });
-
-                if (result.success) {
-                    log(`✅ ${type} reply sent!`, 'success');
-                    log(`📊 Analysis: ${result.analysis?.intent || 'pending'}`, 'info');
-
-                    if (result.agent_handled) {
-                        log(`🤖 Agent is handling this case...`, 'info');
-                        log(`🔄 Agent took ${result.agent_iterations || 0} iterations`, 'info');
-                    } else {
-                        log(`📋 Using deterministic flow (agent disabled or simple case)`, 'info');
-                    }
-
-                    await refreshStats();
-
-                    // Auto-refresh decisions after 2 seconds
-                    setTimeout(viewAgentDecisions, 2000);
-                } else {
-                    log(`❌ Failed: ${result.error}`, 'error');
-                }
+                const result = await apiCall('/test/fee-responses');
+                renderFeeResponses(result.items || []);
             } catch (error) {
-                log(`❌ Error: ${error.message}`, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHTML;
+                log(`❌ Failed to load fee responses: ${error.message}`, 'error');
             }
         }
 
-        // View Agent Decisions
-        async function viewAgentDecisions() {
-            log('📊 Loading agent decisions...');
+        function renderFeeResponses(items) {
+            const container = document.getElementById('fee-response-container');
+            if (!container) return;
 
+            if (!items.length) {
+                container.innerHTML = '<p style="color:#718096;">No fee responses awaiting approval.</p>';
+                return;
+            }
+
+            const html = items.map(item => {
+                const metadata = item.metadata || {};
+                const amount = metadata.fee_amount ? `$${Number(metadata.fee_amount).toFixed(2)}` : '—';
+                const action = (metadata.recommended_action || 'negotiate').replace(/_/g, ' ');
+                const instructions = metadata.instructions || '';
+                const original = item.original_message ? escapeHtml(item.original_message.substring(0, 220)) + (item.original_message.length > 220 ? '…' : '') : '—';
+                const status = escapeHtml(item.status);
+                const replyPreview = escapeHtml(item.generated_reply || '').replace(/\n/g, '<br>');
+
+                return `
+                    <div class="fee-card" id="fee-card-${item.id}">
+                        <div class="fee-metadata">
+                            <span class="status-pill">${status}</span>
+                            <span>Case ${item.case_id}: ${escapeHtml(item.case_name || '')}</span>
+                            <span>Quoted: ${amount}</span>
+                            <span>Action: ${escapeHtml(action)}</span>
+                        </div>
+                        <div class="fee-response-preview">${replyPreview || '<em>No draft generated</em>'}</div>
+                        <details>
+                            <summary style="cursor:pointer; font-size:12px; color:#4a5568;">View agency quote</summary>
+                            <div style="margin-top:8px; font-size:12px; color:#2d3748;">${original}</div>
+                        </details>
+                        <div class="fee-actions">
+                            <textarea data-fee-instructions="${item.id}" placeholder="Add instructions before regenerating...">${escapeHtml(instructions)}</textarea>
+                            <div style="display:flex; flex-direction:column; gap:8px; min-width:180px;">
+                                <label style="font-size:12px; text-transform:uppercase; color:#4a5568;">Action</label>
+                                <select data-fee-action="${item.id}">
+                                    ${['accept','negotiate','escalate'].map(opt => `<option value="${opt}" ${ (metadata.recommended_action || 'negotiate') === opt ? 'selected' : '' }>${opt.charAt(0).toUpperCase() + opt.slice(1)}</option>`).join('')}
+                                </select>
+                                <button class="btn-info" onclick="regenerateFeeResponse(${item.id}, this)">
+                                    <span class="emoji">♻️</span> Regenerate
+                                </button>
+                                <button class="btn-success" onclick="approveFeeResponse(${item.id}, this)">
+                                    <span class="emoji">✅</span> Approve & Send
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = `<div class="fee-card-grid">${html}</div>`;
+        }
+
+        async function approveFeeResponse(id, buttonEl) {
+            const btn = buttonEl || event.target.closest('button');
+            if (!btn) return;
+
+            const original = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Sending...';
+
+            try {
+                const result = await apiCall(`/test/fee-responses/${id}/approve`, 'POST', {});
+                if (result.success) {
+                    log(`✅ Fee response ${id} approved and sent`, 'success');
+                    await loadFeeResponses();
+                    await refreshStats();
+                } else {
+                    log(`❌ Failed to approve fee response: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error approving fee response: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        }
+
+        async function regenerateFeeResponse(id, buttonEl) {
+            const instructionsEl = document.querySelector(`[data-fee-instructions="${id}"]`);
+            const actionEl = document.querySelector(`[data-fee-action="${id}"]`);
+            const instructions = instructionsEl ? instructionsEl.value.trim() : '';
+            const action = actionEl ? actionEl.value : null;
+
+            const btn = buttonEl || event.target.closest('button');
+            if (!btn) return;
+
+            const original = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Updating...';
+
+            try {
+                const result = await apiCall(`/test/fee-responses/${id}/regenerate`, 'POST', {
+                    instructions,
+                    action
+                });
+
+                if (result.success) {
+                    log(`♻️ Fee response ${id} regenerated`, 'info');
+                    await loadFeeResponses();
+                } else {
+                    log(`❌ Failed to regenerate: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ Error regenerating fee response: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            }
+        }
+
+        // Activity feed
+        async function loadActivityLog() {
+            try {
+                const result = await apiCall('/activity?limit=50');
+                renderActivityLog(result.activity || []);
+            } catch (error) {
+                const container = document.getElementById('activity-log-list');
+                if (container) {
+                    container.innerHTML = `<p style="color:#e53e3e;">Failed to load activity: ${escapeHtml(error.message)}</p>`;
+                }
+            }
+        }
+
+        function renderActivityLog(entries) {
+            const container = document.getElementById('activity-log-list');
+            if (!container) return;
+
+            if (!entries.length) {
+                container.innerHTML = '<p style="color:#718096;">No recent activity yet.</p>';
+                return;
+            }
+
+            const html = entries.map(entry => {
+                const caseLabel = entry.case_name ? `${escapeHtml(entry.case_name)} • ` : '';
+                const description = escapeHtml(entry.description || '');
+                const timestamp = new Date(entry.created_at).toLocaleString();
+                return `
+                    <div class="activity-log-entry">
+                        <h4>${caseLabel}${escapeHtml(entry.event_type || 'event')}</h4>
+                        <p>${description}</p>
+                        <p style="font-size:12px;color:#718096;margin-top:6px;">${timestamp}</p>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+        }
+
+        // Agent decisions table
+        async function loadAgentDecisions() {
             try {
                 const result = await apiCall('/test/agent/decisions');
                 const container = document.getElementById('decisions-table');
 
+                if (!container) return;
+
                 if (!result.decisions || result.decisions.length === 0) {
-                    container.innerHTML = '<p style="color: #718096;">No agent decisions yet. Send a test and simulate a reply!</p>';
+                    container.innerHTML = '<p style="color: #718096;">No agent decisions yet.</p>';
                     return;
                 }
 
                 let html = '<table class="table"><thead><tr>';
-                html += '<th>Case ID</th><th>Case Name</th><th>Action</th><th>Reasoning</th><th>Confidence</th><th>Time</th>';
+                html += '<th>Case</th><th>Action</th><th>Reasoning</th><th>Confidence</th><th>Time</th>';
                 html += '</tr></thead><tbody>';
 
                 result.decisions.forEach(d => {
                     const confidenceClass = d.confidence >= 0.8 ? 'success' : d.confidence >= 0.5 ? 'warning' : 'danger';
                     html += '<tr>';
-                    html += `<td>${d.case_id}</td>`;
-                    html += `<td>${d.case_name || 'Unknown'}</td>`;
-                    html += `<td>${d.action_taken}</td>`;
-                    html += `<td>${d.reasoning.substring(0, 100)}...</td>`;
+                    html += `<td>${d.case_id} — ${escapeHtml(d.case_name || 'Unknown')}</td>`;
+                    html += `<td>${escapeHtml(d.action_taken || '')}</td>`;
+                    html += `<td>${escapeHtml(d.reasoning || '').substring(0, 120)}${d.reasoning?.length > 120 ? '…' : ''}</td>`;
                     html += `<td><span class="badge ${confidenceClass}">${(d.confidence * 100).toFixed(0)}%</span></td>`;
                     html += `<td>${new Date(d.created_at).toLocaleString()}</td>`;
                     html += '</tr>';
@@ -1346,68 +1445,61 @@
 
                 html += '</tbody></table>';
                 container.innerHTML = html;
-
-                log(`✅ Loaded ${result.decisions.length} agent decisions`, 'success');
             } catch (error) {
-                log(`❌ Failed to load decisions: ${error.message}`, 'error');
+                const container = document.getElementById('decisions-table');
+                if (container) {
+                    container.innerHTML = `<p style="color:#e53e3e;">Failed to load decisions: ${escapeHtml(error.message)}</p>`;
+                }
             }
         }
 
-        // View Escalations
-        async function viewEscalations() {
-            log('🚨 Loading escalations...');
-
+        // Escalations table
+        async function loadEscalations() {
             try {
                 const result = await apiCall('/test/agent/escalations');
                 const container = document.getElementById('escalations-table');
+                if (!container) return;
 
                 if (!result.escalations || result.escalations.length === 0) {
-                    container.innerHTML = '<p style="color: #718096;">No escalations yet. Try sending a high fee reply!</p>';
+                    container.innerHTML = '<p style="color: #718096;">No escalations yet.</p>';
                     return;
                 }
 
                 let html = '<table class="table"><thead><tr>';
-                html += '<th>Case ID</th><th>Case Name</th><th>Reason</th><th>Urgency</th><th>Suggested Action</th><th>Status</th><th>Created</th>';
+                html += '<th>Case</th><th>Reason</th><th>Urgency</th><th>Suggested Action</th><th>Status</th><th>Created</th>';
                 html += '</tr></thead><tbody>';
 
                 result.escalations.forEach(e => {
                     const urgencyClass = e.urgency === 'high' ? 'danger' : e.urgency === 'medium' ? 'warning' : 'info';
                     html += '<tr>';
-                    html += `<td>${e.case_id}</td>`;
-                    html += `<td>${e.case_name || 'Unknown'}</td>`;
-                    html += `<td>${e.reason}</td>`;
-                    html += `<td><span class="badge ${urgencyClass}">${e.urgency.toUpperCase()}</span></td>`;
-                    html += `<td>${e.suggested_action || 'None'}</td>`;
-                    html += `<td>${e.status}</td>`;
+                    html += `<td>${e.case_id} — ${escapeHtml(e.case_name || 'Unknown')}</td>`;
+                    html += `<td>${escapeHtml(e.reason || '')}</td>`;
+                    html += `<td><span class="badge ${urgencyClass}">${(e.urgency || '').toUpperCase()}</span></td>`;
+                    html += `<td>${escapeHtml(e.suggested_action || 'None')}</td>`;
+                    html += `<td>${escapeHtml(e.status || '')}</td>`;
                     html += `<td>${new Date(e.created_at).toLocaleString()}</td>`;
                     html += '</tr>';
                 });
 
                 html += '</tbody></table>';
                 container.innerHTML = html;
-
-                log(`✅ Loaded ${result.escalations.length} escalations`, 'success');
             } catch (error) {
-                log(`❌ Failed to load escalations: ${error.message}`, 'error');
+                const container = document.getElementById('escalations-table');
+                if (container) {
+                    container.innerHTML = `<p style="color:#e53e3e;">Failed to load escalations: ${escapeHtml(error.message)}</p>`;
+                }
             }
         }
 
-        // View All Cases
-        async function viewAllCases() {
-            await loadCaseMonitor({ manual: true, announce: true });
-            log('📁 Scroll to the Live Case Monitor table for full details.', 'info');
-        }
-
-        // View Portal Runs
-        async function viewPortalRuns() {
-            log('🌐 Loading portal automation runs...');
-
+        // Portal runs table
+        async function loadPortalRuns() {
             try {
                 const result = await apiCall('/test/portal-runs');
                 const container = document.getElementById('portal-runs-table');
+                if (!container) return;
 
                 if (!result.runs || result.runs.length === 0) {
-                    container.innerHTML = '<p style="color: #718096;">No portal runs yet. Trigger one from the CLI.</p>';
+                    container.innerHTML = '<p style="color: #718096;">No portal runs yet.</p>';
                     return;
                 }
 
@@ -1430,16 +1522,17 @@
                     html += `<td>${engineLabel}</td>`;
                     html += `<td>${caseLabel}</td>`;
                     html += `<td style="word-break: break-all;">${portalLabel}</td>`;
-                    html += `<td>${details}</td>`;
+                    html += `<td>${escapeHtml(details)}</td>`;
                     html += '</tr>';
                 });
 
                 html += '</tbody></table>';
                 container.innerHTML = html;
-
-                log(`✅ Loaded ${result.runs.length} portal runs`, 'success');
             } catch (error) {
-                log(`❌ Failed to load portal runs: ${error.message}`, 'error');
+                const container = document.getElementById('portal-runs-table');
+                if (container) {
+                    container.innerHTML = `<p style="color:#e53e3e;">Failed to load portal runs: ${escapeHtml(error.message)}</p>`;
+                }
             }
         }
 
@@ -1557,10 +1650,11 @@
                     log(`📊 Deleted ${result.deleted.cases} cases, ${result.deleted.messages} messages`, 'info');
 
                     await refreshStats();
-                    await loadCaseSelector();
-
-                    document.getElementById('decisions-table').innerHTML = '<p style="color: #718096;">No decisions yet...</p>';
-                    document.getElementById('escalations-table').innerHTML = '<p style="color: #718096;">No escalations yet...</p>';
+                    await loadCaseMonitor({ manual: true });
+                    await loadActivityLog();
+                    await loadAgentDecisions();
+                    await loadEscalations();
+                    await loadPortalRuns();
                 } else {
                     log(`❌ Failed: ${result.error}`, 'error');
                 }
@@ -1572,8 +1666,13 @@
             }
         }
 
-        // Auto-refresh stats every 30 seconds
+        // Auto-refresh stats + data
         setInterval(refreshStats, 30000);
+        setInterval(loadFeeResponses, 45000);
+        setInterval(loadActivityLog, 60000);
+        setInterval(loadAgentDecisions, 60000);
+        setInterval(loadEscalations, 60000);
+        setInterval(loadPortalRuns, 60000);
     </script>
 </body>
 </html>
