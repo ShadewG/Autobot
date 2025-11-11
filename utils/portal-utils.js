@@ -59,7 +59,25 @@ function detectPortalProviderByUrl(url) {
 }
 
 function isSupportedPortalUrl(url) {
-    return !!detectPortalProviderByUrl(url);
+    if (!url) return false;
+
+    const normalized = normalizePortalUrl(url);
+    if (!normalized) return false;
+
+    try {
+        const urlObj = new URL(normalized);
+        const pathname = urlObj.pathname.toLowerCase();
+
+        // Reject PDF files
+        if (pathname.endsWith('.pdf')) {
+            return false;
+        }
+
+        // Accept all other URLs (let Skyvern attempt them)
+        return true;
+    } catch (error) {
+        return false;
+    }
 }
 
 module.exports = {
