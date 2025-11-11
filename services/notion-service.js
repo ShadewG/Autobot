@@ -3,11 +3,55 @@ const db = require('./database');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 
+const NOTION_STATUS_MAP = {
+    'ready_to_send': 'Ready to Send',
+    'sent': 'Sent',
+    'awaiting_response': 'Awaiting Response',
+    'responded': 'Responded',
+    'completed': 'Completed',
+    'error': 'Error',
+    'fee_negotiation': 'Fee Negotiation',
+    'needs_human_fee_approval': 'Needs Human Approval',
+    'needs_human_review': 'Needs Human Review',
+    'portal_in_progress': 'Portal Submission',
+    'portal_submission_failed': 'Portal Issue'
+};
+
 class NotionService {
     constructor() {
         this.notion = new Client({ auth: process.env.NOTION_API_KEY });
         this.databaseId = process.env.NOTION_CASES_DATABASE_ID;
         this.pagePropertyCache = new Map();
+        this.liveStatusProperty = process.env.NOTION_LIVE_STATUS_PROPERTY || 'Live Status';
+        this.legacyStatusProperty = process.env.NOTION_STATUS_PROPERTY || 'Status';
+    }
+
+    /**
+     * Map Notion status to internal database status
+     */
+    mapNotionStatusToInternal(notionStatus) {
+        if (!notionStatus) return 'ready_to_send';
+
+        // Find matching internal status
+        for (const [internal, notion] of Object.entries(NOTION_STATUS_MAP)) {
+            if (notion === notionStatus) {
+                return internal;
+            }
+        }
+
+        // Default mapping for common cases
+        const statusLower = notionStatus.toLowerCase();
+        if (statusLower.includes('ready')) return 'ready_to_send';
+        if (statusLower.includes('sent')) return 'sent';
+        if (statusLower.includes('awaiting') || statusLower.includes('pending')) return 'awaiting_response';
+        if (statusLower.includes('response') || statusLower.includes('responded')) return 'responded';
+        if (statusLower.includes('complete')) return 'completed';
+        if (statusLower.includes('error') || statusLower.includes('issue')) return 'error';
+        if (statusLower.includes('fee')) return 'fee_negotiation';
+        if (statusLower.includes('review')) return 'needs_human_review';
+        if (statusLower.includes('portal')) return 'portal_in_progress';
+
+        return 'ready_to_send'; // Default fallback
     }
 
     /**
@@ -18,7 +62,7 @@ class NotionService {
             const response = await this.notion.databases.query({
                 database_id: this.databaseId,
                 filter: {
-                    property: 'Status',
+                    property: this.liveStatusProperty,
                     select: {
                         equals: status
                     }
@@ -132,8 +176,10 @@ class NotionService {
             additional_details: this.getProperty(props, 'Case Summary', 'rich_text') ||
                               this.getProperty(props, 'Notes', 'rich_text') ||
                               '',
-            status: this.getProperty(props, 'Status', 'select') ||
-                   'ready_to_send',
+            status: this.mapNotionStatusToInternal(
+                this.getProperty(props, this.liveStatusProperty, 'select') ||
+                this.getProperty(props, this.legacyStatusProperty, 'select')
+            ),
             // Add portal URL for reference
             portal_url: portalUrl
         };
@@ -646,6 +692,14 @@ Respond with JSON:
                 } else {
                     missingProps('Send Date');
                 }
+
+                if (propSet.has('Request Day')) {
+                    properties['Request Day'] = {
+                        date: { start: updates.send_date }
+                    };
+                } else {
+                    missingProps('Request Day');
+                }
             }
 
             if (updates.last_response_date) {
@@ -1073,25 +1127,15 @@ Respond with JSON:
                 return;
             }
 
-            // Map database status to Notion status
-            const statusMap = {
-                'Ready to Send': 'Ready to Send',
-                'sent': 'Pending Response',
-                'response_received': 'Response Received',
-                'completed': 'Completed',
-                'needs_human_review': 'Needs Human Review',
-                'escalated': 'Escalated',
-                'closed': 'Closed'
-            };
-
-            const notionStatus = statusMap[caseData.status] || 'Pending Response';
+            // Use the NOTION_STATUS_MAP to get the correct Notion status
+            const notionStatus = NOTION_STATUS_MAP[caseData.status] || NOTION_STATUS_MAP['awaiting_response'];
 
             console.log(`Syncing case ${caseId} status to Notion: ${caseData.status} -> ${notionStatus}`);
 
             await this.notion.pages.update({
                 page_id: caseData.notion_page_id.replace(/-/g, ''),
                 properties: {
-                    Status: {
+                    [this.liveStatusProperty]: {
                         status: {
                             name: notionStatus
                         }
@@ -1099,7 +1143,7 @@ Respond with JSON:
                 }
             });
 
-            console.log(`✅ Updated Notion page ${caseData.notion_page_id} to status: ${notionStatus}`);
+            console.log(`✅ Updated Notion page ${caseData.notion_page_id} ${this.liveStatusProperty} to: ${notionStatus}`);
 
         } catch (error) {
             console.error(`Failed to sync status to Notion for case ${caseId}:`, error.message);
