@@ -141,8 +141,8 @@ class NotionService {
      */
     async enrichWithPoliceDepartment(caseData, notionPage = null) {
         if (!caseData.police_dept_id) {
-            console.warn('No police department relation found, using defaults');
-            caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
+            console.warn('No police department relation found');
+            caseData.agency_email = null;
             caseData.agency_name = 'Police Department';
             if (notionPage) {
                 this.applyFallbackContactsFromPage(caseData, notionPage);
@@ -158,22 +158,33 @@ class NotionService {
 
             const deptProps = deptPage.properties;
 
+            // Search ALL text and URL fields in the PD database for contact info
             const contactValues = [
                 this.getProperty(deptProps, 'Contact Email', 'rich_text'),
                 this.getProperty(deptProps, 'Contact Email', 'email'),
                 this.getProperty(deptProps, 'Email', 'email'),
                 this.getProperty(deptProps, 'Agency Email', 'email'),
                 this.getProperty(deptProps, 'Email', 'rich_text'),
+                this.getProperty(deptProps, 'Portal', 'url'),
+                this.getProperty(deptProps, 'Portal Link', 'url'),
+                this.getProperty(deptProps, 'Request Link', 'url'),
+                this.getProperty(deptProps, 'Website', 'url'),
                 caseData.portal_url // seed so normalization retains existing
             ].filter(Boolean);
 
+            // Also scan all rich_text and url fields for additional contacts
+            Object.entries(deptProps).forEach(([name, prop]) => {
+                if (prop.type === 'rich_text' && prop.rich_text?.[0]?.plain_text) {
+                    contactValues.push(prop.rich_text[0].plain_text);
+                } else if (prop.type === 'url' && prop.url) {
+                    contactValues.push(prop.url);
+                }
+            });
+
             const { emailCandidate, portalCandidate } = this.detectContactChannels(contactValues);
 
-            if (emailCandidate) {
-                caseData.agency_email = emailCandidate;
-            } else {
-                caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
-            }
+            // NO FALLBACK - return null if not found
+            caseData.agency_email = emailCandidate || null;
 
             if (!caseData.portal_url && portalCandidate) {
                 caseData.portal_url = portalCandidate;
