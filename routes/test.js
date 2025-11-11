@@ -1613,4 +1613,102 @@ router.post('/force-notion-sync', async (req, res) => {
     }
 });
 
+/**
+ * Clear all pending jobs from generate queue
+ * POST /api/test/clear-generate-queue
+ */
+router.post('/clear-generate-queue', async (req, res) => {
+    try {
+        console.log('🗑️ Clearing all pending jobs from generate queue...');
+
+        // Get all waiting and delayed jobs
+        const waitingJobs = await generateQueue.getWaiting();
+        const delayedJobs = await generateQueue.getDelayed();
+
+        let clearedCount = 0;
+
+        // Remove waiting jobs
+        for (const job of waitingJobs) {
+            await job.remove();
+            clearedCount++;
+        }
+
+        // Remove delayed jobs
+        for (const job of delayedJobs) {
+            await job.remove();
+            clearedCount++;
+        }
+
+        console.log(`✅ Cleared ${clearedCount} pending jobs from generate queue`);
+
+        res.json({
+            success: true,
+            message: `Cleared ${clearedCount} pending jobs`,
+            cleared_count: clearedCount
+        });
+
+    } catch (error) {
+        console.error('Clear queue error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Generate a sample FOIA request for a case
+ * POST /api/test/generate-sample
+ */
+router.post('/generate-sample', async (req, res) => {
+    try {
+        const { case_id } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id is required'
+            });
+        }
+
+        console.log(`📝 Generating sample FOIA request for case ${case_id}...`);
+
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${case_id} not found`
+            });
+        }
+
+        // Generate FOIA request
+        const generated = await aiService.generateFOIARequest(caseData);
+
+        // Create simple subject line
+        const simpleName = (caseData.subject_name || 'Information Request')
+            .split(' - ')[0]
+            .split('(')[0]
+            .trim();
+        const subject = `Public Records Request - ${simpleName}`;
+
+        res.json({
+            success: true,
+            case_id: case_id,
+            case_name: caseData.case_name,
+            subject: subject,
+            request_text: generated.request_text,
+            agency_name: caseData.agency_name,
+            agency_email: caseData.agency_email,
+            portal_url: caseData.portal_url
+        });
+
+    } catch (error) {
+        console.error('Generate sample error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
