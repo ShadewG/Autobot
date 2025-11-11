@@ -1712,6 +1712,59 @@ router.post('/generate-sample', async (req, res) => {
 });
 
 /**
+ * Test AI contact extraction for cases 34, 35, 36
+ * GET /api/test/contact-extraction
+ */
+router.get('/contact-extraction', async (req, res) => {
+    try {
+        const caseIds = [34, 35, 36];
+        const results = [];
+
+        for (const caseId of caseIds) {
+            const caseData = await db.getCaseById(caseId);
+
+            if (!caseData) {
+                results.push({ case_id: caseId, error: 'Case not found' });
+                continue;
+            }
+
+            // Fetch from Notion to trigger AI extraction
+            try {
+                const enrichedData = await notionService.fetchPageById(caseData.notion_page_id);
+
+                results.push({
+                    case_id: caseId,
+                    case_name: caseData.case_name,
+                    agency_name: enrichedData.agency_name,
+                    state: enrichedData.state,
+                    portal_url: enrichedData.portal_url || null,
+                    email: enrichedData.agency_email || null,
+                    contact_method: enrichedData.portal_url ? 'Portal' : (enrichedData.agency_email ? 'Email' : 'None - Needs Human Review')
+                });
+            } catch (error) {
+                results.push({
+                    case_id: caseId,
+                    case_name: caseData.case_name,
+                    error: error.message
+                });
+            }
+        }
+
+        res.json({
+            success: true,
+            results: results
+        });
+
+    } catch (error) {
+        console.error('Contact extraction test error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Fix state fields for cases 34, 35, 36
  * POST /api/test/fix-states
  */
