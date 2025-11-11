@@ -61,22 +61,31 @@ class NotionService {
      */
     async fetchCasesWithStatus(status = 'Ready to Send') {
         try {
-            console.log(`Querying Notion for status: "${status}"`);
-            console.log(`Using property: "${this.liveStatusProperty}"`);
-            console.log(`Database ID: ${this.databaseId}`);
+            let statusPropertyName = this.liveStatusProperty;
+            let statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
 
-            // Simple query - "Live Status" is a select property
+            if (!statusPropertyInfo) {
+                console.warn(`Live status property "${this.liveStatusProperty}" not found; falling back to legacy property "${this.legacyStatusProperty}"`);
+                statusPropertyName = this.legacyStatusProperty;
+                statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
+            }
+
+            if (!statusPropertyInfo) {
+                throw new Error(`No status property found on Notion database ${this.databaseId}`);
+            }
+
+            const filterKey = statusPropertyInfo.type === 'status' ? 'status' : 'select';
+            const normalizedStatusValue = this.normalizeStatusValue(status, statusPropertyInfo);
+
             const response = await this.notion.databases.query({
                 database_id: this.databaseId,
                 filter: {
-                    property: this.liveStatusProperty,
-                    select: {
-                        equals: status
+                    property: statusPropertyName,
+                    [filterKey]: {
+                        equals: normalizedStatusValue
                     }
                 }
             });
-
-            console.log(`Found ${response.results.length} pages with status "${status}"`);
 
             // Parse pages and enrich with police department data
             const cases = [];
@@ -1056,6 +1065,30 @@ Respond with JSON:
     async getDatabasePropertyInfo(propertyName) {
         const properties = await this.getDatabaseSchemaProperties();
         return properties?.[propertyName] || null;
+    }
+
+    normalizeStatusValue(value, propertyInfo) {
+        if (!value || !propertyInfo) {
+            return value;
+        }
+
+        const canon = (name = '') => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const target = canon(value);
+        const optionsContainer = propertyInfo[propertyInfo.type];
+        const options = optionsContainer?.options || [];
+
+        const directMatch = options.find(opt => opt?.name === value);
+        if (directMatch) {
+            return directMatch.name;
+        }
+
+        const canonicalMatch = options.find(opt => canon(opt?.name) === target);
+        if (canonicalMatch) {
+            return canonicalMatch.name;
+        }
+
+        console.warn(`Status value "${value}" not found on property "${propertyInfo.name || 'unknown'}"; using original value`);
+        return value;
     }
 
     /**
