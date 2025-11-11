@@ -2121,4 +2121,65 @@ router.get('/regen-last-3', async (req, res) => {
     }
 });
 
+/**
+ * CHECK ALL NOTION CASES: Query all cases in Notion regardless of status
+ * GET /api/test/check-all-notion
+ */
+router.get('/check-all-notion', async (req, res) => {
+    try {
+        const { Client } = require('@notionhq/client');
+        const notion = new Client({ auth: process.env.NOTION_API_KEY });
+        const databaseId = process.env.NOTION_CASES_DATABASE_ID;
+
+        console.log('Querying ALL cases in Notion...');
+
+        let allPages = [];
+        let hasMore = true;
+        let startCursor = undefined;
+
+        while (hasMore) {
+            const response = await notion.databases.query({
+                database_id: databaseId,
+                start_cursor: startCursor
+            });
+            allPages = allPages.concat(response.results);
+            hasMore = response.has_more;
+            startCursor = response.next_cursor;
+        }
+
+        console.log(`Total cases found: ${allPages.length}`);
+
+        // Count by status
+        const statusCounts = {};
+        const caseList = [];
+
+        for (const page of allPages) {
+            const name = page.properties.Name?.title?.[0]?.plain_text || 'Untitled';
+            const status = page.properties.Status?.status?.name || 'No Status';
+
+            statusCounts[status] = (statusCounts[status] || 0) + 1;
+
+            caseList.push({
+                name: name.substring(0, 80),
+                status: status,
+                page_id: page.id
+            });
+        }
+
+        res.json({
+            success: true,
+            total_count: allPages.length,
+            status_breakdown: statusCounts,
+            cases: caseList
+        });
+
+    } catch (error) {
+        console.error('Check all Notion error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
