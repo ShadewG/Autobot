@@ -1058,6 +1058,54 @@ Respond with JSON:
             throw error;
         }
     }
+
+    /**
+     * Sync case status back to Notion
+     * @param {number} caseId - Case ID
+     */
+    async syncStatusToNotion(caseId) {
+        try {
+            const db = require('./database');
+            const caseData = await db.getCaseById(caseId);
+
+            if (!caseData || !caseData.notion_page_id) {
+                console.log(`Cannot sync status - no Notion page ID for case ${caseId}`);
+                return;
+            }
+
+            // Map database status to Notion status
+            const statusMap = {
+                'Ready to Send': 'Ready to Send',
+                'sent': 'Pending Response',
+                'response_received': 'Response Received',
+                'completed': 'Completed',
+                'needs_human_review': 'Needs Human Review',
+                'escalated': 'Escalated',
+                'closed': 'Closed'
+            };
+
+            const notionStatus = statusMap[caseData.status] || 'Pending Response';
+
+            console.log(`Syncing case ${caseId} status to Notion: ${caseData.status} -> ${notionStatus}`);
+
+            await this.notion.pages.update({
+                page_id: caseData.notion_page_id.replace(/-/g, ''),
+                properties: {
+                    Status: {
+                        status: {
+                            name: notionStatus
+                        }
+                    }
+                }
+            });
+
+            console.log(`✅ Updated Notion page ${caseData.notion_page_id} to status: ${notionStatus}`);
+
+        } catch (error) {
+            console.error(`Failed to sync status to Notion for case ${caseId}:`, error.message);
+            // Don't throw - this is a non-critical operation
+        }
+    }
 }
 
 module.exports = new NotionService();
