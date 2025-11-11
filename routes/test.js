@@ -1161,4 +1161,77 @@ router.post('/run-migration-007', async (req, res) => {
     }
 });
 
+/**
+ * Delete test cases up to a specific ID
+ * POST /api/test/delete-test-cases
+ */
+router.post('/delete-test-cases', async (req, res) => {
+    try {
+        const { max_case_id } = req.body;
+
+        if (!max_case_id || max_case_id < 1) {
+            return res.status(400).json({
+                success: false,
+                error: 'max_case_id is required and must be > 0'
+            });
+        }
+
+        console.log(`🗑️  Deleting test cases with ID <= ${max_case_id}...`);
+
+        // Get the cases first
+        const casesResult = await db.query(
+            'SELECT id, case_name, agency_name, status FROM cases WHERE id <= $1 ORDER BY id',
+            [max_case_id]
+        );
+
+        if (casesResult.rows.length === 0) {
+            return res.json({
+                success: true,
+                message: 'No cases found to delete',
+                deleted_count: 0
+            });
+        }
+
+        const casesList = casesResult.rows.map(c => ({
+            id: c.id,
+            name: c.case_name,
+            agency: c.agency_name,
+            status: c.status
+        }));
+
+        // Delete cases (CASCADE will handle related records)
+        const deleteResult = await db.query(
+            'DELETE FROM cases WHERE id <= $1',
+            [max_case_id]
+        );
+
+        console.log(`✅ Deleted ${deleteResult.rowCount} test cases`);
+
+        // Log the activity
+        await db.logActivity(
+            'bulk_delete_test_cases',
+            `Deleted test cases with IDs 1-${max_case_id} (${deleteResult.rowCount} cases)`,
+            {
+                deleted_count: deleteResult.rowCount,
+                max_case_id: max_case_id,
+                cases: casesList
+            }
+        );
+
+        res.json({
+            success: true,
+            message: `Deleted ${deleteResult.rowCount} test cases (IDs 1-${max_case_id})`,
+            deleted_count: deleteResult.rowCount,
+            deleted_cases: casesList
+        });
+
+    } catch (error) {
+        console.error('Delete test cases error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
