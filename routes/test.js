@@ -1526,8 +1526,8 @@ router.post('/force-notion-sync', async (req, res) => {
     try {
         console.log('🔄 Force syncing cases from Notion...');
 
-        // Sync cases with "Ready to Send" status
-        const cases = await notionService.syncCasesFromNotion('Ready to Send');
+        // Sync cases with "Ready To Send" status (exact match from Notion)
+        const cases = await notionService.syncCasesFromNotion('Ready To Send');
 
         if (cases.length === 0) {
             return res.json({
