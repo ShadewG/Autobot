@@ -108,11 +108,8 @@ class NotionService {
                          caseName,
             // ACTUAL NOTION FIELD: "Police Department" name will be fetched from relation
             agency_name: null, // Will be populated by enrichWithPoliceDepartment()
-            // ACTUAL NOTION FIELDS: "State" or "US State"
-            // IMPORTANT: State MUST be set in Notion - no default!
-            state: this.getProperty(props, 'State', 'select') ||
-                  this.getProperty(props, 'US State', 'select') ||
-                  null,
+            // State will be extracted by AI from page content
+            state: null,
             // ACTUAL NOTION FIELDS: "Crime Date" or "Date of arrest"
             incident_date: this.getProperty(props, 'Crime Date', 'date') ||
                           this.getProperty(props, 'Date of arrest', 'date') ||
@@ -284,6 +281,59 @@ class NotionService {
                 return prop.relation?.[0]?.id || '';
             default:
                 return null;
+        }
+    }
+
+    /**
+     * Extract US state from page content using AI
+     */
+    async extractStateWithAI(caseData, pageContent) {
+        try {
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const prompt = `Extract the US state for this police incident case.
+
+CASE INFO:
+Case Name: ${caseData.case_name || 'Unknown'}
+Agency: ${caseData.agency_name || 'Unknown'}
+Location: ${caseData.incident_location || 'Unknown'}
+
+FULL PAGE CONTENT:
+${pageContent.substring(0, 2000)}
+
+TASK:
+Identify the US state (2-letter code) where this incident occurred.
+
+Look for:
+- State names in the content
+- City/location names that indicate a state
+- Agency names that include state info
+- Any explicit state mentions
+
+Return ONLY the 2-letter state code (e.g., "CA", "TX", "NY") or null if you cannot determine it with confidence.
+
+Respond with JSON:
+{
+  "state": "XX or null",
+  "confidence": "high/medium/low",
+  "reasoning": "brief explanation"
+}`;
+
+            const response = await openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [{ role: 'user', content: prompt }],
+                response_format: { type: 'json_object' }
+            });
+
+            const result = JSON.parse(response.choices[0].message.content);
+            console.log(`AI state extraction for ${caseData.agency_name}: ${result.state} (${result.confidence}) - ${result.reasoning}`);
+
+            return result.state || null;
+
+        } catch (error) {
+            console.error('AI state extraction failed:', error.message);
+            return null;
         }
     }
 
