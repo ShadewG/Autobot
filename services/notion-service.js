@@ -37,7 +37,14 @@ class NotionService {
                 .join('\n\n')
                 .trim();
         }
-        const enrichedCase = await this.enrichWithPoliceDepartment(caseData);
+        if (!caseData.portal_url) {
+            const portalFromText = this.findPortalInText(caseData.additional_details || fullPageText || '');
+            if (portalFromText) {
+                caseData.portal_url = portalFromText;
+                console.log(`Detected portal URL from page text: ${portalFromText}`);
+            }
+        }
+        const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
                 cases.push(enrichedCase);
             }
 
@@ -102,9 +109,10 @@ class NotionService {
             // ACTUAL NOTION FIELD: "Police Department" name will be fetched from relation
             agency_name: null, // Will be populated by enrichWithPoliceDepartment()
             // ACTUAL NOTION FIELDS: "State" or "US State"
+            // IMPORTANT: State MUST be set in Notion - no default!
             state: this.getProperty(props, 'State', 'select') ||
                   this.getProperty(props, 'US State', 'select') ||
-                  'CA',
+                  null,
             // ACTUAL NOTION FIELDS: "Crime Date" or "Date of arrest"
             incident_date: this.getProperty(props, 'Crime Date', 'date') ||
                           this.getProperty(props, 'Date of arrest', 'date') ||
@@ -131,11 +139,14 @@ class NotionService {
     /**
      * Fetch police department details from related page and enrich case data
      */
-    async enrichWithPoliceDepartment(caseData) {
+    async enrichWithPoliceDepartment(caseData, notionPage = null) {
         if (!caseData.police_dept_id) {
             console.warn('No police department relation found, using defaults');
             caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
             caseData.agency_name = 'Police Department';
+            if (notionPage) {
+                this.applyFallbackContactsFromPage(caseData, notionPage);
+            }
             return caseData;
         }
 
@@ -178,9 +189,44 @@ class NotionService {
             // Fallback to defaults
             caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
             caseData.agency_name = 'Police Department';
+            if (notionPage) {
+                this.applyFallbackContactsFromPage(caseData, notionPage);
+            }
+        }
+
+        if (notionPage) {
+            this.applyFallbackContactsFromPage(caseData, notionPage);
         }
 
         return caseData;
+    }
+
+    applyFallbackContactsFromPage(caseData, page) {
+        try {
+            const props = page.properties || {};
+            for (const [name, prop] of Object.entries(props)) {
+                const type = prop.type;
+                const val = this.getProperty(props, name, type);
+                if (!val) continue;
+
+                extractEmails(val).forEach(email => {
+                    if (isValidEmail(email) && (!caseData.agency_email || caseData.agency_email === (process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com'))) {
+                        caseData.agency_email = email.trim();
+                    } else if (isValidEmail(email) && caseData.agency_email !== email) {
+                        caseData.alternate_agency_email = caseData.alternate_agency_email || email.trim();
+                    }
+                });
+
+                if (!caseData.portal_url) {
+                    const portalCandidate = this.detectContactChannels([val]).portalCandidate;
+                    if (portalCandidate) {
+                        caseData.portal_url = portalCandidate;
+                    }
+                }
+            }
+        } catch (error) {
+            console.warn('Failed to apply fallback contacts from page:', error.message);
+        }
     }
 
     /**
@@ -364,6 +410,20 @@ class NotionService {
         }
 
         return plain;
+    }
+
+    findPortalInText(text = '') {
+        if (!text) {
+            return null;
+        }
+        const urls = extractUrls(text);
+        for (const rawUrl of urls) {
+            const normalized = normalizePortalUrl(rawUrl);
+            if (normalized && isSupportedPortalUrl(normalized)) {
+                return normalized;
+            }
+        }
+        return null;
     }
 
     /**
