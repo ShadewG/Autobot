@@ -67,7 +67,13 @@ class NotionService {
             const page = await this.notion.pages.retrieve({ page_id: cleanPageId });
 
             const caseData = this.parseNotionPage(page);
-            const enrichedCase = await this.enrichWithPoliceDepartment(caseData);
+            const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
+
+            // Extract state from page content if not already set
+            if (!enrichedCase.state) {
+                const pageContent = await this.getFullPagePlainText(page.id);
+                enrichedCase.state = await this.extractStateWithAI(enrichedCase, pageContent);
+            }
 
             return enrichedCase;
         } catch (error) {
