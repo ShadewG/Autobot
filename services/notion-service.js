@@ -24,6 +24,8 @@ class NotionService {
         this.pagePropertyCache = new Map();
         this.liveStatusProperty = process.env.NOTION_LIVE_STATUS_PROPERTY || 'Live Status';
         this.legacyStatusProperty = process.env.NOTION_STATUS_PROPERTY || 'Status';
+        this.databaseSchema = null;
+        this.databaseSchemaFetchedAt = 0;
     }
 
     /**
@@ -59,11 +61,25 @@ class NotionService {
      */
     async fetchCasesWithStatus(status = 'Ready to Send') {
         try {
+            let statusPropertyName = this.liveStatusProperty;
+            let statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
+            if (!statusPropertyInfo) {
+                console.warn(`Live status property "${this.liveStatusProperty}" not found; falling back to legacy status property "${this.legacyStatusProperty}"`);
+                statusPropertyName = this.legacyStatusProperty;
+                statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
+            }
+
+            if (!statusPropertyInfo) {
+                throw new Error(`No status-like property found on Notion database ${this.databaseId}`);
+            }
+
+            const filterKey = statusPropertyInfo?.type === 'status' ? 'status' : 'select';
+
             const response = await this.notion.databases.query({
                 database_id: this.databaseId,
                 filter: {
-                    property: this.liveStatusProperty,
-                    select: {
+                    property: statusPropertyName,
+                    [filterKey]: {
                         equals: status
                     }
                 }
@@ -317,7 +333,9 @@ class NotionService {
             case 'email':
                 return prop.email || '';
             case 'select':
-                return prop.select?.name || '';
+                return prop.select?.name || prop.status?.name || '';
+            case 'status':
+                return prop.status?.name || prop.select?.name || '';
             case 'multi_select':
                 return prop.multi_select?.map(item => item.name) || [];
             case 'date':
@@ -673,16 +691,7 @@ Respond with JSON:
                 console.warn(`Skipping Notion update: property "${name}" not found on page ${pageId}`);
             };
 
-            // Convert our updates to Notion property format
-            if (updates.status) {
-                if (propSet.has('Status')) {
-                    properties.Status = {
-                        select: { name: updates.status }
-                    };
-                } else {
-                    missingProps('Status');
-                }
-            }
+            const liveStatusPropName = this.liveStatusProperty;
 
             if (updates.send_date) {
                 if (propSet.has('Send Date')) {
@@ -735,12 +744,19 @@ Respond with JSON:
             }
 
             if (updates.live_status) {
-                if (propSet.has('Live Status')) {
-                    properties['Live Status'] = {
-                        select: { name: updates.live_status }
-                    };
+                if (propSet.has(liveStatusPropName)) {
+                    const liveStatusPropertyInfo = await this.getDatabasePropertyInfo(liveStatusPropName);
+                    if (liveStatusPropertyInfo?.type === 'status') {
+                        properties[liveStatusPropName] = {
+                            status: { name: updates.live_status }
+                        };
+                    } else {
+                        properties[liveStatusPropName] = {
+                            select: { name: updates.live_status }
+                        };
+                    }
                 } else {
-                    missingProps('Live Status');
+                    missingProps(liveStatusPropName);
                 }
             }
 
@@ -924,9 +940,11 @@ Respond with JSON:
                 return;
             }
 
-            const updates = {
-                status: this.mapStatusToNotion(caseData.status)
-            };
+            const updates = {};
+            const notionStatus = this.mapStatusToNotion(caseData.status);
+            if (notionStatus) {
+                updates.live_status = notionStatus;
+            }
 
             if (caseData.send_date) {
                 updates.send_date = caseData.send_date;
@@ -940,10 +958,6 @@ Respond with JSON:
                 updates.days_overdue = caseData.days_overdue;
             }
 
-            const liveStatus = this.mapStatusToNotion(caseData.status) || caseData.status;
-            if (liveStatus) {
-                updates.live_status = liveStatus;
-            }
             if (caseData.substatus !== undefined) {
                 updates.live_substatus = caseData.substatus || '';
             }
@@ -1025,6 +1039,30 @@ Respond with JSON:
             cachedAt: now
         });
         return properties;
+    }
+
+    async getDatabaseSchemaProperties() {
+        const now = Date.now();
+        if (this.databaseSchema && (now - this.databaseSchemaFetchedAt) < 5 * 60 * 1000) {
+            return this.databaseSchema;
+        }
+
+        try {
+            const database = await this.notion.databases.retrieve({
+                database_id: this.databaseId
+            });
+            this.databaseSchema = database.properties || {};
+            this.databaseSchemaFetchedAt = now;
+            return this.databaseSchema;
+        } catch (error) {
+            console.error('Failed to retrieve Notion database schema:', error.message);
+            return null;
+        }
+    }
+
+    async getDatabasePropertyInfo(propertyName) {
+        const properties = await this.getDatabaseSchemaProperties();
+        return properties?.[propertyName] || null;
     }
 
     /**
@@ -1113,43 +1151,6 @@ Respond with JSON:
         }
     }
 
-    /**
-     * Sync case status back to Notion
-     * @param {number} caseId - Case ID
-     */
-    async syncStatusToNotion(caseId) {
-        try {
-            const db = require('./database');
-            const caseData = await db.getCaseById(caseId);
-
-            if (!caseData || !caseData.notion_page_id) {
-                console.log(`Cannot sync status - no Notion page ID for case ${caseId}`);
-                return;
-            }
-
-            // Use the NOTION_STATUS_MAP to get the correct Notion status
-            const notionStatus = NOTION_STATUS_MAP[caseData.status] || NOTION_STATUS_MAP['awaiting_response'];
-
-            console.log(`Syncing case ${caseId} status to Notion: ${caseData.status} -> ${notionStatus}`);
-
-            await this.notion.pages.update({
-                page_id: caseData.notion_page_id.replace(/-/g, ''),
-                properties: {
-                    [this.liveStatusProperty]: {
-                        status: {
-                            name: notionStatus
-                        }
-                    }
-                }
-            });
-
-            console.log(`✅ Updated Notion page ${caseData.notion_page_id} ${this.liveStatusProperty} to: ${notionStatus}`);
-
-        } catch (error) {
-            console.error(`Failed to sync status to Notion for case ${caseId}:`, error.message);
-            // Don't throw - this is a non-critical operation
-        }
-    }
 }
 
 module.exports = new NotionService();
