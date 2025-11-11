@@ -1712,6 +1712,92 @@ router.post('/generate-sample', async (req, res) => {
 });
 
 /**
+ * NUCLEAR RESET: Delete all cases and resync from Notion
+ * POST /api/test/nuclear-reset
+ */
+router.post('/nuclear-reset', async (req, res) => {
+    try {
+        console.log('🚨 NUCLEAR RESET INITIATED');
+
+        // Clear all queues
+        const { generateQueue } = require('../queues/email-queue');
+        const waitingJobs = await generateQueue.getWaiting();
+        const delayedJobs = await generateQueue.getDelayed();
+        const activeJobs = await generateQueue.getActive();
+
+        let clearedCount = 0;
+        for (const job of [...waitingJobs, ...delayedJobs, ...activeJobs]) {
+            await job.remove();
+            clearedCount++;
+        }
+
+        // Delete all database records
+        await db.query('DELETE FROM auto_reply_queue');
+        await db.query('DELETE FROM analysis');
+        await db.query('DELETE FROM messages');
+        await db.query('DELETE FROM threads');
+        await db.query('DELETE FROM generated_requests');
+        await db.query('DELETE FROM cases');
+        await db.query('DELETE FROM activity_log');
+
+        // Sync from Notion
+        const cases = await notionService.syncCasesFromNotion('Ready to Send');
+
+        // Process and queue cases
+        let queuedCount = 0;
+        let reviewCount = 0;
+        const results = [];
+
+        for (const caseData of cases) {
+            const hasPortal = caseData.portal_url && caseData.portal_url.trim().length > 0;
+            const hasEmail = caseData.agency_email && caseData.agency_email.trim().length > 0;
+
+            if (!hasPortal && !hasEmail) {
+                await db.query(
+                    'UPDATE cases SET status = $1, substatus = $2 WHERE id = $3',
+                    ['needs_human_review', 'Missing contact information', caseData.id]
+                );
+                reviewCount++;
+                results.push({ id: caseData.id, status: 'needs_review', reason: 'No contact info' });
+            } else if (!caseData.state) {
+                await db.query(
+                    'UPDATE cases SET status = $1, substatus = $2 WHERE id = $3',
+                    ['needs_human_review', 'Missing state field', caseData.id]
+                );
+                reviewCount++;
+                results.push({ id: caseData.id, status: 'needs_review', reason: 'Missing state' });
+            } else {
+                await generateQueue.add('generate-and-send', {
+                    caseId: caseData.id,
+                    instantMode: true
+                }, {
+                    delay: queuedCount * 10000 // Stagger by 10 seconds
+                });
+                queuedCount++;
+                results.push({ id: caseData.id, status: 'queued', case_name: caseData.case_name });
+            }
+        }
+
+        res.json({
+            success: true,
+            message: 'Nuclear reset complete',
+            cleared_jobs: clearedCount,
+            synced_count: cases.length,
+            queued_count: queuedCount,
+            review_count: reviewCount,
+            results: results
+        });
+
+    } catch (error) {
+        console.error('Nuclear reset error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Test AI contact extraction for cases 34, 35, 36
  * GET /api/test/contact-extraction
  */
