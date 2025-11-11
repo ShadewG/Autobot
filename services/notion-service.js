@@ -28,8 +28,16 @@ class NotionService {
             // Parse pages and enrich with police department data
             const cases = [];
             for (const page of response.results) {
-                const caseData = this.parseNotionPage(page);
-                const enrichedCase = await this.enrichWithPoliceDepartment(caseData);
+        const caseData = this.parseNotionPage(page);
+        const fullPageText = await this.getFullPagePlainText(page.id);
+        if (fullPageText) {
+            caseData.full_page_text = fullPageText;
+            caseData.additional_details = [caseData.additional_details, fullPageText]
+                .filter(Boolean)
+                .join('\n\n')
+                .trim();
+        }
+        const enrichedCase = await this.enrichWithPoliceDepartment(caseData);
                 cases.push(enrichedCase);
             }
 
@@ -288,6 +296,74 @@ class NotionService {
         }
 
         return null;
+    }
+
+    async getFullPagePlainText(blockId, depth = 0) {
+        try {
+            const lines = [];
+            let cursor = undefined;
+            do {
+                const response = await this.notion.blocks.children.list({
+                    block_id: blockId,
+                    page_size: 100,
+                    start_cursor: cursor
+                });
+
+                for (const block of response.results) {
+                    const text = this.extractTextFromBlock(block);
+                    if (text) {
+                        lines.push(text);
+                    }
+
+                    if (block.has_children) {
+                        const childText = await this.getFullPagePlainText(block.id, depth + 1);
+                        if (childText) {
+                            lines.push(childText);
+                        }
+                    }
+                }
+
+                cursor = response.has_more ? response.next_cursor : null;
+            } while (cursor);
+
+            return lines.join('\n').trim();
+        } catch (error) {
+            console.warn(`Failed to fetch full page text for block ${blockId}:`, error.message);
+            return '';
+        }
+    }
+
+    extractTextFromBlock(block) {
+        if (!block || !block.type) {
+            return '';
+        }
+
+        const type = block.type;
+        const richText = block[type]?.rich_text || [];
+
+        const plain = richText
+            .map(part => part.plain_text || '')
+            .join('')
+            .trim();
+
+        if (!plain) {
+            return '';
+        }
+
+        if (['heading_1', 'heading_2', 'heading_3'].includes(type)) {
+            return `\n${plain.toUpperCase()}\n`;
+        }
+
+        if (type === 'bulleted_list_item' || type === 'numbered_list_item') {
+            return `• ${plain}`;
+        }
+
+        if (type === 'to_do') {
+            const checkbox = block.to_do?.checked ? '[x]' : '[ ]';
+            return `${checkbox} ${plain}`;
+        }
+
+        return plain;
     }
 
     /**
