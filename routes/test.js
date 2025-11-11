@@ -1754,7 +1754,7 @@ router.post('/complete-reset', async (req, res) => {
         }
 
         // Reset ALL Notion statuses to "Ready to Send"
-        const databaseId = process.env.NOTION_DATABASE_ID;
+        const databaseId = process.env.NOTION_CASES_DATABASE_ID;
         let allPages = [];
         let hasMore = true;
         let startCursor = undefined;

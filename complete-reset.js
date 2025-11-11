@@ -42,7 +42,7 @@ async function completeReset() {
         // Step 3: Reset ALL Notion case statuses to "Ready to Send"
         console.log('3️⃣ Resetting Notion statuses to "Ready to Send"...');
 
-        const databaseId = process.env.NOTION_DATABASE_ID;
+        const databaseId = process.env.NOTION_CASES_DATABASE_ID;
 
         // Query ALL pages in the database (not just "Ready to Send")
         let allPages = [];
