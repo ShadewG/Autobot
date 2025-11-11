@@ -1712,6 +1712,42 @@ router.post('/generate-sample', async (req, res) => {
 });
 
 /**
+ * Fix state fields for cases 34, 35, 36
+ * POST /api/test/fix-states
+ */
+router.post('/fix-states', async (req, res) => {
+    try {
+        console.log('🔧 Fixing state fields...');
+
+        // Case 35: Austin PD = Texas
+        await db.query('UPDATE cases SET state = $1 WHERE id = $2', ['TX', 35]);
+
+        // Case 36: Springhill PD = Louisiana
+        await db.query('UPDATE cases SET state = $1 WHERE id = $2', ['LA', 36]);
+
+        // Case 34: Fayette Police Department, Iowa = Iowa
+        await db.query('UPDATE cases SET state = $1 WHERE id = $2', ['IA', 34]);
+
+        res.json({
+            success: true,
+            message: 'Updated states for cases 34, 35, 36',
+            updates: [
+                { case_id: 35, agency: 'Austin PD', state: 'TX' },
+                { case_id: 36, agency: 'Springhill PD', state: 'LA' },
+                { case_id: 34, agency: 'Fayette PD Iowa', state: 'IA' }
+            ]
+        });
+
+    } catch (error) {
+        console.error('Fix states error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Regenerate samples for last 3 sent cases
  * GET /api/test/regen-last-3
  */
