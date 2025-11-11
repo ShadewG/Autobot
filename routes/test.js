@@ -1734,14 +1734,24 @@ router.post('/complete-reset', async (req, res) => {
             clearedCount++;
         }
 
-        // Delete all database records
-        await db.query('DELETE FROM auto_reply_queue');
-        await db.query('DELETE FROM analysis');
-        await db.query('DELETE FROM messages');
-        await db.query('DELETE FROM threads');
-        await db.query('DELETE FROM generated_requests');
-        await db.query('DELETE FROM cases');
-        await db.query('DELETE FROM activity_log');
+        // Delete all database records (ignore errors if table doesn't exist)
+        const tablesToClear = [
+            'auto_reply_queue',
+            'analysis',
+            'messages',
+            'threads',
+            'generated_requests',
+            'cases',
+            'activity_log'
+        ];
+
+        for (const table of tablesToClear) {
+            try {
+                await db.query(`DELETE FROM ${table}`);
+            } catch (e) {
+                console.log(`   ⚠️  Table ${table} doesn't exist or error: ${e.message}`);
+            }
+        }
 
         // Reset ALL Notion statuses to "Ready to Send"
         const databaseId = process.env.NOTION_DATABASE_ID;
@@ -1845,14 +1855,24 @@ router.post('/nuclear-reset', async (req, res) => {
             clearedCount++;
         }
 
-        // Delete all database records
-        await db.query('DELETE FROM auto_reply_queue');
-        await db.query('DELETE FROM analysis');
-        await db.query('DELETE FROM messages');
-        await db.query('DELETE FROM threads');
-        await db.query('DELETE FROM generated_requests');
-        await db.query('DELETE FROM cases');
-        await db.query('DELETE FROM activity_log');
+        // Delete all database records (ignore errors if table doesn't exist)
+        const tablesToClear = [
+            'auto_reply_queue',
+            'analysis',
+            'messages',
+            'threads',
+            'generated_requests',
+            'cases',
+            'activity_log'
+        ];
+
+        for (const table of tablesToClear) {
+            try {
+                await db.query(`DELETE FROM ${table}`);
+            } catch (e) {
+                console.log(`   ⚠️  Table ${table} doesn't exist or error: ${e.message}`);
+            }
+        }
 
         // Sync from Notion
         const cases = await notionService.syncCasesFromNotion('Ready to Send');
