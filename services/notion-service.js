@@ -197,8 +197,8 @@ class NotionService {
 
         } catch (error) {
             console.error('Error fetching police department details:', error.message);
-            // Fallback to defaults
-            caseData.agency_email = process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com';
+            // NO FALLBACK - return null so it flags for human review
+            caseData.agency_email = null;
             caseData.agency_name = 'Police Department';
             if (notionPage) {
                 this.applyFallbackContactsFromPage(caseData, notionPage);
