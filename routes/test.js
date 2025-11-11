@@ -1045,4 +1045,78 @@ router.post('/chat', async (req, res) => {
     }
 });
 
+/**
+ * Re-trigger analysis for a specific case
+ * POST /api/test/retrigger-analysis
+ */
+router.post('/retrigger-analysis', async (req, res) => {
+    try {
+        const { case_id } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id is required'
+            });
+        }
+
+        console.log(`🔄 Re-triggering analysis for case #${case_id}...`);
+
+        // Get the latest inbound message for this case
+        const result = await db.query(
+            `SELECT m.id, m.message_id, m.case_id, m.from_email, m.subject, m.created_at
+             FROM messages m
+             WHERE m.case_id = $1
+             AND m.direction = 'inbound'
+             ORDER BY m.created_at DESC
+             LIMIT 1`,
+            [case_id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: `No inbound messages found for case #${case_id}`
+            });
+        }
+
+        const message = result.rows[0];
+        console.log(`✅ Found inbound message from ${message.from_email}`);
+
+        const { analysisQueue } = require('../queues/email-queue');
+
+        // Queue for analysis with instant reply
+        await analysisQueue.add('analyze-response', {
+            messageId: message.id,
+            caseId: message.case_id,
+            instantReply: true
+        }, {
+            delay: 0,
+            attempts: 3,
+            backoff: {
+                type: 'exponential',
+                delay: 3000
+            }
+        });
+
+        console.log(`✅ Message re-queued for analysis!`);
+
+        res.json({
+            success: true,
+            message: `Case #${case_id} re-queued for analysis`,
+            message_id: message.id,
+            from_email: message.from_email,
+            subject: message.subject,
+            note: 'Analysis worker will process this and send auto-reply'
+        });
+
+    } catch (error) {
+        console.error('Retrigger error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
