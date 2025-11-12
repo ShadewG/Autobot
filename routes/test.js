@@ -2211,4 +2211,86 @@ router.get('/stuck-responses', async (req, res) => {
     }
 });
 
+/**
+ * Fix case 42: Extract portal URL and queue for submission
+ * POST /api/test/fix-case-42
+ */
+router.post('/fix-case-42', async (req, res) => {
+    try {
+        console.log('🔧 Fixing case 42...');
+
+        // Get message 85
+        const messageResult = await db.query(
+            'SELECT * FROM messages WHERE id = $1',
+            [85]
+        );
+
+        if (messageResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Message 85 not found'
+            });
+        }
+
+        const message = messageResult.rows[0];
+        console.log(`✅ Found message 85 from ${message.from_email}`);
+
+        // Extract portal URL from message body
+        const bodyText = message.body_text || '';
+        const urlMatch = bodyText.match(/https?:\/\/[^\s<>"{}|\\^`\[\]]+/gi);
+
+        if (!urlMatch || urlMatch.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'No URL found in message body'
+            });
+        }
+
+        const portalUrl = urlMatch[0].trim();
+        console.log(`✅ Extracted portal URL: ${portalUrl}`);
+
+        // Update case 42 with portal URL
+        await db.query(
+            'UPDATE cases SET portal_url = $1, portal_provider = $2 WHERE id = $3',
+            [portalUrl, 'GovQA', 42]
+        );
+        console.log('✅ Updated case 42 with portal URL');
+
+        // Queue for portal submission
+        const { portalQueue } = require('../queues/email-queue');
+        await portalQueue.add('portal-submit', {
+            caseId: 42
+        }, {
+            attempts: 2,
+            backoff: {
+                type: 'exponential',
+                delay: 5000
+            }
+        });
+
+        console.log('✅ Queued case 42 for portal submission');
+
+        await db.logActivity('case_42_manual_fix', 'Manually extracted portal URL and queued for submission', {
+            case_id: 42,
+            portal_url: portalUrl,
+            message_id: 85
+        });
+
+        res.json({
+            success: true,
+            message: 'Case 42 fixed and queued for portal submission',
+            portal_url: portalUrl,
+            case_id: 42,
+            queued: true
+        });
+
+    } catch (error) {
+        console.error('Fix case 42 error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
