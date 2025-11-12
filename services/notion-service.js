@@ -1,5 +1,6 @@
 const { Client } = require('@notionhq/client');
 const db = require('./database');
+const aiService = require('./ai-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 
@@ -26,6 +27,7 @@ class NotionService {
         this.legacyStatusProperty = process.env.NOTION_STATUS_PROPERTY || 'Status';
         this.databaseSchema = null;
         this.databaseSchemaFetchedAt = 0;
+        this.enableAINormalization = process.env.ENABLE_NOTION_AI_NORMALIZATION !== 'false';
     }
 
     /**
@@ -99,23 +101,32 @@ class NotionService {
             // Parse pages and enrich with police department data
             const cases = [];
             for (const page of response.results) {
-        const caseData = this.parseNotionPage(page);
-        const fullPageText = await this.getFullPagePlainText(page.id);
-        if (fullPageText) {
-            caseData.full_page_text = fullPageText;
-            caseData.additional_details = [caseData.additional_details, fullPageText]
-                .filter(Boolean)
-                .join('\n\n')
-                .trim();
-        }
-        if (!caseData.portal_url) {
-            const portalFromText = this.findPortalInText(caseData.additional_details || fullPageText || '');
-            if (portalFromText) {
-                caseData.portal_url = portalFromText;
-                console.log(`Detected portal URL from page text: ${portalFromText}`);
-            }
-        }
-        const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
+                let caseData = this.parseNotionPage(page);
+                const fullPageText = await this.getFullPagePlainText(page.id);
+                if (fullPageText) {
+                    caseData.full_page_text = fullPageText;
+                    caseData.additional_details = [caseData.additional_details, fullPageText]
+                        .filter(Boolean)
+                        .join('\n\n')
+                        .trim();
+                }
+
+                if (this.enableAINormalization) {
+                    const normalized = await aiService.normalizeNotionCase({
+                        properties: this.preparePropertiesForAI(page.properties),
+                        full_text: fullPageText
+                    });
+                    caseData = this.applyNormalizedCaseData(caseData, normalized);
+                }
+
+                if (!caseData.portal_url) {
+                    const portalFromText = this.findPortalInText(caseData.additional_details || fullPageText || '');
+                    if (portalFromText) {
+                        caseData.portal_url = portalFromText;
+                        console.log(`Detected portal URL from page text: ${portalFromText}`);
+                    }
+                }
+                const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
                 cases.push(enrichedCase);
             }
 
@@ -1199,6 +1210,90 @@ Respond with JSON:
         }
     }
 
+    preparePropertiesForAI(properties = {}) {
+        const result = {};
+        for (const [name, prop] of Object.entries(properties)) {
+            result[name] = this.extractPlainValue(prop);
+        }
+        return result;
+    }
+
+    extractPlainValue(prop) {
+        if (!prop || !prop.type) return null;
+        switch (prop.type) {
+            case 'title':
+                return prop.title?.map(t => t.plain_text).join(' ').trim() || null;
+            case 'rich_text':
+                return prop.rich_text?.map(t => t.plain_text).join(' ').trim() || null;
+            case 'select':
+            case 'status':
+                return prop[prop.type]?.name || null;
+            case 'multi_select':
+                return prop.multi_select?.map(item => item.name) || [];
+            case 'date':
+                return prop.date?.start || null;
+            case 'number':
+                return prop.number || null;
+            case 'email':
+                return prop.email || null;
+            case 'url':
+                return prop.url || null;
+            case 'people':
+                return prop.people?.map(p => p.name || p.email).filter(Boolean) || [];
+            case 'phone_number':
+                return prop.phone_number || null;
+            case 'checkbox':
+                return !!prop.checkbox;
+            case 'files':
+                return prop.files?.map(f => f.name || f.file?.url).filter(Boolean) || [];
+            default:
+                return null;
+        }
+    }
+
+    applyNormalizedCaseData(caseData, normalized) {
+        if (!normalized) return caseData;
+        const updated = { ...caseData };
+
+        const assignIfEmpty = (field, value) => {
+            if (!value) return;
+            if (Array.isArray(value) && value.length === 0) return;
+            if (!updated[field] || (Array.isArray(updated[field]) && updated[field].length === 0)) {
+                updated[field] = value;
+            }
+        };
+
+        assignIfEmpty('case_name', normalized.case_name);
+        assignIfEmpty('agency_name', normalized.agency_name);
+        assignIfEmpty('state', normalized.state);
+        assignIfEmpty('incident_date', normalized.incident_date);
+        assignIfEmpty('incident_location', normalized.incident_location);
+        assignIfEmpty('subject_name', normalized.subject_name);
+        assignIfEmpty('additional_details', normalized.additional_details);
+
+        if (normalized.records_requested?.length) {
+            if (!updated.requested_records || updated.requested_records.length === 0 ||
+                (Array.isArray(updated.requested_records) && updated.requested_records.length <= 2 && updated.requested_records.includes('Body cam footage'))) {
+                updated.requested_records = normalized.records_requested;
+            }
+        }
+
+        if ((!updated.agency_email || updated.agency_email === (process.env.DEFAULT_TEST_EMAIL || '')) &&
+            normalized.contact_emails?.length) {
+            updated.agency_email = normalized.contact_emails[0];
+            updated.alternate_agency_email = normalized.contact_emails[1] || updated.alternate_agency_email;
+        }
+
+        if (!updated.portal_url && normalized.portal_urls?.length) {
+            const portalFromAI = normalized.portal_urls.map(normalizePortalUrl).find(url => url && isSupportedPortalUrl(url));
+            if (portalFromAI) {
+                updated.portal_url = portalFromAI;
+                console.log(`🤖 AI normalization provided portal URL: ${portalFromAI}`);
+            }
+        }
+
+        return updated;
+    }
 }
 
 module.exports = new NotionService();

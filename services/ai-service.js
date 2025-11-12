@@ -842,6 +842,70 @@ ${prompt}`
             console.error('Error recording outcome for learning:', error);
         }
     }
+
+    async normalizeNotionCase(rawPayload) {
+        try {
+            if (!rawPayload) return {};
+
+            const schema = `{
+  "case_name": string,
+  "agency_name": string,
+  "state": string,
+  "incident_date": string,
+  "incident_location": string,
+  "records_requested": array of short strings,
+  "subject_name": string,
+  "contact_emails": array of emails,
+  "portal_urls": array of URLs,
+  "additional_details": string
+}`;
+
+            const systemPrompt = `You are an expert intake specialist. Given raw Notion properties and page text, produce clean JSON matching this schema. Fill missing fields when possible. Do not invent facts.`;
+
+            const promptParts = [];
+            if (rawPayload.properties) {
+                promptParts.push('PROPERTIES:\n' + JSON.stringify(rawPayload.properties, null, 2));
+            }
+            if (rawPayload.full_text) {
+                promptParts.push('FULL_PAGE_TEXT:\n' + rawPayload.full_text);
+            }
+            const prompt = promptParts.join('\n\n');
+
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5',
+                reasoning: { effort: 'low' },
+                text: { verbosity: 'low' },
+                input: `${systemPrompt}\n\nSchema:\n${schema}\n\n${prompt}`
+            });
+
+            const rawText = response.output_text?.trim();
+            if (!rawText) return {};
+
+            const jsonStart = rawText.indexOf('{');
+            const jsonEnd = rawText.lastIndexOf('}');
+            if (jsonStart === -1 || jsonEnd === -1) return {};
+
+            const parsed = JSON.parse(rawText.slice(jsonStart, jsonEnd + 1));
+
+            if (parsed.records_requested && !Array.isArray(parsed.records_requested)) {
+                parsed.records_requested = [parsed.records_requested].filter(Boolean);
+            }
+            if (!Array.isArray(parsed.records_requested)) {
+                parsed.records_requested = [];
+            }
+            if (parsed.contact_emails && !Array.isArray(parsed.contact_emails)) {
+                parsed.contact_emails = [parsed.contact_emails].filter(Boolean);
+            }
+            if (parsed.portal_urls && !Array.isArray(parsed.portal_urls)) {
+                parsed.portal_urls = [parsed.portal_urls].filter(Boolean);
+            }
+
+            return parsed;
+        } catch (error) {
+            console.warn('normalizeNotionCase failed:', error.message);
+            return {};
+        }
+    }
 }
 
 module.exports = new AIService();

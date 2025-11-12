@@ -299,18 +299,35 @@ class PortalAgentServiceSkyvern {
                 }
             );
 
-            console.log(`\n🚀 Using single-stage direct submission (no account creation)`);
+            console.log(`\n🔍 Checking for existing portal account...`);
+            let existingAccount = await database.getPortalAccountByUrl(portalUrl);
+            let accountEmailUsed = existingAccount?.email || defaultPortalEmail;
+            let accountPassword = existingAccount?.password || this._generateSecurePassword();
+            const hadExistingAccount = !!existingAccount;
 
-            // Simplified single-stage submission without account creation
-            const submissionGoal = this.buildNavigationGoalWithoutAccount(caseData, dryRun);
-            const submissionPayload = this.buildNavigationPayloadWithoutAccount(caseData);
+            if (hadExistingAccount) {
+                await database.updatePortalAccountLastUsed(existingAccount.id);
+            }
+
+            const navigationGoal = this.buildUnifiedNavigationGoal(caseData, {
+                dryRun,
+                email: accountEmailUsed,
+                password: accountPassword,
+                hasExistingAccount: hadExistingAccount
+            });
+
+            const navigationPayload = this.buildUnifiedNavigationPayload(caseData, {
+                email: accountEmailUsed,
+                password: accountPassword,
+                dryRun
+            });
 
             const submissionTask = await this._runPortalStage({
-                stage: 'request_submission',
+                stage: 'account_login_submission',
                 caseData,
                 portalUrl,
-                navigationGoal: submissionGoal,
-                navigationPayload: submissionPayload,
+                navigationGoal,
+                navigationPayload,
                 maxSteps
             });
 
@@ -320,10 +337,23 @@ class PortalAgentServiceSkyvern {
 
             const finalTask = submissionTask.finalTask;
             const taskId = submissionTask.taskId;
+            const extracted = finalTask.extracted_information || {};
+            const submissionUrl = extracted.submission_page_url || extracted.request_form_url || finalTask.last_url || null;
 
-            // Check if task completed successfully
             if (finalTask.status === 'completed') {
+                if (!hadExistingAccount) {
+                    await this._persistNewPortalAccount({
+                        caseData,
+                        portalUrl,
+                        taskId,
+                        email: accountEmailUsed,
+                        password: accountPassword
+                    });
+                }
+
                 const taskUrl = `https://app.skyvern.com/tasks/${taskId}`;
+                const actionHistory = finalTask.actions || finalTask.action_history || [];
+
                 const result = {
                     success: true,
                     caseId: caseData.id,
@@ -331,20 +361,30 @@ class PortalAgentServiceSkyvern {
                     taskId: taskId,
                     status: finalTask.status,
                     recording_url: finalTask.recording_url || taskUrl,
-                    extracted_data: finalTask.extracted_information,
-                    steps: finalTask.actions?.length || finalTask.steps || 0,
+                    extracted_data: extracted,
+                    steps: actionHistory.length || finalTask.steps || 0,
                     dryRun,
+                    usedExistingAccount: hadExistingAccount,
+                    savedNewAccount: !hadExistingAccount,
                     runId
                 };
 
                 await database.updateCasePortalStatus(caseData.id, {
                     portal_url: portalUrl,
-                    portal_provider: 'Auto-detected',
+                    portal_provider: extracted.portal_provider || existingAccount?.portal_type || 'Auto-detected',
                     last_portal_run_id: taskId,
                     last_portal_engine: 'skyvern',
-                    last_portal_task_url: taskUrl,
+                    last_portal_task_url: submissionUrl || taskUrl,
                     last_portal_recording_url: result.recording_url,
-                    last_portal_account_email: null
+                    last_portal_account_email: accountEmailUsed,
+                    last_portal_details: JSON.stringify({
+                        submission_status: extracted.submission_status || finalTask.status,
+                        confirmation_number: extracted.confirmation_number || null,
+                        portal_ticket_url: extracted.portal_ticket_url || null,
+                        submission_timestamp: extracted.submission_timestamp || null,
+                        request_form_url: extracted.request_form_url || null,
+                        action_history: actionHistory.slice(-50)
+                    })
                 });
 
                 await database.logActivity(
@@ -360,7 +400,9 @@ class PortalAgentServiceSkyvern {
                         task_id: taskId,
                         task_url: taskUrl,
                         recording_url: result.recording_url,
-                        steps_completed: result.steps
+                        steps_completed: result.steps,
+                        submission_status: extracted.submission_status || finalTask.status,
+                        confirmation_number: extracted.confirmation_number || null
                     }
                 );
 
@@ -373,7 +415,8 @@ class PortalAgentServiceSkyvern {
                     taskId: taskId,
                     recording_url: finalTask.recording_url || failureTaskUrl,
                     steps: finalTask.actions?.length || finalTask.steps || 0,
-                    runId
+                    runId,
+                    extracted_data: extracted
                 };
 
                 await database.logActivity(
@@ -396,7 +439,6 @@ class PortalAgentServiceSkyvern {
 
                 return result;
             } else {
-                // Task still running or other status
                 const taskUrlFallback = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
                 const result = {
                     success: false,
@@ -404,7 +446,8 @@ class PortalAgentServiceSkyvern {
                     taskId: taskId,
                     status: finalTask.status,
                     recording_url: finalTask.recording_url || taskUrlFallback,
-                    runId
+                    runId,
+                    extracted_data: extracted
                 };
 
                 await database.logActivity(
@@ -426,7 +469,6 @@ class PortalAgentServiceSkyvern {
 
                 return result;
             }
-
         } catch (error) {
             console.error('❌ Skyvern agent failed:', error.message);
 
@@ -503,7 +545,8 @@ ACCOUNT SETUP GOAL:
 1. Use the provided portal URL. If you see options like "Create Account" or "Register", create an account using:
    - Email: ${email}
    - Password: ${password}
-   - IMPORTANT: use exactly this password.
+   - IMPORTANT: use exactly this password for every portal.
+   - If the portal says the account already exists, switch to the login page and sign in with the SAME email + password, then continue.
    - Fill in any other required profile fields (name, phone, security questions).
 
 2. After the account is created or you log in, navigate until you reach the actual request submission form (the page where the form fields live). Do NOT submit the FOIA yet, but ensure the form is visible so we know the account is ready.
@@ -666,6 +709,76 @@ INSTRUCTIONS:
             delivery_format: 'electronic',
             fee_waiver_requested: true,
             fee_waiver_reason: 'Request as member of press/media for public interest reporting'
+        };
+    }
+
+    buildUnifiedNavigationGoal(caseData, { dryRun, email, password, hasExistingAccount }) {
+        return `You are an autonomous browser agent that must complete the entire FOIA portal workflow end-to-end.
+
+MISSION:
+1. If needed, create an account using:
+   - Email: ${email}
+   - Password: ${password}
+   (Use exactly these credentials so we can log in later.)
+2. Log in and navigate to the request submission form.
+3. Fill the form using the payload data (incident info, records requested, narrative).
+4. ${dryRun ? 'Stop on the final review page (do NOT click submit).' : 'Submit the request and capture the confirmation number/status.'}
+5. Use the Set Extracted Information tool once you reach each milestone. The JSON must include:
+{
+  "login_success": boolean,
+  "request_form_url": string,
+  "submission_page_url": string,
+  "submission_status": string,
+  "confirmation_number": string,
+  "portal_ticket_url": string,
+  "verification_required": boolean,
+  "verification_reason": string,
+  "submission_timestamp": string (ISO8601)
+}
+
+VERIFICATION:
+- If the portal emails a verification or MFA code, trigger ACTION: wait_for_email_code with TARGET JSON (pattern, timeout, sender) to read the code and proceed within the same task.
+- Only set verification_required=true if you cannot continue even after requesting a code.
+
+RULES:
+- Always leave the browser on the submission page (or confirmation page) when complete.
+- Capture any reference numbers shown on screen.
+- Be explicit in action history; explain when you create accounts or enter codes.
+- If the portal supports guest submissions, skip account creation but still populate and submit the form.
+- If submission truly cannot finish, set submission_status to a clear error reason and stop.`;
+    }
+
+    buildUnifiedNavigationPayload(caseData, { email, password, verificationCode, dryRun }) {
+        return {
+            credentials: {
+                email,
+                password,
+                verification_code: verificationCode || null,
+                has_existing_account: verificationCode ? true : undefined
+            },
+            requester: {
+                name: caseData.subject_name || 'FOIA Requester',
+                email,
+                phone: caseData.requester_phone || null,
+                title: 'Documentary Researcher'
+            },
+            incident: {
+                state: caseData.state || '',
+                date: caseData.incident_date || '',
+                location: caseData.incident_location || '',
+                description: caseData.additional_details || ''
+            },
+            records: Array.isArray(caseData.requested_records) && caseData.requested_records.length
+                ? caseData.requested_records
+                : ['Body-worn camera footage', 'Dash camera footage', 'Incident reports', '911 audio'],
+            agency_name: caseData.agency_name || '',
+            case_name: caseData.case_name || 'Records Request',
+            dry_run: dryRun,
+            delivery_format: 'electronic',
+            fee_waiver: {
+                requested: true,
+                reason: 'Non-commercial documentary / public interest reporting'
+            }
         };
     }
 
