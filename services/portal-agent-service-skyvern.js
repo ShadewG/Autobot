@@ -305,80 +305,11 @@ class PortalAgentServiceSkyvern {
                 }
             );
 
-            console.log(`\n🔍 Checking for existing portal account...`);
-            let existingAccount = await database.getPortalAccountByUrl(portalUrl);
-            let accountEmailUsed = existingAccount?.email || defaultPortalEmail;
-            let accountPassword = existingAccount?.password || null;
+            console.log(`\n🚀 Using single-stage direct submission (no account creation)`);
 
-            if (existingAccount) {
-                console.log(`✅ Found existing account: ${existingAccount.email}`);
-                await database.updatePortalAccountLastUsed(existingAccount.id);
-            }
-
-            // Stage 1: create account when we don't have one yet
-            let accountCreationTask = null;
-            const hadExistingAccount = !!existingAccount;
-
-            if (!existingAccount) {
-                console.log(`❌ No existing account - running account setup stage`);
-                accountPassword = this._generateSecurePassword();
-
-                accountCreationTask = await this._runPortalStage({
-                    stage: 'account_setup',
-                    caseData,
-                    portalUrl,
-                    navigationGoal: this.buildNavigationGoalWithAccountCreation(caseData, dryRun, accountPassword, accountEmailUsed),
-                    navigationPayload: this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword, accountEmailUsed),
-                    maxSteps
-                });
-
-                if (!accountCreationTask.success) {
-                    return accountCreationTask.result;
-                }
-
-                await this._persistNewPortalAccount({
-                    caseData,
-                    portalUrl,
-                    taskId: accountCreationTask.taskId,
-                    email: accountEmailUsed,
-                    password: accountPassword
-                });
-
-                existingAccount = {
-                    email: accountEmailUsed,
-                    password: accountPassword,
-                    portal_type: 'Auto-detected'
-                };
-            }
-
-            // Stage 2: handle verification if portal demanded it
-            if (accountCreationTask && this._detectVerificationNeeded(accountCreationTask.finalTask)) {
-                console.log(`🔐 Portal hinted at verification requirement - running verification stage`);
-                const verificationCode = await this._maybeFetchVerificationCode(portalUrl);
-                const verificationGoal = this.buildVerificationGoal(caseData, existingAccount, verificationCode);
-                const verificationPayload = this.buildVerificationPayload(caseData, existingAccount, verificationCode);
-
-                const verificationTask = await this._runPortalStage({
-                    stage: 'account_verification',
-                    caseData,
-                    portalUrl,
-                    navigationGoal: verificationGoal,
-                    navigationPayload: verificationPayload,
-                    maxSteps: maxSteps / 2
-                });
-
-                if (!verificationTask.success) {
-                    return verificationTask.result;
-                }
-            }
-
-            // Stage 3: actual submission/login
-            const submissionGoal = existingAccount
-                ? this.buildNavigationGoalWithLogin(caseData, existingAccount, dryRun)
-                : this.buildNavigationGoalWithoutAccount(caseData, dryRun);
-            const submissionPayload = existingAccount
-                ? this.buildNavigationPayloadWithLogin(caseData, existingAccount)
-                : this.buildNavigationPayloadWithoutAccount(caseData);
+            // Simplified single-stage submission without account creation
+            const submissionGoal = this.buildNavigationGoalWithoutAccount(caseData, dryRun);
+            const submissionPayload = this.buildNavigationPayloadWithoutAccount(caseData);
 
             const submissionTask = await this._runPortalStage({
                 stage: 'request_submission',
@@ -409,19 +340,17 @@ class PortalAgentServiceSkyvern {
                     extracted_data: finalTask.extracted_information,
                     steps: finalTask.actions?.length || finalTask.steps || 0,
                     dryRun,
-                    usedExistingAccount: hadExistingAccount,
-                    savedNewAccount: !hadExistingAccount,
                     runId
                 };
 
                 await database.updateCasePortalStatus(caseData.id, {
                     portal_url: portalUrl,
-                    portal_provider: existingAccount?.portal_type || 'Auto-detected',
+                    portal_provider: 'Auto-detected',
                     last_portal_run_id: taskId,
                     last_portal_engine: 'skyvern',
                     last_portal_task_url: taskUrl,
                     last_portal_recording_url: result.recording_url,
-                    last_portal_account_email: accountEmailUsed
+                    last_portal_account_email: null
                 });
 
                 await database.logActivity(
@@ -574,20 +503,22 @@ Be thorough and fill out every available field with the provided information. Th
      * Build navigation goal for ACCOUNT CREATION (new account)
      */
     buildNavigationGoalWithAccountCreation(caseData, dryRun, password, email) {
-        return `You are preparing a FOIA (Freedom of Information Act) portal for future submission.
+        return `You are preparing a FOIA portal account so we can submit a request in a later stage.
 
-ACCOUNT SETUP INSTRUCTIONS:
-1. CREATE A NEW ACCOUNT if the portal requires it. Use:
+ACCOUNT SETUP GOAL:
+1. Use the provided portal URL. If you see options like "Create Account" or "Register", create an account using:
    - Email: ${email}
    - Password: ${password}
    - IMPORTANT: use exactly this password.
-   - Complete any required profile details.
+   - Fill in any other required profile fields (name, phone, security questions).
 
-2. If the portal allows guest submissions, confirm that and stop. Otherwise, create the account and stop as soon as you can see a dashboard or request form. Do NOT start the FOIA request during this stage.
+2. After the account is created or you log in, navigate until you reach the actual request submission form (the page where the form fields live). Do NOT submit the FOIA yet, but ensure the form is visible so we know the account is ready.
 
-3. If the portal displays verification instructions, leave them visible for the next stage.
+3. Capture the URL of the submission page and leave the browser on that page when you complete the task.
 
-This stage only ensures the account exists. Do not fill or submit the FOIA form yet.`;
+4. If the portal allows guest submissions without an account, skip account creation and go directly to the submission form, then stop on that page.
+
+The stage is successful only when the request submission form is open and ready for future automation.`;
     }
 
     buildVerificationGoal(caseData, account, verificationCode) {
