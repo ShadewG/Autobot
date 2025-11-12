@@ -58,7 +58,7 @@ app.use('/api/test', testRoutes);
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
 const discordService = require('./services/discord-service');
-const { emailWorker, analysisWorker, generateWorker } = require('./queues/email-queue');
+const { emailWorker, analysisWorker, generateWorker, portalWorker } = require('./queues/email-queue');
 const fs = require('fs');
 
 /**
