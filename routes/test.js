@@ -2293,4 +2293,79 @@ router.post('/fix-case-42', async (req, res) => {
     }
 });
 
+/**
+ * Force submit a case via portal
+ * POST /api/test/force-portal-submit
+ */
+router.post('/force-portal-submit', async (req, res) => {
+    try {
+        const { case_id } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id is required'
+            });
+        }
+
+        console.log(`🚀 Force queueing case ${case_id} for portal submission...`);
+
+        // Get case data
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${case_id} not found`
+            });
+        }
+
+        // Check if portal URL exists
+        if (!caseData.portal_url) {
+            return res.status(400).json({
+                success: false,
+                error: `Case ${case_id} has no portal URL`,
+                case_name: caseData.case_name
+            });
+        }
+
+        console.log(`✅ Case has portal URL: ${caseData.portal_url}`);
+
+        // Queue for portal submission
+        const { portalQueue } = require('../queues/email-queue');
+        await portalQueue.add('portal-submit', {
+            caseId: case_id
+        }, {
+            attempts: 2,
+            backoff: {
+                type: 'exponential',
+                delay: 5000
+            }
+        });
+
+        console.log(`✅ Queued case ${case_id} for portal submission`);
+
+        await db.logActivity('force_portal_submit', `Manually queued case for portal submission`, {
+            case_id: case_id,
+            portal_url: caseData.portal_url
+        });
+
+        res.json({
+            success: true,
+            message: `Case ${case_id} queued for portal submission`,
+            case_id: case_id,
+            case_name: caseData.case_name,
+            portal_url: caseData.portal_url,
+            portal_provider: caseData.portal_provider,
+            queued: true
+        });
+
+    } catch (error) {
+        console.error('Force portal submit error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
