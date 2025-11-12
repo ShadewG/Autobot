@@ -3,7 +3,13 @@ const db = require('./database');
 const notionService = require('./notion-service');
 const aiService = require('./ai-service');
 const crypto = require('crypto');
-const { PORTAL_PROVIDERS } = require('../utils/portal-utils');
+const { extractUrls } = require('../utils/contact-utils');
+const {
+    PORTAL_PROVIDERS,
+    normalizePortalUrl,
+    detectPortalProviderByUrl,
+    isSupportedPortalUrl
+} = require('../utils/portal-utils');
 
 class SendGridService {
     constructor() {
@@ -624,7 +630,44 @@ class SendGridService {
             }
         }
 
+        // Fallback: scan body for explicit portal URLs/instructions
+        const combinedText = `${subject}\n${text}`;
+        const urls = extractUrls(combinedText) || [];
+        const portalKeywordHints = ['portal', 'public records', 'request center', 'submit', 'nextrequest', 'govqa', 'justfoia'];
+
+        for (const rawUrl of urls) {
+            const normalized = normalizePortalUrl(rawUrl);
+            if (!normalized || !isSupportedPortalUrl(normalized)) {
+                continue;
+            }
+
+            const lowerUrl = normalized.toLowerCase();
+            const provider = detectPortalProviderByUrl(normalized);
+            const hasKeyword = portalKeywordHints.some(keyword => lowerUrl.includes(keyword));
+
+            if (!provider && !hasKeyword) {
+                continue;
+            }
+
+            return {
+                provider: provider?.name || 'manual_portal',
+                type: 'submission_required',
+                portal_url: normalized,
+                instructions_excerpt: this.extractPortalInstructionSnippet(combinedText, rawUrl)
+            };
+        }
+
         return null;
+    }
+
+    extractPortalInstructionSnippet(text, url) {
+        if (!text || !url) return null;
+        const index = text.indexOf(url);
+        if (index === -1) return null;
+
+        const start = Math.max(0, index - 120);
+        const end = Math.min(text.length, index + url.length + 120);
+        return text.substring(start, end).trim();
     }
 
     detectFeeQuote({ subject = '', text = '' }) {

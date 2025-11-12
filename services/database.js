@@ -190,7 +190,9 @@ class DatabaseService {
                 from_email, to_email, cc_emails, subject, body_text, body_html,
                 has_attachments, attachment_count, message_type, portal_notification,
                 portal_notification_type, portal_notification_provider, sent_at, received_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            ON CONFLICT (message_id) DO NOTHING
             RETURNING *
         `;
         const values = [
@@ -215,7 +217,12 @@ class DatabaseService {
             messageData.received_at || null
         ];
         const result = await this.query(query, values);
-        return result.rows[0];
+        if (result.rows.length > 0) {
+            return result.rows[0];
+        }
+
+        // Fetch existing message when conflict occurred
+        return await this.getMessageByMessageIdentifier(messageData.message_id);
     }
 
     async getMessageByMessageIdentifier(messageIdentifier) {

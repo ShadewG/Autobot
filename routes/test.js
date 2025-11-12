@@ -6,7 +6,9 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const discordService = require('../services/discord-service');
 const aiService = require('../services/ai-service');
-const { emailQueue, generateQueue } = require('../queues/email-queue');
+const { emailQueue, generateQueue, portalQueue } = require('../queues/email-queue');
+const { extractUrls } = require('../utils/contact-utils');
+const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
@@ -656,6 +658,20 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
             });
         }
 
+        const urlsFromNote = note ? extractUrls(note) : [];
+        let portalUrlFromNote = null;
+        let portalProviderFromNote = null;
+
+        for (const rawUrl of urlsFromNote || []) {
+            const normalized = normalizePortalUrl(rawUrl);
+            if (normalized && isSupportedPortalUrl(normalized)) {
+                portalUrlFromNote = normalized;
+                const provider = detectPortalProviderByUrl(normalized);
+                portalProviderFromNote = provider?.name || 'Manual Portal';
+                break;
+            }
+        }
+
         let newStatus = caseData.status;
         let substatus = caseData.substatus || '';
 
@@ -670,7 +686,20 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
             substatus = note ? `Change requested: ${note}` : 'Human requested changes';
         }
 
-        await db.updateCaseStatus(caseId, newStatus, { substatus });
+        if (portalUrlFromNote) {
+            await db.updateCasePortalStatus(caseId, {
+                portal_url: portalUrlFromNote,
+                portal_provider: portalProviderFromNote
+            });
+
+            await db.logActivity('portal_link_added', 'Portal link provided via human review', {
+                case_id: caseId,
+                portal_url: portalUrlFromNote,
+                portal_provider: portalProviderFromNote
+            });
+        }
+
+        const updatedCase = await db.updateCaseStatus(caseId, newStatus, { substatus });
         await notionService.syncStatusToNotion(caseId);
 
         await db.logActivity('human_review_decision', `Human review ${action} for ${caseData.case_name}`, {
@@ -679,6 +708,24 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
             note,
             next_status: newStatus
         });
+
+        if (action === 'approve') {
+            if (!updatedCase.send_date) {
+                console.log(`✅ Human approval -> queueing case ${caseId} for generation`);
+                await generateQueue.add('generate-foia', { caseId });
+            } else if (updatedCase.portal_url || portalUrlFromNote) {
+                console.log(`✅ Human approval -> queueing portal submission for case ${caseId}`);
+                await portalQueue.add('portal-submit', {
+                    caseId
+                }, {
+                    attempts: 2,
+                    backoff: {
+                        type: 'exponential',
+                        delay: 5000
+                    }
+                });
+            }
+        }
 
         res.json({
             success: true,

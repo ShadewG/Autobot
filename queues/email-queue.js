@@ -230,6 +230,26 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         // Notify Discord about response received
         await discordService.notifyResponseReceived(caseData, analysis);
 
+        const portalInstruction = messageData.portal_notification &&
+            messageData.portal_notification_type === 'submission_required';
+
+        if (portalInstruction) {
+            console.log(`🌐 Portal instruction detected for case ${caseId}; pivoting to portal workflow (no email reply).`);
+            const portalStatusNote = 'Agency requested portal submission';
+            await db.updateCaseStatus(caseId, 'portal_in_progress', {
+                substatus: portalStatusNote,
+                last_portal_status: portalStatusNote,
+                last_portal_status_at: new Date()
+            });
+            await db.logActivity('portal_instruction_received', portalStatusNote, {
+                case_id: caseId,
+                message_id: messageId,
+                portal_url: caseData.portal_url
+            });
+            await notionService.syncStatusToNotion(caseId);
+            return analysis;
+        }
+
         // ===== HYBRID AGENT APPROACH =====
         // Use agent for complex cases, deterministic flow for simple ones
         const useAgent = true; // Agent always enabled for complex cases
@@ -508,10 +528,8 @@ const generateWorker = new Worker('generate-queue', async (job) => {
     }
 }, { connection });
 
-const portalWorker = new Worker('portal-queue', async (job) => {
-    console.log(`Processing portal job: ${job.id}`, job.data);
-
-    const { caseId, portalUrl, provider, messageId, notificationType } = job.data;
+async function runPortalStatusJob({ job, caseId, portalUrl, provider, messageId, notificationType }) {
+    console.log(`Processing portal status job: ${job.id}`, job.data);
 
     try {
         const caseData = await db.getCaseById(caseId);
@@ -522,6 +540,23 @@ const portalWorker = new Worker('portal-queue', async (job) => {
         const targetUrl = portalUrl || caseData.portal_url;
         if (!targetUrl) {
             throw new Error(`No portal URL available for case ${caseId}`);
+        }
+
+        const account = await db.getPortalAccountByUrl(targetUrl);
+        if (!account) {
+            console.log(`⚠️  Skipping portal status for case ${caseId} - no saved account yet`);
+            await db.logActivity('portal_status_skipped', 'Skipping portal status check (no saved account)', {
+                case_id: caseId,
+                portal_url: targetUrl,
+                portal_provider: provider,
+                notification_type: notificationType,
+                message_id: messageId
+            });
+            return {
+                success: false,
+                skipped: true,
+                reason: 'no_saved_account'
+            };
         }
 
         const result = await portalAgentSkyvern.checkPortalStatus(caseData, targetUrl, {
@@ -568,7 +603,7 @@ const portalWorker = new Worker('portal-queue', async (job) => {
 
         return result;
     } catch (error) {
-        console.error(`Portal job ${job.id} failed:`, error);
+        console.error(`Portal status job ${job.id} failed:`, error);
         await db.logActivity('portal_status_failed', `Portal status refresh failed: ${error.message}`, {
             case_id: caseId,
             portal_url: portalUrl,
@@ -578,6 +613,115 @@ const portalWorker = new Worker('portal-queue', async (job) => {
         });
         throw error;
     }
+}
+
+async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instructions }) {
+    console.log(`Processing portal submission job: ${job.id}`, job.data);
+
+    try {
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            throw new Error(`Case ${caseId} not found`);
+        }
+
+        const targetUrl = portalUrl || caseData.portal_url;
+        if (!targetUrl) {
+            throw new Error(`No portal URL available for case ${caseId}`);
+        }
+
+        // Mark case as portal in progress if not already sent
+        if (caseData.status !== 'sent') {
+            await db.updateCaseStatus(caseId, 'portal_in_progress', {
+                substatus: 'Agency requested portal submission',
+                last_portal_status: 'Portal submission queued',
+                last_portal_status_at: new Date()
+            });
+        }
+
+        const result = await portalAgentSkyvern.submitToPortal(caseData, targetUrl, {
+            maxSteps: 60,
+            dryRun: false,
+            instructions
+        });
+
+        if (!result || !result.success) {
+            throw new Error(result?.error || 'Portal submission failed');
+        }
+
+        const statusText = result.status || 'submitted';
+        const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
+        const sendDate = caseData.send_date || new Date();
+
+        await db.updateCaseStatus(caseId, 'sent', {
+            substatus: `Portal submission completed (${statusText})`,
+            send_date: sendDate
+        });
+
+        await db.updateCasePortalStatus(caseId, {
+            portal_url: targetUrl,
+            portal_provider: provider || caseData.portal_provider || 'Auto-detected',
+            last_portal_status: `Submission completed (${statusText})`,
+            last_portal_status_at: new Date(),
+            last_portal_engine: 'skyvern',
+            last_portal_run_id: result.taskId || result.runId || null,
+            last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
+            last_portal_task_url: taskUrl,
+            last_portal_recording_url: result.recording_url || taskUrl,
+            last_portal_account_email: result.accountEmail || caseData.last_portal_account_email || null
+        });
+
+        await notionService.syncStatusToNotion(caseId);
+
+        await db.logActivity('portal_submission', `Portal submission completed for case ${caseId}`, {
+            case_id: caseId,
+            portal_url: targetUrl,
+            portal_provider: provider || caseData.portal_provider || 'Auto-detected',
+            instructions,
+            run_id: result.taskId || result.runId || null,
+            recording_url: result.recording_url || taskUrl,
+            task_url: taskUrl
+        });
+
+        await discordService.notifyPortalSubmission(caseData, {
+            success: true,
+            portalUrl: targetUrl,
+            steps: result.steps || 0
+        });
+
+        await discordService.notifyRequestSent(caseData, 'portal');
+
+        return result;
+    } catch (error) {
+        console.error(`Portal submission job ${job.id} failed:`, error);
+        await db.logActivity('portal_submission_failed', `Portal submission failed: ${error.message}`, {
+            case_id: caseId,
+            portal_url: portalUrl,
+            portal_provider: provider,
+            instructions
+        });
+        throw error;
+    }
+}
+
+const portalWorker = new Worker('portal-queue', async (job) => {
+    if (job.name === 'portal-submit') {
+        return runPortalSubmissionJob({
+            job,
+            caseId: job.data.caseId,
+            portalUrl: job.data.portalUrl,
+            provider: job.data.provider,
+            instructions: job.data.instructions
+        });
+    }
+
+    return runPortalStatusJob({
+        job,
+        caseId: job.data.caseId,
+        portalUrl: job.data.portalUrl,
+        provider: job.data.provider,
+        messageId: job.data.messageId,
+        notificationType: job.data.notificationType
+    });
 }, { connection, concurrency: 1 });
 
 // Error handlers

@@ -2,6 +2,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const database = require('./database');
+const EmailVerificationHelper = require('../agentkit/email-helper');
 
 /**
  * Portal Agent using Skyvern AI
@@ -18,6 +19,168 @@ class PortalAgentServiceSkyvern {
         // Support both cloud and self-hosted
         this.baseUrl = process.env.SKYVERN_API_URL || 'https://api.skyvern.com/api/v1';
         this.apiKey = process.env.SKYVERN_API_KEY;
+        this.emailHelper = new EmailVerificationHelper({
+            inboxAddress: process.env.REQUESTS_INBOX || 'requests@foib-request.com'
+        });
+    }
+
+    async _runPortalStage({ stage, caseData, portalUrl, navigationGoal, navigationPayload, maxSteps }) {
+        const stageLabel = this._formatStageLabel(stage);
+        await database.logActivity(
+            'portal_stage_started',
+            `Stage ${stageLabel} started for ${caseData.case_name}`,
+            {
+                case_id: caseData.id || null,
+                portal_url: portalUrl,
+                stage,
+                max_steps: maxSteps
+            }
+        );
+
+        try {
+            const { finalTask, taskId } = await this._createTaskAndPoll({
+                portalUrl,
+                navigationGoal,
+                navigationPayload,
+                maxSteps
+            });
+
+            if (finalTask.status !== 'completed') {
+                const taskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
+                const errorMessage = finalTask.failure_reason || `Stage ended with status ${finalTask.status}`;
+
+                await database.logActivity(
+                    'portal_stage_failed',
+                    `Stage ${stageLabel} failed for ${caseData.case_name}: ${errorMessage}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        stage,
+                        status: finalTask.status,
+                        task_id: taskId,
+                        task_url: taskUrl,
+                        error: errorMessage
+                    }
+                );
+
+                return {
+                    success: false,
+                    result: {
+                        success: false,
+                        error: errorMessage,
+                        taskId,
+                        status: finalTask.status,
+                        recording_url: finalTask.recording_url || taskUrl,
+                        steps: finalTask.actions?.length || finalTask.steps || 0
+                    }
+                };
+            }
+
+            const taskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
+
+            await database.logActivity(
+                'portal_stage_completed',
+                `Stage ${stageLabel} completed for ${caseData.case_name}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    stage,
+                    task_id: taskId,
+                    task_url: taskUrl,
+                    steps_completed: finalTask.actions?.length || finalTask.steps || 0
+                }
+            );
+
+            return {
+                success: true,
+                finalTask,
+                taskId,
+                recordingUrl: finalTask.recording_url || taskUrl
+            };
+        } catch (error) {
+            await database.logActivity(
+                'portal_stage_failed',
+                `Stage ${stageLabel} crashed for ${caseData.case_name}: ${error.message}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    stage,
+                    error: error.message
+                }
+            );
+
+            return {
+                success: false,
+                result: {
+                    success: false,
+                    error: error.message
+                }
+            };
+        }
+    }
+
+    async _persistNewPortalAccount({ caseData, portalUrl, taskId, email, password }) {
+        if (!email || !password) {
+            return;
+        }
+
+        console.log(`\n💾 Saving new portal account credentials...`);
+        try {
+            const savedAccount = await database.createPortalAccount({
+                portal_url: portalUrl,
+                email,
+                password,
+                first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
+                last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
+                portal_type: 'Auto-detected',
+                additional_info: {
+                    case_id: caseData.id,
+                    created_by_task: taskId
+                }
+            });
+            console.log(`   ✅ Saved account ID: ${savedAccount.id}`);
+        } catch (error) {
+            console.error(`   ⚠️  Failed to save account: ${error.message}`);
+        }
+    }
+
+    _detectVerificationNeeded(finalTask) {
+        if (!finalTask) return false;
+        const blob = JSON.stringify(finalTask).toLowerCase();
+        return blob.includes('verification code') ||
+            blob.includes('enter the code') ||
+            blob.includes('check your email') ||
+            blob.includes('otp') ||
+            blob.includes('confirm your email');
+    }
+
+    async _maybeFetchVerificationCode(portalUrl) {
+        const pattern = process.env.PORTAL_VERIFICATION_REGEX || '(\\d{4,8})';
+        const timeoutMs = parseInt(process.env.PORTAL_VERIFICATION_TIMEOUT_MS || '180000', 10);
+        let fromEmail = null;
+        try {
+            const hostname = new URL(portalUrl).hostname;
+            fromEmail = hostname.split('.').slice(-2).join('.');
+        } catch (_) {
+            fromEmail = null;
+        }
+
+        try {
+            const code = await this.emailHelper.waitForCode({
+                pattern,
+                timeoutMs,
+                fromEmail
+            });
+            console.log(`🔐 Retrieved verification code from inbox`);
+            return code;
+        } catch (error) {
+            console.warn(`⚠️  Could not auto-fetch verification code: ${error.message}`);
+            return null;
+        }
+    }
+
+    _formatStageLabel(stage) {
+        return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     }
 
     async _createTaskAndPoll({ portalUrl, navigationGoal, navigationPayload, maxSteps }) {
@@ -142,69 +305,99 @@ class PortalAgentServiceSkyvern {
                 }
             );
 
-            // Check if we have existing portal credentials
             console.log(`\n🔍 Checking for existing portal account...`);
-            const existingAccount = await database.getPortalAccountByUrl(portalUrl);
-
-            let navigationGoal, navigationPayload, accountPassword;
-            let accountEmailUsed = defaultPortalEmail;
+            let existingAccount = await database.getPortalAccountByUrl(portalUrl);
+            let accountEmailUsed = existingAccount?.email || defaultPortalEmail;
+            let accountPassword = existingAccount?.password || null;
 
             if (existingAccount) {
                 console.log(`✅ Found existing account: ${existingAccount.email}`);
-                console.log(`   Account ID: ${existingAccount.id}`);
-                console.log(`   Last used: ${existingAccount.last_used_at || 'Never'}`);
-                accountEmailUsed = existingAccount.email;
-                // Build instructions to LOG IN with existing credentials
-                navigationGoal = this.buildNavigationGoalWithLogin(caseData, existingAccount, dryRun);
-                navigationPayload = this.buildNavigationPayloadWithLogin(caseData, existingAccount);
-                accountPassword = null; // We're not creating a new account
-
-                // Update last used timestamp
                 await database.updatePortalAccountLastUsed(existingAccount.id);
-            } else {
-                console.log(`❌ No existing account found - will create new account`);
-
-                // Generate a password that we'll tell Skyvern to use
-                accountPassword = this._generateSecurePassword();
-                console.log(`   Generated password for new account`);
-
-                // Build instructions to CREATE ACCOUNT
-                navigationGoal = this.buildNavigationGoalWithAccountCreation(caseData, dryRun, accountPassword, accountEmailUsed);
-                navigationPayload = this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword, accountEmailUsed);
             }
 
-            const { finalTask, taskId } = await this._createTaskAndPoll({
+            // Stage 1: create account when we don't have one yet
+            let accountCreationTask = null;
+            const hadExistingAccount = !!existingAccount;
+
+            if (!existingAccount) {
+                console.log(`❌ No existing account - running account setup stage`);
+                accountPassword = this._generateSecurePassword();
+
+                accountCreationTask = await this._runPortalStage({
+                    stage: 'account_setup',
+                    caseData,
+                    portalUrl,
+                    navigationGoal: this.buildNavigationGoalWithAccountCreation(caseData, dryRun, accountPassword, accountEmailUsed),
+                    navigationPayload: this.buildNavigationPayloadWithAccountCreation(caseData, accountPassword, accountEmailUsed),
+                    maxSteps
+                });
+
+                if (!accountCreationTask.success) {
+                    return accountCreationTask.result;
+                }
+
+                await this._persistNewPortalAccount({
+                    caseData,
+                    portalUrl,
+                    taskId: accountCreationTask.taskId,
+                    email: accountEmailUsed,
+                    password: accountPassword
+                });
+
+                existingAccount = {
+                    email: accountEmailUsed,
+                    password: accountPassword,
+                    portal_type: 'Auto-detected'
+                };
+            }
+
+            // Stage 2: handle verification if portal demanded it
+            if (accountCreationTask && this._detectVerificationNeeded(accountCreationTask.finalTask)) {
+                console.log(`🔐 Portal hinted at verification requirement - running verification stage`);
+                const verificationCode = await this._maybeFetchVerificationCode(portalUrl);
+                const verificationGoal = this.buildVerificationGoal(caseData, existingAccount, verificationCode);
+                const verificationPayload = this.buildVerificationPayload(caseData, existingAccount, verificationCode);
+
+                const verificationTask = await this._runPortalStage({
+                    stage: 'account_verification',
+                    caseData,
+                    portalUrl,
+                    navigationGoal: verificationGoal,
+                    navigationPayload: verificationPayload,
+                    maxSteps: maxSteps / 2
+                });
+
+                if (!verificationTask.success) {
+                    return verificationTask.result;
+                }
+            }
+
+            // Stage 3: actual submission/login
+            const submissionGoal = existingAccount
+                ? this.buildNavigationGoalWithLogin(caseData, existingAccount, dryRun)
+                : this.buildNavigationGoalWithoutAccount(caseData, dryRun);
+            const submissionPayload = existingAccount
+                ? this.buildNavigationPayloadWithLogin(caseData, existingAccount)
+                : this.buildNavigationPayloadWithoutAccount(caseData);
+
+            const submissionTask = await this._runPortalStage({
+                stage: 'request_submission',
+                caseData,
                 portalUrl,
-                navigationGoal,
-                navigationPayload,
+                navigationGoal: submissionGoal,
+                navigationPayload: submissionPayload,
                 maxSteps
             });
 
+            if (!submissionTask.success) {
+                return submissionTask.result;
+            }
+
+            const finalTask = submissionTask.finalTask;
+            const taskId = submissionTask.taskId;
+
             // Check if task completed successfully
             if (finalTask.status === 'completed') {
-                // If we created a new account, save credentials to database
-                if (!existingAccount && accountPassword) {
-                    console.log(`\n💾 Saving new portal account credentials...`);
-                    try {
-                        const savedAccount = await database.createPortalAccount({
-                            portal_url: portalUrl,
-                            email: accountEmailUsed,
-                            password: accountPassword,
-                            first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
-                            last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
-                            portal_type: 'Auto-detected',
-                            additional_info: {
-                                case_id: caseData.id,
-                                created_by_task: taskId
-                            }
-                        });
-                        console.log(`   ✅ Saved account ID: ${savedAccount.id}`);
-                    } catch (saveError) {
-                        console.error(`   ⚠️  Failed to save account: ${saveError.message}`);
-                        // Continue anyway - don't fail the whole task
-                    }
-                }
-
                 const taskUrl = `https://app.skyvern.com/tasks/${taskId}`;
                 const result = {
                     success: true,
@@ -216,8 +409,8 @@ class PortalAgentServiceSkyvern {
                     extracted_data: finalTask.extracted_information,
                     steps: finalTask.actions?.length || finalTask.steps || 0,
                     dryRun,
-                    usedExistingAccount: !!existingAccount,
-                    savedNewAccount: !existingAccount && !!accountPassword,
+                    usedExistingAccount: hadExistingAccount,
+                    savedNewAccount: !hadExistingAccount,
                     runId
                 };
 
@@ -381,31 +574,72 @@ Be thorough and fill out every available field with the provided information. Th
      * Build navigation goal for ACCOUNT CREATION (new account)
      */
     buildNavigationGoalWithAccountCreation(caseData, dryRun, password, email) {
-        return `You are filling out a FOIA (Freedom of Information Act) records request on a government portal.
+        return `You are preparing a FOIA (Freedom of Information Act) portal for future submission.
 
-INSTRUCTIONS:
-1. CREATE A NEW ACCOUNT on the portal:
+ACCOUNT SETUP INSTRUCTIONS:
+1. CREATE A NEW ACCOUNT if the portal requires it. Use:
    - Email: ${email}
    - Password: ${password}
-   - IMPORTANT: Use exactly this password: ${password}
-   - Fill in any required account information (name, state, etc.)
-   - Complete any email verification if needed
+   - IMPORTANT: use exactly this password.
+   - Complete any required profile details.
 
-2. Once the account is created and you're logged in, fill out the FOIA request form with ALL fields using the data provided in the navigation_payload
+2. If the portal allows guest submissions, confirm that and stop. Otherwise, create the account and stop as soon as you can see a dashboard or request form. Do NOT start the FOIA request during this stage.
 
-3. Key fields to look for and fill:
-   - Requester name/contact information
-   - Agency name
-   - Request description/subject
-   - Records being requested (detailed list)
-   - Date range or incident information
-   - Email for correspondence
-   - Delivery format preference (electronic/email)
-   - Fee waiver request (if available, request as press/media)
+3. If the portal displays verification instructions, leave them visible for the next stage.
 
-4. ${dryRun ? 'STOP before clicking the final submit button (this is a test/dry run)' : 'Complete the full submission by clicking the submit button'}
+This stage only ensures the account exists. Do not fill or submit the FOIA form yet.`;
+    }
 
-Be thorough and fill out every available field with the provided information. The goal is to create a complete, detailed FOIA request.`;
+    buildVerificationGoal(caseData, account, verificationCode) {
+        return `You already created a portal account for ${account.email}.
+
+VERIFICATION STAGE INSTRUCTIONS:
+1. Navigate to the portal login or verification screen.
+2. If prompted, request a verification code to be sent to ${account.email}.
+3. Enter the verification code ${verificationCode ? `(${verificationCode})` : 'that was emailed to you'} to activate the account.
+4. Once the portal confirms the account is verified or allows access to the request form, STOP.
+
+If no verification is required, simply log in successfully and stop.`;
+    }
+
+    buildVerificationPayload(caseData, account, verificationCode) {
+        return {
+            case_id: caseData.id,
+            email: account?.email,
+            password: account?.password,
+            verification_code: verificationCode,
+            agency_name: caseData.agency_name,
+            case_name: caseData.case_name
+        };
+    }
+
+    buildNavigationGoalWithoutAccount(caseData, dryRun) {
+        return `You are submitting a FOIA (Freedom of Information Act) request on a portal that supports guest submissions.
+
+INSTRUCTIONS:
+1. Proceed through the form without creating an account.
+2. Fill every required field using the provided data.
+3. ${dryRun ? 'Stop before the final submit button (dry run).' : 'Submit the request when finished.'}
+`;
+    }
+
+    buildNavigationPayloadWithoutAccount(caseData) {
+        return {
+            email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+            requester_name: caseData.subject_name || 'FOIA Requester',
+            requester_email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+            case_name: caseData.case_name || 'Records Request',
+            subject_name: caseData.subject_name || '',
+            agency_name: caseData.agency_name || '',
+            state: caseData.state || '',
+            incident_date: caseData.incident_date || '',
+            incident_location: caseData.incident_location || '',
+            records_requested: caseData.requested_records || 'Body-worn camera footage, dashcam footage, incident reports, 911 calls, arrest reports, booking photos',
+            request_description: caseData.additional_details || '',
+            delivery_format: 'electronic',
+            fee_waiver_requested: true,
+            fee_waiver_reason: 'Request as member of press/media for public interest reporting'
+        };
     }
 
     /**

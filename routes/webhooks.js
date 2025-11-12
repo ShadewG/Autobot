@@ -101,7 +101,8 @@ router.post('/inbound', upload.none(), async (req, res) => {
                     portalUrl: result.portal_notification.portal_url,
                     provider: result.portal_notification.provider,
                     messageId: result.message_id,
-                    notificationType: result.portal_notification.type
+                    notificationType: result.portal_notification.type,
+                    instructions: result.portal_notification.instructions_excerpt || null
                 };
 
                 if (portalJobData.portalUrl) {
@@ -114,6 +115,13 @@ router.post('/inbound', upload.none(), async (req, res) => {
                     });
 
                     console.log(`🌐 Portal refresh queued for case ${result.case_id} (${portalJobData.provider})`);
+
+                    if (result.portal_notification.type === 'submission_required') {
+                        await portalQueue.add('portal-submit', portalJobData, {
+                            attempts: 1
+                        });
+                        console.log(`🚀 Portal submission queued for case ${result.case_id} (${portalJobData.provider})`);
+                    }
                 } else {
                     console.warn(`🌐 Portal notification detected but no portal URL stored for case ${result.case_id}`);
                 }
