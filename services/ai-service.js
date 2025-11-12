@@ -855,12 +855,12 @@ ${prompt}`
   "incident_location": string,
   "records_requested": array of short strings,
   "subject_name": string,
-  "contact_emails": array of emails,
-  "portal_urls": array of URLs,
   "additional_details": string
 }`;
 
-            const systemPrompt = `You are a data extraction specialist. Extract ONLY information that is explicitly present in the provided Notion properties or page text. Parse and normalize the data you find. If a field is not present in the source data, leave it empty (null, empty string, or empty array). Never use your training data or world knowledge to fill in missing information. Only extract what you can directly see in the input.`;
+            const systemPrompt = `You are a data extraction specialist. Extract ONLY information that is explicitly present in the provided Notion properties or page text. Parse and normalize the data you find. If a field is not present in the source data, leave it empty (null, empty string, or empty array). Never use your training data or world knowledge to fill in missing information. Only extract what you can directly see in the input.
+
+CRITICAL: DO NOT extract URLs, email addresses, or contact information. These will be extracted separately from structured fields. Focus only on extracting text content like names, dates, locations, and descriptions.`;
 
             const promptParts = [];
             if (rawPayload.properties) {
@@ -893,12 +893,10 @@ ${prompt}`
             if (!Array.isArray(parsed.records_requested)) {
                 parsed.records_requested = [];
             }
-            if (parsed.contact_emails && !Array.isArray(parsed.contact_emails)) {
-                parsed.contact_emails = [parsed.contact_emails].filter(Boolean);
-            }
-            if (parsed.portal_urls && !Array.isArray(parsed.portal_urls)) {
-                parsed.portal_urls = [parsed.portal_urls].filter(Boolean);
-            }
+
+            // DO NOT extract portal_urls or contact_emails from AI - these come from direct Notion fields only
+            delete parsed.portal_urls;
+            delete parsed.contact_emails;
 
             return parsed;
         } catch (error) {
