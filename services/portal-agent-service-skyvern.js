@@ -302,7 +302,7 @@ class PortalAgentServiceSkyvern {
             console.log(`\n🔍 Checking for existing portal account...`);
             let existingAccount = await database.getPortalAccountByUrl(portalUrl);
             let accountEmailUsed = existingAccount?.email || defaultPortalEmail;
-            let accountPassword = existingAccount?.password || this._generateSecurePassword();
+            let accountPassword = existingAccount?.password || 'Insanity!0M';
             const hadExistingAccount = !!existingAccount;
 
             if (hadExistingAccount) {
@@ -757,7 +757,7 @@ RULES:
                 has_existing_account: verificationCode ? true : undefined
             },
             requester: {
-                name: caseData.subject_name || 'FOIA Requester',
+                name: 'Samuel Hylton',
                 email,
                 phone: caseData.requester_phone || null,
                 title: 'Documentary Researcher'
