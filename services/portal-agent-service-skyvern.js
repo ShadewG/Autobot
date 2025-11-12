@@ -258,12 +258,182 @@ class PortalAgentServiceSkyvern {
         return { finalTask, taskId };
     }
 
+    async _runAccountStage({ caseData, portalUrl, accountEmail, accountPassword, contactInfo, existingAccount, dryRun, maxSteps, runId }) {
+        let verificationCode = null;
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const navigationGoal = this.buildAccountStageGoal(caseData, {
+                email: accountEmail,
+                password: accountPassword,
+                dryRun,
+                hasExistingAccount: !!existingAccount,
+                verificationCode
+            });
+
+            const navigationPayload = this.buildAccountStagePayload(caseData, {
+                email: accountEmail,
+                password: accountPassword,
+                contactInfo,
+                verificationCode
+            });
+
+            const stage = await this._runPortalStage({
+                stage: 'account_setup',
+                caseData,
+                portalUrl,
+                navigationGoal,
+                navigationPayload,
+                maxSteps
+            });
+
+            if (!stage.success) {
+                return stage;
+            }
+
+            const extracted = stage.finalTask.extracted_information || {};
+            if (extracted.verification_required && !verificationCode) {
+                console.log('🔐 Verification required, attempting to fetch code...');
+                verificationCode = await this._maybeFetchVerificationCode(portalUrl);
+                if (!verificationCode) {
+                    return {
+                        success: false,
+                        result: {
+                            success: false,
+                            error: 'Verification required but no code available',
+                            status: 'verification_required'
+                        }
+                    };
+                }
+                continue;
+            }
+
+            const requestFormUrl = extracted.request_form_url || extracted.submission_page_url || stage.finalTask.last_url || portalUrl;
+            return {
+                success: true,
+                taskId: stage.taskId,
+                extracted,
+                requestFormUrl
+            };
+        }
+
+        return {
+            success: false,
+            result: {
+                success: false,
+                error: 'Failed to satisfy verification',
+                status: 'verification_failed'
+            }
+        };
+    }
+
+    async _runSubmissionStage({ caseData, portalUrl, accountEmail, accountPassword, contactInfo, submissionUrl, dryRun, maxSteps, runId, portalProvider }) {
+        const navigationGoal = this.buildSubmissionStageGoal(caseData, {
+            email: accountEmail,
+            password: accountPassword,
+            submissionUrl,
+            dryRun
+        });
+
+        const navigationPayload = this.buildSubmissionStagePayload(caseData, {
+            email: accountEmail,
+            password: accountPassword,
+            contactInfo,
+            submissionUrl,
+            dryRun
+        });
+
+        const stage = await this._runPortalStage({
+            stage: 'request_submission',
+            caseData,
+            portalUrl,
+            navigationGoal,
+            navigationPayload,
+            maxSteps
+        });
+
+        if (!stage.success) {
+            return stage;
+        }
+
+        const finalTask = stage.finalTask;
+        const taskId = stage.taskId;
+        const extracted = finalTask.extracted_information || {};
+        const taskUrl = `https://app.skyvern.com/tasks/${taskId}`;
+        const actionHistory = finalTask.actions || finalTask.action_history || [];
+
+        if (finalTask.status === 'completed') {
+            await database.updateCasePortalStatus(caseData.id, {
+                portal_url: portalUrl,
+                portal_provider: portalProvider,
+                last_portal_run_id: taskId,
+                last_portal_engine: 'skyvern',
+                last_portal_task_url: extracted.submission_page_url || submissionUrl,
+                last_portal_recording_url: finalTask.recording_url || taskUrl,
+                last_portal_account_email: accountEmail,
+                last_portal_details: JSON.stringify({
+                    submission_status: extracted.submission_status || finalTask.status,
+                    confirmation_number: extracted.confirmation_number || null,
+                    portal_ticket_url: extracted.portal_ticket_url || null,
+                    submission_timestamp: extracted.submission_timestamp || null,
+                    action_history: actionHistory.slice(-50)
+                })
+            });
+
+            await database.logActivity('portal_run_completed', `Skyvern portal submission completed for ${caseData.case_name}`, {
+                case_id: caseData.id || null,
+                portal_url: portalUrl,
+                dry_run: dryRun,
+                max_steps: maxSteps,
+                task_id: taskId,
+                run_id: runId,
+                submission_status: extracted.submission_status || finalTask.status,
+                confirmation_number: extracted.confirmation_number || null
+            });
+
+            return {
+                success: true,
+                result: {
+                    success: true,
+                    caseId: caseData.id,
+                    portalUrl,
+                    taskId,
+                    recording_url: finalTask.recording_url || taskUrl,
+                    extracted_data: extracted,
+                    steps: actionHistory.length || finalTask.steps || 0,
+                    submission_status: extracted.submission_status || finalTask.status,
+                    confirmation_number: extracted.confirmation_number || null
+                }
+            };
+        }
+
+        const failureTaskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
+        await database.logActivity('portal_run_failed', `Skyvern portal submission failed for ${caseData.case_name}`, {
+            case_id: caseData.id || null,
+            portal_url: portalUrl,
+            dry_run: dryRun,
+            max_steps: maxSteps,
+            task_id: taskId,
+            run_id: runId,
+            error: finalTask.failure_reason || finalTask.status
+        });
+
+        return {
+            success: false,
+            result: {
+                success: false,
+                error: finalTask.failure_reason || `Task ended with status ${finalTask.status}`,
+                taskId,
+                recording_url: finalTask.recording_url || failureTaskUrl,
+                extracted_data: extracted
+            }
+        };
+    }
+
     /**
      * Generate a secure password for new accounts
      */
     _generateSecurePassword() {
-        // Use consistent password for all portal accounts
-        return 'Insanity!0M';
+        return process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
     }
 
     /**
@@ -309,166 +479,58 @@ class PortalAgentServiceSkyvern {
                 await database.updatePortalAccountLastUsed(existingAccount.id);
             }
 
-            const navigationGoal = this.buildUnifiedNavigationGoal(caseData, {
-                dryRun,
-                email: accountEmailUsed,
-                password: accountPassword,
-                hasExistingAccount: hadExistingAccount
-            });
+            const contactInfo = this.buildStandardContactInfo(caseData);
 
-            const navigationPayload = this.buildUnifiedNavigationPayload(caseData, {
-                email: accountEmailUsed,
-                password: accountPassword,
-                dryRun
-            });
-
-            const submissionTask = await this._runPortalStage({
-                stage: 'account_login_submission',
+            const accountStage = await this._runAccountStage({
                 caseData,
                 portalUrl,
-                navigationGoal,
-                navigationPayload,
-                maxSteps
+                accountEmail: accountEmailUsed,
+                accountPassword,
+                contactInfo,
+                existingAccount,
+                dryRun,
+                maxSteps,
+                runId
             });
 
-            if (!submissionTask.success) {
-                return submissionTask.result;
+            if (!accountStage.success) {
+                return accountStage.result;
             }
 
-            const finalTask = submissionTask.finalTask;
-            const taskId = submissionTask.taskId;
-            const extracted = finalTask.extracted_information || {};
-            const submissionUrl = extracted.submission_page_url || extracted.request_form_url || finalTask.last_url || null;
-
-            if (finalTask.status === 'completed') {
-                if (!hadExistingAccount) {
-                    await this._persistNewPortalAccount({
-                        caseData,
-                        portalUrl,
-                        taskId,
-                        email: accountEmailUsed,
-                        password: accountPassword
-                    });
-                }
-
-                const taskUrl = `https://app.skyvern.com/tasks/${taskId}`;
-                const actionHistory = finalTask.actions || finalTask.action_history || [];
-
-                const result = {
-                    success: true,
-                    caseId: caseData.id,
-                    portalUrl: portalUrl,
-                    taskId: taskId,
-                    status: finalTask.status,
-                    recording_url: finalTask.recording_url || taskUrl,
-                    extracted_data: extracted,
-                    steps: actionHistory.length || finalTask.steps || 0,
-                    dryRun,
-                    usedExistingAccount: hadExistingAccount,
-                    savedNewAccount: !hadExistingAccount,
-                    runId
-                };
-
-                await database.updateCasePortalStatus(caseData.id, {
-                    portal_url: portalUrl,
-                    portal_provider: extracted.portal_provider || existingAccount?.portal_type || 'Auto-detected',
-                    last_portal_run_id: taskId,
-                    last_portal_engine: 'skyvern',
-                    last_portal_task_url: submissionUrl || taskUrl,
-                    last_portal_recording_url: result.recording_url,
-                    last_portal_account_email: accountEmailUsed,
-                    last_portal_details: JSON.stringify({
-                        submission_status: extracted.submission_status || finalTask.status,
-                        confirmation_number: extracted.confirmation_number || null,
-                        portal_ticket_url: extracted.portal_ticket_url || null,
-                        submission_timestamp: extracted.submission_timestamp || null,
-                        request_form_url: extracted.request_form_url || null,
-                        action_history: actionHistory.slice(-50)
-                    })
+            if (!hadExistingAccount) {
+                await this._persistNewPortalAccount({
+                    caseData,
+                    portalUrl,
+                    taskId: accountStage.taskId,
+                    email: accountEmailUsed,
+                    password: accountPassword
                 });
-
-                await database.logActivity(
-                    'portal_run_completed',
-                    `Skyvern portal automation completed for ${caseData.case_name}`,
-                    {
-                        case_id: caseData.id || null,
-                        portal_url: portalUrl,
-                        dry_run: dryRun,
-                        max_steps: maxSteps,
-                        run_id: runId,
-                        engine: 'skyvern',
-                        task_id: taskId,
-                        task_url: taskUrl,
-                        recording_url: result.recording_url,
-                        steps_completed: result.steps,
-                        submission_status: extracted.submission_status || finalTask.status,
-                        confirmation_number: extracted.confirmation_number || null
-                    }
-                );
-
-                return result;
-            } else if (finalTask.status === 'failed') {
-                const failureTaskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
-                const result = {
-                    success: false,
-                    error: finalTask.failure_reason || 'Task failed',
-                    taskId: taskId,
-                    recording_url: finalTask.recording_url || failureTaskUrl,
-                    steps: finalTask.actions?.length || finalTask.steps || 0,
-                    runId,
-                    extracted_data: extracted
-                };
-
-                await database.logActivity(
-                    'portal_run_failed',
-                    `Skyvern portal automation failed for ${caseData.case_name}: ${result.error}`,
-                    {
-                        case_id: caseData.id || null,
-                        portal_url: portalUrl,
-                        dry_run: dryRun,
-                        max_steps: maxSteps,
-                        run_id: runId,
-                        engine: 'skyvern',
-                        task_id: taskId,
-                        task_url: failureTaskUrl,
-                        recording_url: result.recording_url,
-                        steps_completed: result.steps,
-                        error: result.error
-                    }
-                );
-
-                return result;
-            } else {
-                const taskUrlFallback = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
-                const result = {
-                    success: false,
-                    error: `Task ended with status: ${finalTask.status}`,
-                    taskId: taskId,
-                    status: finalTask.status,
-                    recording_url: finalTask.recording_url || taskUrlFallback,
-                    runId,
-                    extracted_data: extracted
-                };
-
-                await database.logActivity(
-                    'portal_run_failed',
-                    `Skyvern portal automation ended with status ${finalTask.status} for ${caseData.case_name}`,
-                    {
-                        case_id: caseData.id || null,
-                        portal_url: portalUrl,
-                        dry_run: dryRun,
-                        max_steps: maxSteps,
-                        run_id: runId,
-                        engine: 'skyvern',
-                        task_id: taskId,
-                        task_url: taskUrlFallback,
-                        recording_url: result.recording_url,
-                        error: result.error
-                    }
-                );
-
-                return result;
             }
+
+            const submissionUrl = accountStage.requestFormUrl || caseData.last_portal_task_url || portalUrl;
+            const portalProvider = existingAccount?.portal_type || accountStage.extracted?.portal_provider || 'Auto-detected';
+
+            await database.updateCasePortalStatus(caseData.id, {
+                portal_url: portalUrl,
+                portal_provider: portalProvider,
+                last_portal_task_url: submissionUrl,
+                last_portal_details: JSON.stringify(accountStage.extracted || {})
+            });
+
+            const submissionStage = await this._runSubmissionStage({
+                caseData,
+                portalUrl,
+                accountEmail: accountEmailUsed,
+                accountPassword,
+                contactInfo,
+                submissionUrl,
+                dryRun,
+                maxSteps,
+                runId,
+                portalProvider
+            });
+
+            return submissionStage.result;
         } catch (error) {
             console.error('❌ Skyvern agent failed:', error.message);
 
@@ -712,54 +774,76 @@ INSTRUCTIONS:
         };
     }
 
-    buildUnifiedNavigationGoal(caseData, { dryRun, email, password, hasExistingAccount }) {
-        return `You are an autonomous browser agent that must complete the entire FOIA portal workflow end-to-end.
+    buildAccountStageGoal(caseData, { email, password, dryRun, hasExistingAccount, verificationCode }) {
+        return `You are preparing the FOIA portal for ${caseData.case_name}.
 
-MISSION:
-1. If needed, create an account using:
-   - Email: ${email}
-   - Password: ${password}
-   (Use exactly these credentials so we can log in later.)
-2. Log in and navigate to the request submission form.
-3. Fill the form using the payload data (incident info, records requested, narrative).
-4. ${dryRun ? 'Stop on the final review page (do NOT click submit).' : 'Submit the request and capture the confirmation number/status.'}
-5. Use the Set Extracted Information tool once you reach each milestone. The JSON must include:
+ACCOUNT STAGE OBJECTIVE:
+1. If an account already exists, log in with Email: ${email} and Password: ${password}. If not, create it with the same credentials.
+2. Complete any profile fields (address, phone, etc.) using the provided data.
+3. Solve CAPTCHAs if needed.
+4. Navigate to the "New Request" or submission form and stop there (do NOT submit yet).
+5. Use Set Extracted Information with this schema:
 {
   "login_success": boolean,
   "request_form_url": string,
   "submission_page_url": string,
-  "submission_status": string,
-  "confirmation_number": string,
-  "portal_ticket_url": string,
   "verification_required": boolean,
   "verification_reason": string,
-  "submission_timestamp": string (ISO8601)
+  "portal_provider": string
 }
 
-VERIFICATION:
-- If the portal emails a verification or MFA code, trigger ACTION: wait_for_email_code with TARGET JSON (pattern, timeout, sender) to read the code and proceed within the same task.
-- Only set verification_required=true if you cannot continue even after requesting a code.
-
-RULES:
-- Always leave the browser on the submission page (or confirmation page) when complete.
-- Capture any reference numbers shown on screen.
-- Be explicit in action history; explain when you create accounts or enter codes.
-- If the portal supports guest submissions, skip account creation but still populate and submit the form.
-- If submission truly cannot finish, set submission_status to a clear error reason and stop.`;
+If the portal demands verification/MFA, request a code (a follow-up attempt will supply it) and set verification_required=true with the reason.` ;
     }
 
-    buildUnifiedNavigationPayload(caseData, { email, password, verificationCode, dryRun }) {
+    buildAccountStagePayload(caseData, { email, password, contactInfo, verificationCode }) {
         return {
             credentials: {
                 email,
                 password,
-                verification_code: verificationCode || null,
-                has_existing_account: verificationCode ? true : undefined
+                verification_code: verificationCode
             },
+            contact_info: contactInfo,
+            case_name: caseData.case_name,
+            agency_name: caseData.agency_name,
+            state: caseData.state || '',
+            incident_date: caseData.incident_date || '',
+            incident_location: caseData.incident_location || '',
+            records_requested: Array.isArray(caseData.requested_records)
+                ? caseData.requested_records
+                : [caseData.requested_records].filter(Boolean)
+        };
+    }
+
+    buildSubmissionStageGoal(caseData, { email, password, submissionUrl, dryRun }) {
+        return `You already have an account for this portal.
+
+SUBMISSION STAGE OBJECTIVE:
+1. Go to ${submissionUrl || 'the portal request form'}.
+2. Log in with Email: ${email} / Password: ${password} if prompted.
+3. Fill out the request form completely using the provided payload.
+4. ${dryRun ? 'Stop on the final review screen without submitting.' : 'Submit the request and capture confirmation details.'}
+5. Use Set Extracted Information with this schema:
+{
+  "submission_status": string,
+  "confirmation_number": string,
+  "portal_ticket_url": string,
+  "submission_page_url": string,
+  "submission_timestamp": string
+}` ;
+    }
+
+    buildSubmissionStagePayload(caseData, { email, password, contactInfo, submissionUrl, dryRun }) {
+        return {
+            credentials: {
+                email,
+                password
+            },
+            submission_url: submissionUrl,
+            contact_info: contactInfo,
             requester: {
                 name: 'Samuel Hylton',
                 email,
-                phone: caseData.requester_phone || null,
+                phone: contactInfo.phone,
                 title: 'Documentary Researcher'
             },
             incident: {
@@ -771,16 +855,25 @@ RULES:
             records: Array.isArray(caseData.requested_records) && caseData.requested_records.length
                 ? caseData.requested_records
                 : ['Body-worn camera footage', 'Dash camera footage', 'Incident reports', '911 audio'],
-            agency_name: caseData.agency_name || '',
-            case_name: caseData.case_name || 'Records Request',
-            dry_run: dryRun,
             delivery_format: 'electronic',
+            dry_run: dryRun,
             fee_waiver: {
                 requested: true,
-                reason: 'Non-commercial documentary / public interest reporting'
+                reason: 'Non-commercial documentary / public interest'
             }
         };
     }
+
+    buildStandardContactInfo(caseData) {
+        return {
+            phone: caseData.requester_phone || process.env.REQUESTER_PHONE || '206-555-0198',
+            address1: caseData.requester_address || process.env.REQUESTER_ADDRESS || '3021 21st Ave W Apt 202',
+            city: caseData.requester_city || process.env.REQUESTER_CITY || 'Seattle',
+            state: caseData.requester_state || process.env.REQUESTER_STATE || caseData.state || 'WA',
+            zip: caseData.requester_zip || process.env.REQUESTER_ZIP || '98199'
+        };
+    }
+
 
     /**
      * Get task status (for polling)
