@@ -262,14 +262,8 @@ class PortalAgentServiceSkyvern {
      * Generate a secure password for new accounts
      */
     _generateSecurePassword() {
-        const length = 16;
-        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-        let password = '';
-        const randomBytes = crypto.randomBytes(length);
-        for (let i = 0; i < length; i++) {
-            password += chars[randomBytes[i] % chars.length];
-        }
-        return password;
+        // Use consistent password for all portal accounts
+        return 'Insanity!0M';
     }
 
     /**
@@ -556,9 +550,22 @@ INSTRUCTIONS:
 
     buildNavigationPayloadWithoutAccount(caseData) {
         return {
+            // Requester Information (person making the FOIA request)
             email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-            requester_name: caseData.subject_name || 'FOIA Requester',
+            requester_name: 'Samuel Hylton',
             requester_email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+            first_name: 'Samuel',
+            last_name: 'Hylton',
+            phone: '209-800-7702',
+            phone_number: '209-800-7702',
+            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
+            street_address: '3021 21st Ave W, Apt 202',
+            city: 'Seattle',
+            state_abbr: 'WA',
+            zip: '98199',
+            zip_code: '98199',
+
+            // Case/Subject Information (the person involved in the case)
             case_name: caseData.case_name || 'Records Request',
             subject_name: caseData.subject_name || '',
             agency_name: caseData.agency_name || '',
@@ -567,6 +574,8 @@ INSTRUCTIONS:
             incident_location: caseData.incident_location || '',
             records_requested: caseData.requested_records || 'Body-worn camera footage, dashcam footage, incident reports, 911 calls, arrest reports, booking photos',
             request_description: caseData.additional_details || '',
+
+            // Request preferences
             delivery_format: 'electronic',
             fee_waiver_requested: true,
             fee_waiver_reason: 'Request as member of press/media for public interest reporting'
@@ -582,17 +591,25 @@ INSTRUCTIONS:
             login_email: existingAccount.email,
             login_password: existingAccount.password,
 
-            // Contact Information
+            // Requester Contact Information (person making the FOIA request)
             email: existingAccount.email,
-            requester_name: caseData.subject_name || existingAccount.first_name + ' ' + existingAccount.last_name,
+            requester_name: 'Samuel Hylton',
             requester_email: existingAccount.email,
+            first_name: 'Samuel',
+            last_name: 'Hylton',
+            phone: '209-800-7702',
+            phone_number: '209-800-7702',
+            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
+            street_address: '3021 21st Ave W, Apt 202',
+            city: 'Seattle',
+            state_abbr: 'WA',
+            zip: '98199',
+            zip_code: '98199',
 
-            // Case Information
+            // Case/Subject Information (the person involved in the case)
             case_name: caseData.case_name || 'Records Request',
             subject_name: caseData.subject_name || '',
             agency_name: caseData.agency_name || '',
-
-            // Location & Date
             state: caseData.state || '',
             incident_date: caseData.incident_date || '',
             incident_location: caseData.incident_location || '',
@@ -601,7 +618,7 @@ INSTRUCTIONS:
             records_requested: caseData.requested_records || 'Body-worn camera footage, dashcam footage, incident reports, 911 calls, arrest reports, booking photos',
             request_description: caseData.additional_details || 'Requesting all records related to this incident including police reports, witness statements, forensic evidence, and any other relevant documentation.',
 
-            // Additional fields
+            // Request preferences
             delivery_format: 'electronic',
             fee_waiver_requested: true,
             fee_waiver_reason: 'Request as member of press/media for public interest reporting'
@@ -617,20 +634,26 @@ INSTRUCTIONS:
             account_email: email,
             account_password: password,
             account_password_confirm: password,
-            first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
-            last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
+            first_name: 'Samuel',
+            last_name: 'Hylton',
 
-            // Contact Information
+            // Requester Contact Information (person making the FOIA request)
             email: email,
-            requester_name: caseData.subject_name || 'FOIB Request',
+            requester_name: 'Samuel Hylton',
             requester_email: email,
+            phone: '209-800-7702',
+            phone_number: '209-800-7702',
+            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
+            street_address: '3021 21st Ave W, Apt 202',
+            city: 'Seattle',
+            state_abbr: 'WA',
+            zip: '98199',
+            zip_code: '98199',
 
-            // Case Information
+            // Case/Subject Information (the person involved in the case)
             case_name: caseData.case_name || 'Records Request',
             subject_name: caseData.subject_name || '',
             agency_name: caseData.agency_name || '',
-
-            // Location & Date
             state: caseData.state || '',
             incident_date: caseData.incident_date || '',
             incident_location: caseData.incident_location || '',
@@ -639,7 +662,7 @@ INSTRUCTIONS:
             records_requested: caseData.requested_records || 'Body-worn camera footage, dashcam footage, incident reports, 911 calls, arrest reports, booking photos',
             request_description: caseData.additional_details || 'Requesting all records related to this incident including police reports, witness statements, forensic evidence, and any other relevant documentation.',
 
-            // Additional fields
+            // Request preferences
             delivery_format: 'electronic',
             fee_waiver_requested: true,
             fee_waiver_reason: 'Request as member of press/media for public interest reporting'
@@ -700,6 +723,13 @@ INSTRUCTIONS:
         const extracted = finalTask.extracted_information || {};
         const statusText = extracted.status || extracted.status_text || extracted.summary || null;
         const dueDate = extracted.due_date || extracted.deadline || null;
+        const submissionUrl = extracted.request_form_url || extracted.form_url || extracted.page_url || finalTask.last_url || null;
+
+        if (submissionUrl) {
+            await database.updateCasePortalStatus(caseData.id, {
+                last_portal_task_url: submissionUrl
+            });
+        }
 
         return {
             success: true,
@@ -708,6 +738,7 @@ INSTRUCTIONS:
             extracted_data: extracted,
             statusText,
             dueDate,
+            submissionUrl,
             raw: finalTask,
             accountEmail: account.email
         };
