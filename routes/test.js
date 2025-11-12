@@ -2182,4 +2182,33 @@ router.get('/check-all-notion', async (req, res) => {
     }
 });
 
+/**
+ * Test stuck response detector
+ * GET /api/test/stuck-responses
+ */
+router.get('/stuck-responses', async (req, res) => {
+    try {
+        console.log('🔍 Running stuck response detector...');
+
+        const stuckResponseDetector = require('../services/stuck-response-detector');
+        const result = await stuckResponseDetector.detectAndFlagStuckResponses();
+
+        res.json({
+            success: true,
+            message: result.flagged === 0
+                ? 'No stuck responses found'
+                : `Flagged ${result.flagged} stuck response(s) for human review`,
+            flagged_count: result.flagged,
+            case_ids: result.cases || []
+        });
+
+    } catch (error) {
+        console.error('Stuck response detector error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
