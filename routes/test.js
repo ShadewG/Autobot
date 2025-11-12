@@ -2369,6 +2369,88 @@ router.post('/force-portal-submit', async (req, res) => {
 });
 
 /**
+ * Approve case for portal submission (from human review)
+ * POST /api/test/approve-for-portal
+ */
+router.post('/approve-for-portal', async (req, res) => {
+    try {
+        const { case_id } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id is required'
+            });
+        }
+
+        console.log(`✅ Approving case ${case_id} for portal submission...`);
+
+        // Get case data
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${case_id} not found`
+            });
+        }
+
+        // Check if portal URL exists
+        if (!caseData.portal_url) {
+            return res.status(400).json({
+                success: false,
+                error: `Case ${case_id} has no portal URL - cannot approve for portal`,
+                case_name: caseData.case_name
+            });
+        }
+
+        // Update status to awaiting_response with portal_submission_needed
+        await db.updateCaseStatus(case_id, 'awaiting_response', {
+            substatus: 'Approved - queued for portal submission'
+        });
+
+        // Sync to Notion
+        await notionService.syncStatusToNotion(case_id);
+
+        // Queue for portal submission
+        const { portalQueue } = require('../queues/email-queue');
+        await portalQueue.add('portal-submit', {
+            caseId: case_id
+        }, {
+            attempts: 2,
+            backoff: {
+                type: 'exponential',
+                delay: 5000
+            }
+        });
+
+        console.log(`✅ Case ${case_id} approved and queued for portal submission`);
+
+        await db.logActivity('approve_for_portal', `Approved case for portal submission from human review`, {
+            case_id: case_id,
+            portal_url: caseData.portal_url
+        });
+
+        res.json({
+            success: true,
+            message: `Case ${case_id} approved and queued for portal submission`,
+            case_id: case_id,
+            case_name: caseData.case_name,
+            portal_url: caseData.portal_url,
+            new_status: 'awaiting_response',
+            new_substatus: 'Approved - queued for portal submission',
+            queued: true
+        });
+
+    } catch (error) {
+        console.error('Approve for portal error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Resync case from Notion (re-extract contact info with AI)
  * POST /api/test/resync-case
  */
