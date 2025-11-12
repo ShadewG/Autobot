@@ -163,6 +163,23 @@ class DiscordService {
     }
 
     /**
+     * Notify when a response gets stuck without analysis
+     */
+    async notifyStuckResponse(caseData, hoursStuck) {
+        await this.notify({
+            title: '🚨 Stuck Response Detected',
+            description: `**${caseData.case_name || 'Case #' + caseData.id}** has been stuck in "responded" status`,
+            color: 0xf56565, // Red
+            fields: [
+                { name: 'Case ID', value: `#${caseData.id}`, inline: true },
+                { name: 'Hours Stuck', value: `${hoursStuck}h`, inline: true },
+                { name: 'Agency', value: caseData.agency_name || 'Unknown', inline: false },
+                { name: 'Action', value: 'Auto-flagged for human review', inline: false }
+            ]
+        });
+    }
+
+    /**
      * Notify when case is escalated
      */
     async notifyEscalation(caseData, escalationReason, urgency) {

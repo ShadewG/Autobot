@@ -3,6 +3,7 @@ const notionService = require('./notion-service');
 const followUpService = require('./follow-up-service');
 const { generateQueue } = require('../queues/email-queue');
 const db = require('./database');
+const stuckResponseDetector = require('./stuck-response-detector');
 
 class CronService {
     constructor() {
@@ -69,10 +70,24 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Check for stuck responses every 30 minutes
+        this.jobs.stuckResponseCheck = new CronJob('*/30 * * * *', async () => {
+            try {
+                console.log('Checking for stuck responses...');
+                const result = await stuckResponseDetector.detectAndFlagStuckResponses();
+                if (result.flagged > 0) {
+                    console.log(`⚠️ Flagged ${result.flagged} stuck response(s) for human review`);
+                }
+            } catch (error) {
+                console.error('Error in stuck response check cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Follow-ups: Daily at 9 AM');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
+        console.log('✓ Stuck response check: Every 30 minutes');
     }
 
     /**
@@ -93,7 +108,8 @@ class CronService {
             notionSync: this.jobs.notionSync?.running || false,
             followUp: followUpService.cronJob?.running || false,
             cleanup: this.jobs.cleanup?.running || false,
-            healthCheck: this.jobs.healthCheck?.running || false
+            healthCheck: this.jobs.healthCheck?.running || false,
+            stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false
         };
     }
 }
