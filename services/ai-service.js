@@ -860,7 +860,7 @@ ${prompt}`
   "additional_details": string
 }`;
 
-            const systemPrompt = `You are an expert intake specialist. Given raw Notion properties and page text, produce clean JSON matching this schema. Fill missing fields when possible. Do not invent facts.`;
+            const systemPrompt = `You are a data extraction specialist. Extract ONLY information that is explicitly present in the provided Notion properties or page text. Parse and normalize the data you find. If a field is not present in the source data, leave it empty (null, empty string, or empty array). Never use your training data or world knowledge to fill in missing information. Only extract what you can directly see in the input.`;
 
             const promptParts = [];
             if (rawPayload.properties) {
