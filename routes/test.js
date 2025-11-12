@@ -2368,4 +2368,100 @@ router.post('/force-portal-submit', async (req, res) => {
     }
 });
 
+/**
+ * Resync case from Notion (re-extract contact info with AI)
+ * POST /api/test/resync-case
+ */
+router.post('/resync-case', async (req, res) => {
+    try {
+        const { case_id } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id is required'
+            });
+        }
+
+        console.log(`🔄 Resyncing case ${case_id} from Notion...`);
+
+        // Get current case data
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${case_id} not found`
+            });
+        }
+
+        if (!caseData.notion_page_id) {
+            return res.status(400).json({
+                success: false,
+                error: `Case ${case_id} has no Notion page ID`
+            });
+        }
+
+        console.log(`✅ Fetching Notion page: ${caseData.notion_page_id}`);
+
+        // Fetch fresh data from Notion (this triggers AI extraction)
+        const freshData = await notionService.fetchPageById(caseData.notion_page_id);
+
+        console.log(`✅ Extracted data from Notion:`);
+        console.log(`   Portal URL: ${freshData.portal_url || 'none'}`);
+        console.log(`   Email: ${freshData.agency_email || 'none'}`);
+        console.log(`   State: ${freshData.state || 'none'}`);
+
+        // Update case with fresh data
+        await db.query(`
+            UPDATE cases
+            SET portal_url = $1,
+                portal_provider = $2,
+                agency_email = $3,
+                agency_name = $4,
+                state = $5,
+                updated_at = NOW()
+            WHERE id = $6
+        `, [
+            freshData.portal_url || null,
+            freshData.portal_provider || null,
+            freshData.agency_email || null,
+            freshData.agency_name || caseData.agency_name,
+            freshData.state || caseData.state,
+            case_id
+        ]);
+
+        console.log(`✅ Updated case ${case_id} with fresh Notion data`);
+
+        await db.logActivity('resync_case_from_notion', `Manually resynced case from Notion`, {
+            case_id: case_id,
+            portal_url: freshData.portal_url,
+            agency_email: freshData.agency_email
+        });
+
+        res.json({
+            success: true,
+            message: `Case ${case_id} resynced from Notion`,
+            case_id: case_id,
+            case_name: caseData.case_name,
+            before: {
+                portal_url: caseData.portal_url,
+                agency_email: caseData.agency_email,
+                state: caseData.state
+            },
+            after: {
+                portal_url: freshData.portal_url || null,
+                agency_email: freshData.agency_email || null,
+                state: freshData.state || caseData.state
+            }
+        });
+
+    } catch (error) {
+        console.error('Resync case error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;
