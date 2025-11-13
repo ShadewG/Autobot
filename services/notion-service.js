@@ -40,6 +40,8 @@ class NotionService {
         this.pagePropertyCache = new Map();
         this.liveStatusProperty = process.env.NOTION_LIVE_STATUS_PROPERTY || 'Live Status';
         this.legacyStatusProperty = process.env.NOTION_STATUS_PROPERTY || 'Status';
+        this.statusAutoProperty = process.env.NOTION_STATUS_AUTO_PROPERTY || 'Status Auto';
+        this.statusAutoValue = process.env.NOTION_STATUS_AUTO_VALUE || 'Auto';
         this.databaseSchema = null;
         this.databaseSchemaFetchedAt = 0;
         this.enableAINormalization = process.env.ENABLE_NOTION_AI_NORMALIZATION !== 'false';
@@ -103,29 +105,54 @@ class NotionService {
             console.log(`Property options:`, JSON.stringify(statusPropertyInfo[statusPropertyInfo.type]?.options, null, 2));
             console.log(`=========================\n`);
 
-            const response = await this.notion.databases.query({
-                database_id: this.databaseId,
-                filter: {
-                    and: [
-                        {
-                            property: statusPropertyName,
-                            [filterKey]: {
-                                is_not_empty: true
-                            }
-                        },
-                        {
-                            property: statusPropertyName,
-                            [filterKey]: {
-                                equals: normalizedStatusValue
-                            }
-                        }
-                    ]
+            const filters = [
+                {
+                    property: statusPropertyName,
+                    [filterKey]: {
+                        equals: normalizedStatusValue
+                    }
                 }
-            });
+            ];
+
+            // Only include records explicitly marked as auto if the property exists
+            const statusAutoPropertyInfo = this.statusAutoProperty
+                ? await this.getDatabasePropertyInfo(this.statusAutoProperty)
+                : null;
+
+            if (statusAutoPropertyInfo) {
+                const normalizedAutoValue = ['status', 'select'].includes(statusAutoPropertyInfo.type)
+                    ? this.normalizeStatusValue(this.statusAutoValue, statusAutoPropertyInfo)
+                    : this.statusAutoValue;
+                const autoFilter = this.buildPropertyEqualsFilter(
+                    this.statusAutoProperty,
+                    statusAutoPropertyInfo,
+                    normalizedAutoValue
+                );
+                if (autoFilter) {
+                    filters.push(autoFilter);
+                }
+            }
+
+            const response = [];
+            let hasMore = true;
+            let cursor = undefined;
+
+            while (hasMore) {
+                const query = await this.notion.databases.query({
+                    database_id: this.databaseId,
+                    filter: filters.length === 1 ? filters[0] : { and: filters },
+                    start_cursor: cursor,
+                    page_size: 100
+                });
+
+                response.push(...query.results);
+                hasMore = query.has_more;
+                cursor = query.next_cursor;
+            }
 
             // Parse pages and enrich with police department data
             const cases = [];
-            for (const page of response.results) {
+            for (const page of response) {
                 let caseData = this.parseNotionPage(page);
                 const fullPageText = await this.getFullPagePlainText(page.id);
                 if (fullPageText) {
@@ -1117,6 +1144,54 @@ Respond with JSON:
     async getDatabasePropertyInfo(propertyName) {
         const properties = await this.getDatabaseSchemaProperties();
         return properties?.[propertyName] || null;
+    }
+
+    buildPropertyEqualsFilter(propertyName, propertyInfo, value) {
+        if (!propertyName || !propertyInfo || value === undefined || value === null) {
+            return null;
+        }
+
+        const type = propertyInfo.type;
+        switch (type) {
+            case 'status':
+            case 'select':
+                return {
+                    property: propertyName,
+                    [type]: {
+                        equals: value
+                    }
+                };
+            case 'multi_select':
+                return {
+                    property: propertyName,
+                    multi_select: {
+                        contains: value
+                    }
+                };
+            case 'checkbox':
+                return {
+                    property: propertyName,
+                    checkbox: {
+                        equals: value === true || value === 'true'
+                    }
+                };
+            case 'rich_text':
+                return {
+                    property: propertyName,
+                    rich_text: {
+                        contains: value
+                    }
+                };
+            case 'title':
+                return {
+                    property: propertyName,
+                    title: {
+                        contains: value
+                    }
+                };
+            default:
+                return null;
+        }
     }
 
     normalizeStatusValue(value, propertyInfo) {
