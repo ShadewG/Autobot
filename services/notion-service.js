@@ -79,7 +79,7 @@ class NotionService {
     /**
      * Fetch cases from Notion database with a specific status
      */
-    async fetchCasesWithStatus(status = 'Ready to Send') {
+    async fetchCasesWithStatus(status = 'Ready To Send') {
         try {
             const resolvedLiveStatus = await this.resolvePropertyName(this.liveStatusProperty);
             let statusPropertyName = resolvedLiveStatus;
@@ -937,7 +937,7 @@ Respond with JSON:
     /**
      * Sync cases from Notion to our database
      */
-    async syncCasesFromNotion(status = 'Ready to Send') {
+    async syncCasesFromNotion(status = 'Ready To Send') {
         try {
             console.log(`Syncing cases with status: ${status}`);
             const notionCases = await this.fetchCasesWithStatus(status);

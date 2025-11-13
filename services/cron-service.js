@@ -20,7 +20,7 @@ class CronService {
         this.jobs.notionSync = new CronJob('*/15 * * * *', async () => {
             try {
                 console.log('Running Notion sync...');
-                const cases = await notionService.syncCasesFromNotion('Ready to Send');
+                const cases = await notionService.syncCasesFromNotion('Ready To Send');
 
                 // Auto-process new cases if enabled
                 if (cases.length > 0) {
