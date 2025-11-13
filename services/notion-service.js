@@ -38,6 +38,7 @@ class NotionService {
         this.notion = new Client({ auth: process.env.NOTION_API_KEY });
         this.databaseId = process.env.NOTION_CASES_DATABASE_ID;
         this.pagePropertyCache = new Map();
+        this.resolvedPropertyCache = new Map();
         this.liveStatusProperty = process.env.NOTION_LIVE_STATUS_PROPERTY || 'Live Status';
         this.legacyStatusProperty = process.env.NOTION_STATUS_PROPERTY || 'Status';
         this.statusAutoProperty = process.env.NOTION_STATUS_AUTO_PROPERTY || 'Status Auto';
@@ -80,12 +81,13 @@ class NotionService {
      */
     async fetchCasesWithStatus(status = 'Ready to Send') {
         try {
-            let statusPropertyName = this.liveStatusProperty;
+            const resolvedLiveStatus = await this.resolvePropertyName(this.liveStatusProperty);
+            let statusPropertyName = resolvedLiveStatus;
             let statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
 
             if (!statusPropertyInfo) {
                 console.warn(`Live status property "${this.liveStatusProperty}" not found; falling back to legacy property "${this.legacyStatusProperty}"`);
-                statusPropertyName = this.legacyStatusProperty;
+                statusPropertyName = await this.resolvePropertyName(this.legacyStatusProperty);
                 statusPropertyInfo = await this.getDatabasePropertyInfo(statusPropertyName);
             }
 
@@ -109,14 +111,23 @@ class NotionService {
                 {
                     property: statusPropertyName,
                     [filterKey]: {
+                        is_not_empty: true
+                    }
+                },
+                {
+                    property: statusPropertyName,
+                    [filterKey]: {
                         equals: normalizedStatusValue
                     }
                 }
             ];
 
             // Only include records explicitly marked as auto if the property exists
-            const statusAutoPropertyInfo = this.statusAutoProperty
-                ? await this.getDatabasePropertyInfo(this.statusAutoProperty)
+            const resolvedAutoProperty = this.statusAutoProperty
+                ? await this.resolvePropertyName(this.statusAutoProperty)
+                : null;
+            const statusAutoPropertyInfo = resolvedAutoProperty
+                ? await this.getDatabasePropertyInfo(resolvedAutoProperty)
                 : null;
 
             if (statusAutoPropertyInfo) {
@@ -124,7 +135,7 @@ class NotionService {
                     ? this.normalizeStatusValue(this.statusAutoValue, statusAutoPropertyInfo)
                     : this.statusAutoValue;
                 const autoFilter = this.buildPropertyEqualsFilter(
-                    this.statusAutoProperty,
+                    resolvedAutoProperty,
                     statusAutoPropertyInfo,
                     normalizedAutoValue
                 );
@@ -239,6 +250,10 @@ class NotionService {
         const policeDeptRelation = props['Police Department'];
         const policeDeptId = policeDeptRelation?.relation?.[0]?.id || null;
 
+        const statusValue =
+            this.getPropertyWithFallback(props, this.liveStatusProperty, 'status') ||
+            this.getPropertyWithFallback(props, this.legacyStatusProperty, 'select');
+
         return {
             notion_page_id: page.id,
             case_name: caseName,
@@ -269,10 +284,7 @@ class NotionService {
             additional_details: this.getProperty(props, 'Case Summary', 'rich_text') ||
                               this.getProperty(props, 'Notes', 'rich_text') ||
                               '',
-            status: this.mapNotionStatusToInternal(
-                this.getProperty(props, this.liveStatusProperty, 'select') ||
-                this.getProperty(props, this.legacyStatusProperty, 'select')
-            ),
+            status: this.mapNotionStatusToInternal(statusValue),
             // Add portal URL for reference
             portal_url: portalUrl
         };
@@ -1427,6 +1439,52 @@ Respond with JSON:
         }
 
         return updated;
+    }
+
+    getPropertyWithFallback(properties, preferredName, type) {
+        if (!properties || !preferredName) {
+            return this.getProperty(properties || {}, preferredName, type);
+        }
+        const direct = this.getProperty(properties, preferredName, type);
+        if (direct) {
+            return direct;
+        }
+        const match = Object.keys(properties).find(
+            (key) => key.toLowerCase() === preferredName.toLowerCase()
+        );
+        if (match && match !== preferredName) {
+            return this.getProperty(properties, match, type);
+        }
+        return direct;
+    }
+
+    async resolvePropertyName(preferredName) {
+        if (!preferredName) return preferredName;
+        const cacheKey = preferredName.toLowerCase();
+        if (this.resolvedPropertyCache.has(cacheKey)) {
+            return this.resolvedPropertyCache.get(cacheKey);
+        }
+
+        const properties = await this.getDatabaseSchemaProperties();
+        if (!properties) {
+            return preferredName;
+        }
+
+        if (properties[preferredName]) {
+            this.resolvedPropertyCache.set(cacheKey, preferredName);
+            return preferredName;
+        }
+
+        const match = Object.keys(properties).find(
+            (key) => key.toLowerCase() === preferredName.toLowerCase()
+        );
+
+        const resolved = match || preferredName;
+        this.resolvedPropertyCache.set(cacheKey, resolved);
+        if (match) {
+            console.log(`Resolved Notion property "${preferredName}" -> "${match}"`);
+        }
+        return resolved;
     }
 }
 
