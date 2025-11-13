@@ -215,9 +215,9 @@ class PortalAgentServiceSkyvern {
             throw new Error('No task ID returned from API');
         }
 
-        console.log(`\n⏳ Polling for task completion (max 10 minutes)...`);
+        console.log(`\n⏳ Polling for task completion (max 40 minutes)...`);
 
-        const maxPolls = 120;
+        const maxPolls = 480; // 480 polls * 5 seconds = 40 minutes
         let polls = 0;
         let finalTask = null;
 
