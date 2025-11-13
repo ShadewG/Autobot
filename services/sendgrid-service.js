@@ -670,8 +670,38 @@ class SendGridService {
         return text.substring(start, end).trim();
     }
 
+    sanitizeAgencyText(text = '') {
+        if (!text) return '';
+        let sanitized = text.replace(/\r/g, '');
+        const markers = [
+            '\nFrom:',
+            '\nFROM:',
+            '\nOn ',
+            '\nSent:',
+            '\n-----Original Message-----',
+            '-----Original Message-----'
+        ];
+        let cutIndex = sanitized.length;
+        for (const marker of markers) {
+            const idx = sanitized.indexOf(marker);
+            if (idx !== -1 && idx < cutIndex) {
+                cutIndex = idx;
+            }
+        }
+        sanitized = sanitized.substring(0, cutIndex).trim();
+        if (!sanitized) {
+            sanitized = text.trim();
+        }
+        const filteredLines = sanitized
+            .split('\n')
+            .map(line => line.trimEnd())
+            .filter(line => line && !line.trim().startsWith('>'));
+        return filteredLines.join('\n').trim();
+    }
+
     detectFeeQuote({ subject = '', text = '' }) {
-        const haystack = `${subject}\n${text}`.toLowerCase();
+        const cleanedText = this.sanitizeAgencyText(text);
+        const haystack = `${subject}\n${cleanedText}`.toLowerCase();
         if (!/fee|cost|estimate|invoice|payment|charge/.test(haystack)) {
             return null;
         }
@@ -680,7 +710,7 @@ class SendGridService {
         let match;
         let highest = 0;
 
-        while ((match = currencyRegex.exec(subject + ' ' + text)) !== null) {
+        while ((match = currencyRegex.exec(subject + ' ' + cleanedText)) !== null) {
             const amount = parseFloat(match[1].replace(/,/g, ''));
             if (!isNaN(amount) && amount > highest) {
                 highest = amount;

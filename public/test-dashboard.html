@@ -13,9 +13,18 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: radial-gradient(circle at top, rgba(56,189,248,0.15) 0%, rgba(8,47,73,0.4) 35%, #020617 80%);
+            color: #e2e8f0;
             min-height: 100vh;
-            padding: 20px;
+            padding: 24px;
+        }
+
+        a {
+            color: #38bdf8;
+        }
+
+        a:hover {
+            color: #7dd3fc;
         }
 
         .container {
@@ -24,30 +33,31 @@
         }
 
         .header {
-            background: white;
+            background: #0f172a;
             border-radius: 12px;
             padding: 30px;
             margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.6);
         }
 
         .header h1 {
-            color: #1a202c;
+            color: #f8fafc;
             font-size: 32px;
             margin-bottom: 10px;
         }
 
         .header .subtitle {
-            color: #718096;
+            color: #94a3b8;
             font-size: 16px;
         }
 
         .status-bar {
-            background: white;
+            background: #0f172a;
             border-radius: 12px;
             padding: 20px;
             margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid rgba(148, 163, 184, 0.2);
             display: flex;
             gap: 20px;
             flex-wrap: wrap;
@@ -58,20 +68,23 @@
             min-width: 200px;
             padding: 15px;
             border-radius: 8px;
-            background: #f7fafc;
+            background: rgba(15, 118, 110, 0.1);
+            border: 1px solid rgba(15, 118, 110, 0.3);
         }
 
         .status-item.active {
-            background: #c6f6d5;
+            background: rgba(34, 197, 94, 0.15);
+            border-color: rgba(34, 197, 94, 0.5);
         }
 
         .status-item.inactive {
-            background: #fed7d7;
+            background: rgba(248, 113, 113, 0.15);
+            border-color: rgba(248, 113, 113, 0.4);
         }
 
         .status-label {
             font-size: 12px;
-            color: #718096;
+            color: #94a3b8;
             text-transform: uppercase;
             font-weight: 600;
             margin-bottom: 5px;
@@ -80,7 +93,7 @@
         .status-value {
             font-size: 24px;
             font-weight: bold;
-            color: #1a202c;
+            color: #f8fafc;
         }
 
         .grid {
@@ -91,14 +104,15 @@
         }
 
         .card {
-            background: white;
+            background: #0b1220;
             border-radius: 12px;
             padding: 25px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            box-shadow: 0 20px 45px -20px rgba(15, 23, 42, 0.8);
         }
 
         .card h2 {
-            color: #1a202c;
+            color: #f1f5f9;
             font-size: 20px;
             margin-bottom: 15px;
             display: flex;
@@ -110,7 +124,7 @@
             content: '';
             width: 4px;
             height: 20px;
-            background: #667eea;
+            background: linear-gradient(180deg, #38bdf8, #6366f1);
             border-radius: 2px;
         }
 
@@ -132,11 +146,14 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
+            background: #1e293b;
+            color: #e2e8f0;
+            border: 1px solid rgba(148, 163, 184, 0.2);
         }
 
         button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.45);
         }
 
         button:active {
@@ -144,32 +161,32 @@
         }
 
         .btn-primary {
-            background: #667eea;
+            background: #2563eb;
             color: white;
         }
 
         .btn-success {
-            background: #48bb78;
+            background: #16a34a;
             color: white;
         }
 
         .btn-danger {
-            background: #f56565;
+            background: #dc2626;
             color: white;
         }
 
         .btn-warning {
-            background: #ed8936;
+            background: #d97706;
             color: white;
         }
 
         .btn-info {
-            background: #4299e1;
+            background: #0ea5e9;
             color: white;
         }
 
         .btn-secondary {
-            background: #718096;
+            background: #475569;
             color: white;
         }
 
@@ -179,7 +196,7 @@
         }
 
         .output-box {
-            background: #1a202c;
+            background: #020617;
             color: #e2e8f0;
             border-radius: 8px;
             padding: 15px;
@@ -194,27 +211,27 @@
 
         .output-box:empty::before {
             content: 'No output yet...';
-            color: #718096;
+            color: #475569;
         }
 
         .log-entry {
             margin-bottom: 8px;
-            padding: 8px;
-            border-left: 3px solid #667eea;
-            background: #2d3748;
-            border-radius: 4px;
+            padding: 10px 12px;
+            border-left: 3px solid #38bdf8;
+            background: #0b1220;
+            border-radius: 6px;
         }
 
         .log-entry.success {
-            border-left-color: #48bb78;
+            border-left-color: #22c55e;
         }
 
         .log-entry.error {
-            border-left-color: #f56565;
+            border-left-color: #f87171;
         }
 
         .log-entry.warning {
-            border-left-color: #ed8936;
+            border-left-color: #fbbf24;
         }
 
         .timestamp {
@@ -233,23 +250,23 @@
         }
 
         .badge.success {
-            background: #c6f6d5;
-            color: #22543d;
+            background: rgba(34, 197, 94, 0.15);
+            color: #bbf7d0;
         }
 
         .badge.danger {
-            background: #fed7d7;
-            color: #742a2a;
+            background: rgba(248, 113, 113, 0.15);
+            color: #fecdd3;
         }
 
         .badge.warning {
-            background: #feebc8;
-            color: #7c2d12;
+            background: rgba(251, 191, 36, 0.15);
+            color: #fde68a;
         }
 
         .badge.info {
-            background: #bee3f8;
-            color: #2c5282;
+            background: rgba(14, 165, 233, 0.15);
+            color: #bae6fd;
         }
 
         .activity-log-list {
@@ -261,22 +278,22 @@
         }
 
         .activity-log-entry {
-            padding: 10px 12px;
-            border-radius: 8px;
-            background: #f7fafc;
-            border-left: 4px solid #667eea;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #0f172a;
+            border-left: 4px solid #38bdf8;
         }
 
         .activity-log-entry h4 {
             margin: 0 0 4px 0;
             font-size: 14px;
-            color: #1a202c;
+            color: #f8fafc;
         }
 
         .activity-log-entry p {
             margin: 0;
             font-size: 13px;
-            color: #2d3748;
+            color: #cbd5f5;
         }
 
         .loading {
@@ -300,24 +317,24 @@
         }
 
         .table th {
-            background: #f7fafc;
+            background: #111c2f;
             padding: 12px;
             text-align: left;
             font-size: 12px;
-            color: #718096;
+            color: #cbd5f5;
             font-weight: 600;
-            border-bottom: 2px solid #e2e8f0;
+            border-bottom: 2px solid rgba(148, 163, 184, 0.3);
         }
 
         .table td {
             padding: 12px;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.2);
             font-size: 14px;
-            color: #2d3748;
+            color: #e2e8f0;
         }
 
         .table tr:hover {
-            background: #f7fafc;
+            background: rgba(59, 130, 246, 0.08);
         }
 
         .full-width {
@@ -340,32 +357,39 @@
             flex: 1;
             min-width: 220px;
             padding: 10px;
-            border: 2px solid #e2e8f0;
+            border: 2px solid rgba(148, 163, 184, 0.3);
             border-radius: 8px;
             font-size: 14px;
-            background: white;
+            background: #0f172a;
+            color: #f8fafc;
         }
 
         .case-search-input:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #38bdf8;
         }
 
         .case-monitor-meta {
             font-size: 12px;
-            color: #718096;
+            color: #94a3b8;
             margin-left: auto;
         }
 
         .case-title {
             font-weight: 600;
-            color: #1a202c;
+            color: #f8fafc;
         }
 
         .case-meta {
             font-size: 12px;
-            color: #718096;
+            color: #94a3b8;
             margin-top: 4px;
+        }
+
+        .case-preview {
+            margin-top: 6px;
+            color: #cbd5f5;
+            font-size: 13px;
         }
 
         .portal-section-heading {
@@ -572,25 +596,25 @@
         }
 
         .message-direction.inbound {
-            background: #c6f6d5;
-            color: #22543d;
+            background: rgba(34, 197, 94, 0.2);
+            color: #bbf7d0;
         }
 
         .message-direction.outbound {
-            background: #bee3f8;
-            color: #2c5282;
+            background: rgba(14, 165, 233, 0.2);
+            color: #bae6fd;
         }
 
         .message-direction.neutral {
-            background: #edf2f7;
-            color: #4a5568;
+            background: rgba(148, 163, 184, 0.2);
+            color: #e2e8f0;
         }
 
         .table-btn {
             padding: 8px 14px;
             border-radius: 6px;
             border: none;
-            background: #667eea;
+            background: #2563eb;
             color: white;
             font-size: 13px;
             cursor: pointer;
@@ -686,19 +710,21 @@
             font-size: 12px;
             font-weight: 600;
             text-transform: uppercase;
-            color: #4a5568;
+            color: #94a3b8;
         }
 
         .form-field input {
             padding: 10px;
-            border: 2px solid #e2e8f0;
+            border: 2px solid rgba(148, 163, 184, 0.35);
             border-radius: 8px;
             font-size: 14px;
+            background: #0f172a;
+            color: #f8fafc;
         }
 
         .form-field input:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #38bdf8;
         }
 
         .inline-checkbox {
@@ -706,19 +732,35 @@
             align-items: center;
             gap: 8px;
             font-size: 13px;
-            color: #4a5568;
+            color: #cbd5f5;
         }
 
         .inline-checkbox input {
             width: auto;
         }
 
-        .dry-run-input {
+        .utility-actions {
+            margin-top: 30px;
+            padding: 16px;
+            border-radius: 12px;
+            background: #0b1220;
+            border: 1px solid rgba(148,163,184,0.2);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            justify-content: flex-end;
+        }
+
+        .utility-actions button {
+            padding: 10px 16px;
+            font-size: 13px;
+        }
+
+        .utility-result {
             width: 100%;
-            padding: 10px;
-            border-radius: 8px;
-            border: 2px solid #e2e8f0;
-            font-size: 14px;
+            font-size: 13px;
+            color: #cbd5f5;
         }
     </style>
 </head>
@@ -752,80 +794,11 @@
 
         <!-- Grid Layout -->
         <div class="grid">
-            <!-- Test Scenarios -->
-            <div class="card">
-                <h2>📧 Send Test Emails</h2>
-                <div class="button-group">
-                    <button class="btn-primary" onclick="sendTestEmail()">
-                        <span class="emoji">📤</span> Send Test Email
-                    </button>
-                    <p style="color: #718096; font-size: 12px; margin-top: 10px;">
-                        Creates a new test case and sends email to overlord1pvp@gmail.com
-                    </p>
-                </div>
-            </div>
+            
 
-            <!-- Dry Run Portal -->
-            <div class="card">
-                <h2>🧪 Dry Run Portal</h2>
-                <div class="form-field">
-                    <label for="dry-run-portal-input">Portal URL</label>
-                    <input id="dry-run-portal-input" type="url" class="dry-run-input" placeholder="https://example.govqa.us/..." />
-                </div>
-                <div class="button-group">
-                    <button class="btn-secondary" onclick="runDryRunPortal(event)">
-                        <span class="emoji">🧪</span> Run Dry Portal Test
-                    </button>
-                    <p style="color:#718096; font-size:12px; margin-top:10px;">
-                        Fills the portal form using test data, stops before final submission, and gives you a link to review the Skyvern replay.
-                    </p>
-                </div>
-                <div id="dry-run-portal-result" class="case-meta" style="margin-top:10px;"></div>
-            </div>
+            
 
-            <!-- Force Notion Sync -->
-            <div class="card">
-                <h2>🔄 Force Notion Sync</h2>
-                <div class="button-group">
-                    <button class="btn-success" onclick="forceNotionSync(event)">
-                        <span class="emoji">🔄</span> Sync & Send All Cases
-                    </button>
-                    <p style="color:#718096; font-size:12px; margin-top:10px;">
-                        Syncs all "Ready to Send" cases from Notion and immediately queues them for sending. Cases missing contact info will be flagged for review.
-                    </p>
-                </div>
-                <div id="force-sync-result" style="margin-top:10px;"></div>
-            </div>
-
-            <!-- Notion Launch -->
-            <div class="card full-width">
-                <h2>🗂️ Launch Outreach From Notion</h2>
-                <div class="form-grid">
-                    <div class="form-field" style="grid-column: span 2;">
-                        <label for="notion-link-input">Notion Page Link or ID</label>
-                        <input id="notion-link-input" type="text" placeholder="https://www.notion.so/... or 6f5c2d90c0b24b3e9f6a..." />
-                    </div>
-                    <div class="form-field">
-                        <label for="notion-email-input">Override Agency Email (optional)</label>
-                        <input id="notion-email-input" type="email" placeholder="agency@example.gov" />
-                    </div>
-                    <div class="form-field">
-                        <label>Send Mode</label>
-                        <div class="inline-checkbox">
-                            <input id="notion-instant-checkbox" type="checkbox" checked />
-                            <span>Instant mode (no delay)</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="button-group">
-                    <button class="btn-success" onclick="processNotionCase(event)">
-                        <span class="emoji">🚀</span> Launch Outreach
-                    </button>
-                    <p style="color: #718096; font-size: 12px;">
-                        Paste any Notion request card link/ID to queue drafting + sending automatically. Finished case will appear in the Live Case Monitor below.
-                    </p>
-                </div>
-            </div>
+            
 
             <div class="card full-width">
                 <h2>💰 Pending Fee Responses</h2>
@@ -904,6 +877,16 @@
                     <p style="color: #718096;">Click "Portal Runs" to load...</p>
                 </div>
             </div>
+
+            <div class="utility-actions">
+                <div class="utility-result" id="force-sync-result"></div>
+                <button class="btn-secondary" onclick="sendTestEmail(event)">
+                    <span class="emoji">📤</span> Send Test Email
+                </button>
+                <button class="btn-info" onclick="forceNotionSync(event)">
+                    <span class="emoji">🔄</span> Sync Ready Cases
+                </button>
+            </div>
         </div>
     </div>
 
@@ -932,7 +915,6 @@
             loadFeeResponses();
             loadHumanReviews();
             setupCaseMonitorControls();
-            setupNotionFormControls();
             loadCaseMonitor();
             scheduleCaseMonitorRefresh();
 
@@ -992,20 +974,6 @@
             }
         }
 
-        function setupNotionFormControls() {
-            const notionInput = document.getElementById('notion-link-input');
-            const emailInput = document.getElementById('notion-email-input');
-
-            [notionInput, emailInput].forEach((input) => {
-                if (!input) return;
-                input.addEventListener('keyup', (event) => {
-                    if (event.key === 'Enter') {
-                        processNotionCase(event);
-                    }
-                });
-            });
-        }
-
         function scheduleCaseMonitorRefresh() {
             if (caseMonitorTimer) {
                 clearInterval(caseMonitorTimer);
@@ -1035,40 +1003,6 @@
             const date = new Date(value);
             if (Number.isNaN(date.getTime())) return '—';
             return date.toLocaleString();
-        }
-
-        function extractNotionPageId(input) {
-            if (!input) return null;
-            const trimmed = input.trim();
-            if (!trimmed) return null;
-
-            const hyphenated = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
-            if (hyphenated) {
-                return hyphenated[0].replace(/-/g, '').toLowerCase();
-            }
-
-            const plain = trimmed.match(/[0-9a-f]{32}/i);
-            if (plain) {
-                return plain[0].toLowerCase();
-            }
-
-            const queryIndex = trimmed.indexOf('?');
-            if (queryIndex !== -1) {
-                try {
-                    const search = new URLSearchParams(trimmed.substring(queryIndex + 1));
-                    const paramId = search.get('p') || search.get('pageId');
-                    if (paramId) {
-                        const cleaned = paramId.replace(/-/g, '');
-                        if (/^[0-9a-f]{32}$/i.test(cleaned)) {
-                            return cleaned.toLowerCase();
-                        }
-                    }
-                } catch {
-                    // ignore malformed query params
-                }
-            }
-
-            return null;
         }
 
         function escapeHtml(str = '') {
@@ -1272,58 +1206,6 @@
             const dir = direction === 'inbound' ? 'inbound' : direction === 'outbound' ? 'outbound' : 'neutral';
             const label = direction.charAt(0).toUpperCase() + direction.slice(1);
             return `<span class="message-direction ${dir}">${label}</span>`;
-        }
-
-        async function processNotionCase(clickEvent) {
-            const notionInput = document.getElementById('notion-link-input');
-            const emailInput = document.getElementById('notion-email-input');
-            const instantCheckbox = document.getElementById('notion-instant-checkbox');
-
-            if (!notionInput || !notionInput.value.trim()) {
-                log('❌ Please paste a Notion link or ID first.', 'error');
-                return;
-            }
-
-            const pageId = extractNotionPageId(notionInput.value);
-            if (!pageId) {
-                log('❌ Could not parse a Notion page ID from that input.', 'error');
-                return;
-            }
-
-            const payload = {
-                notion_page_id: pageId,
-                instant_mode: instantCheckbox ? instantCheckbox.checked : true
-            };
-
-            if (emailInput && emailInput.value.trim()) {
-                payload.test_email = emailInput.value.trim();
-            }
-
-            const btn = clickEvent?.target?.closest('button');
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="loading"></span> Launching...';
-            }
-
-            log(`🚀 Launching outreach for Notion page ${pageId}...`);
-
-            try {
-                const result = await apiCall('/test/process-notion', 'POST', payload);
-                if (result.success) {
-                    log(`✅ Case ${result.case_id} queued (instant mode: ${result.instant_mode})`, 'success');
-                    await refreshStats();
-                    await loadCaseMonitor({ manual: true });
-                } else {
-                    log(`❌ Failed to queue case: ${result.error}`, 'error');
-                }
-            } catch (error) {
-                log(`❌ Error launching outreach: ${error.message}`, 'error');
-            } finally {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = '<span class="emoji">🚀</span> Launch Outreach';
-                }
-            }
         }
 
         async function loadCaseMonitor(options = {}) {
@@ -1531,8 +1413,9 @@
         }
 
         // Send Test Email
-        async function sendTestEmail() {
-            const btn = event.target.closest('button');
+        async function sendTestEmail(evt) {
+            const btn = evt?.target?.closest('button');
+            if (!btn) return;
             btn.disabled = true;
             btn.innerHTML = '<span class="loading"></span> Sending...';
 
@@ -1558,64 +1441,10 @@
             }
         }
 
-        async function runDryRunPortal(event) {
-            const input = document.getElementById('dry-run-portal-input');
-            const resultBox = document.getElementById('dry-run-portal-result');
-            const btn = event.target.closest('button');
-
-            if (!input || !input.value.trim()) {
-                log('⚠️ Please enter a portal URL to dry run.', 'warning');
-                return;
-            }
-
-            btn.disabled = true;
-            const originalHtml = btn.innerHTML;
-            btn.innerHTML = '<span class="loading"></span> Running...';
-            resultBox.textContent = 'Dry run in progress...';
-
-            try {
-                const portalUrl = input.value.trim();
-                const payload = {
-                    portal_url: portalUrl,
-                    dry_run: true
-                };
-                const result = await apiCall('/test/portal-agent', 'POST', payload);
-
-                if (result.success === false && !result.taskId) {
-                    resultBox.innerHTML = `<span style="color:#e53e3e;">Failed to run: ${escapeHtml(result.error || 'Unknown error')}</span>`;
-                    log(`❌ Dry run failed: ${result.error || 'Unknown error'}`, 'error');
-                    return;
-                }
-
-                const lines = [];
-                lines.push(`Status: ${escapeHtml(result.status || (result.success ? 'completed' : 'stopped'))}`);
-                if (result.portalUrl) {
-                    lines.push(`Portal: <a href="${result.portalUrl}" target="_blank" rel="noopener">${escapeHtml(result.portalUrl)}</a>`);
-                }
-                if (result.taskId) {
-                    const taskLink = `https://app.skyvern.com/tasks/${result.taskId}`;
-                    lines.push(`Skyvern Task: <a href="${taskLink}" target="_blank" rel="noopener">${taskLink}</a>`);
-                }
-                if (result.recording_url) {
-                    lines.push(`Replay: <a href="${result.recording_url}" target="_blank" rel="noopener">${result.recording_url}</a>`);
-                }
-                lines.push(`Steps Completed: ${result.steps || 0}`);
-                lines.push(`Dry Run: ${result.dryRun === false ? 'No' : 'Yes'}`);
-
-                resultBox.innerHTML = lines.map(line => `<div>${line}</div>`).join('');
-                log('✅ Portal dry run finished. Check the links for the full walkthrough.', 'success');
-            } catch (error) {
-                resultBox.innerHTML = `<span style="color:#e53e3e;">${escapeHtml(error.message)}</span>`;
-                log(`❌ Dry run error: ${error.message}`, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
-            }
-        }
-
         // Force Notion Sync
-        async function forceNotionSync(event) {
-            const btn = event.target.closest('button');
+        async function forceNotionSync(evt) {
+            const btn = evt?.target?.closest('button');
+            if (!btn) return;
             const resultBox = document.getElementById('force-sync-result');
 
             if (!confirm('Sync all "Ready to Send" cases from Notion and queue them for sending?')) {
