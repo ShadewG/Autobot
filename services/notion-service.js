@@ -106,10 +106,20 @@ class NotionService {
             const response = await this.notion.databases.query({
                 database_id: this.databaseId,
                 filter: {
-                    property: statusPropertyName,
-                    [filterKey]: {
-                        equals: normalizedStatusValue
-                    }
+                    and: [
+                        {
+                            property: statusPropertyName,
+                            [filterKey]: {
+                                is_not_empty: true
+                            }
+                        },
+                        {
+                            property: statusPropertyName,
+                            [filterKey]: {
+                                equals: normalizedStatusValue
+                            }
+                        }
+                    ]
                 }
             });
 
