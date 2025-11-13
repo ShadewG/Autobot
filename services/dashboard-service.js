@@ -131,6 +131,8 @@ class DashboardService {
                 al.event_type,
                 al.description,
                 al.created_at,
+                al.case_id,
+                al.metadata,
                 c.case_name,
                 c.agency_name,
                 m.direction,

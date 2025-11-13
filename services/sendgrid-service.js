@@ -707,12 +707,27 @@ class SendGridService {
             recommendedAction = 'escalate';
         }
 
-        const updatedCase = await db.updateCaseStatus(caseData.id, 'needs_human_fee_approval', {
+        let updatedCase;
+        const statusFields = {
             substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
             last_fee_quote_amount: amount,
             last_fee_quote_currency: feeQuote.currency,
             last_fee_quote_at: new Date()
-        });
+        };
+
+        try {
+            updatedCase = await db.updateCaseStatus(caseData.id, 'needs_human_fee_approval', statusFields);
+        } catch (error) {
+            if (error.code === '42703' && error.message.includes('last_fee_quote')) {
+                console.warn('Fee columns missing in database; storing status without fee metadata.');
+                const fallbackFields = {
+                    substatus: statusFields.substatus
+                };
+                updatedCase = await db.updateCaseStatus(caseData.id, 'needs_human_fee_approval', fallbackFields);
+            } else {
+                throw error;
+            }
+        }
 
         await notionService.syncStatusToNotion(caseData.id);
 

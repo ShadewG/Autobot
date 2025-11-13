@@ -4,6 +4,21 @@ const aiService = require('./ai-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 
+const STATE_ABBREVIATIONS = {
+    'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
+    'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE', 'district of columbia': 'DC',
+    'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID', 'illinois': 'IL',
+    'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS', 'kentucky': 'KY', 'louisiana': 'LA',
+    'maine': 'ME', 'maryland': 'MD', 'massachusetts': 'MA', 'michigan': 'MI',
+    'minnesota': 'MN', 'mississippi': 'MS', 'missouri': 'MO', 'montana': 'MT',
+    'nebraska': 'NE', 'nevada': 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+    'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND',
+    'ohio': 'OH', 'oklahoma': 'OK', 'oregon': 'OR', 'pennsylvania': 'PA',
+    'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', 'tennessee': 'TN',
+    'texas': 'TX', 'utah': 'UT', 'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA',
+    'west virginia': 'WV', 'wisconsin': 'WI', 'wyoming': 'WY'
+};
+
 const NOTION_STATUS_MAP = {
     'ready_to_send': 'Ready to Send',
     'sent': 'Sent',
@@ -127,6 +142,7 @@ class NotionService {
                     }
                 }
                 const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
+                enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
                 cases.push(enrichedCase);
             }
 
@@ -156,7 +172,9 @@ class NotionService {
                 const pageContent = await this.getFullPagePlainText(page.id);
                 enrichedCase.state = await this.extractStateWithAI(enrichedCase, pageContent);
             }
+            enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
 
+            enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
             return enrichedCase;
         } catch (error) {
             console.error(`Error fetching Notion page ${pageId}:`, error);
@@ -245,42 +263,27 @@ class NotionService {
 
             const deptProps = deptPage.properties;
 
-            // Export ALL fields from Police Department database for AI analysis
+            // AI normalization for police department page
+            let normalizedPD = null;
+            if (this.enableAINormalization) {
+                const deptText = await this.getFullPagePlainText(caseData.police_dept_id);
+                normalizedPD = await aiService.normalizeNotionCase({
+                    properties: this.preparePropertiesForAI(deptProps),
+                    full_text: deptText
+                });
+            }
+
+            this.applyNormalizedPDData(caseData, normalizedPD);
+
+            // Fallback contact extraction for any remaining gaps
             const allFieldsData = {};
             Object.entries(deptProps).forEach(([fieldName, prop]) => {
-                let value = null;
-                switch (prop.type) {
-                    case 'title':
-                        value = prop.title?.map(t => t.plain_text).join('') || null;
-                        break;
-                    case 'rich_text':
-                        value = prop.rich_text?.map(t => t.plain_text).join(' ').trim() || null;
-                        break;
-                    case 'email':
-                        value = prop.email || null;
-                        break;
-                    case 'url':
-                        value = prop.url || null;
-                        break;
-                    case 'select':
-                        value = prop.select?.name || null;
-                        break;
-                    case 'multi_select':
-                        value = prop.multi_select?.map(s => s.name).join(', ') || null;
-                        break;
-                    case 'number':
-                        value = prop.number?.toString() || null;
-                        break;
-                    case 'phone_number':
-                        value = prop.phone_number || null;
-                        break;
-                }
-                if (value) {
-                    allFieldsData[fieldName] = value;
+                const val = this.extractPlainValue(prop);
+                if (val) {
+                    allFieldsData[fieldName] = val;
                 }
             });
 
-            // Use GPT-5 to intelligently extract and prioritize contact info
             const { emailCandidate, portalCandidate } = await this.extractContactsWithAI(allFieldsData, caseData);
 
             // NO FALLBACK - return null if not found
@@ -337,6 +340,25 @@ class NotionService {
             }
         } catch (error) {
             console.warn('Failed to apply fallback contacts from page:', error.message);
+        }
+    }
+
+    applyNormalizedPDData(caseData, normalized) {
+        if (!normalized) return;
+        if (normalized.contact_emails?.length) {
+            caseData.agency_email = normalized.contact_emails[0];
+            if (normalized.contact_emails[1]) {
+                caseData.alternate_agency_email = normalized.contact_emails[1];
+            }
+        }
+        if (!caseData.portal_url && normalized.portal_urls?.length) {
+            const portal = normalized.portal_urls.map(normalizePortalUrl).find(u => u && isSupportedPortalUrl(u));
+            if (portal) {
+                caseData.portal_url = portal;
+            }
+        }
+        if (normalized.agency_name && (!caseData.agency_name || caseData.agency_name === 'Police Department')) {
+            caseData.agency_name = normalized.agency_name;
         }
     }
 
@@ -1127,6 +1149,30 @@ Respond with JSON:
     /**
      * Fetch and process a single Notion page by ID
      */
+    normalizeStateCode(value) {
+        if (!value) return null;
+        const trimmed = value.trim();
+        if (!trimmed) return null;
+
+        const upper = trimmed.toUpperCase();
+        if (/^[A-Z]{2}$/.test(upper)) {
+            return upper;
+        }
+
+        const cleaned = trimmed.toLowerCase().replace(/\./g, ).replace(/state|commonwealth/g, ).trim();
+        if (STATE_ABBREVIATIONS[cleaned]) {
+            return STATE_ABBREVIATIONS[cleaned];
+        }
+
+        const match = Object.entries(STATE_ABBREVIATIONS).find(([name]) => cleaned.startsWith(name));
+        if (match) {
+            return match[1];
+        }
+
+        console.warn(`Unable to normalize state value "${value}"; leaving blank to avoid DB errors`);
+        return null;
+    }
+
     async processSinglePage(pageId) {
         try {
             console.log(`Fetching single Notion page: ${pageId}`);
@@ -1189,6 +1235,8 @@ Respond with JSON:
                 console.log(`Case already exists: ${notionCase.case_name}`);
                 return existing;
             }
+
+            notionCase.state = this.normalizeStateCode(notionCase.state);
 
             // Calculate deadline
             const deadline = await this.calculateDeadline(notionCase.state);
@@ -1265,7 +1313,8 @@ Respond with JSON:
 
         assignIfEmpty('case_name', normalized.case_name);
         assignIfEmpty('agency_name', normalized.agency_name);
-        assignIfEmpty('state', normalized.state);
+        const normalizedState = this.normalizeStateCode(normalized.state);
+        assignIfEmpty('state', normalizedState);
         assignIfEmpty('incident_date', normalized.incident_date);
         assignIfEmpty('incident_location', normalized.incident_location);
         assignIfEmpty('subject_name', normalized.subject_name);

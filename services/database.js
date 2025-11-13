@@ -2,6 +2,7 @@ const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
 
 class DatabaseService {
     constructor() {
@@ -351,7 +352,8 @@ class DatabaseService {
                 lm.subject AS last_message_subject,
                 lm.body_text AS last_message_body,
                 lm.received_at AS last_message_received_at,
-                lm.sent_at AS last_message_sent_at
+                lm.sent_at AS last_message_sent_at,
+                portal_events.portal_events
             FROM cases c
             LEFT JOIN LATERAL (
                 SELECT description, created_at
@@ -367,12 +369,23 @@ class DatabaseService {
                 ORDER BY COALESCE(received_at, sent_at, created_at) DESC
                 LIMIT 1
             ) lm ON true
+            LEFT JOIN LATERAL (
+                SELECT json_agg(events ORDER BY events.created_at DESC) AS portal_events
+                FROM (
+                    SELECT event_type, description, created_at, metadata
+                    FROM activity_log
+                    WHERE case_id = c.id
+                      AND event_type = ANY($3::text[])
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                ) events
+            ) portal_events ON true
             WHERE c.status = ANY($1)
             ORDER BY c.updated_at DESC
             LIMIT $2
         `;
 
-        const result = await this.query(query, [reviewStatuses, limit]);
+        const result = await this.query(query, [reviewStatuses, limit, PORTAL_ACTIVITY_EVENTS]);
         return result.rows;
     }
 

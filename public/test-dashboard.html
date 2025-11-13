@@ -368,6 +368,82 @@
             margin-top: 4px;
         }
 
+        .portal-section-heading {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #4a5568;
+            margin-top: 10px;
+        }
+
+        .portal-details {
+            margin-top: 6px;
+            font-size: 12px;
+            color: #2d3748;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px 16px;
+        }
+
+        .portal-details-row {
+            display: flex;
+            flex-direction: column;
+            min-width: 140px;
+        }
+
+        .portal-details-row span.label {
+            font-size: 10px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .portal-details-row span.value {
+            margin-top: 2px;
+        }
+
+        .portal-timeline {
+            margin-top: 8px;
+            padding-left: 12px;
+            border-left: 2px solid #cbd5f5;
+        }
+
+        .portal-timeline-item {
+            margin-bottom: 8px;
+        }
+
+        .portal-timeline-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #1a202c;
+        }
+
+        .portal-timeline-time {
+            font-size: 11px;
+            color: #718096;
+            margin-left: 6px;
+        }
+
+        .portal-timeline-description {
+            font-size: 11px;
+            color: #4a5568;
+            margin-top: 2px;
+        }
+
+        .portal-error {
+            color: #c53030;
+            font-weight: 600;
+        }
+
+        .portal-review-block {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #f7fafc;
+            border: 1px solid #e2e8f0;
+        }
+
         .case-preview {
             margin-top: 6px;
             color: #2d3748;
@@ -987,6 +1063,137 @@
             return `https://${url}`;
         }
 
+        function renderPortalLinks(entity = {}) {
+            const links = [];
+            const portalUrl = normalizePortalUrl(entity.portal_url);
+            if (portalUrl) {
+                const providerLabel = entity.portal_provider ? `${entity.portal_provider} portal` : 'Portal';
+                links.push(`<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener">${escapeHtml(providerLabel)}</a>`);
+            }
+            if (entity.last_portal_details?.portal_ticket_url) {
+                links.push(`<a href="${escapeHtml(entity.last_portal_details.portal_ticket_url)}" target="_blank" rel="noopener">Ticket</a>`);
+            }
+            if (entity.last_portal_task_url) {
+                links.push(`<a href="${escapeHtml(entity.last_portal_task_url)}" target="_blank" rel="noopener">Skyvern Task</a>`);
+            } else if (entity.last_portal_recording_url) {
+                links.push(`<a href="${escapeHtml(entity.last_portal_recording_url)}" target="_blank" rel="noopener">Skyvern Replay</a>`);
+            }
+            return links.length ? `<div class="case-meta portal-links">${links.join(' • ')}</div>` : '';
+        }
+
+        function renderPortalDetails(details, options = {}) {
+            if (!details) return '';
+            const rows = [];
+
+            const addRow = (label, value) => {
+                if (!value && value !== 0) return;
+                rows.push(`
+                    <div class="portal-details-row">
+                        <span class="label">${escapeHtml(label)}</span>
+                        <span class="value">${value}</span>
+                    </div>
+                `);
+            };
+
+            if (details.submission_status) {
+                addRow('Status', escapeHtml(details.submission_status));
+            }
+            if (details.confirmation_number) {
+                addRow('Confirmation #', `<code>${escapeHtml(details.confirmation_number)}</code>`);
+            }
+            if (details.submission_timestamp) {
+                addRow('Submitted', escapeHtml(formatDateTime(details.submission_timestamp)));
+            }
+            if (typeof details.login_success === 'boolean') {
+                addRow('Login', details.login_success ? 'Successful' : 'Failed');
+            }
+            if (details.verification_required) {
+                addRow('Verification', escapeHtml(details.verification_reason || 'Required'));
+            }
+            if (details.request_form_url) {
+                addRow('Request Form', `<a href="${escapeHtml(details.request_form_url)}" target="_blank" rel="noopener">Open form</a>`);
+            }
+            if (details.submission_page_url) {
+                addRow('Submission Page', `<a href="${escapeHtml(details.submission_page_url)}" target="_blank" rel="noopener">Open submission</a>`);
+            }
+            if (rows.length === 0) {
+                return '';
+            }
+
+            const heading = options.heading
+                ? `<div class="portal-section-heading">${escapeHtml(options.heading)}</div>`
+                : '';
+
+            return `${heading}<div class="portal-details">${rows.join('')}</div>`;
+        }
+
+        function normalizePortalMetadata(metadata) {
+            if (!metadata) {
+                return {};
+            }
+            if (typeof metadata === 'object') {
+                return metadata;
+            }
+            try {
+                return JSON.parse(metadata);
+            } catch {
+                return {};
+            }
+        }
+
+        function formatPortalEventLabel(event = {}) {
+            const type = event.event_type || 'portal_event';
+            const normalizedMeta = normalizePortalMetadata(event.metadata);
+            const metadataStage = normalizedMeta.stage;
+            const titleCase = (str = '') => str.replace(/\b\w/g, (char) => char.toUpperCase());
+            const cleanStage = metadataStage ? titleCase(metadataStage.replace(/_/g, ' ')) : null;
+
+            let suffix = '';
+            if (/_failed$/i.test(type)) {
+                suffix = 'Failed';
+            } else if (/_completed$/i.test(type)) {
+                suffix = 'Completed';
+            } else if (/_started$/i.test(type)) {
+                suffix = 'Started';
+            }
+
+            const base = cleanStage || titleCase(type.replace(/^portal_/, '').replace(/_/g, ' '));
+            return [base, suffix].filter(Boolean).join(' ').trim();
+        }
+
+        function renderPortalTimeline(events, options = {}) {
+            if (!events || !events.length) {
+                return '';
+            }
+
+            const limit = options.limit || 4;
+            const heading = options.heading
+                ? `<div class="portal-section-heading">${escapeHtml(options.heading)}</div>`
+                : '';
+
+            const items = events.slice(0, limit).map((event) => {
+                const metadata = normalizePortalMetadata(event.metadata);
+                const label = formatPortalEventLabel(event);
+                const timeAgo = event.created_at ? formatRelativeTime(event.created_at) : '—';
+                const description = event.description ? `<div class="portal-timeline-description">${escapeHtml(event.description)}</div>` : '';
+                const errorDetail = metadata.error
+                    ? `<div class="portal-timeline-description portal-error">${escapeHtml(metadata.error)}</div>`
+                    : '';
+                return `
+                    <div class="portal-timeline-item">
+                        <div>
+                            <span class="portal-timeline-label">${escapeHtml(label)}</span>
+                            <span class="portal-timeline-time">${escapeHtml(timeAgo)}</span>
+                        </div>
+                        ${description}
+                        ${errorDetail}
+                    </div>
+                `;
+            }).join('');
+
+            return `${heading}<div class="portal-timeline">${items}</div>`;
+        }
+
         function renderPortalStatusCell(c) {
             const status = c.last_portal_status ? escapeHtml(c.last_portal_status) : '—';
             const metaParts = [];
@@ -997,22 +1204,14 @@
                 metaParts.push(`via ${escapeHtml(c.last_portal_engine)}`);
             }
             const metaHtml = metaParts.length ? `<div class="case-meta">${metaParts.join(' • ')}</div>` : '';
-            const portalUrl = normalizePortalUrl(c.portal_url);
             const provider = c.portal_provider ? `<div class="case-meta">Provider: ${escapeHtml(c.portal_provider)}</div>` : '';
-            const links = [];
-            if (portalUrl) {
-                links.push(`<a href="${portalUrl}" target="_blank" rel="noopener">Portal</a>`);
-            }
-            if (c.last_portal_task_url) {
-                links.push(`<a href="${c.last_portal_task_url}" target="_blank" rel="noopener">Skyvern Task</a>`);
-            } else if (c.last_portal_recording_url) {
-                links.push(`<a href="${c.last_portal_recording_url}" target="_blank" rel="noopener">Skyvern Replay</a>`);
-            }
-            const linksHtml = links.length ? `<div class="case-meta">${links.join(' • ')}</div>` : '';
+            const linksHtml = renderPortalLinks(c);
+            const detailsHtml = renderPortalDetails(c.last_portal_details || null);
+            const timelineHtml = renderPortalTimeline(c.portal_events || []);
             const accountHtml = c.last_portal_account_email
                 ? `<div class="case-meta">Login Email: ${escapeHtml(c.last_portal_account_email)} (password stored securely)</div>`
                 : '';
-            return `<div class="case-title">${status}</div>${metaHtml}${provider}${linksHtml}${accountHtml}`;
+            return `<div class="case-title">${status}</div>${metaHtml}${provider}${linksHtml}${accountHtml}${detailsHtml}${timelineHtml}`;
         }
 
         function renderStatusPill(status, substatus) {
@@ -1472,12 +1671,20 @@
                     ? `<details><summary style="cursor:pointer;font-size:12px;color:#4a5568;">Latest message</summary><div style="margin-top:6px;font-size:12px;color:#2d3748;">${escapeHtml(item.last_message_body.substring(0, 400))}${item.last_message_body.length > 400 ? '…' : ''}</div></details>`
                     : '';
 
+                const portalLinksHtml = renderPortalLinks(item);
+                const portalDetailsHtml = renderPortalDetails(item.last_portal_details || null, { heading: 'Portal Submission' });
+                const portalTimelineHtml = renderPortalTimeline(item.portal_events || [], { heading: 'Portal Activity', limit: 5 });
+                const portalInfoHtml = (portalLinksHtml || portalDetailsHtml || portalTimelineHtml)
+                    ? `<div class="portal-review-block">${portalLinksHtml}${portalDetailsHtml}${portalTimelineHtml}</div>`
+                    : '';
+
                 return `
                     <div class="fee-card" id="human-review-${item.id}">
                         <h4>Case ${item.id}: ${escapeHtml(item.case_name || 'Untitled')}</h4>
                         ${caseMeta}
                         ${lastActivity}
                         ${lastMessage}
+                        ${portalInfoHtml}
                         <div class="fee-actions">
                             <textarea data-review-note="${item.id}" placeholder="Add context or instructions..."></textarea>
                             <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
@@ -1813,33 +2020,81 @@
                 }
 
                 let html = '<table class="table"><thead><tr>';
-                html += '<th>Time</th><th>Status</th><th>Engine</th><th>Case</th><th>Portal</th><th>Details</th>';
+                html += '<th>Time</th><th>Event</th><th>Engine</th><th>Case</th><th>Portal</th><th>Details</th>';
                 html += '</tr></thead><tbody>';
 
                 result.runs.forEach(run => {
                     const meta = run.metadata || {};
-                    const status = run.event_type.replace('portal_run_', '');
-                    const statusClass = status === 'completed' ? 'success' : status === 'failed' ? 'danger' : 'info';
-                    const caseLabel = meta.case_id ? `Case ${meta.case_id}` : 'Test';
-                    const portalLabel = meta.portal_url || 'Unknown';
-                    const detailText = meta.error || meta.final_url || run.description || '';
-                    const detailHtml = detailText ? `<div>${escapeHtml(detailText)}</div>` : '';
+                    const eventLabel = formatPortalEventLabel(run);
+                    let statusClass = 'info';
+                    if (/failed/i.test(run.event_type)) {
+                        statusClass = 'danger';
+                    } else if (/completed/i.test(run.event_type) || /portal_submission$/i.test(run.event_type)) {
+                        statusClass = 'success';
+                    }
+
+                    const caseId = meta.case_id || meta.caseId || null;
+                    const caseLabel = caseId ? `Case ${caseId}` : '—';
+                    const portalRaw = meta.portal_url || meta.portalUrl || '';
+                    const portalHref = portalRaw ? normalizePortalUrl(portalRaw) : null;
+                    const portalCell = portalHref
+                        ? `<a href="${escapeHtml(portalHref)}" target="_blank" rel="noopener">${escapeHtml(portalRaw)}</a>`
+                        : '—';
+
+                    const detailParts = [];
+                    const stageLabel = meta.stage
+                        ? meta.stage.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+                        : null;
+                    if (stageLabel) {
+                        detailParts.push(`Stage: ${stageLabel}`);
+                    }
+                    if (meta.submission_status) {
+                        detailParts.push(`Status: ${meta.submission_status}`);
+                    }
+                    if (meta.confirmation_number) {
+                        detailParts.push(`Confirmation #: ${meta.confirmation_number}`);
+                    }
+                    if (meta.verification_required) {
+                        detailParts.push(`Verification required: ${meta.verification_reason || 'Awaiting code'}`);
+                    }
+                    if (run.description) {
+                        detailParts.push(run.description);
+                    }
+                    if (meta.error) {
+                        detailParts.push(`Error: ${meta.error}`);
+                    }
+
+                    const detailHtml = detailParts.length
+                        ? detailParts.map(line => `<div class="portal-timeline-description">${escapeHtml(line)}</div>`).join('')
+                        : '';
+
                     const linkParts = [];
                     if (meta.task_url) {
-                        linkParts.push(`<a href="${meta.task_url}" target="_blank" rel="noopener">Skyvern Task</a>`);
-                    } else if (meta.recording_url) {
-                        linkParts.push(`<a href="${meta.recording_url}" target="_blank" rel="noopener">Skyvern Replay</a>`);
+                        linkParts.push(`<a href="${escapeHtml(meta.task_url)}" target="_blank" rel="noopener">Skyvern Task</a>`);
+                    }
+                    if (meta.recording_url) {
+                        linkParts.push(`<a href="${escapeHtml(meta.recording_url)}" target="_blank" rel="noopener">Skyvern Replay</a>`);
+                    }
+                    if (meta.portal_ticket_url) {
+                        linkParts.push(`<a href="${escapeHtml(meta.portal_ticket_url)}" target="_blank" rel="noopener">Portal Ticket</a>`);
+                    }
+                    if (meta.submission_page_url) {
+                        linkParts.push(`<a href="${escapeHtml(meta.submission_page_url)}" target="_blank" rel="noopener">Submission Page</a>`);
                     }
                     const linksHtml = linkParts.length ? `<div class="case-meta">${linkParts.join(' • ')}</div>` : '';
-                    const details = `${detailHtml}${linksHtml}`;
-                    const engineLabel = meta.engine || '—';
+
+                    const details = detailHtml || linksHtml
+                        ? `${detailHtml}${linksHtml}`
+                        : '—';
+
+                    const engineLabel = meta.engine || meta.portal_engine || '—';
 
                     html += '<tr>';
                     html += `<td>${new Date(run.created_at).toLocaleString()}</td>`;
-                    html += `<td><span class="badge ${statusClass}">${status.toUpperCase()}</span></td>`;
-                    html += `<td>${engineLabel}</td>`;
-                    html += `<td>${caseLabel}</td>`;
-                    html += `<td style="word-break: break-all;">${portalLabel}</td>`;
+                    html += `<td><span class="badge ${statusClass}">${escapeHtml(eventLabel)}</span></td>`;
+                    html += `<td>${escapeHtml(engineLabel)}</td>`;
+                    html += `<td>${escapeHtml(caseLabel)}</td>`;
+                    html += `<td style="word-break: break-all;">${portalCell}</td>`;
                     html += `<td>${details}</td>`;
                     html += '</tr>';
                 });

@@ -9,6 +9,44 @@ const aiService = require('../services/ai-service');
 const { emailQueue, generateQueue, portalQueue } = require('../queues/email-queue');
 const { extractUrls } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
+
+function safeJsonParse(value, defaultValue = null) {
+    if (!value) {
+        return defaultValue;
+    }
+
+    if (typeof value === 'object') {
+        return value;
+    }
+
+    try {
+        return JSON.parse(value);
+    } catch (error) {
+        console.warn('Failed to parse JSON field:', error.message);
+        return defaultValue;
+    }
+}
+
+function normalizePortalEvents(rawEvents) {
+    const parsed = safeJsonParse(rawEvents, rawEvents);
+    if (!parsed) {
+        return [];
+    }
+
+    const list = Array.isArray(parsed) ? parsed : [parsed];
+    return list
+        .filter(Boolean)
+        .map((event) => {
+            const metadata = safeJsonParse(event.metadata, event.metadata || {});
+            return {
+                event_type: event.event_type || event.eventType || 'unknown',
+                description: event.description || '',
+                created_at: event.created_at || event.createdAt || null,
+                metadata
+            };
+        });
+}
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
@@ -583,15 +621,21 @@ router.get('/portal-runs', async (req, res) => {
             `
             SELECT id, event_type, description, metadata, created_at
             FROM activity_log
-            WHERE event_type IN ('portal_run_started', 'portal_run_completed', 'portal_run_failed')
+            WHERE event_type = ANY($1::text[])
             ORDER BY created_at DESC
             LIMIT 50
-            `
+            `,
+            [PORTAL_ACTIVITY_EVENTS]
         );
+
+        const runs = result.rows.map((row) => ({
+            ...row,
+            metadata: safeJsonParse(row.metadata, row.metadata || {})
+        }));
 
         res.json({
             success: true,
-            runs: result.rows
+            runs
         });
     } catch (error) {
         console.error('Error fetching portal runs:', error);
@@ -625,9 +669,14 @@ router.get('/activity', async (req, res) => {
 router.get('/human-reviews', async (req, res) => {
     try {
         const reviews = await db.getHumanReviewCases(100);
+        const enriched = reviews.map((item) => ({
+            ...item,
+            last_portal_details: safeJsonParse(item.last_portal_details),
+            portal_events: normalizePortalEvents(item.portal_events)
+        }));
         res.json({
             success: true,
-            cases: reviews
+            cases: enriched
         });
     } catch (error) {
         console.error('Error fetching human review cases:', error);
@@ -774,6 +823,10 @@ router.get('/cases', async (req, res) => {
         }
 
         const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+        const portalEventsParam = paramIndex;
+        values.push(PORTAL_ACTIVITY_EVENTS);
+        paramIndex++;
+        const limitParam = paramIndex;
         values.push(limit);
 
         const result = await db.query(`
@@ -793,6 +846,7 @@ router.get('/cases', async (req, res) => {
                 c.last_portal_task_url,
                 c.last_portal_recording_url,
                 c.last_portal_account_email,
+                c.last_portal_details,
                 c.agent_handled,
                 c.created_at,
                 c.updated_at,
@@ -805,7 +859,8 @@ router.get('/cases', async (req, res) => {
                 last_msg.preview_text AS last_message_preview,
                 last_msg.message_timestamp AS last_message_at,
                 followup.next_followup_date,
-                followup.status AS followup_status
+                followup.status AS followup_status,
+                portal_events.portal_events
             FROM cases c
             LEFT JOIN LATERAL (
                 SELECT
@@ -840,12 +895,29 @@ router.get('/cases', async (req, res) => {
                 ORDER BY next_followup_date ASC
                 LIMIT 1
             ) followup ON true
+            LEFT JOIN LATERAL (
+                SELECT json_agg(events ORDER BY events.created_at DESC) AS portal_events
+                FROM (
+                    SELECT event_type, description, created_at, metadata
+                    FROM activity_log
+                    WHERE case_id = c.id
+                      AND event_type = ANY($${portalEventsParam}::text[])
+                    ORDER BY created_at DESC
+                    LIMIT 10
+                ) events
+            ) portal_events ON true
             ${whereClause}
             ORDER BY COALESCE(last_msg.message_timestamp, c.updated_at, c.created_at) DESC
-            LIMIT $${paramIndex}
+            LIMIT $${limitParam}
         `, values);
 
-        res.json({ success: true, cases: result.rows });
+        const cases = result.rows.map((row) => ({
+            ...row,
+            last_portal_details: safeJsonParse(row.last_portal_details),
+            portal_events: normalizePortalEvents(row.portal_events)
+        }));
+
+        res.json({ success: true, cases });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -866,7 +938,25 @@ router.get('/cases/:caseId/messages', async (req, res) => {
         }
 
         const caseResult = await db.query(`
-            SELECT id, case_name, agency_name, agency_email, status, substatus, agent_handled, created_at, updated_at
+            SELECT
+                id,
+                case_name,
+                agency_name,
+                agency_email,
+                status,
+                substatus,
+                agent_handled,
+                created_at,
+                updated_at,
+                portal_url,
+                portal_provider,
+                last_portal_status,
+                last_portal_status_at,
+                last_portal_run_id,
+                last_portal_task_url,
+                last_portal_recording_url,
+                last_portal_account_email,
+                last_portal_details
             FROM cases
             WHERE id = $1
         `, [caseId]);
@@ -904,9 +994,14 @@ router.get('/cases/:caseId/messages', async (req, res) => {
             WHERE case_id = $1
         `, [caseId]);
 
+        const casePayload = {
+            ...caseResult.rows[0],
+            last_portal_details: safeJsonParse(caseResult.rows[0].last_portal_details)
+        };
+
         res.json({
             success: true,
-            case: caseResult.rows[0],
+            case: casePayload,
             messages: messagesResult.rows,
             stats: {
                 total_messages: parseInt(stats.rows[0].total_messages || 0, 10),

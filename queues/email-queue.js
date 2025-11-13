@@ -406,17 +406,19 @@ const generateWorker = new Worker('generate-queue', async (job) => {
                 });
 
                 if (portalResult && portalResult.success) {
+                    const submissionStatus = portalResult.submission_status || portalResult.status || 'submitted';
                     await db.updateCaseStatus(caseId, 'sent', {
-                        substatus: `Portal submission completed (${portalResult.status || 'submitted'})`,
+                        substatus: `Portal submission completed (${submissionStatus})`,
                         send_date: new Date()
                     });
                     await db.updateCasePortalStatus(caseId, {
                         portal_url: portalUrl,
                         portal_provider: caseData.portal_provider || 'Auto-detected',
-                        last_portal_status: 'Submission completed',
+                        last_portal_status: submissionStatus,
                         last_portal_status_at: new Date(),
                         last_portal_engine: 'skyvern',
-                        last_portal_run_id: portalResult.taskId || portalResult.runId || null
+                        last_portal_run_id: portalResult.taskId || portalResult.runId || null,
+                        last_portal_details: JSON.stringify(portalResult.extracted_data || {})
                     });
 
                     await notionService.syncStatusToNotion(caseId);
@@ -426,7 +428,9 @@ const generateWorker = new Worker('generate-queue', async (job) => {
                         portal_url: portalUrl,
                         portal_provider: caseData.portal_provider || 'Auto-detected',
                         engine: 'skyvern',
-                        run_id: portalResult.taskId || portalResult.runId || null
+                        run_id: portalResult.taskId || portalResult.runId || null,
+                        submission_status: submissionStatus,
+                        confirmation_number: portalResult.confirmation_number || null
                     });
 
                     // Notify Discord about portal submission
