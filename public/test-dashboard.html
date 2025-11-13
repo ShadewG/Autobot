@@ -442,6 +442,37 @@
             border-radius: 10px;
             background: #f7fafc;
             border: 1px solid #e2e8f0;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .portal-timeline-collapsible {
+            margin-top: 8px;
+        }
+
+        .portal-timeline-collapsible summary {
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            color: #4a5568;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .portal-timeline-collapsible summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .portal-timeline-collapsible summary::before {
+            content: '▸';
+            font-size: 10px;
+            color: #4a5568;
+            transition: transform 0.2s;
+        }
+
+        .portal-timeline-collapsible[open] summary::before {
+            transform: rotate(90deg);
         }
 
         .case-preview {
@@ -1063,6 +1094,13 @@
             return `https://${url}`;
         }
 
+        function truncateText(text = '', maxLength = 160) {
+            if (!text) return '';
+            const clean = text.trim();
+            if (clean.length <= maxLength) return clean;
+            return `${clean.substring(0, maxLength - 1)}…`;
+        }
+
         function renderPortalLinks(entity = {}) {
             const links = [];
             const portalUrl = normalizePortalUrl(entity.portal_url);
@@ -1096,7 +1134,7 @@
             };
 
             if (details.submission_status) {
-                addRow('Status', escapeHtml(details.submission_status));
+                addRow('Status', escapeHtml(truncateText(details.submission_status, 80)));
             }
             if (details.confirmation_number) {
                 addRow('Confirmation #', `<code>${escapeHtml(details.confirmation_number)}</code>`);
@@ -1108,7 +1146,7 @@
                 addRow('Login', details.login_success ? 'Successful' : 'Failed');
             }
             if (details.verification_required) {
-                addRow('Verification', escapeHtml(details.verification_reason || 'Required'));
+                addRow('Verification', escapeHtml(truncateText(details.verification_reason || 'Required', 80)));
             }
             if (details.request_form_url) {
                 addRow('Request Form', `<a href="${escapeHtml(details.request_form_url)}" target="_blank" rel="noopener">Open form</a>`);
@@ -1167,17 +1205,17 @@
             }
 
             const limit = options.limit || 4;
-            const heading = options.heading
-                ? `<div class="portal-section-heading">${escapeHtml(options.heading)}</div>`
-                : '';
+            const heading = options.heading || 'Portal Activity';
 
             const items = events.slice(0, limit).map((event) => {
                 const metadata = normalizePortalMetadata(event.metadata);
                 const label = formatPortalEventLabel(event);
                 const timeAgo = event.created_at ? formatRelativeTime(event.created_at) : '—';
-                const description = event.description ? `<div class="portal-timeline-description">${escapeHtml(event.description)}</div>` : '';
+                const description = event.description
+                    ? `<div class="portal-timeline-description">${escapeHtml(truncateText(event.description, 160))}</div>`
+                    : '';
                 const errorDetail = metadata.error
-                    ? `<div class="portal-timeline-description portal-error">${escapeHtml(metadata.error)}</div>`
+                    ? `<div class="portal-timeline-description portal-error">${escapeHtml(truncateText(metadata.error, 160))}</div>`
                     : '';
                 return `
                     <div class="portal-timeline-item">
@@ -1191,7 +1229,12 @@
                 `;
             }).join('');
 
-            return `${heading}<div class="portal-timeline">${items}</div>`;
+            return `
+                <details class="portal-timeline-collapsible">
+                    <summary>${escapeHtml(heading)} (${events.length})</summary>
+                    <div class="portal-timeline">${items}</div>
+                </details>
+            `;
         }
 
         function renderPortalStatusCell(c) {
@@ -2058,10 +2101,10 @@
                         detailParts.push(`Verification required: ${meta.verification_reason || 'Awaiting code'}`);
                     }
                     if (run.description) {
-                        detailParts.push(run.description);
+                        detailParts.push(truncateText(run.description, 160));
                     }
                     if (meta.error) {
-                        detailParts.push(`Error: ${meta.error}`);
+                        detailParts.push(`Error: ${truncateText(meta.error, 160)}`);
                     }
 
                     const detailHtml = detailParts.length
