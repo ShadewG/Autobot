@@ -1,8 +1,79 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const axios = require('axios');
 const sendgridService = require('../services/sendgrid-service');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
+
+/**
+ * Detect verification code emails and forward to Skyvern TOTP API
+ * No Zapier needed - we handle it directly in our inbound email webhook
+ */
+async function detectAndForwardTOTP({ from, to, subject, text, html }) {
+    try {
+        // Check if this looks like a verification email
+        const subjectLower = (subject || '').toLowerCase();
+        const textLower = (text || '').toLowerCase();
+        const htmlLower = (html || '').toLowerCase();
+
+        const verificationKeywords = [
+            'verification code',
+            'verify your email',
+            'confirmation code',
+            'your code is',
+            'enter this code',
+            'authentication code',
+            '2fa',
+            'two-factor',
+            'one-time password',
+            'otp'
+        ];
+
+        const isVerification = verificationKeywords.some(keyword =>
+            subjectLower.includes(keyword) ||
+            textLower.includes(keyword) ||
+            htmlLower.includes(keyword)
+        );
+
+        if (!isVerification) {
+            return false; // Not a verification email
+        }
+
+        console.log(`🔐 Detected verification email from ${from}`);
+        console.log(`   Subject: ${subject}`);
+
+        // Forward to Skyvern TOTP API
+        const skyvernApiKey = process.env.SKYVERN_API_KEY;
+        if (!skyvernApiKey) {
+            console.warn('⚠️  SKYVERN_API_KEY not set - skipping TOTP forward');
+            return true;
+        }
+
+        await axios.post(
+            'https://api.skyvern.com/api/v1/totp',
+            {
+                totp_identifier: to, // The email address that received the code
+                content: text || html || '', // Email body content
+                source: 'email'
+            },
+            {
+                headers: {
+                    'x-api-key': skyvernApiKey,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 5000 // Don't block email processing if Skyvern is slow
+            }
+        );
+
+        console.log('✅ Forwarded verification code to Skyvern TOTP API');
+        return true;
+
+    } catch (error) {
+        console.error('❌ Failed to forward TOTP to Skyvern:', error.message);
+        // Don't fail the email processing if TOTP forward fails
+        return false;
+    }
+}
 
 // Configure multer to handle SendGrid's multipart/form-data
 const upload = multer({
@@ -67,6 +138,19 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
         console.log('Extracted text:', emailText ? emailText.substring(0, 100) : 'NULL');
         console.log('Extracted HTML:', emailHtml ? emailHtml.substring(0, 100) : 'NULL');
+
+        // TOTP: Check if this is a verification code email and forward to Skyvern
+        const isVerificationEmail = await detectAndForwardTOTP({
+            from: inboundData.from || inboundData.sender,
+            to: inboundData.to || inboundData.recipient,
+            subject: inboundData.subject,
+            text: emailText || inboundData.text || inboundData.body_text,
+            html: emailHtml || inboundData.html || inboundData.body_html
+        });
+
+        if (isVerificationEmail) {
+            console.log('✅ Verification email detected and forwarded to Skyvern TOTP API');
+        }
 
         // Process the inbound email
         const result = await sendgridService.processInboundEmail({
