@@ -724,9 +724,17 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
         let newStatus = caseData.status;
         let substatus = caseData.substatus || '';
 
+        const priorPortalFlag = (caseData.substatus || '').toLowerCase().includes('portal_submission');
+        const portalNeeded = priorPortalFlag || !!portalUrlFromNote;
+
         if (action === 'approve') {
-            newStatus = next_status || 'ready_to_send';
-            substatus = note ? `Approved: ${note}` : 'Approved by human reviewer';
+            if (portalNeeded) {
+                newStatus = 'portal_in_progress';
+                substatus = note ? `Portal submission queued: ${note}` : 'Portal submission queued';
+            } else {
+                newStatus = next_status || 'ready_to_send';
+                substatus = note ? `Approved: ${note}` : 'Approved by human reviewer';
+            }
         } else if (action === 'reject') {
             newStatus = next_status || 'needs_manual_processing';
             substatus = note ? `Rejected: ${note}` : 'Rejected by human reviewer';
@@ -759,20 +767,24 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
         });
 
         if (action === 'approve') {
-            if (!updatedCase.send_date) {
+            if (portalNeeded) {
+                if (updatedCase.portal_url) {
+                    console.log(`✅ Human approval -> queueing portal submission for case ${caseId}`);
+                    await portalQueue.add('portal-submit', {
+                        caseId
+                    }, {
+                        attempts: 2,
+                        backoff: {
+                            type: 'exponential',
+                            delay: 5000
+                        }
+                    });
+                } else {
+                    console.warn(`⚠️ Portal submission approved for case ${caseId} but no portal URL is saved.`);
+                }
+            } else if (!updatedCase.send_date) {
                 console.log(`✅ Human approval -> queueing case ${caseId} for generation`);
                 await generateQueue.add('generate-foia', { caseId });
-            } else if (updatedCase.portal_url || portalUrlFromNote) {
-                console.log(`✅ Human approval -> queueing portal submission for case ${caseId}`);
-                await portalQueue.add('portal-submit', {
-                    caseId
-                }, {
-                    attempts: 2,
-                    backoff: {
-                        type: 'exponential',
-                        delay: 5000
-                    }
-                });
             }
         }
 
