@@ -5,14 +5,19 @@ const sendgridService = require('../services/sendgrid-service');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
 
 // Configure multer to handle SendGrid's multipart/form-data
-const upload = multer();
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: parseInt(process.env.INBOUND_ATTACHMENT_MAX_BYTES || `${10 * 1024 * 1024}`, 10)
+    }
+});
 
 /**
  * SendGrid Inbound Parse Webhook
  * Receives emails sent to your domain
  * SendGrid sends multipart/form-data
  */
-router.post('/inbound', upload.none(), async (req, res) => {
+router.post('/inbound', upload.any(), async (req, res) => {
     try {
         console.log('Received inbound email webhook from SendGrid');
         console.log('Content-Type:', req.headers['content-type']);
@@ -26,6 +31,13 @@ router.post('/inbound', upload.none(), async (req, res) => {
 
         // SendGrid sends data as form fields
         const inboundData = req.body;
+        const inboundAttachments = (req.files || []).map((file) => ({
+            filename: file.originalname,
+            mimetype: file.mimetype,
+            buffer: file.buffer,
+            size: file.size,
+            encoding: file.encoding
+        }));
 
         // Parse the raw email to extract text and HTML
         let emailText = null;
@@ -64,7 +76,7 @@ router.post('/inbound', upload.none(), async (req, res) => {
             text: emailText || inboundData.text || inboundData.body_text,
             html: emailHtml || inboundData.html || inboundData.body_html,
             headers: inboundData.headers || {},
-            attachments: inboundData.attachments || []
+            attachments: inboundAttachments
         });
 
         if (result.matched) {

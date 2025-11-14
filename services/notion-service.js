@@ -1276,7 +1276,26 @@ Respond with JSON:
             return upper;
         }
 
-        const cleaned = trimmed.toLowerCase().replace(/\./g, ).replace(/state|commonwealth/g, ).trim();
+        const parenMatch = trimmed.match(/\(([A-Za-z]{2})\)/);
+        if (parenMatch) {
+            return parenMatch[1].toUpperCase();
+        }
+
+        const abbreviationMatch = trimmed.match(/\b([A-Za-z]{2})\b/);
+        if (abbreviationMatch) {
+            const candidate = abbreviationMatch[1].toUpperCase();
+            if (/^[A-Z]{2}$/.test(candidate)) {
+                return candidate;
+            }
+        }
+
+        const cleaned = trimmed
+            .toLowerCase()
+            .replace(/[^a-z\s]/g, ' ')
+            .replace(/\b(state|states|commonwealth|of|department|police|sheriff|county)\b/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
         if (STATE_ABBREVIATIONS[cleaned]) {
             return STATE_ABBREVIATIONS[cleaned];
         }
