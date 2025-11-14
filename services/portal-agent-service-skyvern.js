@@ -154,8 +154,11 @@ class PortalAgentServiceSkyvern {
             blob.includes('confirm your email');
     }
 
-    async _maybeFetchVerificationCode(portalUrl) {
-        const pattern = process.env.PORTAL_VERIFICATION_REGEX || '(\\d{4,8})';
+    async _maybeFetchVerificationCode(portalUrl, { mode = 'code' } = {}) {
+        const defaultCodePattern = '(\\d{4,8})';
+        const defaultLinkPattern = '(https?:\\/\\/[^\\s"']+)';
+        const envPattern = process.env.PORTAL_VERIFICATION_REGEX;
+        const pattern = envPattern || (mode === 'link' ? defaultLinkPattern : defaultCodePattern);
         const timeoutMs = parseInt(process.env.PORTAL_VERIFICATION_TIMEOUT_MS || '180000', 10);
         let fromEmail = null;
         try {
@@ -179,6 +182,30 @@ class PortalAgentServiceSkyvern {
         }
     }
 
+    _isVerificationError(message = '') {
+        if (!message) return false;
+        const haystack = message.toLowerCase();
+        return haystack.includes('verification') ||
+            haystack.includes('confirm your email') ||
+            haystack.includes('confirmation link') ||
+            haystack.includes('check your email');
+    }
+
+    async _confirmViaLink(link) {
+        if (!link) return false;
+        try {
+            await axios.get(link, {
+                maxRedirects: 0,
+                validateStatus: () => true
+            });
+            console.log('✅ Visited verification link successfully');
+            return true;
+        } catch (error) {
+            console.warn(`⚠️  Failed to visit verification link: ${error.message}`);
+            return false;
+        }
+    }
+
     _formatStageLabel(stage) {
         return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     }
@@ -187,6 +214,9 @@ class PortalAgentServiceSkyvern {
         console.log(`\n📝 Navigation Goal:\n${navigationGoal}\n`);
         console.log(`⏳ Creating task...\n`);
 
+        // Email address that receives verification codes
+        const totpIdentifier = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+
         const response = await axios.post(
             `${this.baseUrl}/tasks`,
             {
@@ -194,7 +224,8 @@ class PortalAgentServiceSkyvern {
                 navigation_goal: navigationGoal,
                 navigation_payload: navigationPayload,
                 max_steps_override: maxSteps,
-                engine: 'skyvern-2.0'
+                engine: 'skyvern-2.0',
+                totp_identifier: totpIdentifier  // Enable TOTP/2FA support
             },
             {
                 headers: {
@@ -287,6 +318,16 @@ class PortalAgentServiceSkyvern {
             });
 
             if (!stage.success) {
+                if (!verificationCode && this._isVerificationError(stage.result?.error || '')) {
+                    console.log('🔐 Portal reported verification needed. Attempting to confirm via email link...');
+                    const link = await this._maybeFetchVerificationCode(portalUrl, { mode: 'link' });
+                    if (link) {
+                        const confirmed = await this._confirmViaLink(link);
+                        if (confirmed) {
+                            continue;
+                        }
+                    }
+                }
                 return stage;
             }
 
@@ -301,6 +342,21 @@ class PortalAgentServiceSkyvern {
                             success: false,
                             error: 'Verification required but no code available',
                             status: 'verification_required'
+                        }
+                    };
+                }
+                if (verificationCode.startsWith('http')) {
+                    const confirmed = await this._confirmViaLink(verificationCode);
+                    verificationCode = null;
+                    if (confirmed) {
+                        continue;
+                    }
+                    return {
+                        success: false,
+                        result: {
+                            success: false,
+                            error: 'Verification link could not be confirmed',
+                            status: 'verification_failed'
                         }
                     };
                 }
