@@ -378,6 +378,11 @@
         .case-title {
             font-weight: 600;
             color: #f8fafc;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+            max-width: 260px;
         }
 
         .case-meta {
@@ -390,6 +395,15 @@
             margin-top: 6px;
             color: #cbd5f5;
             font-size: 13px;
+        }
+
+        .case-subtitle {
+            font-size: 12px;
+            color: #94a3b8;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 260px;
         }
 
         .portal-section-heading {
@@ -1267,8 +1281,10 @@
             html += '</tr></thead><tbody>';
 
             cases.forEach((c) => {
-                const name = escapeHtml(c.case_name || 'Untitled case');
-                const agency = escapeHtml(c.agency_name || 'Unknown agency');
+            const subjectLine = escapeHtml(c.subject_name || c.case_name || 'Untitled case');
+            const showSubtitle = c.case_name && c.subject_name && c.subject_name !== c.case_name;
+            const subtitleLine = showSubtitle ? escapeHtml(c.case_name) : null;
+            const agency = escapeHtml(c.agency_name || 'Unknown agency');
                 const statusHtml = renderStatusPill(c.status, c.substatus);
                 const directionBadge = renderDirectionBadge(c.last_message_direction);
                 const preview = escapeHtml(c.last_message_preview || 'No correspondence yet.');
@@ -1284,7 +1300,11 @@
                 const followupStatus = c.followup_status ? `<div class="case-meta">Status: ${escapeHtml(c.followup_status)}</div>` : '';
 
                 html += '<tr>';
-                html += `<td><div class="case-title">${name}</div><div class="case-meta">#${c.id} • Created ${formatRelativeTime(c.created_at)}</div></td>`;
+                html += `<td>
+                    <div class="case-title" title="${subjectLine}">${subjectLine}</div>
+                    ${subtitleLine ? `<div class="case-subtitle" title="${subtitleLine}">${subtitleLine}</div>` : ''}
+                    <div class="case-meta">#${c.id} • Created ${formatRelativeTime(c.created_at)}</div>
+                </td>`;
                 html += `<td><div class="case-title">${agency}</div><div class="case-meta">${escapeHtml(c.agency_email || '—')}</div></td>`;
                 const portalCell = renderPortalStatusCell(c);
 
