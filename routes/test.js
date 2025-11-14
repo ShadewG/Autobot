@@ -2525,6 +2525,85 @@ router.post('/force-portal-submit', async (req, res) => {
 });
 
 /**
+ * Set portal URL and queue for submission
+ * POST /api/test/set-portal-url
+ */
+router.post('/set-portal-url', async (req, res) => {
+    try {
+        const { case_id, portal_url, portal_provider } = req.body;
+
+        if (!case_id || !portal_url) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id and portal_url are required'
+            });
+        }
+
+        console.log(`🌐 Setting portal URL for case ${case_id}: ${portal_url}`);
+
+        // Get case data
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${case_id} not found`
+            });
+        }
+
+        // Update case with portal URL
+        await db.updateCasePortalStatus(case_id, {
+            portal_url: portal_url,
+            portal_provider: portal_provider || 'NextRequest'
+        });
+
+        // Update status to portal_in_progress
+        await db.updateCaseStatus(case_id, 'portal_in_progress', {
+            substatus: 'Portal URL set - queued for submission'
+        });
+
+        console.log(`✅ Updated case ${case_id} with portal URL`);
+
+        // Queue for portal submission
+        const { portalQueue } = require('../queues/email-queue');
+        await portalQueue.add('portal-submit', {
+            caseId: case_id
+        }, {
+            attempts: 2,
+            backoff: {
+                type: 'exponential',
+                delay: 5000
+            }
+        });
+
+        console.log(`✅ Queued case ${case_id} for portal submission`);
+
+        await db.logActivity('set_portal_url', `Set portal URL and queued for submission`, {
+            case_id: case_id,
+            portal_url: portal_url,
+            portal_provider: portal_provider || 'NextRequest'
+        });
+
+        res.json({
+            success: true,
+            message: `Portal URL set and case queued for submission`,
+            case_id: case_id,
+            case_name: caseData.case_name,
+            portal_url: portal_url,
+            portal_provider: portal_provider || 'NextRequest',
+            status: 'portal_in_progress',
+            queued: true
+        });
+
+    } catch (error) {
+        console.error('Set portal URL error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Approve case for portal submission (from human review)
  * POST /api/test/approve-for-portal
  */
