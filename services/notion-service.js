@@ -951,8 +951,28 @@ Respond with JSON:
                     const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
 
                     if (existing) {
-                        console.log(`Case already exists (skipping re-send): ${notionCase.case_name}`);
-                        // Don't add to syncedCases - only new cases should be queued
+                        // Case exists - check if Live Status changed to "Ready To Send"
+                        // If so, update and re-queue it
+                        if (existing.notion_status !== status.toLowerCase().replace(/ /g, '_')) {
+                            console.log(`Case status changed to "${status}" - updating and re-queuing: ${notionCase.case_name}`);
+
+                            // Update the case with new data
+                            notionCase.id = existing.id;
+                            const updatedCase = await db.updateCase(existing.id, {
+                                notion_status: notionCase.notion_status,
+                                agency_name: notionCase.agency_name,
+                                agency_email: notionCase.agency_email,
+                                status: 'ready_to_send', // Reset status to ready_to_send
+                            });
+
+                            syncedCases.push(updatedCase);
+
+                            await db.logActivity('case_status_changed', `Case status changed to "${status}" - re-queued: ${notionCase.case_name}`, {
+                                case_id: existing.id
+                            });
+                        } else {
+                            console.log(`Case already exists with same status (skipping): ${notionCase.case_name}`);
+                        }
                         continue;
                     }
 
