@@ -170,6 +170,27 @@ node test-portal-skyvern.js "https://portal-url-here.com"
 3. Settings → Reveal API key
 4. Add to `.env`: `SKYVERN_API_KEY=sk-...`
 
+### Skyvern Workflow Runner (API-only test harness)
+
+- File: `run-skyvern-workflow.js`
+- Purpose: builds the `parameters` payload (`URL`, `login`, `case_info`, `personal_info`) and hits `POST https://api.skyvern.com/v1/run/workflows` so you can test the new FOIA workflow (`workflow_id wpid_461535111447599002` by default).
+- Case data is pulled directly from Postgres via `database.getCaseById`.
+- Portal credentials are injected automatically if a saved account exists for the domain; otherwise the `login` field is left blank as required.
+- Requester contact details are hard-coded from the usual `REQUESTER_*` env vars so Skyvern always gets the same `personal_info` structure.
+
+**Usage**
+```bash
+SKYVERN_API_KEY=sk-... \
+SKYVERN_WORKFLOW_ID=wpid_461535111447599002 \
+node run-skyvern-workflow.js <caseId> [portalUrlOverride]
+```
+
+The script logs the safe payload (credentials redacted), calls the workflow endpoint, and prints the API response. You can optionally set:
+
+- `SKYVERN_PROXY_LOCATION` — falls back to `RESIDENTIAL`
+- `SKYVERN_BROWSER_SESSION_ID` / `SKYVERN_BROWSER_ADDRESS` — pass through to reuse persistent sessions once you have them
+- `SKYVERN_WORKFLOW_RUN_URL` — override base URL if you are testing against a self-hosted Skyvern instance
+
 ---
 
 ## Environment Variables

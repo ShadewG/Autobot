@@ -156,7 +156,7 @@ class PortalAgentServiceSkyvern {
 
     async _maybeFetchVerificationCode(portalUrl, { mode = 'code' } = {}) {
         const defaultCodePattern = '(\\d{4,8})';
-        const defaultLinkPattern = '(https?:\\/\\/[^\\s"']+)';
+        const defaultLinkPattern = "(https?:\\/\\/[^\\s\"']+)";
         const envPattern = process.env.PORTAL_VERIFICATION_REGEX;
         const pattern = envPattern || (mode === 'link' ? defaultLinkPattern : defaultCodePattern);
         const timeoutMs = parseInt(process.env.PORTAL_VERIFICATION_TIMEOUT_MS || '180000', 10);
