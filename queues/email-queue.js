@@ -236,7 +236,8 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         if (portalInstruction) {
             console.log(`🌐 Portal instruction detected for case ${caseId}; pivoting to portal workflow (no email reply).`);
             const portalStatusNote = 'Agency requested portal submission';
-            await db.updateCaseStatus(caseId, 'portal_in_progress', {
+            await db.updateCaseStatus(caseId, 'needs_human_review', {
+                substatus: 'portal_submission_required',
                 substatus: portalStatusNote,
                 last_portal_status: portalStatusNote,
                 last_portal_status_at: new Date()
@@ -304,10 +305,11 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
 
         // ===== DETERMINISTIC FLOW (Original Logic) =====
         // Check if we should auto-reply (enabled by default)
-        const autoReplyEnabled = process.env.ENABLE_AUTO_REPLY !== 'false';
+        const autoReplyEnabled = process.env.ENABLE_AUTO_REPLY === 'true';
+        const caseNeedsHuman = caseData.status?.startsWith('needs_human');
         console.log(`⚙️ Auto-reply enabled: ${autoReplyEnabled}`);
 
-        if (analysis.requires_action && autoReplyEnabled) {
+        if (analysis.requires_action && autoReplyEnabled && !caseNeedsHuman) {
             console.log(`🤖 Generating auto-reply...`);
             const autoReply = await aiService.generateAutoReply(messageData, analysis, caseData);
 
@@ -363,6 +365,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
             console.log(`⚠️ Skipping auto-reply generation:`);
             console.log(`   analysis.requires_action: ${analysis.requires_action}`);
             console.log(`   autoReplyEnabled: ${autoReplyEnabled}`);
+            console.log(`   caseNeedsHuman: ${caseNeedsHuman}`);
             console.log(`   Full analysis object:`, JSON.stringify(analysis, null, 2));
         }
 

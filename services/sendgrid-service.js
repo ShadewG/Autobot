@@ -612,6 +612,8 @@ class SendGridService {
         const emailDomain = (fromEmail || '').split('@')[1]?.toLowerCase() || '';
         const haystack = `${subject} ${text}`.toLowerCase();
 
+        let pendingPortalNotification = null;
+
         for (const provider of PORTAL_PROVIDERS) {
             const domainMatch = provider.domains.some((domain) => emailDomain.includes(domain));
             const keywordMatch = provider.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
@@ -622,11 +624,16 @@ class SendGridService {
                     ? `https://${inferredDomain}${provider.defaultPath}`
                     : null;
 
-                return {
+                const instructionHints = ['submit', 'portal', 'request center', 'use the portal', 'request can be found'];
+                const textHasInstructions = instructionHints.some((hint) => haystack.includes(hint));
+                const requiresSubmission = keywordMatch || textHasInstructions;
+
+                pendingPortalNotification = {
                     provider: provider.name,
-                    type: 'status_update',
+                    type: requiresSubmission ? 'submission_required' : 'status_update',
                     portal_url: portalUrl
                 };
+                break;
             }
         }
 
@@ -657,7 +664,7 @@ class SendGridService {
             };
         }
 
-        return null;
+        return pendingPortalNotification;
     }
 
     extractPortalInstructionSnippet(text, url) {
