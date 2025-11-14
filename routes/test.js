@@ -833,6 +833,7 @@ router.get('/cases', async (req, res) => {
             SELECT
                 c.id,
                 c.case_name,
+                c.subject_name,
                 c.agency_name,
                 c.agency_email,
                 c.status,
@@ -937,10 +938,11 @@ router.get('/cases/:caseId/messages', async (req, res) => {
             });
         }
 
-        const caseResult = await db.query(`
-            SELECT
-                id,
-                case_name,
+            const caseResult = await db.query(`
+                SELECT
+                    id,
+                    case_name,
+                    subject_name,
                 agency_name,
                 agency_email,
                 status,
@@ -2681,6 +2683,38 @@ router.post('/resync-case', async (req, res) => {
 
     } catch (error) {
         console.error('Resync case error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Test Discord notification
+ * POST /api/test/discord
+ */
+router.post('/discord', async (req, res) => {
+    try {
+        const { message } = req.body;
+
+        await discordService.notify({
+            title: '🧪 Discord Test Message',
+            description: message || 'This is a test message from the Autobot API to verify Discord notifications are working!',
+            color: 0x667eea,
+            fields: [
+                { name: 'Status', value: '✅ Connected', inline: true },
+                { name: 'Time', value: new Date().toLocaleString(), inline: true },
+                { name: 'Message', value: 'If you see this, Discord notifications are working correctly!', inline: false }
+            ]
+        });
+
+        res.json({
+            success: true,
+            message: 'Discord test notification sent'
+        });
+    } catch (error) {
+        console.error('Discord test error:', error);
         res.status(500).json({
             success: false,
             error: error.message
