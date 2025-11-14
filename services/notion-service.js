@@ -122,7 +122,9 @@ class NotionService {
                 }
             ];
 
-            // Only include records explicitly marked as auto if the property exists
+            // NOTE: Status Auto filter removed - sync all cases with matching Live Status
+            // If you want to re-enable filtering by Status = "Auto", uncomment below:
+            /*
             const resolvedAutoProperty = this.statusAutoProperty
                 ? await this.resolvePropertyName(this.statusAutoProperty)
                 : null;
@@ -143,6 +145,7 @@ class NotionService {
                     filters.push(autoFilter);
                 }
             }
+            */
 
             const response = [];
             let hasMore = true;
