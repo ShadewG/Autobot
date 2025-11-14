@@ -713,6 +713,17 @@ Then analyze the situation and decide what action to take.`
             return { error: 'Case not found' };
         }
 
+        // NEVER send emails if there's a portal_url - portal submission only
+        if (caseData.portal_url) {
+            console.log(`      🚫 BLOCKED: Case ${case_id} has portal_url - NO EMAIL will be sent`);
+            console.log(`      🌐 Portal URL: ${caseData.portal_url}`);
+            return {
+                success: false,
+                error: 'Portal submission required - email blocked',
+                portal_url: caseData.portal_url
+            };
+        }
+
         const isTestCase =
             (caseData.notion_page_id && caseData.notion_page_id.startsWith('test-')) ||
             (caseData.case_name && caseData.case_name.toLowerCase().includes('test')) ||

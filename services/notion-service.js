@@ -947,6 +947,16 @@ Respond with JSON:
             console.log(`Found ${notionCases.length} cases in Notion`);
 
             const syncedCases = [];
+            const statusKey = status.toLowerCase().replace(/ /g, '_');
+            const protectedStatuses = new Set([
+                'portal_in_progress',
+                'needs_human_review',
+                'needs_human_fee_approval',
+                'sent',
+                'awaiting_response',
+                'responded',
+                'completed'
+            ]);
 
             for (const notionCase of notionCases) {
                 try {
@@ -954,28 +964,30 @@ Respond with JSON:
                     const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
 
                     if (existing) {
-                        // Case exists - check if Live Status changed to "Ready To Send"
-                        // If so, update and re-queue it
-                        if (existing.notion_status !== status.toLowerCase().replace(/ /g, '_')) {
-                            console.log(`Case status changed to "${status}" - updating and re-queuing: ${notionCase.case_name}`);
-
-                            // Update the case with new data
-                            notionCase.id = existing.id;
-                            const updatedCase = await db.updateCase(existing.id, {
-                                notion_status: notionCase.notion_status,
-                                agency_name: notionCase.agency_name,
-                                agency_email: notionCase.agency_email,
-                                status: 'ready_to_send', // Reset status to ready_to_send
-                            });
-
-                            syncedCases.push(updatedCase);
-
-                            await db.logActivity('case_status_changed', `Case status changed to "${status}" - re-queued: ${notionCase.case_name}`, {
-                                case_id: existing.id
-                            });
-                        } else {
-                            console.log(`Case already exists with same status (skipping): ${notionCase.case_name}`);
+                        if (protectedStatuses.has(existing.status)) {
+                            console.log(`Case ${existing.id} is in protected status (${existing.status}); ignoring Notion Ready status.`);
+                            continue;
                         }
+
+                        if (existing.status === 'ready_to_send') {
+                            console.log(`Case already ready to send (skipping): ${notionCase.case_name}`);
+                            continue;
+                        }
+
+                        console.log(`Case status changed to "${status}" - updating and re-queuing: ${notionCase.case_name}`);
+
+                        const updatedCase = await db.updateCase(existing.id, {
+                            agency_name: notionCase.agency_name,
+                            agency_email: notionCase.agency_email,
+                            status: 'ready_to_send'
+                        });
+
+                        syncedCases.push(updatedCase);
+
+                        await db.logActivity('case_status_changed', `Case status changed to "${status}" - re-queued: ${notionCase.case_name}`, {
+                            case_id: existing.id
+                        });
+
                         continue;
                     }
 

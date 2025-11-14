@@ -304,6 +304,13 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         }
 
         // ===== DETERMINISTIC FLOW (Original Logic) =====
+        // NEVER auto-reply if there's a portal_url - portal submission only
+        if (caseData.portal_url) {
+            console.log(`🚫 BLOCKED: Case ${caseId} has portal_url - NO AUTO-REPLY will be sent`);
+            console.log(`🌐 Portal URL: ${caseData.portal_url}`);
+            return analysis;
+        }
+
         // Check if we should auto-reply (enabled by default)
         const autoReplyEnabled = process.env.ENABLE_AUTO_REPLY === 'true';
         const caseNeedsHuman = caseData.status?.startsWith('needs_human');
@@ -477,6 +484,30 @@ const generateWorker = new Worker('generate-queue', async (job) => {
 
         // If portal submission did not occur/succeed, fall back to email flow
         if (!portalHandled) {
+            // NEVER fall back to email if there's a portal_url - portal submission only
+            if (portalUrl) {
+                console.log(`🚫 BLOCKED: Case ${caseId} has portal_url but portal submission failed - NO EMAIL fallback`);
+                console.log(`🌐 Portal URL: ${portalUrl}`);
+                console.log(`⚠️ Portal error: ${portalError?.message || 'Unknown error or unsupported domain'}`);
+                await db.updateCaseStatus(caseId, 'needs_human_review', {
+                    substatus: 'Portal submission failed - requires human intervention'
+                });
+                await notionService.syncStatusToNotion(caseId);
+                await db.logActivity('portal_requires_human', `Portal submission failed for case ${caseId}, no email fallback`, {
+                    case_id: caseId,
+                    portal_url: portalUrl,
+                    error: portalError?.message || 'Unknown error or unsupported domain'
+                });
+                return {
+                    success: false,
+                    case_id: caseId,
+                    queued_for_send: false,
+                    sent_via_portal: false,
+                    portal_failed: true,
+                    requires_human_review: true
+                };
+            }
+
             if (portalError) {
                 console.log(`📧 Continuing with email for case ${caseId} after portal error.`);
             }
