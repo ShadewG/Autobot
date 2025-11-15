@@ -19,6 +19,13 @@ class PortalAgentServiceSkyvern {
         // Support both cloud and self-hosted
         this.baseUrl = process.env.SKYVERN_API_URL || 'https://api.skyvern.com/api/v1';
         this.apiKey = process.env.SKYVERN_API_KEY;
+        this.workflowId = process.env.SKYVERN_WORKFLOW_ID || null;
+        this.workflowRunUrl = process.env.SKYVERN_WORKFLOW_RUN_URL || 'https://api.skyvern.com/v1/run/workflows';
+        this.workflowStatusUrl = process.env.SKYVERN_WORKFLOW_STATUS_URL || 'https://api.skyvern.com/v1/workflow_runs';
+        this.workflowProxyLocation = process.env.SKYVERN_PROXY_LOCATION || 'RESIDENTIAL';
+        this.workflowBrowserSessionId = process.env.SKYVERN_BROWSER_SESSION_ID || null;
+        this.workflowBrowserAddress = process.env.SKYVERN_BROWSER_ADDRESS || null;
+        this.workflowHttpTimeout = parseInt(process.env.SKYVERN_HTTP_TIMEOUT_MS || '120000', 10);
         this.emailHelper = new EmailVerificationHelper({
             inboxAddress: process.env.REQUESTS_INBOX || 'requests@foib-request.com'
         });
@@ -457,7 +464,8 @@ class PortalAgentServiceSkyvern {
                     extracted_data: extracted,
                     steps: actionHistory.length || finalTask.steps || 0,
                     submission_status: extracted.submission_status || finalTask.status,
-                    confirmation_number: extracted.confirmation_number || null
+                    confirmation_number: extracted.confirmation_number || null,
+                    engine: 'skyvern'
                 }
             };
         }
@@ -480,7 +488,8 @@ class PortalAgentServiceSkyvern {
                 error: finalTask.failure_reason || `Task ended with status ${finalTask.status}`,
                 taskId,
                 recording_url: finalTask.recording_url || failureTaskUrl,
-                extracted_data: extracted
+                extracted_data: extracted,
+                engine: 'skyvern'
             }
         };
     }
@@ -504,13 +513,17 @@ class PortalAgentServiceSkyvern {
 
         const runId = uuidv4();
         const defaultPortalEmail = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const useWorkflow = this._workflowEnabled();
 
         try {
             console.log(`🤖 Starting Skyvern agent for case: ${caseData.case_name}`);
             console.log(`   Portal: ${portalUrl}`);
-            console.log(`   Max steps: ${maxSteps}`);
+            console.log(`   Mode: ${useWorkflow ? 'workflow' : 'task-runner'}`);
+            if (!useWorkflow) {
+                console.log(`   Max steps: ${maxSteps}`);
+            }
             console.log(`   Dry run: ${dryRun}`);
-            console.log(`   API: ${this.baseUrl}`);
+            console.log(`   API: ${useWorkflow ? this.workflowRunUrl : this.baseUrl}`);
 
             await database.logActivity(
                 'portal_run_started',
@@ -519,11 +532,20 @@ class PortalAgentServiceSkyvern {
                     case_id: caseData.id || null,
                     portal_url: portalUrl,
                     dry_run: dryRun,
-                    max_steps: maxSteps,
+                    max_steps: useWorkflow ? null : maxSteps,
                     run_id: runId,
-                    engine: 'skyvern'
+                    engine: useWorkflow ? 'skyvern_workflow' : 'skyvern'
                 }
             );
+
+            if (useWorkflow) {
+                return await this._submitViaWorkflow({
+                    caseData,
+                    portalUrl,
+                    dryRun,
+                    runId
+                });
+            }
 
             console.log(`\n🔍 Checking for existing portal account...`);
             let existingAccount = await database.getPortalAccountByUrl(portalUrl);
@@ -601,7 +623,8 @@ class PortalAgentServiceSkyvern {
             const result = {
                 success: false,
                 error: errorMessage,
-                runId
+                runId,
+                engine: useWorkflow ? 'skyvern_workflow' : 'skyvern'
             };
 
             await database.logActivity(
@@ -621,6 +644,319 @@ class PortalAgentServiceSkyvern {
 
             return result;
         }
+    }
+
+    /**
+     * Workflow helper utilities
+     */
+    _workflowEnabled() {
+        if (!this.workflowId) return false;
+        if (process.env.SKYVERN_USE_WORKFLOW === 'false') return false;
+        return true;
+    }
+
+    _formatWorkflowDate(value) {
+        if (!value) return null;
+        const dateObj = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(dateObj.getTime())) {
+            return value;
+        }
+        return dateObj.toISOString().split('T')[0];
+    }
+
+    _normalizeRecordsField(records) {
+        if (!records) return [];
+        if (Array.isArray(records)) {
+            return records.filter(Boolean);
+        }
+        if (typeof records === 'string') {
+            const trimmed = records.trim();
+            if (!trimmed) return [];
+            if ((trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'))) {
+                try {
+                    const parsed = JSON.parse(trimmed.replace(/^{/, '[').replace(/}$/, ']'));
+                    if (Array.isArray(parsed)) {
+                        return parsed.filter(Boolean);
+                    }
+                } catch (_) {
+                    // fall through
+                }
+            }
+            if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+                return trimmed
+                    .slice(1, -1)
+                    .split(',')
+                    .map(item => item.replace(/^"+|"+$/g, '').trim())
+                    .filter(Boolean);
+            }
+            return [trimmed];
+        }
+        return [String(records)];
+    }
+
+    _buildWorkflowCaseInfo(caseData, portalUrl, dryRun) {
+        return {
+            case_id: caseData.id,
+            notion_page_id: caseData.notion_page_id,
+            case_name: caseData.case_name,
+            subject_name: caseData.subject_name,
+            agency_name: caseData.agency_name,
+            agency_email: caseData.agency_email,
+            portal_url: portalUrl,
+            state: caseData.state,
+            incident_date: this._formatWorkflowDate(caseData.incident_date),
+            incident_location: caseData.incident_location,
+            requested_records: this._normalizeRecordsField(caseData.requested_records),
+            additional_details: caseData.additional_details,
+            status: caseData.status,
+            deadline_date: this._formatWorkflowDate(caseData.deadline_date),
+            last_portal_status: caseData.last_portal_status,
+            last_portal_details: caseData.last_portal_details,
+            dry_run: !!dryRun
+        };
+    }
+
+    _buildWorkflowPersonalInfo(caseData, preferredEmail) {
+        return {
+            name: process.env.REQUESTER_NAME || 'Samuel Hylton',
+            email: preferredEmail || process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com',
+            phone: process.env.REQUESTER_PHONE || '209-800-7702',
+            organization: process.env.REQUESTER_ORG || 'Matcher / FOIA Request Team',
+            title: process.env.REQUESTER_TITLE || 'Documentary Researcher',
+            address: {
+                line1: process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
+                line2: process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
+                city: process.env.REQUESTER_CITY || 'Seattle',
+                state: process.env.REQUESTER_STATE || caseData.state || 'WA',
+                zip: process.env.REQUESTER_ZIP || '98199'
+            },
+            preferred_delivery: 'electronic',
+            fee_waiver: {
+                requested: true,
+                reason: 'Non-commercial documentary / public interest'
+            }
+        };
+    }
+
+    _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun }) {
+        const caseInfo = this._buildWorkflowCaseInfo(caseData, portalUrl, dryRun);
+        const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email);
+        const loginPayload = portalAccount
+            ? JSON.stringify({
+                  email: portalAccount.email,
+                  password: portalAccount.password
+              })
+            : '';
+
+        return {
+            URL: portalUrl,
+            login: loginPayload,
+            case_info: caseInfo,
+            personal_info: personalInfo
+        };
+    }
+
+    async _submitViaWorkflow({ caseData, portalUrl, dryRun, runId }) {
+        if (!this.workflowId) {
+            throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode requested');
+        }
+
+        console.log('⚙️ Skyvern workflow mode enabled. Building parameters…');
+        let portalAccount = await database.getPortalAccountByUrl(portalUrl);
+        if (portalAccount) {
+            await database.updatePortalAccountLastUsed(portalAccount.id);
+        }
+
+        const parameters = this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun });
+        const requestBody = {
+            workflow_id: this.workflowId,
+            parameters,
+            proxy_location: this.workflowProxyLocation,
+            browser_session_id: this.workflowBrowserSessionId,
+            browser_address: this.workflowBrowserAddress,
+            run_with: 'agent',
+            ai_fallback: true,
+            extra_http_headers: {}
+        };
+
+        const safeLog = JSON.parse(JSON.stringify(requestBody));
+        if (safeLog.parameters?.login) {
+            safeLog.parameters.login = '[redacted credential payload]';
+        }
+        console.log('📦 Workflow payload:', JSON.stringify(safeLog, null, 2));
+
+        try {
+            const response = await axios.post(
+                this.workflowRunUrl,
+                requestBody,
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': this.apiKey
+                    },
+                    timeout: this.workflowHttpTimeout
+                }
+            );
+
+            const workflowResponse = response.data || {};
+            const workflowRunId = workflowResponse.workflow_run_id || workflowResponse.run_id || workflowResponse.id || runId;
+            const initialStatus = workflowResponse.status || 'workflow_started';
+
+            await database.updateCasePortalStatus(caseData.id, {
+                portal_url: portalUrl,
+                portal_provider: caseData.portal_provider || 'Auto-detected',
+                last_portal_status: initialStatus,
+                last_portal_status_at: new Date(),
+                last_portal_engine: 'skyvern_workflow',
+                last_portal_run_id: workflowRunId,
+                last_portal_details: JSON.stringify(workflowResponse),
+                last_portal_task_url: portalUrl,
+                last_portal_account_email: portalAccount?.email || null
+            });
+
+            await database.logActivity(
+                'portal_workflow_triggered',
+                `Skyvern workflow triggered for ${caseData.case_name}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    run_id: workflowRunId,
+                    engine: 'skyvern_workflow',
+                    status: initialStatus
+                }
+            );
+
+            const finalResult = workflowRunId
+                ? await this._pollWorkflowRun(workflowRunId)
+                : null;
+
+            if (!finalResult) {
+                console.warn('⚠️ Workflow run status unavailable; manual follow-up required.');
+                return {
+                    success: false,
+                    status: initialStatus,
+                    runId: workflowRunId,
+                    workflow_response: workflowResponse,
+                    error: 'Workflow run status unavailable',
+                    engine: 'skyvern_workflow'
+                };
+            }
+
+            const finalStatus = (finalResult.status || finalResult.final_status || '').toLowerCase();
+            const completed = ['completed', 'succeeded', 'success'].includes(finalStatus);
+            const failed = finalStatus.includes('fail') || finalStatus.includes('error');
+            const recordingUrl = finalResult.recording_url || finalResult.recording || workflowResponse.recording_url || null;
+            const extractedData = finalResult.outputs || finalResult.extracted_information || finalResult.result || {};
+
+            await database.updateCasePortalStatus(caseData.id, {
+                last_portal_status: finalResult.status || finalResult.final_status || (completed ? 'completed' : 'failed'),
+                last_portal_status_at: new Date(),
+                last_portal_recording_url: recordingUrl || null,
+                last_portal_details: JSON.stringify(finalResult)
+            });
+
+            if (completed && !failed) {
+                await database.logActivity(
+                    'portal_stage_completed',
+                    `Skyvern workflow completed for ${caseData.case_name}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        run_id: workflowRunId,
+                        engine: 'skyvern_workflow'
+                    }
+                );
+
+                return {
+                    success: true,
+                    status: finalResult.status || 'completed',
+                    submission_status: finalResult.status || 'completed',
+                    runId: workflowRunId,
+                    recording_url: recordingUrl || null,
+                    extracted_data: extractedData,
+                    engine: 'skyvern_workflow'
+                };
+            }
+
+            const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
+            await database.logActivity(
+                'portal_stage_failed',
+                `Skyvern workflow failed for ${caseData.case_name}: ${failureReason}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    run_id: workflowRunId,
+                    engine: 'skyvern_workflow',
+                    error: failureReason
+                }
+            );
+
+            return {
+                success: false,
+                status: finalResult.status || 'failed',
+                runId: workflowRunId,
+                recording_url: recordingUrl || null,
+                error: failureReason,
+                workflow_response: finalResult,
+                engine: 'skyvern_workflow'
+            };
+        } catch (error) {
+            const message = error.response?.data?.message || error.response?.data?.error || error.message;
+            console.error('❌ Skyvern workflow API error:', message);
+            await database.logActivity(
+                'portal_stage_failed',
+                `Skyvern workflow crashed for ${caseData.case_name}: ${message}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    engine: 'skyvern_workflow',
+                    error: message
+                }
+            );
+            return {
+                success: false,
+                status: 'failed',
+                error: message,
+                engine: 'skyvern_workflow'
+            };
+        }
+    }
+
+    async _pollWorkflowRun(workflowRunId) {
+        if (!workflowRunId) {
+            return null;
+        }
+        const maxPolls = parseInt(process.env.SKYVERN_WORKFLOW_MAX_POLLS || '480', 10);
+        const pollIntervalMs = parseInt(process.env.SKYVERN_WORKFLOW_POLL_INTERVAL_MS || '5000', 10);
+        const statusEndpointBase = this.workflowStatusUrl.replace(/\/$/, '');
+        const statusUrl = `${statusEndpointBase}/${workflowRunId}`;
+
+        console.log(`⏳ Polling workflow run ${workflowRunId} for completion...`);
+
+        for (let poll = 0; poll < maxPolls; poll++) {
+            await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+            try {
+                const statusResponse = await axios.get(statusUrl, {
+                    headers: {
+                        'x-api-key': this.apiKey
+                    },
+                    timeout: this.workflowHttpTimeout
+                });
+
+                const data = statusResponse.data;
+                const status = (data.status || data.final_status || '').toLowerCase();
+                console.log(`   Poll ${poll + 1}: status=${status || 'unknown'}`);
+
+                if (['completed', 'succeeded', 'success', 'failed', 'terminated', 'error'].includes(status)) {
+                    return data;
+                }
+            } catch (pollError) {
+                console.warn(`   Poll ${poll + 1}: error fetching workflow status - ${pollError.message}`);
+            }
+        }
+
+        console.warn('⚠️ Workflow run polling timed out.');
+        return null;
     }
 
     /**

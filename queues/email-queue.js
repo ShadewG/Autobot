@@ -686,6 +686,7 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
             throw new Error(result?.error || 'Portal submission failed');
         }
 
+        const engineUsed = result.engine || 'skyvern';
         const statusText = result.status || 'submitted';
         const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
         const sendDate = caseData.send_date || new Date();
@@ -700,7 +701,7 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
             portal_provider: provider || caseData.portal_provider || 'Auto-detected',
             last_portal_status: `Submission completed (${statusText})`,
             last_portal_status_at: new Date(),
-            last_portal_engine: 'skyvern',
+            last_portal_engine: engineUsed,
             last_portal_run_id: result.taskId || result.runId || null,
             last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
             last_portal_task_url: taskUrl,
@@ -717,7 +718,8 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
             instructions,
             run_id: result.taskId || result.runId || null,
             recording_url: result.recording_url || taskUrl,
-            task_url: taskUrl
+            task_url: taskUrl,
+            engine: engineUsed
         });
 
         await discordService.notifyPortalSubmission(caseData, {

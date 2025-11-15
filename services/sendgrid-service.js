@@ -356,7 +356,7 @@ class SendGridService {
             });
 
             // Find the case this email belongs to
-            const caseData = await this.findCaseForInbound({
+            let caseData = await this.findCaseForInbound({
                 toEmail,
                 fromEmail,
                 inReplyToId,
@@ -487,6 +487,51 @@ class SendGridService {
                     portal_url: portalUrl,
                     portal_provider: portalDetection.provider,
                     notification_type: portalDetection.type
+                });
+            }
+
+            const confirmationDetection = this.detectNextRequestConfirmation({
+                subject: inboundData.subject,
+                text: inboundData.text || inboundData.body_text || '',
+                html: inboundData.html || inboundData.body_html || ''
+            });
+
+            if (confirmationDetection) {
+                const confirmationUrl = confirmationDetection.portal_url;
+
+                await db.markMessagePortalNotification(message.id, {
+                    type: 'confirmation_link',
+                    provider: 'nextrequest'
+                });
+
+                await db.updateCasePortalStatus(caseData.id, {
+                    portal_url: confirmationUrl,
+                    portal_provider: 'nextrequest',
+                    last_portal_status: 'Confirmation link received',
+                    last_portal_status_at: new Date(),
+                    last_portal_details: JSON.stringify({
+                        confirmation_url: confirmationUrl,
+                        source_message_id: message.id
+                    })
+                });
+
+                await db.updateCaseStatus(caseData.id, 'portal_in_progress', {
+                    substatus: 'Confirmation link received - retrying portal submission'
+                });
+
+                caseData.portal_url = confirmationUrl;
+
+                portalNotificationInfo = {
+                    provider: 'nextrequest',
+                    type: 'confirmation_link',
+                    portal_url: confirmationUrl,
+                    instructions_excerpt: confirmationDetection.instructions_excerpt
+                };
+
+                await db.logActivity('portal_confirmation_link', `NextRequest confirmation link received for ${caseData.case_name}`, {
+                    case_id: caseData.id,
+                    message_id: message.id,
+                    portal_url: confirmationUrl
                 });
             }
 
@@ -665,6 +710,40 @@ class SendGridService {
         }
 
         return pendingPortalNotification;
+    }
+
+    detectNextRequestConfirmation({ subject = '', text = '', html = '' }) {
+        const combinedText = [subject, text, html].filter(Boolean).join('\n');
+        if (!combinedText) {
+            return null;
+        }
+
+        const lower = combinedText.toLowerCase();
+        const hasProviderCue = lower.includes('nextrequest');
+        const hasConfirmationCue = lower.includes('confirm your') ||
+            lower.includes('confirmation link') ||
+            lower.includes('confirmation instructions') ||
+            lower.includes('/confirmation');
+
+        if (!hasProviderCue || !hasConfirmationCue) {
+            return null;
+        }
+
+        const urls = extractUrls(combinedText) || [];
+        for (const rawUrl of urls) {
+            const normalized = normalizePortalUrl(rawUrl);
+            if (!normalized) continue;
+            const lowered = normalized.toLowerCase();
+            if (!lowered.includes('nextrequest.com')) continue;
+            if (lowered.includes('/confirmation')) {
+                return {
+                    portal_url: normalized,
+                    instructions_excerpt: this.extractPortalInstructionSnippet(combinedText, rawUrl)
+                };
+            }
+        }
+
+        return null;
     }
 
     extractPortalInstructionSnippet(text, url) {

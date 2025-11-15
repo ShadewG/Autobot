@@ -201,7 +201,14 @@ router.post('/inbound', upload.any(), async (req, res) => {
                     instructions: result.portal_notification.instructions_excerpt || null
                 };
 
-                if (portalJobData.portalUrl) {
+                if (!portalJobData.portalUrl) {
+                    console.warn(`🌐 Portal notification detected but no portal URL stored for case ${result.case_id}`);
+                } else if (result.portal_notification.type === 'confirmation_link') {
+                    await portalQueue.add('portal-submit', portalJobData, {
+                        attempts: 1
+                    });
+                    console.log(`🔁 Portal submission re-queued for case ${result.case_id} using confirmation link`);
+                } else {
                     await portalQueue.add('portal-refresh', portalJobData, {
                         attempts: 3,
                         backoff: {
@@ -218,8 +225,6 @@ router.post('/inbound', upload.any(), async (req, res) => {
                         });
                         console.log(`🚀 Portal submission queued for case ${result.case_id} (${portalJobData.provider})`);
                     }
-                } else {
-                    console.warn(`🌐 Portal notification detected but no portal URL stored for case ${result.case_id}`);
                 }
             }
 

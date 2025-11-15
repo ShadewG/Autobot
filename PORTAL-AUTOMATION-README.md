@@ -191,6 +191,17 @@ The script logs the safe payload (credentials redacted), calls the workflow endp
 - `SKYVERN_BROWSER_SESSION_ID` / `SKYVERN_BROWSER_ADDRESS` — pass through to reuse persistent sessions once you have them
 - `SKYVERN_WORKFLOW_RUN_URL` — override base URL if you are testing against a self-hosted Skyvern instance
 
+### Portal worker integration
+
+`services/portal-agent-service-skyvern.js` now automatically prefers the workflow API whenever `SKYVERN_WORKFLOW_ID` is present (unless `SKYVERN_USE_WORKFLOW=false`). It builds the same payload, triggers the workflow run, polls `https://api.skyvern.com/v1/workflow_runs/{id}` for completion, and surfaces the final status back to the queue. Keep these env vars handy:
+
+- `SKYVERN_WORKFLOW_ID` (required to enable workflow mode)
+- `SKYVERN_WORKFLOW_RUN_URL` / `SKYVERN_WORKFLOW_STATUS_URL` (override endpoints if self-hosting)
+- `SKYVERN_PROXY_LOCATION`, `SKYVERN_BROWSER_SESSION_ID`, `SKYVERN_BROWSER_ADDRESS` (optional session controls)
+- `SKYVERN_WORKFLOW_MAX_POLLS`, `SKYVERN_WORKFLOW_POLL_INTERVAL_MS`, `SKYVERN_HTTP_TIMEOUT_MS` (tune polling behaviour)
+
+If the workflow env vars are absent the service falls back to the legacy `POST /api/v1/tasks` flow with navigation goals/payloads.
+
 ---
 
 ## Environment Variables
