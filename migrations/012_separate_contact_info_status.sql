@@ -12,9 +12,10 @@ SET
 WHERE
     status = 'needs_human_review'
     AND (
-        substatus LIKE '%missing contact%'
-        OR substatus LIKE '%no valid portal or email%'
-        OR substatus LIKE '%no contact info%'
+        substatus ILIKE '%missing contact%'
+        OR substatus ILIKE '%no valid portal or email%'
+        OR substatus ILIKE '%no contact info%'
+        OR substatus ILIKE '%No valid portal%'
     );
 
 -- Log the migration
