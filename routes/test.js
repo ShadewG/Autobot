@@ -1149,6 +1149,119 @@ router.get('/cases/:caseId/notion-links', async (req, res) => {
 });
 
 /**
+ * Re-import police department info for cases (primarily portal/email)
+ * POST /api/test/cases/reimport-pd-info
+ */
+router.post('/cases/reimport-pd-info', async (req, res) => {
+    try {
+        const { case_id, limit = 25, missing_portal_only = true } = req.body || {};
+        let cases = [];
+
+        if (case_id) {
+            const caseData = await db.getCaseById(case_id);
+            if (!caseData) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Case not found'
+                });
+            }
+            cases = [caseData];
+        } else {
+            const conditions = [];
+            if (missing_portal_only !== false) {
+                conditions.push('(portal_url IS NULL OR LENGTH(TRIM(portal_url)) = 0)');
+            }
+            const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+            const result = await db.query(`
+                SELECT
+                    id,
+                    case_name,
+                    notion_page_id,
+                    portal_url,
+                    portal_provider,
+                    agency_email,
+                    alternate_agency_email
+                FROM cases
+                ${whereClause}
+                ORDER BY updated_at DESC
+                LIMIT $1
+            `, [limit]);
+            cases = result.rows;
+        }
+
+        const summary = { processed: cases.length, updated: 0, results: [] };
+
+        if (!cases.length) {
+            return res.json({
+                success: true,
+                ...summary,
+                message: 'No cases matched criteria'
+            });
+        }
+
+        for (const caseRow of cases) {
+            if (!caseRow.notion_page_id) {
+                summary.results.push({
+                    case_id: caseRow.id,
+                    case_name: caseRow.case_name,
+                    status: 'skipped',
+                    reason: 'Missing notion_page_id'
+                });
+                continue;
+            }
+
+            try {
+                const notionCase = await notionService.fetchPageById(caseRow.notion_page_id);
+                const updates = {};
+
+                if (notionCase.portal_url && notionCase.portal_url !== caseRow.portal_url) {
+                    updates.portal_url = notionCase.portal_url;
+                    const provider = detectPortalProviderByUrl(notionCase.portal_url);
+                    if (provider?.label) {
+                        updates.portal_provider = provider.label;
+                    }
+                }
+                if (notionCase.agency_email && notionCase.agency_email !== caseRow.agency_email) {
+                    updates.agency_email = notionCase.agency_email;
+                }
+                if (notionCase.alternate_agency_email && notionCase.alternate_agency_email !== caseRow.alternate_agency_email) {
+                    updates.alternate_agency_email = notionCase.alternate_agency_email;
+                }
+
+                if (Object.keys(updates).length) {
+                    await db.updateCase(caseRow.id, updates);
+                    summary.updated += 1;
+                    summary.results.push({
+                        case_id: caseRow.id,
+                        case_name: caseRow.case_name,
+                        status: 'updated',
+                        updates
+                    });
+                } else {
+                    summary.results.push({
+                        case_id: caseRow.id,
+                        case_name: caseRow.case_name,
+                        status: 'no_change'
+                    });
+                }
+            } catch (error) {
+                console.error(`Failed to refresh PD info for case ${caseRow.id}:`, error);
+                summary.results.push({
+                    case_id: caseRow.id,
+                    case_name: caseRow.case_name,
+                    status: 'error',
+                    error: error.message
+                });
+            }
+        }
+
+        res.json({ success: true, ...summary });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * Simulate agency reply (for dashboard testing)
  * POST /api/test/simulate-reply
  */

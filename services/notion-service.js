@@ -33,6 +33,30 @@ const NOTION_STATUS_MAP = {
     'portal_submission_failed': 'Portal Issue'
 };
 
+const POLICE_DEPARTMENT_FIELD_SPECS = [
+    { name: 'Department Name' },
+    { name: 'Address' },
+    { name: 'Mailing Address' },
+    { name: 'County' },
+    { name: 'State' },
+    { name: 'Contact Email' },
+    { name: 'Contact Phone' },
+    { name: 'Fax No.' },
+    { name: 'Email Correspondence' },
+    { name: 'Name Of Officer/Employee Contacted' },
+    { name: 'Portal/ Online Form' },
+    { name: 'Portal/ Online Form (1)' },
+    { name: 'Request Form' },
+    { name: 'Allows In House Redaction' },
+    { name: 'BWC Availability' },
+    { name: 'Rating' },
+    { name: 'Cases Requested' },
+    { name: 'Cases requested' },
+    { name: 'Calls' },
+    { name: 'Last Info Verified' },
+    { name: 'Notes' }
+];
+
 class NotionService {
     constructor() {
         this.notion = new Client({ auth: process.env.NOTION_API_KEY });
@@ -328,15 +352,14 @@ class NotionService {
             this.applyNormalizedPDData(caseData, normalizedPD);
 
             // Fallback contact extraction for any remaining gaps
-            const allFieldsData = {};
-            Object.entries(deptProps).forEach(([fieldName, prop]) => {
-                const val = this.extractPlainValue(prop);
-                if (val) {
-                    allFieldsData[fieldName] = val;
-                }
-            });
+            const priorityFields = this.exportPoliceDepartmentFields(deptProps);
+            const allFieldsData = this.preparePropertiesForAI(deptProps);
+            const fieldsPayload = {
+                priority_fields: priorityFields,
+                all_fields: allFieldsData
+            };
 
-            const { emailCandidate, portalCandidate } = await this.extractContactsWithAI(allFieldsData, caseData);
+            const { emailCandidate, portalCandidate } = await this.extractContactsWithAI(fieldsPayload, caseData);
 
             // NO FALLBACK - return null if not found
             caseData.agency_email = emailCandidate || null;
@@ -423,9 +446,15 @@ class NotionService {
 
         switch (type) {
             case 'title':
-                return prop.title?.[0]?.plain_text || '';
+                return (prop.title || [])
+                    .map((part) => part.plain_text || '')
+                    .join(' ')
+                    .trim();
             case 'rich_text':
-                return prop.rich_text?.[0]?.plain_text || '';
+                return (prop.rich_text || [])
+                    .map((part) => part.plain_text || '')
+                    .join(' ')
+                    .trim();
             case 'email':
                 return prop.email || '';
             case 'select':
@@ -559,14 +588,20 @@ Respond with JSON:
      * Use GPT-5 to intelligently extract contact info from ALL PD fields
      * Prioritizes portal > email, and finds the best contact method
      */
-    async extractContactsWithAI(allFieldsData, caseData) {
+    async extractContactsWithAI(fieldsPayload = {}, caseData) {
         try {
             const OpenAI = require('openai');
             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+            const priorityFields = fieldsPayload.priority_fields || {};
+            const allFieldsData = fieldsPayload.all_fields || fieldsPayload || {};
+
             const prompt = `You are analyzing a Police Department database record to find contact information for submitting public records requests.
 
-POLICE DEPARTMENT FIELDS:
+PRIORITY POLICE DEPARTMENT FIELDS:
+${JSON.stringify(priorityFields, null, 2)}
+
+FULL FIELD EXPORT:
 ${JSON.stringify(allFieldsData, null, 2)}
 
 AGENCY NAME: ${caseData.agency_name || 'Unknown'}
@@ -590,7 +625,7 @@ Respond with JSON:
 }`;
 
             const response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: 'gpt-5-mini',
                 messages: [{ role: 'user', content: prompt }],
                 response_format: { type: 'json_object' }
             });
@@ -1409,6 +1444,15 @@ Respond with JSON:
         }
     }
 
+    exportPoliceDepartmentFields(properties = {}) {
+        const exportData = {};
+        POLICE_DEPARTMENT_FIELD_SPECS.forEach(({ name }) => {
+            const prop = properties[name];
+            exportData[name] = prop ? this.extractPlainValue(prop) : null;
+        });
+        return exportData;
+    }
+
     preparePropertiesForAI(properties = {}) {
         const result = {};
         for (const [name, prop] of Object.entries(properties)) {
@@ -1445,6 +1489,8 @@ Respond with JSON:
                 return !!prop.checkbox;
             case 'files':
                 return prop.files?.map(f => f.name || f.file?.url).filter(Boolean) || [];
+            case 'relation':
+                return prop.relation?.map(rel => rel.id).filter(Boolean) || [];
             default:
                 return null;
         }

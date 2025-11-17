@@ -928,8 +928,12 @@
 
             <div class="utility-actions">
                 <div class="utility-result" id="force-sync-result"></div>
+                <div class="utility-result" id="portal-refresh-result"></div>
                 <button class="btn-secondary" onclick="sendTestEmail(event)">
                     <span class="emoji">📤</span> Send Test Email
+                </button>
+                <button class="btn-secondary" onclick="refreshPortalInfo(event)">
+                    <span class="emoji">🧹</span> Refresh Portal Info
                 </button>
                 <button class="btn-info" onclick="forceNotionSync(event)">
                     <span class="emoji">🔄</span> Sync Ready Cases
@@ -1607,6 +1611,62 @@
             } catch (error) {
                 resultBox.innerHTML = `<span style="color:#e53e3e;">${escapeHtml(error.message)}</span>`;
                 log(`❌ Force sync error: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        }
+
+        // Refresh PD info / portal links
+        async function refreshPortalInfo(evt) {
+            const btn = evt?.target?.closest('button');
+            if (!btn) return;
+            const resultBox = document.getElementById('portal-refresh-result');
+
+            btn.disabled = true;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="loading"></span> Refreshing...';
+            if (resultBox) {
+                resultBox.innerHTML = '<p style="color:#718096;">Re-importing police department info...</p>';
+            }
+
+            try {
+                log('🧹 Re-importing PD info for cases missing portal URLs...', 'info');
+                const result = await apiCall('/test/cases/reimport-pd-info', 'POST', {});
+
+                const lines = [];
+                lines.push(`<strong>Processed:</strong> ${result.processed || 0}`);
+                lines.push(`<strong>Updated:</strong> ${result.updated || 0}`);
+                if (result.message) {
+                    lines.push(escapeHtml(result.message));
+                }
+
+                if (result.results && result.results.length) {
+                    const detailLines = result.results.slice(0, 5).map((entry) => {
+                        const icon = entry.status === 'updated'
+                            ? '✅'
+                            : entry.status === 'error'
+                                ? '❌'
+                                : 'ℹ️';
+                        const name = escapeHtml(entry.case_name || `Case ${entry.case_id}`);
+                        const status = escapeHtml(entry.status || 'unknown');
+                        return `${icon} ${name}: ${status}${entry.error ? ` - ${escapeHtml(entry.error)}` : ''}`;
+                    });
+                    lines.push('<strong>Details:</strong>');
+                    lines.push(detailLines.join('<br>'));
+                }
+
+                if (resultBox) {
+                    resultBox.innerHTML = lines.map((line) => `<div style="margin-bottom:4px;">${line}</div>`).join('');
+                }
+
+                log(`✅ PD refresh complete - processed ${result.processed || 0}, updated ${result.updated || 0}`, 'success');
+                await loadCaseMonitor({ manual: true });
+            } catch (error) {
+                if (resultBox) {
+                    resultBox.innerHTML = `<p style="color:#f87171;">${escapeHtml(error.message || 'Failed to refresh portal info')}</p>`;
+                }
+                log(`❌ Failed to refresh PD info: ${error.message}`, 'error');
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
