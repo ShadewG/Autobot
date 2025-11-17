@@ -45,3 +45,13 @@ temp/
 portal-screenshots/
 portal-agent-result.png
 portal-agent-log.json
+
+# Local databases
+*.db
+case_tracker.db
+
+# Test scripts
+test-*.js
+cancel-case-*.js
+check-*.js
+run-*.js
