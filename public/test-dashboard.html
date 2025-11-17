@@ -406,6 +406,40 @@
             max-width: 260px;
         }
 
+        .case-title-link a,
+        .case-link-text {
+            color: #38bdf8;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .case-link-text:hover,
+        .case-title-link a:hover {
+            color: #7dd3fc;
+        }
+
+        .case-link-text:focus-visible {
+            outline: 2px solid #38bdf8;
+            border-radius: 4px;
+        }
+
+        .case-link-text.link-loading {
+            opacity: 0.6;
+            position: relative;
+        }
+
+        .case-link-text.link-loading::after {
+            content: '';
+            display: inline-block;
+            margin-left: 6px;
+            width: 10px;
+            height: 10px;
+            border: 2px solid rgba(148, 163, 184, 0.7);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
         .portal-section-heading {
             font-size: 12px;
             font-weight: 600;
@@ -917,6 +951,7 @@
     <script>
         let caseMonitorTimer = null;
         let latestCaseMonitorCount = 0;
+        const notionLinkCache = new Map();
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1017,6 +1052,11 @@
             const date = new Date(value);
             if (Number.isNaN(date.getTime())) return '—';
             return date.toLocaleString();
+        }
+
+        function buildNotionUrl(pageId) {
+            if (!pageId) return null;
+            return `https://www.notion.so/${String(pageId).replace(/-/g, '')}`;
         }
 
         function escapeHtml(str = '') {
@@ -1281,10 +1321,17 @@
             html += '</tr></thead><tbody>';
 
             cases.forEach((c) => {
-            const subjectLine = escapeHtml(c.subject_name || c.case_name || 'Untitled case');
-            const showSubtitle = c.case_name && c.subject_name && c.subject_name !== c.case_name;
-            const subtitleLine = showSubtitle ? escapeHtml(c.case_name) : null;
-            const agency = escapeHtml(c.agency_name || 'Unknown agency');
+                const subjectLine = escapeHtml(c.subject_name || c.case_name || 'Untitled case');
+                const showSubtitle = c.case_name && c.subject_name && c.subject_name !== c.case_name;
+                const subtitleLine = showSubtitle ? escapeHtml(c.case_name) : null;
+                const agency = escapeHtml(c.agency_name || 'Unknown agency');
+                const caseNotionUrl = buildNotionUrl(c.notion_page_id);
+                const caseTitleClass = caseNotionUrl ? 'case-title case-title-link' : 'case-title';
+                const caseTitleContent = caseNotionUrl
+                    ? `<a class="case-link-text" href="${escapeHtml(caseNotionUrl)}" target="_blank" rel="noopener">${subjectLine}</a>`
+                    : subjectLine;
+                const agencyTitleClass = 'case-title case-agency-link';
+                const agencyTitleContent = `<span class="case-link-text" role="link" tabindex="0" onclick="openAgencyCard(event, ${c.id})" onkeydown="handleAgencyLinkKey(event, ${c.id})">${agency}</span>`;
                 const statusHtml = renderStatusPill(c.status, c.substatus);
                 const directionBadge = renderDirectionBadge(c.last_message_direction);
                 const preview = escapeHtml(c.last_message_preview || 'No correspondence yet.');
@@ -1301,11 +1348,14 @@
 
                 html += '<tr>';
                 html += `<td>
-                    <div class="case-title" title="${subjectLine}">${subjectLine}</div>
+                    <div class="${caseTitleClass}" title="${subjectLine}">${caseTitleContent}</div>
                     ${subtitleLine ? `<div class="case-subtitle" title="${subtitleLine}">${subtitleLine}</div>` : ''}
                     <div class="case-meta">#${c.id} • Created ${formatRelativeTime(c.created_at)}</div>
                 </td>`;
-                html += `<td><div class="case-title">${agency}</div><div class="case-meta">${escapeHtml(c.agency_email || '—')}</div></td>`;
+                html += `<td>
+                    <div class="${agencyTitleClass}" title="${agency}">${agencyTitleContent}</div>
+                    <div class="case-meta">${escapeHtml(c.agency_email || '—')}</div>
+                </td>`;
                 const portalCell = renderPortalStatusCell(c);
 
                 html += `<td>${statusHtml}</td>`;
@@ -1322,6 +1372,56 @@
 
             html += '</tbody></table>';
             container.innerHTML = html;
+        }
+
+        async function openAgencyCard(event, caseId) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+
+            if (!caseId) {
+                return;
+            }
+
+            const target = event?.currentTarget || null;
+            if (target) {
+                target.classList.add('link-loading');
+            }
+
+            try {
+                let linkInfo = notionLinkCache.get(caseId);
+                if (!linkInfo) {
+                    const response = await apiCall(`/test/cases/${caseId}/notion-links`);
+                    if (!response.success) {
+                        throw new Error(response.error || 'Unable to load Notion links');
+                    }
+                    notionLinkCache.set(caseId, response);
+                    linkInfo = response;
+                }
+
+                if (linkInfo.agency_url) {
+                    const newWindow = window.open(linkInfo.agency_url, '_blank');
+                    if (newWindow) {
+                        newWindow.opener = null;
+                    }
+                } else {
+                    log('⚠️ No police department card is linked on Notion for this case.', 'warning');
+                }
+            } catch (error) {
+                log(`❌ Failed to open police department card: ${error.message}`, 'error');
+            } finally {
+                if (target) {
+                    target.classList.remove('link-loading');
+                }
+            }
+        }
+
+        function handleAgencyLinkKey(event, caseId) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openAgencyCard(event, caseId);
+            }
         }
 
         async function openThreadModal(caseId) {
