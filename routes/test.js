@@ -1510,10 +1510,21 @@ router.post('/run-migration', async (req, res) => {
         const fs = require('fs');
         const path = require('path');
 
-        console.log('🔄 Running agent tables migration...');
+        // Get migration filename from request body, default to add-agent-tables.sql
+        const migrationFile = req.body.migration || 'add-agent-tables.sql';
+        const migrationName = migrationFile.replace('.sql', '');
+
+        console.log(`🔄 Running migration: ${migrationName}...`);
 
         // Read migration file
-        const migrationPath = path.join(__dirname, '..', 'migrations', 'add-agent-tables.sql');
+        const migrationPath = path.join(__dirname, '..', 'migrations', `${migrationName}.sql`);
+        if (!fs.existsSync(migrationPath)) {
+            return res.status(404).json({
+                success: false,
+                error: `Migration file not found: ${migrationName}.sql`
+            });
+        }
+
         const sql = fs.readFileSync(migrationPath, 'utf8');
 
         // Execute migration
