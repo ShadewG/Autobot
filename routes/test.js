@@ -50,6 +50,70 @@ function normalizePortalEvents(rawEvents) {
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
+const POLICE_DEPT_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const policeDeptLinkCache = new Map();
+
+function buildNotionUrl(pageId) {
+    if (!pageId) {
+        return null;
+    }
+    const cleanId = pageId.replace(/-/g, '');
+    return `https://www.notion.so/${cleanId}`;
+}
+
+async function resolvePoliceDeptPageId(notionPageId) {
+    if (!notionPageId || !notionService?.notion) {
+        return null;
+    }
+
+    const cacheEntry = policeDeptLinkCache.get(notionPageId);
+    const now = Date.now();
+    if (cacheEntry && (now - cacheEntry.timestamp) < POLICE_DEPT_CACHE_TTL) {
+        return cacheEntry.value;
+    }
+
+    try {
+        const page = await notionService.notion.pages.retrieve({
+            page_id: notionPageId.replace(/-/g, '')
+        });
+
+        const properties = page.properties || {};
+        const preferredKeys = [
+            'Police Department',
+            'Police Dept',
+            'Police Departments',
+            'Police Department ',
+            'PD',
+            'Agency',
+            'Department'
+        ];
+
+        let relationProperty = null;
+        for (const key of preferredKeys) {
+            if (properties[key]?.type === 'relation') {
+                relationProperty = properties[key];
+                break;
+            }
+        }
+
+        if (!relationProperty) {
+            const fallbackEntry = Object.entries(properties).find(([name, prop]) => (
+                prop?.type === 'relation' && /police|dept|agency/i.test(name)
+            ));
+            if (fallbackEntry) {
+                relationProperty = fallbackEntry[1];
+            }
+        }
+
+        const policeDeptPageId = relationProperty?.relation?.[0]?.id || null;
+        policeDeptLinkCache.set(notionPageId, { value: policeDeptPageId, timestamp: now });
+        return policeDeptPageId;
+    } catch (error) {
+        console.error('Failed to fetch police department relation from Notion:', error.message);
+        throw error;
+    }
+}
+
 /**
  * Test endpoint: Process a Notion page with instant mode
  * POST /api/test/process-notion
@@ -844,6 +908,7 @@ router.get('/cases', async (req, res) => {
         const result = await db.query(`
             SELECT
                 c.id,
+                c.notion_page_id,
                 c.case_name,
                 c.subject_name,
                 c.agency_name,
@@ -1022,6 +1087,61 @@ router.get('/cases/:caseId/messages', async (req, res) => {
                 last_inbound_at: stats.rows[0].last_inbound_at,
                 last_outbound_at: stats.rows[0].last_outbound_at
             }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Get Notion links for a case and its related police department
+ * GET /api/test/cases/:caseId/notion-links
+ */
+router.get('/cases/:caseId/notion-links', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId, 10);
+        if (Number.isNaN(caseId)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid case ID'
+            });
+        }
+
+        const caseResult = await db.query(`
+            SELECT id, notion_page_id
+            FROM cases
+            WHERE id = $1
+        `, [caseId]);
+
+        if (caseResult.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Case not found'
+            });
+        }
+
+        const caseRow = caseResult.rows[0];
+        const caseUrl = buildNotionUrl(caseRow.notion_page_id);
+
+        let policeDeptPageId = null;
+        let policeDeptUrl = null;
+
+        if (caseRow.notion_page_id && notionService?.notion) {
+            try {
+                policeDeptPageId = await resolvePoliceDeptPageId(caseRow.notion_page_id);
+                policeDeptUrl = buildNotionUrl(policeDeptPageId);
+            } catch (error) {
+                console.warn(`Unable to load police department relation for case ${caseId}:`, error.message);
+            }
+        }
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            case_page_id: caseRow.notion_page_id,
+            case_url: caseUrl,
+            agency_page_id: policeDeptPageId,
+            agency_url: policeDeptUrl
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -1714,17 +1834,17 @@ router.post('/force-notion-sync', async (req, res) => {
             const hasEmail = caseData.agency_email && caseData.agency_email.trim().length > 0;
 
             if (!hasPortal && !hasEmail) {
-                // No contact info - flag for human review
-                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                // No contact info - flag for contact info needed
+                await db.updateCaseStatus(caseData.id, 'needs_contact_info', {
                     substatus: 'Missing contact information (no portal URL or email)'
                 });
                 await notionService.syncStatusToNotion(caseData.id);
-                await db.logActivity('contact_missing', `Case ${caseData.id} flagged for human review - missing contact info`, {
+                await db.logActivity('contact_missing', `Case ${caseData.id} flagged - missing contact info`, {
                     case_id: caseData.id
                 });
 
-                result.status = 'needs_human_review';
-                result.message = 'Missing contact info - flagged for review';
+                result.status = 'needs_contact_info';
+                result.message = 'Missing contact info - needs portal URL or email';
                 reviewCount++;
             } else {
                 // Has contact info - queue for processing

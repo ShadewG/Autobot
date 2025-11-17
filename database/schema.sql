@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS cases (
     incident_location TEXT,
     requested_records TEXT[], -- Array of record types
     additional_details TEXT,
-    status VARCHAR(50) DEFAULT 'ready_to_send', -- ready_to_send, sent, awaiting_response, responded, completed, error
+    status VARCHAR(50) DEFAULT 'ready_to_send', -- ready_to_send, sent, awaiting_response, responded, completed, error, needs_human_review, needs_contact_info, needs_human_fee_approval, portal_in_progress
+    substatus VARCHAR(100), -- More granular status detail (e.g., 'Missing contact information', 'No valid portal or email contact detected')
     portal_url VARCHAR(1000),
     portal_provider VARCHAR(100),
     last_portal_status VARCHAR(255),

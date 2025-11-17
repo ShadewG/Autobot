@@ -116,7 +116,7 @@ async function completeReset() {
                 console.log(`      Status: ⚠️  FLAGGED (no contact info)`);
                 await db.query(
                     'UPDATE cases SET status = $1, substatus = $2 WHERE id = $3',
-                    ['needs_human_review', 'Missing contact information', caseData.id]
+                    ['needs_contact_info', 'Missing contact information', caseData.id]
                 );
                 reviewCount++;
             } else {

@@ -73,10 +73,10 @@ async function resetAndResync() {
             console.log(`      Email: ${hasEmail ? '✅ ' + caseData.agency_email : '❌ None'}`);
 
             if (!hasPortal && !hasEmail) {
-                console.log(`      Status: ⚠️  FLAGGED FOR HUMAN REVIEW (no contact info)`);
+                console.log(`      Status: ⚠️  NEEDS CONTACT INFO (no contact info)`);
                 await db.query(
                     'UPDATE cases SET status = $1, substatus = $2 WHERE id = $3',
-                    ['needs_human_review', 'Missing contact information (no portal URL or email)', caseData.id]
+                    ['needs_contact_info', 'Missing contact information (no portal URL or email)', caseData.id]
                 );
                 reviewCount++;
             } else if (!caseData.state) {
