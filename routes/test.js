@@ -1565,6 +1565,34 @@ router.post('/run-migration', async (req, res) => {
 });
 
 /**
+ * Utility endpoint to update contact info status
+ * POST /api/test/fix-contact-status
+ */
+router.post('/fix-contact-status', async (req, res) => {
+    try {
+        const result = await db.query(`
+            UPDATE cases
+            SET status = 'needs_contact_info', updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'needs_human_review'
+              AND substatus = 'No valid portal or email contact detected'
+            RETURNING id, case_name, status, substatus
+        `);
+
+        res.json({
+            success: true,
+            updated: result.rowCount,
+            cases: result.rows
+        });
+    } catch (error) {
+        console.error('Error updating contact status:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * Chat endpoint for testing AI responses
  * POST /api/test/chat
  */
