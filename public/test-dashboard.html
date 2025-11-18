@@ -188,6 +188,22 @@
         .btn-secondary {
             background: #475569;
             color: white;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            padding: 10px 16px;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+
+        .btn-secondary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.45);
+        }
+
+        .btn-secondary:active {
+            transform: translateY(0);
         }
 
         button:disabled {
@@ -316,6 +332,11 @@
             margin-top: 15px;
         }
 
+        .table-scroll {
+            width: 100%;
+            overflow-x: auto;
+        }
+
         .table th {
             background: #111c2f;
             padding: 12px;
@@ -331,6 +352,7 @@
             border-bottom: 1px solid rgba(148, 163, 184, 0.2);
             font-size: 14px;
             color: #e2e8f0;
+            vertical-align: top;
         }
 
         .table tr:hover {
@@ -395,6 +417,14 @@
             margin-top: 6px;
             color: #cbd5f5;
             font-size: 13px;
+            max-width: 360px;
+            line-height: 1.4;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: normal;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
         }
 
         .case-subtitle {
@@ -518,6 +548,11 @@
             overflow-y: auto;
         }
 
+        .message-cell {
+            min-width: 240px;
+            max-width: 380px;
+        }
+
         .portal-timeline-collapsible {
             margin-top: 8px;
         }
@@ -551,6 +586,14 @@
             margin-top: 6px;
             color: #2d3748;
             font-size: 13px;
+            max-width: 360px;
+            line-height: 1.4;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: normal;
+            display: -webkit-box;
+            -webkit-line-clamp: 4;
+            -webkit-box-orient: vertical;
         }
 
         .fee-card-grid {
@@ -631,6 +674,41 @@
         .status-pill.awaiting_response { background: #faf089; color: #b7791f; }
         .status-pill.closed { background: #c6f6d5; color: #276749; }
         .status-pill.follow_up_scheduled { background: #e9d8fd; color: #553c9a; }
+
+        .status-chip {
+            display: inline-flex;
+            align-items: center;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.03em;
+        }
+
+        .status-chip.warn {
+            background: rgba(249, 115, 22, 0.18);
+            color: #9a3412;
+        }
+
+        .status-chip.info {
+            background: rgba(14, 165, 233, 0.18);
+            color: #075985;
+        }
+
+        .status-chip.success {
+            background: rgba(34, 197, 94, 0.18);
+            color: #166534;
+        }
+
+        .status-chip.muted {
+            background: rgba(148, 163, 184, 0.25);
+            color: #475569;
+        }
+
+        .status-chip.danger {
+            background: rgba(248, 113, 113, 0.2);
+            color: #991b1b;
+        }
 
         .message-direction {
             display: inline-flex;
@@ -809,6 +887,159 @@
             width: 100%;
             font-size: 13px;
             color: #cbd5f5;
+        }
+
+        .review-card-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .review-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 18px;
+            background: #ffffff;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .review-header {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .review-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1a202c;
+        }
+
+        .review-badges {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .review-meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 12px 18px;
+        }
+
+        .review-meta-item span.label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #94a3b8;
+            letter-spacing: 0.04em;
+        }
+
+        .review-meta-item span.value {
+            display: block;
+            margin-top: 4px;
+            color: #1f2937;
+            font-size: 13px;
+        }
+
+        .review-portal-summary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .review-portal-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 12px;
+        }
+
+        .review-note {
+            width: 100%;
+            border-radius: 10px;
+            border: 1px solid #cbd5f5;
+            padding: 10px;
+            font-size: 13px;
+            min-height: 70px;
+            resize: vertical;
+        }
+
+        .review-actions-primary {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .review-advanced {
+            background: #f8fafc;
+            border-radius: 10px;
+            padding: 10px;
+        }
+
+        .review-advanced summary {
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            color: #475569;
+        }
+
+        .review-advanced-content {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .review-advanced-content select,
+        .review-advanced-content input {
+            border-radius: 8px;
+            border: 1px solid #cbd5f5;
+            padding: 8px;
+            font-size: 13px;
+        }
+
+        .fee-card-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .fee-card-title {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .fee-card-quote {
+            font-size: 13px;
+            color: #1a202c;
+            text-align: right;
+        }
+
+        .fee-card-quote strong {
+            display: block;
+            font-size: 18px;
+        }
+
+        .fee-card-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+        }
+
+        .fee-card-note {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 10px;
+            font-size: 13px;
+            color: #1f2937;
         }
     </style>
 </head>
@@ -1063,6 +1294,22 @@
             return `https://www.notion.so/${String(pageId).replace(/-/g, '')}`;
         }
 
+        function formatSubjectPreview(name = '') {
+            if (!name) return '';
+            const clean = name.replace(/\s+/g, ' ').trim();
+            if (!clean) return '';
+            const separators = [',', ';', ' and ', ' & '];
+            for (const sep of separators) {
+                if (clean.toLowerCase().includes(sep.trim())) {
+                    const parts = clean.split(new RegExp(sep, 'i'));
+                    if (parts.length) {
+                        return parts[0].trim() || clean;
+                    }
+                }
+            }
+            return clean;
+        }
+
         function escapeHtml(str = '') {
             return str
                 .replace(/&/g, '&amp;')
@@ -1096,6 +1343,11 @@
         function renderPortalLinks(entity = {}) {
             const links = [];
             const portalUrl = normalizePortalUrl(entity.portal_url);
+            const normalizedTask = entity.last_portal_task_url ? normalizePortalUrl(entity.last_portal_task_url) : null;
+            const taskUrl = normalizedTask && normalizedTask !== portalUrl ? normalizedTask : null;
+            const normalizedRecording = entity.last_portal_recording_url ? normalizePortalUrl(entity.last_portal_recording_url) : null;
+            const recordingUrl = normalizedRecording && normalizedRecording !== portalUrl ? normalizedRecording : null;
+
             if (portalUrl) {
                 const providerLabel = entity.portal_provider ? `${entity.portal_provider} portal` : 'Portal';
                 links.push(`<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener">${escapeHtml(providerLabel)}</a>`);
@@ -1103,10 +1355,12 @@
             if (entity.last_portal_details?.portal_ticket_url) {
                 links.push(`<a href="${escapeHtml(entity.last_portal_details.portal_ticket_url)}" target="_blank" rel="noopener">Ticket</a>`);
             }
-            if (entity.last_portal_task_url) {
-                links.push(`<a href="${escapeHtml(entity.last_portal_task_url)}" target="_blank" rel="noopener">Skyvern Task</a>`);
-            } else if (entity.last_portal_recording_url) {
-                links.push(`<a href="${escapeHtml(entity.last_portal_recording_url)}" target="_blank" rel="noopener">Skyvern Replay</a>`);
+            if (taskUrl) {
+                const taskLabel = /workflow/i.test(taskUrl) ? 'Skyvern Workflow' : 'Skyvern Task';
+                links.push(`<a href="${escapeHtml(taskUrl)}" target="_blank" rel="noopener">${escapeHtml(taskLabel)}</a>`);
+            }
+            if (recordingUrl) {
+                links.push(`<a href="${escapeHtml(recordingUrl)}" target="_blank" rel="noopener">Skyvern Replay</a>`);
             }
             return links.length ? `<div class="case-meta portal-links">${links.join(' • ')}</div>` : '';
         }
@@ -1246,7 +1500,11 @@
             const accountHtml = c.last_portal_account_email
                 ? `<div class="case-meta">Login Email: ${escapeHtml(c.last_portal_account_email)} (password stored securely)</div>`
                 : '';
-            return `<div class="case-title">${status}</div>${metaHtml}${provider}${linksHtml}${accountHtml}${detailsHtml}${timelineHtml}`;
+            const runMeta = c.last_portal_run_id ? `<div class="case-meta">Run: ${escapeHtml(String(c.last_portal_run_id))}</div>` : '';
+            const completionWarning = c.last_portal_status && /completed|submitted|success/i.test(c.last_portal_status) && c.status && c.status !== 'sent'
+                ? `<div class="case-meta"><span class="status-chip warn">Portal done • Case ${escapeHtml(c.status)}</span></div>`
+                : '';
+            return `<div class="case-title">${status}</div>${metaHtml}${provider}${runMeta}${linksHtml}${accountHtml}${completionWarning}${detailsHtml}${timelineHtml}`;
         }
 
         function renderStatusPill(status, substatus) {
@@ -1325,15 +1583,19 @@
             html += '</tr></thead><tbody>';
 
             cases.forEach((c) => {
-                const subjectLine = escapeHtml(c.subject_name || c.case_name || 'Untitled case');
-                const showSubtitle = c.case_name && c.subject_name && c.subject_name !== c.case_name;
-                const subtitleLine = showSubtitle ? escapeHtml(c.case_name) : null;
+                const primaryName = escapeHtml(c.case_name || c.subject_name || 'Untitled case');
+                const hasSecondary = c.subject_name && c.case_name && c.subject_name !== c.case_name;
+                const subjectPreview = hasSecondary ? formatSubjectPreview(c.subject_name || '') : '';
+                const hasMoreSubjects = hasSecondary && subjectPreview && subjectPreview.length < (c.subject_name || '').trim().length;
+                const secondaryLine = hasSecondary
+                    ? `<div class="case-subtitle" title="${escapeHtml(c.subject_name)}">Subject: ${escapeHtml(subjectPreview || c.subject_name)}${hasMoreSubjects ? ' +' : ''}</div>`
+                    : '';
                 const agency = escapeHtml(c.agency_name || 'Unknown agency');
                 const caseNotionUrl = buildNotionUrl(c.notion_page_id);
                 const caseTitleClass = caseNotionUrl ? 'case-title case-title-link' : 'case-title';
                 const caseTitleContent = caseNotionUrl
-                    ? `<a class="case-link-text" href="${escapeHtml(caseNotionUrl)}" target="_blank" rel="noopener">${subjectLine}</a>`
-                    : subjectLine;
+                    ? `<a class="case-link-text" href="${escapeHtml(caseNotionUrl)}" target="_blank" rel="noopener">${primaryName}</a>`
+                    : primaryName;
                 const agencyTitleClass = 'case-title case-agency-link';
                 const agencyTitleContent = `<span class="case-link-text" role="link" tabindex="0" onclick="openAgencyCard(event, ${c.id})" onkeydown="handleAgencyLinkKey(event, ${c.id})">${agency}</span>`;
                 const statusHtml = renderStatusPill(c.status, c.substatus);
@@ -1352,8 +1614,8 @@
 
                 html += '<tr>';
                 html += `<td>
-                    <div class="${caseTitleClass}" title="${subjectLine}">${caseTitleContent}</div>
-                    ${subtitleLine ? `<div class="case-subtitle" title="${subtitleLine}">${subtitleLine}</div>` : ''}
+                    <div class="${caseTitleClass}" title="${primaryName}">${caseTitleContent}</div>
+                    ${secondaryLine}
                     <div class="case-meta">#${c.id} • Created ${formatRelativeTime(c.created_at)}</div>
                 </td>`;
                 html += `<td>
@@ -1364,7 +1626,11 @@
 
                 html += `<td>${statusHtml}</td>`;
                 html += `<td>${portalCell}</td>`;
-                html += `<td>${directionBadge}<div class="case-meta">${lastActivity}</div><div class="case-preview">${preview}</div></td>`;
+                html += `<td class="message-cell">
+                    ${directionBadge}
+                    <div class="case-meta">${lastActivity}</div>
+                    <div class="case-preview">${preview}</div>
+                </td>`;
                 html += `<td><div class="case-title">${totalMessages} message${totalMessages === 1 ? '' : 's'}</div><div class="case-meta">Inbound: ${inboundMeta} • Outbound: ${outboundMeta}</div></td>`;
                 html += `<td><div class="case-title">${followupText}</div>${followupStatus}</td>`;
                 html += `<td>
@@ -1704,76 +1970,142 @@
                 return;
             }
 
-            const html = items.map(item => {
-                const caseMeta = `
-                    <div class="case-meta">
-                        <strong>Status:</strong> ${escapeHtml(item.status)} •
-                        <strong>Substatus:</strong> ${escapeHtml(item.substatus || '—')}
+            const html = items.map((item) => {
+                const statusLabel = escapeHtml((item.status || 'needs_review').replace(/_/g, ' '));
+                const substatusLabel = item.substatus
+                    ? escapeHtml(item.substatus.replace(/_/g, ' '))
+                    : null;
+                const issueChips = [];
+                if (substatusLabel) {
+                    issueChips.push(`<span class="status-chip warn">${substatusLabel}</span>`);
+                }
+                if (!item.portal_url) {
+                    issueChips.push('<span class="status-chip danger">Portal missing</span>');
+                }
+                if (!item.agency_email) {
+                    issueChips.push('<span class="status-chip warn">No agency email</span>');
+                }
+
+                const portalUrl = item.portal_url ? normalizePortalUrl(item.portal_url) : null;
+                const portalSummary = `
+                    <div class="review-portal-summary">
+                        ${portalUrl ? `<a href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener">${escapeHtml(item.portal_provider || 'Open portal')}</a>` : '<span class="status-chip danger">No portal link stored</span>'}
+                        ${item.last_portal_account_email ? `<span class="status-chip info">Login: ${escapeHtml(item.last_portal_account_email)}</span>` : ''}
+                        ${item.last_portal_status ? `<span class="status-chip muted">Skyvern: ${escapeHtml(item.last_portal_status)}</span>` : ''}
+                        ${item.last_portal_engine ? `<span class="status-chip muted">${escapeHtml(item.last_portal_engine)}</span>` : ''}
                     </div>
-                    <div class="case-meta">
-                        <strong>Agency:</strong> ${escapeHtml(item.agency_name || 'Unknown')} — ${escapeHtml(item.agency_email || 'No email')}
+                    <div class="review-portal-links">
+                        ${renderPortalLinks(item)}
+                        ${item.last_portal_task_url ? `<a href="${escapeHtml(item.last_portal_task_url)}" target="_blank" rel="noopener">Latest Skyvern task</a>` : ''}
+                        ${item.last_portal_recording_url && !item.last_portal_task_url ? `<a href="${escapeHtml(item.last_portal_recording_url)}" target="_blank" rel="noopener">Skyvern recording</a>` : ''}
                     </div>
                 `;
 
                 const lastActivity = item.last_activity_description
-                    ? `<div class="case-meta"><strong>Last Activity:</strong> ${escapeHtml(item.last_activity_description)}</div>`
+                    ? `<div class="review-meta-item"><span class="label">Last Activity</span><span class="value">${escapeHtml(item.last_activity_description)}</span></div>`
                     : '';
 
                 const lastMessage = item.last_message_body
-                    ? `<details><summary style="cursor:pointer;font-size:12px;color:#4a5568;">Latest message</summary><div style="margin-top:6px;font-size:12px;color:#2d3748;">${escapeHtml(item.last_message_body.substring(0, 400))}${item.last_message_body.length > 400 ? '…' : ''}</div></details>`
+                    ? `<div class="review-meta-item"><span class="label">Latest message</span><span class="value">${escapeHtml(item.last_message_body.substring(0, 320))}${item.last_message_body.length > 320 ? '…' : ''}</span></div>`
                     : '';
 
-                const portalLinksHtml = renderPortalLinks(item);
                 const portalDetailsHtml = renderPortalDetails(item.last_portal_details || null, { heading: 'Portal Submission' });
                 const portalTimelineHtml = renderPortalTimeline(item.portal_events || [], { heading: 'Portal Activity', limit: 5 });
-                const portalInfoHtml = (portalLinksHtml || portalDetailsHtml || portalTimelineHtml)
-                    ? `<div class="portal-review-block">${portalLinksHtml}${portalDetailsHtml}${portalTimelineHtml}</div>`
+                const portalInfoHtml = (portalDetailsHtml || portalTimelineHtml)
+                    ? `<div class="portal-review-block">${portalDetailsHtml}${portalTimelineHtml}</div>`
                     : '';
+                const headerAction = portalUrl
+                    ? `<a class="btn-secondary" href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener"><span class="emoji">🌐</span> Open Portal</a>`
+                    : `<button class="btn-secondary" onclick="openThreadModal(${item.id})"><span class="emoji">📨</span> View Thread</button>`;
 
                 return `
-                    <div class="fee-card" id="human-review-${item.id}">
-                        <h4>Case ${item.id}: ${escapeHtml(item.case_name || 'Untitled')}</h4>
-                        ${caseMeta}
-                        ${lastActivity}
-                        ${lastMessage}
+                    <div class="review-card" id="human-review-${item.id}">
+                        <div class="review-header">
+                            <div>
+                                <div class="review-title">Case ${item.id}: ${escapeHtml(item.case_name || 'Untitled')}</div>
+                                <div class="review-badges">
+                                    <span class="status-chip info">${statusLabel}</span>
+                                    ${issueChips.join('')}
+                                </div>
+                            </div>
+                            <div class="review-portal-links">
+                                ${headerAction}
+                            </div>
+                        </div>
+                        <div class="review-meta-grid">
+                            <div class="review-meta-item">
+                                <span class="label">Agency</span>
+                                <span class="value">${escapeHtml(item.agency_name || 'Unknown')} • ${escapeHtml(item.agency_email || 'No email')}</span>
+                            </div>
+                            <div class="review-meta-item">
+                                <span class="label">Reason</span>
+                                <span class="value">${substatusLabel || 'Needs review'}</span>
+                            </div>
+                            ${lastActivity}
+                            ${lastMessage}
+                        </div>
+                        ${portalSummary}
                         ${portalInfoHtml}
-                        <div class="fee-actions">
-                            <textarea data-review-note="${item.id}" placeholder="Add context or instructions..."></textarea>
-                            <div style="display:flex;flex-direction:column;gap:8px;min-width:200px;">
-                                <label style="font-size:12px;text-transform:uppercase;color:#4a5568;">Decision</label>
+                        <textarea class="review-note" data-review-note="${item.id}" placeholder="Add context or instructions..."></textarea>
+                        <div class="review-actions-primary">
+                            <button class="btn-success" onclick="submitHumanReviewDecision(${item.id}, this, { action: 'approve' })">
+                                <span class="emoji">✅</span> Approve & Queue
+                            </button>
+                            <button class="btn-danger" onclick="submitHumanReviewDecision(${item.id}, this, { action: 'reject' })">
+                                <span class="emoji">⛔</span> Reject
+                            </button>
+                            <button class="btn-warning" onclick="submitHumanReviewDecision(${item.id}, this, { action: 'change', nextStatus: 'manual_followup' })">
+                                <span class="emoji">🛠</span> Manual Follow-up
+                            </button>
+                            <button class="btn-secondary" onclick="openThreadModal(${item.id})">
+                                <span class="emoji">📨</span> View Thread
+                            </button>
+                        </div>
+                        <details class="review-advanced">
+                            <summary>Advanced options</summary>
+                            <div class="review-advanced-content">
                                 <select data-review-action="${item.id}">
                                     <option value="approve">Approve</option>
                                     <option value="reject">Reject</option>
                                     <option value="change">Change</option>
                                 </select>
-                                <input data-review-next-status="${item.id}" placeholder="Next status (optional)" style="padding:8px;border-radius:8px;border:1px solid #cbd5f5;" />
-                                <button class="btn-secondary" onclick="openThreadModal(${item.id})">
-                                    <span class="emoji">📨</span> View Thread
-                                </button>
-                                <button class="btn-success" onclick="submitHumanReviewDecision(${item.id}, this)">
-                                    <span class="emoji">✅</span> Submit Decision
-                                </button>
+                                <input data-review-next-status="${item.id}" placeholder="Next status (optional)" />
                             </div>
-                        </div>
+                        </details>
                     </div>
                 `;
             }).join('');
 
-            container.innerHTML = `<div class="fee-card-grid">${html}</div>`;
+            container.innerHTML = `<div class="review-card-grid">${html}</div>`;
         }
 
-        async function submitHumanReviewDecision(caseId, buttonEl) {
+        async function submitHumanReviewDecision(caseId, buttonEl, overrides = {}) {
             const noteEl = document.querySelector(`[data-review-note="${caseId}"]`);
             const actionEl = document.querySelector(`[data-review-action="${caseId}"]`);
             const nextStatusEl = document.querySelector(`[data-review-next-status="${caseId}"]`);
 
+            if (overrides.action && actionEl) {
+                actionEl.value = overrides.action;
+            }
+            if (overrides.nextStatus && nextStatusEl) {
+                nextStatusEl.value = overrides.nextStatus;
+            }
+
+            const action = overrides.action || (actionEl ? actionEl.value : 'approve');
+            const note = overrides.note !== undefined
+                ? overrides.note
+                : (noteEl ? noteEl.value.trim() : '');
+            const nextStatus = overrides.nextStatus !== undefined
+                ? overrides.nextStatus
+                : (nextStatusEl && nextStatusEl.value.trim() ? nextStatusEl.value.trim() : undefined);
+
             const payload = {
-                action: actionEl ? actionEl.value : 'approve',
-                note: noteEl ? noteEl.value.trim() : '',
-                next_status: nextStatusEl && nextStatusEl.value.trim() ? nextStatusEl.value.trim() : undefined
+                action,
+                note,
+                next_status: nextStatus
             };
 
-            const btn = buttonEl || event.target.closest('button');
+            const btn = buttonEl || (typeof event !== 'undefined' ? event.target.closest('button') : null);
             if (btn) {
                 btn.disabled = true;
                 btn.innerHTML = '<span class="loading"></span> Saving...';
@@ -1811,31 +2143,41 @@
             const html = items.map(item => {
                 const metadata = item.metadata || {};
                 const amount = metadata.fee_amount ? `$${Number(metadata.fee_amount).toFixed(2)}` : '—';
-                const action = (metadata.recommended_action || 'negotiate').replace(/_/g, ' ');
+                const recommendedAction = metadata.recommended_action || 'negotiate';
+                const actionLabel = recommendedAction.replace(/_/g, ' ');
                 const instructions = metadata.instructions || '';
-                const original = item.original_message ? escapeHtml(item.original_message.substring(0, 220)) + (item.original_message.length > 220 ? '…' : '') : '—';
+                const original = item.original_message ? escapeHtml(item.original_message.substring(0, 300)) + (item.original_message.length > 300 ? '…' : '') : '—';
                 const status = escapeHtml(item.status);
                 const replyPreview = escapeHtml(item.generated_reply || '').replace(/\n/g, '<br>');
 
                 return `
                     <div class="fee-card" id="fee-card-${item.id}">
-                        <div class="fee-metadata">
-                            <span class="status-pill">${status}</span>
-                            <span>Case ${item.case_id}: ${escapeHtml(item.case_name || '')}</span>
-                            <span>Quoted: ${amount}</span>
-                            <span>Action: ${escapeHtml(action)}</span>
+                        <div class="fee-card-header">
+                            <div class="fee-card-title">
+                                <span class="status-chip warn">${status}</span>
+                                <span>Case ${item.case_id}: ${escapeHtml(item.case_name || 'Untitled')}</span>
+                            </div>
+                            <div class="fee-card-quote">
+                                <span>Quoted</span>
+                                <strong>${amount}</strong>
+                            </div>
                         </div>
+                        <div class="fee-card-tags">
+                            <span class="status-chip info">Recommended: ${escapeHtml(actionLabel)}</span>
+                            ${metadata.deadline ? `<span class="status-chip muted">Deadline ${escapeHtml(metadata.deadline)}</span>` : ''}
+                        </div>
+                        ${instructions ? `<div class="fee-card-note"><strong>Guidance</strong><br>${escapeHtml(instructions)}</div>` : ''}
                         <div class="fee-response-preview">${replyPreview || '<em>No draft generated</em>'}</div>
                         <details>
                             <summary style="cursor:pointer; font-size:12px; color:#4a5568;">View agency quote</summary>
                             <div style="margin-top:8px; font-size:12px; color:#2d3748;">${original}</div>
                         </details>
                         <div class="fee-actions">
-                            <textarea data-fee-instructions="${item.id}" data-original-instructions="${escapeHtml(instructions)}" placeholder="Add instructions before regenerating...">${escapeHtml(instructions)}</textarea>
-                            <div style="display:flex; flex-direction:column; gap:8px; min-width:180px;">
+                            <textarea data-fee-instructions="${item.id}" data-original-instructions="${escapeHtml(instructions)}" placeholder="Edit instructions before regenerating...">${escapeHtml(instructions)}</textarea>
+                            <div style="display:flex; flex-direction:column; gap:8px; min-width:200px;">
                                 <label style="font-size:12px; text-transform:uppercase; color:#4a5568;">Action</label>
-                                <select data-fee-action="${item.id}" data-original-action="${metadata.recommended_action || 'negotiate'}">
-                                    ${['accept','negotiate','escalate'].map(opt => `<option value="${opt}" ${ (metadata.recommended_action || 'negotiate') === opt ? 'selected' : '' }>${opt.charAt(0).toUpperCase() + opt.slice(1)}</option>`).join('')}
+                                <select data-fee-action="${item.id}" data-original-action="${recommendedAction}">
+                                    ${['accept','negotiate','escalate'].map(opt => `<option value="${opt}" ${ recommendedAction === opt ? 'selected' : '' }>${opt.charAt(0).toUpperCase() + opt.slice(1)}</option>`).join('')}
                                 </select>
                                 <button class="btn-secondary" onclick="openThreadModal(${item.case_id})">
                                     <span class="emoji">📨</span> View Thread

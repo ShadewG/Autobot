@@ -26,6 +26,7 @@ class PortalAgentServiceSkyvern {
         this.workflowBrowserSessionId = process.env.SKYVERN_BROWSER_SESSION_ID || null;
         this.workflowBrowserAddress = process.env.SKYVERN_BROWSER_ADDRESS || null;
         this.workflowHttpTimeout = parseInt(process.env.SKYVERN_HTTP_TIMEOUT_MS || '120000', 10);
+        this.skyvernAppBaseUrl = process.env.SKYVERN_APP_BASE_URL || 'https://app.skyvern.com';
         this.emailHelper = new EmailVerificationHelper({
             inboxAddress: process.env.REQUESTS_INBOX || 'requests@foib-request.com'
         });
@@ -655,6 +656,22 @@ class PortalAgentServiceSkyvern {
         return true;
     }
 
+    _buildWorkflowRunUrl(workflowRunId, workflowResponse = {}) {
+        const direct =
+            workflowResponse.workflow_run_url ||
+            workflowResponse.run_url ||
+            workflowResponse.url ||
+            workflowResponse.workflow_url;
+        if (direct) {
+            return direct;
+        }
+        if (!workflowRunId) {
+            return null;
+        }
+        const base = (this.skyvernAppBaseUrl || 'https://app.skyvern.com').replace(/\/$/, '');
+        return `${base}/workflow-runs/${workflowRunId}`;
+    }
+
     _formatWorkflowDate(value) {
         if (!value) return null;
         const dateObj = value instanceof Date ? value : new Date(value);
@@ -801,6 +818,7 @@ class PortalAgentServiceSkyvern {
             const workflowResponse = response.data || {};
             const workflowRunId = workflowResponse.workflow_run_id || workflowResponse.run_id || workflowResponse.id || runId;
             const initialStatus = workflowResponse.status || 'workflow_started';
+            const workflowRunLink = this._buildWorkflowRunUrl(workflowRunId, workflowResponse);
 
             await database.updateCasePortalStatus(caseData.id, {
                 portal_url: portalUrl,
@@ -810,7 +828,7 @@ class PortalAgentServiceSkyvern {
                 last_portal_engine: 'skyvern_workflow',
                 last_portal_run_id: workflowRunId,
                 last_portal_details: JSON.stringify(workflowResponse),
-                last_portal_task_url: portalUrl,
+                last_portal_task_url: workflowRunLink || null,
                 last_portal_account_email: portalAccount?.email || null
             });
 
@@ -822,7 +840,8 @@ class PortalAgentServiceSkyvern {
                     portal_url: portalUrl,
                     run_id: workflowRunId,
                     engine: 'skyvern_workflow',
-                    status: initialStatus
+                    status: initialStatus,
+                    task_url: workflowRunLink || null
                 }
             );
 
@@ -836,6 +855,7 @@ class PortalAgentServiceSkyvern {
                     success: false,
                     status: initialStatus,
                     runId: workflowRunId,
+                    workflow_url: workflowRunLink || null,
                     workflow_response: workflowResponse,
                     error: 'Workflow run status unavailable',
                     engine: 'skyvern_workflow'
@@ -847,12 +867,14 @@ class PortalAgentServiceSkyvern {
             const failed = finalStatus.includes('fail') || finalStatus.includes('error');
             const recordingUrl = finalResult.recording_url || finalResult.recording || workflowResponse.recording_url || null;
             const extractedData = finalResult.outputs || finalResult.extracted_information || finalResult.result || {};
+            const finalWorkflowRunLink = this._buildWorkflowRunUrl(workflowRunId, finalResult) || workflowRunLink;
 
             await database.updateCasePortalStatus(caseData.id, {
                 last_portal_status: finalResult.status || finalResult.final_status || (completed ? 'completed' : 'failed'),
                 last_portal_status_at: new Date(),
                 last_portal_recording_url: recordingUrl || null,
-                last_portal_details: JSON.stringify(finalResult)
+                last_portal_details: JSON.stringify(finalResult),
+                last_portal_task_url: finalWorkflowRunLink || null
             });
 
             if (completed && !failed) {
@@ -863,7 +885,8 @@ class PortalAgentServiceSkyvern {
                         case_id: caseData.id || null,
                         portal_url: portalUrl,
                         run_id: workflowRunId,
-                        engine: 'skyvern_workflow'
+                        engine: 'skyvern_workflow',
+                        task_url: finalWorkflowRunLink || null
                     }
                 );
 
@@ -874,28 +897,31 @@ class PortalAgentServiceSkyvern {
                     runId: workflowRunId,
                     recording_url: recordingUrl || null,
                     extracted_data: extractedData,
+                    workflow_url: finalWorkflowRunLink || null,
                     engine: 'skyvern_workflow'
                 };
             }
 
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
-            await database.logActivity(
-                'portal_stage_failed',
-                `Skyvern workflow failed for ${caseData.case_name}: ${failureReason}`,
-                {
-                    case_id: caseData.id || null,
-                    portal_url: portalUrl,
-                    run_id: workflowRunId,
-                    engine: 'skyvern_workflow',
-                    error: failureReason
-                }
-            );
+                await database.logActivity(
+                    'portal_stage_failed',
+                    `Skyvern workflow failed for ${caseData.case_name}: ${failureReason}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        run_id: workflowRunId,
+                        engine: 'skyvern_workflow',
+                        error: failureReason,
+                        task_url: finalWorkflowRunLink || workflowRunLink || null
+                    }
+                );
 
             return {
                 success: false,
                 status: finalResult.status || 'failed',
                 runId: workflowRunId,
                 recording_url: recordingUrl || null,
+                workflow_url: finalWorkflowRunLink || null,
                 error: failureReason,
                 workflow_response: finalResult,
                 engine: 'skyvern_workflow'
@@ -910,13 +936,15 @@ class PortalAgentServiceSkyvern {
                     case_id: caseData.id || null,
                     portal_url: portalUrl,
                     engine: 'skyvern_workflow',
-                    error: message
+                    error: message,
+                    task_url: workflowRunLink || null
                 }
             );
             return {
                 success: false,
                 status: 'failed',
                 error: message,
+                workflow_url: workflowRunLink || null,
                 engine: 'skyvern_workflow'
             };
         }
