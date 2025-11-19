@@ -3085,4 +3085,48 @@ router.post('/discord', async (req, res) => {
     }
 });
 
+/**
+ * Check queue status and worker health
+ * GET /api/test/queue-status
+ */
+router.get('/queue-status', async (req, res) => {
+    try {
+        const generateCounts = await generateQueue.getJobCounts('wait', 'active', 'completed', 'failed', 'delayed');
+        const emailCounts = await emailQueue.getJobCounts('wait', 'active', 'completed', 'failed', 'delayed');
+        const portalCounts = await portalQueue.getJobCounts('wait', 'active', 'completed', 'failed', 'delayed');
+
+        // Get some waiting jobs to see what's queued
+        const waitingGenerate = await generateQueue.getJobs(['waiting'], 0, 5);
+        const waitingEmail = await emailQueue.getJobs(['waiting'], 0, 5);
+        const waitingPortal = await portalQueue.getJobs(['waiting'], 0, 5);
+
+        res.json({
+            success: true,
+            timestamp: new Date().toISOString(),
+            queues: {
+                generate: {
+                    counts: generateCounts,
+                    waiting_jobs: waitingGenerate.map(j => ({ id: j.id, data: j.data, addedAt: j.timestamp }))
+                },
+                email: {
+                    counts: emailCounts,
+                    waiting_jobs: waitingEmail.map(j => ({ id: j.id, data: j.data, addedAt: j.timestamp }))
+                },
+                portal: {
+                    counts: portalCounts,
+                    waiting_jobs: waitingPortal.map(j => ({ id: j.id, data: j.data, addedAt: j.timestamp }))
+                }
+            },
+            redis_url: process.env.REDIS_URL ? 'Configured' : 'NOT CONFIGURED'
+        });
+    } catch (error) {
+        console.error('Queue status error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: error.stack
+        });
+    }
+});
+
 module.exports = router;
