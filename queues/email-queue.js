@@ -417,6 +417,14 @@ const generateWorker = new Worker('generate-queue', async (job) => {
 
                 if (portalResult && portalResult.success) {
                     const submissionStatus = portalResult.submission_status || portalResult.status || 'submitted';
+                    const portalEngine = portalResult.engine || 'skyvern';
+                    const workflowUrl = portalResult.workflow_url || null;
+                    const taskUrl = workflowUrl
+                        ? workflowUrl
+                        : (portalResult.taskId ? `https://app.skyvern.com/tasks/${portalResult.taskId}` : null);
+                    const recordingUrl = portalResult.recording_url || taskUrl || null;
+                    const portalRunId = portalResult.runId || portalResult.taskId || null;
+
                     await db.updateCaseStatus(caseId, 'sent', {
                         substatus: `Portal submission completed (${submissionStatus})`,
                         send_date: new Date()
@@ -426,9 +434,11 @@ const generateWorker = new Worker('generate-queue', async (job) => {
                         portal_provider: caseData.portal_provider || 'Auto-detected',
                         last_portal_status: submissionStatus,
                         last_portal_status_at: new Date(),
-                        last_portal_engine: 'skyvern',
-                        last_portal_run_id: portalResult.taskId || portalResult.runId || null,
-                        last_portal_details: JSON.stringify(portalResult.extracted_data || {})
+                        last_portal_engine: portalEngine,
+                        last_portal_run_id: portalRunId,
+                        last_portal_details: JSON.stringify(portalResult.extracted_data || {}),
+                        last_portal_task_url: taskUrl,
+                        last_portal_recording_url: recordingUrl
                     });
 
                     await notionService.syncStatusToNotion(caseId);
@@ -437,8 +447,10 @@ const generateWorker = new Worker('generate-queue', async (job) => {
                         case_id: caseId,
                         portal_url: portalUrl,
                         portal_provider: caseData.portal_provider || 'Auto-detected',
-                        engine: 'skyvern',
-                        run_id: portalResult.taskId || portalResult.runId || null,
+                        engine: portalEngine,
+                        run_id: portalRunId,
+                        task_url: taskUrl,
+                        recording_url: recordingUrl,
                         submission_status: submissionStatus,
                         confirmation_number: portalResult.confirmation_number || null
                     });

@@ -1041,6 +1041,62 @@
             font-size: 13px;
             color: #1f2937;
         }
+
+        .live-log-card {
+            background: #0b1220;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 20px;
+        }
+
+        .live-log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .live-log-list {
+            max-height: 260px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .live-log-entry {
+            background: #0f172a;
+            border-left: 4px solid #38bdf8;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .live-log-entry.error {
+            border-left-color: #f87171;
+        }
+
+        .live-log-entry.warn {
+            border-left-color: #fb923c;
+        }
+
+        .live-log-entry.success {
+            border-left-color: #22c55e;
+        }
+
+        .live-log-entry .live-log-meta {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .live-log-entry strong {
+            color: #f8fafc;
+        }
     </style>
 </head>
 <body>
@@ -1094,6 +1150,16 @@
                 <h2>🧑‍⚖️ Human Review Queue</h2>
                 <div id="human-review-container">
                     <p style="color:#718096;">No cases need human review.</p>
+                </div>
+            </div>
+
+            <div class="live-log-card">
+                <div class="live-log-header">
+                    <h3 style="color:#f1f5f9;font-size:18px;">⚡ Live Case Logs</h3>
+                    <small style="color:#94a3b8;" id="live-log-meta">Refreshing…</small>
+                </div>
+                <div id="live-log-list" class="live-log-list">
+                    <p style="color:#718096;">Collecting recent events…</p>
                 </div>
             </div>
 
@@ -1187,6 +1253,26 @@
         let caseMonitorTimer = null;
         let latestCaseMonitorCount = 0;
         const notionLinkCache = new Map();
+        let liveLogTimer = null;
+        let lastLiveLogTimestamp = null;
+        const LIVE_LOG_EVENTS = {
+            portal_run_started: 'info',
+            portal_workflow_triggered: 'info',
+            portal_stage_completed: 'success',
+            portal_stage_failed: 'error',
+            portal_submission: 'success',
+            portal_submission_failed: 'error',
+            portal_requires_human: 'warn',
+            portal_status_synced: 'info',
+            email_sent: 'success',
+            generate_job_failed: 'error',
+            generation_failed: 'error',
+            notion_sync: 'info',
+            case_imported: 'info',
+            case_status_changed: 'info',
+            portal_status_failed: 'error',
+            portal_instruction_received: 'warn'
+        };
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1198,9 +1284,11 @@
             loadPortalRuns();
             loadFeeResponses();
             loadHumanReviews();
+            loadLiveLogs();
             setupCaseMonitorControls();
             loadCaseMonitor();
             scheduleCaseMonitorRefresh();
+            scheduleLiveLogRefresh();
 
             const modal = document.getElementById('thread-modal');
             if (modal) {
@@ -1263,6 +1351,13 @@
                 clearInterval(caseMonitorTimer);
             }
             caseMonitorTimer = setInterval(() => loadCaseMonitor(), 30000);
+        }
+
+        function scheduleLiveLogRefresh() {
+            if (liveLogTimer) {
+                clearInterval(liveLogTimer);
+            }
+            liveLogTimer = setInterval(() => loadLiveLogs(), 15000);
         }
 
         function formatRelativeTime(value) {
@@ -1642,6 +1737,76 @@
 
             html += '</tbody></table>';
             container.innerHTML = html;
+        }
+
+        async function loadLiveLogs() {
+            try {
+                const result = await apiCall('/test/activity?limit=80');
+                renderLiveLogs(result.activity || []);
+            } catch (error) {
+                const container = document.getElementById('live-log-list');
+                if (container) {
+                    container.innerHTML = `<p style="color:#e53e3e;">Failed to load logs: ${escapeHtml(error.message)}</p>`;
+                }
+                const meta = document.getElementById('live-log-meta');
+                if (meta) {
+                    meta.textContent = 'Failed to refresh';
+                }
+            }
+        }
+
+        function renderLiveLogs(entries = []) {
+            const container = document.getElementById('live-log-list');
+            const meta = document.getElementById('live-log-meta');
+            if (!container) return;
+
+            const relevant = entries
+                .filter((entry) => entry && LIVE_LOG_EVENTS[entry.event_type])
+                .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))
+                .slice(0, 25);
+
+            if (!relevant.length) {
+                container.innerHTML = '<p style="color:#718096;">No recent automation logs.</p>';
+                if (meta) {
+                    meta.textContent = `Updated ${new Date().toLocaleTimeString()} • No recent logs`;
+                }
+                return;
+            }
+
+            let newestTimestamp = lastLiveLogTimestamp || 0;
+            const html = relevant.map((entry) => {
+                const severity = LIVE_LOG_EVENTS[entry.event_type] || 'info';
+                const timestamp = entry.created_at ? new Date(entry.created_at) : null;
+                const timeLabel = timestamp ? timestamp.toLocaleTimeString() : '';
+                const caseLabel = entry.case_name
+                    ? `${escapeHtml(entry.case_name)}`
+                    : entry.case_id
+                        ? `Case ${entry.case_id}`
+                        : '—';
+                const description = escapeHtml(entry.description || '');
+                const eventLabel = escapeHtml(entry.event_type.replace(/_/g, ' '));
+                const isNew = timestamp && timestamp.getTime() > (lastLiveLogTimestamp || 0);
+                if (timestamp) {
+                    newestTimestamp = Math.max(newestTimestamp, timestamp.getTime());
+                }
+                return `
+                    <div class="live-log-entry ${severity}">
+                        <div class="live-log-meta">
+                            <span>${eventLabel}</span>
+                            <span>${timeLabel}</span>
+                            <span>${caseLabel}</span>
+                            ${isNew ? '<span class="status-chip info">new</span>' : ''}
+                        </div>
+                        <div>${description || '<em>No details</em>'}</div>
+                    </div>
+                `;
+            }).join('');
+
+            container.innerHTML = html;
+            lastLiveLogTimestamp = newestTimestamp;
+            if (meta) {
+                meta.textContent = `Updated ${new Date().toLocaleTimeString()} • Showing ${relevant.length}`;
+            }
         }
 
         async function openAgencyCard(event, caseId) {
