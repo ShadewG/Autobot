@@ -1005,7 +1005,13 @@ Respond with JSON:
                         }
 
                         if (existing.status === 'ready_to_send') {
-                            console.log(`Case already ready to send (skipping): ${notionCase.case_name}`);
+                            // Check if case has been queued - if not, re-queue it
+                            if (!existing.queued_at) {
+                                console.log(`Case ready_to_send but never queued - re-queuing: ${notionCase.case_name}`);
+                                syncedCases.push(existing);
+                            } else {
+                                console.log(`Case already ready to send and queued (skipping): ${notionCase.case_name}`);
+                            }
                             continue;
                         }
 
