@@ -62,6 +62,7 @@ export const requestsAPI = {
       autopilot_mode?: string;
       requires_human?: boolean;
       pause_reason?: string | null;
+      next_due_at?: string;
     }
   ) => {
     return fetchAPI(`/requests/${id}`, {
