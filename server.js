@@ -4,12 +4,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
-const next = require('next');
 const db = require('./services/database');
-
-const dev = process.env.NODE_ENV !== 'production';
-const nextApp = next({ dev, dir: './dashboard' });
-const nextHandle = nextApp.getRequestHandler();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -33,7 +28,9 @@ app.use(morgan('combined'));
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Next.js dashboard routes are handled after API routes below
+// Serve Next.js dashboard static files
+const dashboardPath = path.join(__dirname, 'dashboard', 'out');
+app.use(express.static(dashboardPath));
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -146,32 +143,43 @@ async function runMigrations() {
     }
 }
 
-// Error handling middleware for API routes
-app.use('/api', (err, req, res, next) => {
-    console.error('API Error:', err);
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Error:', err);
     res.status(err.status || 500).json({
         error: err.message || 'Internal server error',
         ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
     });
 });
 
-// Next.js handles all other routes (dashboard pages)
-app.all('*', (req, res) => {
-    // Skip API routes (already handled above)
+// Dashboard SPA fallback - serve index.html for unmatched routes
+app.get('*', (req, res, next) => {
+    // Skip API and webhook routes
     if (req.path.startsWith('/api/') || req.path.startsWith('/webhooks/')) {
         return res.status(404).json({ error: 'Not found', path: req.path });
     }
-    return nextHandle(req, res);
+
+    // Try to serve the specific HTML file for the route
+    const fs = require('fs');
+    const htmlPath = path.join(dashboardPath, req.path, 'index.html');
+
+    if (fs.existsSync(htmlPath)) {
+        return res.sendFile(htmlPath);
+    }
+
+    // Fallback to root index.html for SPA routing
+    const rootIndex = path.join(dashboardPath, 'index.html');
+    if (fs.existsSync(rootIndex)) {
+        return res.sendFile(rootIndex);
+    }
+
+    // If no dashboard files exist, return 404
+    return res.status(404).json({ error: 'Not found', path: req.path });
 });
 
 // Initialize database and start server
 async function startServer() {
     try {
-        // Prepare Next.js
-        console.log('Preparing Next.js dashboard...');
-        await nextApp.prepare();
-        console.log('Next.js dashboard ready');
-
         console.log('Initializing database...');
         await db.initialize();
         console.log('Database initialized successfully');

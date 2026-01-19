@@ -1,7 +1,7 @@
 "use client";
 
-import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -26,16 +26,15 @@ import {
   Loader2,
 } from "lucide-react";
 
-export default function RequestDetailPage() {
-  const params = useParams();
+function RequestDetailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const id = params.id as string;
+  const id = searchParams.get("id");
 
   const [nextAction, setNextAction] = useState<NextAction | null>(null);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
-    `/requests/${id}/workspace`,
+    id ? `/requests/${id}/workspace` : null,
     fetcher
   );
 
@@ -46,19 +45,14 @@ export default function RequestDetailPage() {
     }
   }, [data?.next_action_proposal]);
 
-  // Check if adjust dialog should be open (from URL param)
-  useEffect(() => {
-    if (searchParams.get("adjust") === "true") {
-      // Could trigger the adjust dialog here
-    }
-  }, [searchParams]);
-
   const handleApprove = async () => {
+    if (!id) return;
     await requestsAPI.approve(id, nextAction?.id);
     mutate();
   };
 
   const handleRevise = async (instruction: string) => {
+    if (!id) return;
     const result = await requestsAPI.revise(id, instruction, nextAction?.id);
     if (result.next_action_proposal) {
       setNextAction(result.next_action_proposal);
@@ -66,6 +60,7 @@ export default function RequestDetailPage() {
   };
 
   const handleDismiss = async () => {
+    if (!id) return;
     await requestsAPI.dismiss(id, nextAction?.id);
     setNextAction(null);
     mutate();
@@ -76,6 +71,17 @@ export default function RequestDetailPage() {
     console.log("Send message:", content);
     mutate();
   };
+
+  if (!id) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-destructive">No request ID provided</p>
+        <Link href="/requests" className="text-primary hover:underline mt-4 inline-block">
+          Back to Requests
+        </Link>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -300,7 +306,7 @@ export default function RequestDetailPage() {
               )}
               <Separator />
               <Link
-                href={`/agencies/${agency_summary.id}`}
+                href={`/agencies/detail?id=${agency_summary.id}`}
                 className="text-primary hover:underline inline-block"
               >
                 View Full Agency Profile
@@ -310,5 +316,17 @@ export default function RequestDetailPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+export default function RequestDetailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <RequestDetailContent />
+    </Suspense>
   );
 }

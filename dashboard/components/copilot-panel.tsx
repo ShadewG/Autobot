@@ -273,7 +273,7 @@ export function CopilotPanel({
             <CardTitle className="text-sm flex items-center justify-between">
               Agency Profile
               <a
-                href={`/agencies/${agency.id}`}
+                href={`/agencies/detail?id=${agency.id}`}
                 className="text-xs text-primary hover:underline"
               >
                 <ExternalLink className="h-3 w-3 inline mr-1" />

@@ -1,6 +1,7 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -27,20 +28,33 @@ import {
   DollarSign,
   FileText,
   CheckCircle,
-  AlertCircle,
   Loader2,
   ExternalLink,
 } from "lucide-react";
 
-export default function AgencyDetailPage() {
-  const params = useParams();
+function AgencyDetailContent() {
   const router = useRouter();
-  const id = params.id as string;
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
 
   const { data, error, isLoading } = useSWR<AgencyDetailResponse>(
-    `/agencies/${id}`,
+    id ? `/agencies/${id}` : null,
     fetcher
   );
+
+  if (!id) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-destructive">No agency ID provided</p>
+        <Link
+          href="/agencies"
+          className="text-primary hover:underline mt-4 inline-block"
+        >
+          Back to Agencies
+        </Link>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
@@ -254,7 +268,7 @@ export default function AgencyDetailPage() {
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">Pending Review</span>
               <Badge
-                variant={agency.stats.pending_review > 0 ? "warning" : "outline"}
+                variant={agency.stats.pending_review > 0 ? "secondary" : "outline"}
               >
                 {agency.stats.pending_review}
               </Badge>
@@ -300,7 +314,7 @@ export default function AgencyDetailPage() {
                     key={req.id}
                     className="cursor-pointer"
                     onClick={() =>
-                      (window.location.href = `/requests/${req.id}`)
+                      (window.location.href = `/requests/detail?id=${req.id}`)
                     }
                   >
                     <TableCell className="font-medium">{req.id}</TableCell>
@@ -323,5 +337,17 @@ export default function AgencyDetailPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function AgencyDetailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <AgencyDetailContent />
+    </Suspense>
   );
 }
