@@ -140,7 +140,7 @@ export default function AgenciesPage() {
                       key={agency.id}
                       className="cursor-pointer"
                       onClick={() =>
-                        (window.location.href = `/dashboard/agencies/${agency.id}`)
+                        (window.location.href = `/agencies/${agency.id}`)
                       }
                     >
                       <TableCell>

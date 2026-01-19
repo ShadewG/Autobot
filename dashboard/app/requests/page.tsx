@@ -28,7 +28,7 @@ export default function RequestsPage() {
 
   const handleAdjust = (id: string) => {
     // Navigate to detail page with adjust dialog open
-    window.location.href = `/dashboard/requests/${id}?adjust=true`;
+    window.location.href = `/requests/${id}?adjust=true`;
   };
 
   const handleSnooze = async (id: string) => {

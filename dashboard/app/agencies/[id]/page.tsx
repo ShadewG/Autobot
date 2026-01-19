@@ -58,7 +58,7 @@ export default function AgencyDetailPage() {
           {error?.message || "Agency not found"}
         </p>
         <Link
-          href="/dashboard/agencies"
+          href="/agencies"
           className="text-primary hover:underline mt-4 inline-block"
         >
           Back to Agencies
@@ -76,7 +76,7 @@ export default function AgencyDetailPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => router.push("/dashboard/agencies")}
+          onClick={() => router.push("/agencies")}
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back
@@ -300,7 +300,7 @@ export default function AgencyDetailPage() {
                     key={req.id}
                     className="cursor-pointer"
                     onClick={() =>
-                      (window.location.href = `/dashboard/requests/${req.id}`)
+                      (window.location.href = `/requests/${req.id}`)
                     }
                   >
                     <TableCell className="font-medium">{req.id}</TableCell>

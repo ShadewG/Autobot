@@ -23,18 +23,18 @@ export default function RootLayout({
             <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <div className="container flex h-14 items-center">
                 <div className="mr-4 flex">
-                  <a href="/dashboard/requests" className="mr-6 flex items-center space-x-2">
+                  <a href="/requests" className="mr-6 flex items-center space-x-2">
                     <span className="font-bold">FOIA Dashboard</span>
                   </a>
                   <nav className="flex items-center space-x-6 text-sm font-medium">
                     <a
-                      href="/dashboard/requests"
+                      href="/requests"
                       className="transition-colors hover:text-foreground/80 text-foreground"
                     >
                       Requests
                     </a>
                     <a
-                      href="/dashboard/agencies"
+                      href="/agencies"
                       className="transition-colors hover:text-foreground/80 text-muted-foreground"
                     >
                       Agencies

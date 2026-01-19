@@ -92,7 +92,7 @@ export default function RequestDetailPage() {
         <p className="text-sm text-muted-foreground">
           {error?.message || "Request not found"}
         </p>
-        <Link href="/dashboard/requests" className="text-primary hover:underline mt-4 inline-block">
+        <Link href="/requests" className="text-primary hover:underline mt-4 inline-block">
           Back to Requests
         </Link>
       </div>
@@ -109,7 +109,7 @@ export default function RequestDetailPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => router.push("/dashboard/requests")}
+            onClick={() => router.push("/requests")}
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
@@ -300,7 +300,7 @@ export default function RequestDetailPage() {
               )}
               <Separator />
               <Link
-                href={`/dashboard/agencies/${agency_summary.id}`}
+                href={`/agencies/${agency_summary.id}`}
                 className="text-primary hover:underline inline-block"
               >
                 View Full Agency Profile

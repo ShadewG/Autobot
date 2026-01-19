@@ -31,7 +31,7 @@ export function RequestRow({
   const router = useRouter();
 
   const handleClick = () => {
-    router.push(`/dashboard/requests/${request.id}`);
+    router.push(`/requests/${request.id}`);
   };
 
   return (
