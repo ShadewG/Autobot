@@ -9,7 +9,10 @@
     "migrate": "node database/migrate.js",
     "test-setup": "node test-setup.js",
     "postinstall": "playwright install chromium --with-deps || echo 'Playwright install failed, continuing...'",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dashboard": "cd dashboard && npm run dev",
+    "dashboard:build": "cd dashboard && npm run build",
+    "dashboard:install": "cd dashboard && npm install"
   },
   "keywords": [
     "foia",

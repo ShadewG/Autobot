@@ -28,6 +28,14 @@ app.use(morgan('combined'));
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Serve Next.js dashboard from /dashboard route
+const dashboardPath = path.join(__dirname, 'dashboard', 'out');
+app.use('/dashboard', express.static(dashboardPath));
+// Handle dashboard client-side routing
+app.get('/dashboard/*', (req, res) => {
+    res.sendFile(path.join(dashboardPath, 'index.html'));
+});
+
 // Health check endpoint
 app.get('/health', async (req, res) => {
     try {
@@ -50,10 +58,14 @@ app.get('/health', async (req, res) => {
 const webhookRoutes = require('./routes/webhooks');
 const apiRoutes = require('./routes/api');
 const testRoutes = require('./routes/test');
+const requestRoutes = require('./routes/requests');
+const agencyRoutes = require('./routes/agencies');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/test', testRoutes);
+app.use('/api/requests', requestRoutes);
+app.use('/api/agencies', agencyRoutes);
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
