@@ -4,7 +4,12 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
+const next = require('next');
 const db = require('./services/database');
+
+const dev = process.env.NODE_ENV !== 'production';
+const nextApp = next({ dev, dir: './dashboard' });
+const nextHandle = nextApp.getRequestHandler();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,13 +33,7 @@ app.use(morgan('combined'));
 // Serve static files from public directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Serve Next.js dashboard from /dashboard route
-const dashboardPath = path.join(__dirname, 'dashboard', 'out');
-app.use('/dashboard', express.static(dashboardPath));
-// Handle dashboard client-side routing
-app.get('/dashboard/*', (req, res) => {
-    res.sendFile(path.join(dashboardPath, 'index.html'));
-});
+// Next.js dashboard routes are handled after API routes below
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
@@ -147,26 +146,32 @@ async function runMigrations() {
     }
 }
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-    console.error('Error:', err);
+// Error handling middleware for API routes
+app.use('/api', (err, req, res, next) => {
+    console.error('API Error:', err);
     res.status(err.status || 500).json({
         error: err.message || 'Internal server error',
         ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
     });
 });
 
-// 404 handler
-app.use((req, res) => {
-    res.status(404).json({
-        error: 'Not found',
-        path: req.path
-    });
+// Next.js handles all other routes (dashboard pages)
+app.all('*', (req, res) => {
+    // Skip API routes (already handled above)
+    if (req.path.startsWith('/api/') || req.path.startsWith('/webhooks/')) {
+        return res.status(404).json({ error: 'Not found', path: req.path });
+    }
+    return nextHandle(req, res);
 });
 
 // Initialize database and start server
 async function startServer() {
     try {
+        // Prepare Next.js
+        console.log('Preparing Next.js dashboard...');
+        await nextApp.prepare();
+        console.log('Next.js dashboard ready');
+
         console.log('Initializing database...');
         await db.initialize();
         console.log('Database initialized successfully');
@@ -195,7 +200,8 @@ async function startServer() {
             console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
             console.log(`   Database: ${process.env.DATABASE_URL ? 'Connected' : 'Not configured'}`);
             console.log(`   Redis: ${process.env.REDIS_URL ? 'Connected' : 'Not configured'}`);
-            console.log(`\n   Health check: http://localhost:${PORT}/health`);
+            console.log(`\n   Dashboard: http://localhost:${PORT}/requests`);
+            console.log(`   Health check: http://localhost:${PORT}/health`);
             console.log(`   API: http://localhost:${PORT}/api`);
             console.log(`   Webhooks: http://localhost:${PORT}/webhooks/inbound`);
             console.log(`\n   ✓ Database migrations applied`);
