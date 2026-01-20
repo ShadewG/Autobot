@@ -326,9 +326,13 @@ async function resumeFOIACaseGraph(caseId, humanDecision) {
     }
 
     // Resume with the human decision
+    // IMPORTANT: Pass caseId in update to restore state that checkpoint may have lost
     const { Command } = require("@langchain/langgraph");
     const result = await graph.invoke(
-      new Command({ resume: humanDecision }),
+      new Command({
+        resume: humanDecision,
+        update: { caseId }  // Restore caseId since checkpoint may not have it
+      }),
       config
     );
 

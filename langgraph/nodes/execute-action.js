@@ -43,7 +43,7 @@ function generateExecutionKey(proposalKey) {
  * Execute the approved action
  */
 async function executeActionNode(state) {
-  const {
+  let {
     caseId, proposalId, proposalKey, proposalActionType,
     draftSubject, draftBodyText, draftBodyHtml, proposalReasoning
   } = state;
@@ -53,6 +53,25 @@ async function executeActionNode(state) {
 
   // P0 FIX #3: IDEMPOTENCY CHECK - Already executed?
   const existingProposal = await db.getProposalById(proposalId);
+
+  // Recover missing state from proposal if checkpoint lost data
+  if (!caseId && existingProposal?.case_id) {
+    caseId = existingProposal.case_id;
+    logs.push(`Recovered caseId from proposal: ${caseId}`);
+  }
+  if (!proposalActionType && existingProposal?.action_type) {
+    proposalActionType = existingProposal.action_type;
+    logs.push(`Recovered proposalActionType from proposal: ${proposalActionType}`);
+  }
+  if (!draftSubject && existingProposal?.draft_subject) {
+    draftSubject = existingProposal.draft_subject;
+  }
+  if (!draftBodyText && existingProposal?.draft_body_text) {
+    draftBodyText = existingProposal.draft_body_text;
+  }
+  if (!draftBodyHtml && existingProposal?.draft_body_html) {
+    draftBodyHtml = existingProposal.draft_body_html;
+  }
 
   if (existingProposal?.status === 'EXECUTED') {
     logs.push(`SKIPPED: Proposal ${proposalId} already executed`);

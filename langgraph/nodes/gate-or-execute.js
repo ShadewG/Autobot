@@ -129,9 +129,12 @@ async function gateOrExecuteNode(state) {
 
   // This code runs AFTER resume - decision contains the human's choice
   // The node re-ran from the top, so proposal was re-upserted (idempotent)
+  // IMPORTANT: Return caseId and proposalActionType since checkpoint may have lost them
   return {
+    caseId,  // Preserve/restore caseId
     proposalId: proposal.id,
     proposalKey,
+    proposalActionType,  // Preserve/restore action type
     humanDecision: decision,
     adjustmentCount: decision?.action === 'ADJUST'
       ? (adjustmentCount || 0) + 1
