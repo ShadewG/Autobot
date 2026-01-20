@@ -4305,6 +4305,174 @@ const E2E_SCENARIOS = {
         llm_stubs: {
             draft: { subject: 'Follow-up: Records Request', body: 'I am following up on my records request submitted on...' }
         }
+    },
+
+    // ==================== HUMAN FLOW SCENARIOS ====================
+    // These test the interrupt/resume patterns
+
+    denial_strong_approve: {
+        name: 'Denial (Strong) - Human Approves',
+        description: 'Strong denial gates, human approves the rebuttal',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - DENIED',
+            body: 'Your request is DENIED pursuant to Exemption 7(A) - law enforcement investigation.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        human_decision: { action: 'APPROVE' },  // Simulate human approving
+        expected: {
+            classification: 'DENIAL',
+            action_type: 'SEND_REBUTTAL',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'DENIAL',
+            // After human approval:
+            final_proposal_status: 'EXECUTED',
+            final_requires_human: false
+        },
+        llm_stubs: {
+            classify: { classification: 'DENIAL', confidence: 0.95, sentiment: 'negative', key_points: ['exemption 7(A)', 'law enforcement'] },
+            draft: { subject: 'Re: Appeal of Denial', body: 'I respectfully appeal this denial under the Freedom of Information Act...' }
+        }
+    },
+
+    denial_strong_adjust: {
+        name: 'Denial (Strong) - Human Adjusts',
+        description: 'Strong denial gates, human requests adjustment, re-drafts',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - DENIED',
+            body: 'Your request is DENIED pursuant to Exemption 7(A).',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        human_decision: { action: 'ADJUST', instruction: 'Make the appeal more assertive and cite relevant case law' },
+        expected: {
+            classification: 'DENIAL',
+            action_type: 'SEND_REBUTTAL',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'DENIAL',
+            // After adjustment: should re-gate with new draft
+            final_requires_human: true  // Still needs approval after re-draft
+        },
+        llm_stubs: {
+            classify: { classification: 'DENIAL', confidence: 0.95, sentiment: 'negative', key_points: ['exemption 7(A)'] },
+            draft: { subject: 'Re: Appeal of Denial', body: 'I strongly contest this denial...' },
+            // Re-draft after adjustment
+            redraft: { subject: 'Re: Appeal of Denial (Revised)', body: 'I emphatically appeal this denial citing FOIA case law...' }
+        }
+    },
+
+    denial_strong_dismiss: {
+        name: 'Denial (Strong) - Human Dismisses',
+        description: 'Strong denial gates, human dismisses proposal (no action)',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - DENIED',
+            body: 'Your request is DENIED pursuant to Exemption 7(A).',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        human_decision: { action: 'DISMISS' },
+        expected: {
+            classification: 'DENIAL',
+            action_type: 'SEND_REBUTTAL',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'DENIAL',
+            // After dismiss: no execution, proposal abandoned
+            final_proposal_status: 'DISMISSED',
+            final_requires_human: false
+        },
+        llm_stubs: {
+            classify: { classification: 'DENIAL', confidence: 0.95, sentiment: 'negative', key_points: ['exemption 7(A)'] },
+            draft: { subject: 'Re: Appeal', body: 'Appeal draft...' }
+        }
+    },
+
+    fee_high_approve: {
+        name: 'Fee Quote (High) - Human Approves',
+        description: 'High fee gates, human approves payment',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - Fee Quote',
+            body: 'The estimated cost for your request is $450.00.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'SUPERVISED' },
+        human_decision: { action: 'APPROVE' },
+        expected: {
+            classification: 'FEE_QUOTE',
+            fee_amount: 450,
+            action_type: 'ACCEPT_FEE',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'FEE_QUOTE',
+            // After approval:
+            final_proposal_status: 'EXECUTED',
+            final_requires_human: false
+        },
+        llm_stubs: {
+            classify: { classification: 'FEE_QUOTE', confidence: 0.92, sentiment: 'neutral', fee_amount: 450 },
+            draft: { subject: 'Re: Fee Approval', body: 'I agree to pay the $450.00 fee. Please proceed.' }
+        }
+    },
+
+    fee_high_withdraw: {
+        name: 'Fee Quote (High) - Human Withdraws',
+        description: 'High fee gates, human withdraws request',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - Fee Quote',
+            body: 'The estimated cost for your request is $2,500.00.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'SUPERVISED' },
+        human_decision: { action: 'WITHDRAW' },
+        expected: {
+            classification: 'FEE_QUOTE',
+            fee_amount: 2500,
+            action_type: 'NEGOTIATE_FEE',  // High fee triggers negotiate
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'FEE_QUOTE',
+            // After withdraw:
+            final_case_status: 'cancelled',
+            final_requires_human: false
+        },
+        llm_stubs: {
+            classify: { classification: 'FEE_QUOTE', confidence: 0.90, sentiment: 'neutral', fee_amount: 2500 },
+            draft: { subject: 'Re: Fee Negotiation', body: 'I would like to negotiate the fee...' }
+        }
+    },
+
+    clarification_supervised_approve: {
+        name: 'Clarification - Human Approves',
+        description: 'Clarification request in supervised mode, human approves response',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - More Info Needed',
+            body: 'Please provide the specific incident date and case number.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'SUPERVISED' },
+        human_decision: { action: 'APPROVE' },
+        expected: {
+            classification: 'CLARIFICATION_REQUEST',
+            action_type: 'SEND_CLARIFICATION',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'SCOPE',
+            // After approval:
+            final_proposal_status: 'EXECUTED',
+            final_requires_human: false
+        },
+        llm_stubs: {
+            classify: { classification: 'CLARIFICATION_REQUEST', confidence: 0.92, sentiment: 'neutral' },
+            draft: { subject: 'Re: Additional Information', body: 'The incident occurred on January 15, 2024. The case number is 24-12345.' }
+        }
     }
 };
 
@@ -4769,6 +4937,12 @@ async function executePhase(run) {
             }
 
             case 'human_gate': {
+                // Auto-apply scenario's human_decision if present and no manual decision set
+                if (!run.human_decision && scenario.human_decision) {
+                    run.human_decision = scenario.human_decision;
+                    run.logs.push(`Auto-applied scenario human_decision: ${scenario.human_decision.action}`);
+                }
+
                 // This phase waits for human input
                 if (!run.human_decision) {
                     run.status = 'awaiting_human';
@@ -5050,6 +5224,62 @@ async function runE2EAssertions(run) {
             passed: emailSends.length === 0,
             expected: 'no email sends for portal case',
             actual: `${emailSends.length} email sends`
+        });
+    }
+
+    // === HUMAN FLOW ASSERTIONS (for scenarios with human_decision) ===
+
+    // HF1: Final proposal status after human action
+    if (expected.final_proposal_status) {
+        assertions.push({
+            name: 'final_proposal_status',
+            passed: latestProposal?.status === expected.final_proposal_status,
+            expected: expected.final_proposal_status,
+            actual: latestProposal?.status || 'no proposal'
+        });
+    }
+
+    // HF2: Final requires_human state after human action
+    if (expected.final_requires_human !== undefined) {
+        assertions.push({
+            name: 'final_requires_human',
+            passed: caseData.requires_human === expected.final_requires_human,
+            expected: expected.final_requires_human,
+            actual: caseData.requires_human
+        });
+    }
+
+    // HF3: Final case status after human action (e.g., WITHDRAW → cancelled)
+    if (expected.final_case_status) {
+        assertions.push({
+            name: 'final_case_status',
+            passed: caseData.status === expected.final_case_status,
+            expected: expected.final_case_status,
+            actual: caseData.status
+        });
+    }
+
+    // HF4: Proposal key stability - same proposal_key across resume/retries
+    if (latestProposal?.proposal_key) {
+        const proposalsWithSameKey = proposals.rows.filter(
+            p => p.proposal_key === latestProposal.proposal_key
+        );
+        assertions.push({
+            name: 'proposal_key_stable',
+            passed: proposalsWithSameKey.length === 1,
+            expected: 'exactly 1 proposal with this key (no duplicates)',
+            actual: `${proposalsWithSameKey.length} proposals with key ${latestProposal.proposal_key}`
+        });
+    }
+
+    // HF5: Executed proposals have unique execution_key
+    if (executedProposals.length > 0) {
+        const allHaveExecutionKey = executedProposals.every(p => p.execution_key != null);
+        assertions.push({
+            name: 'executed_has_execution_key',
+            passed: allHaveExecutionKey,
+            expected: 'all EXECUTED proposals have execution_key',
+            actual: allHaveExecutionKey ? 'all have keys' : 'some missing execution_key'
         });
     }
 
