@@ -30,6 +30,16 @@ export function CopilotPanel({
   nextAction,
   agency,
 }: CopilotPanelProps) {
+  // Hide "Proposed Action" when decision is required (shown in DecisionPanel instead)
+  const isDecisionRequired =
+    Boolean(request.pause_reason) ||
+    request.requires_human ||
+    request.status?.toUpperCase() === "PAUSED" ||
+    request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
+    request.status?.toLowerCase().includes("needs_human");
+
+  const showProposal = !isDecisionRequired && nextAction;
+
   return (
     <ScrollArea className="h-[calc(100vh-300px)]">
       <div className="space-y-4 pr-4">
@@ -46,8 +56,8 @@ export function CopilotPanel({
           </Card>
         )}
 
-        {/* Next Action Proposal */}
-        {nextAction && (
+        {/* Next Action Proposal - only show when autopilot is running (no decision required) */}
+        {showProposal && (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm flex items-center gap-2">
@@ -104,7 +114,7 @@ export function CopilotPanel({
                 </div>
               )}
 
-              {/* Draft preview */}
+              {/* Draft preview - not shown here when decision required (shown in DecisionPanel) */}
               {nextAction.draft_content && (
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">Draft Preview</span>

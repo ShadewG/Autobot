@@ -10,7 +10,7 @@ import { AtRiskBadge } from "./at-risk-badge";
 import type { RequestListItem } from "@/lib/types";
 import type { TableVariant } from "./request-table";
 import { formatRelativeTime, truncate, cn } from "@/lib/utils";
-import { Eye, ArrowRight, DollarSign, Calendar, AlertTriangle } from "lucide-react";
+import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle } from "lucide-react";
 
 interface RequestRowProps {
   request: RequestListItem;
@@ -20,97 +20,52 @@ interface RequestRowProps {
   onSnooze?: (id: string) => void;
 }
 
-// Build the "next action" microline based on request state
-function getNextActionLine(request: RequestListItem, variant: TableVariant): string | null {
-  if (variant === "paused") {
-    // For paused: show what decision is needed
-    if (request.pause_reason === "FEE_QUOTE" && request.cost_amount) {
-      return `Decision required: Fee $${request.cost_amount.toLocaleString()}`;
-    }
-    if (request.pause_reason === "DENIAL") {
-      return "Decision required: Denial received";
-    }
-    if (request.pause_reason === "SCOPE") {
-      return "Decision required: Scope clarification";
-    }
-    if (request.pause_reason === "ID_REQUIRED") {
-      return "Decision required: ID verification";
-    }
-    if (request.pause_reason === "SENSITIVE") {
-      return "Decision required: Sensitive content";
-    }
-    if (request.pause_reason === "CLOSE_ACTION") {
-      return "Decision required: Confirm completion";
-    }
-    return "Decision required";
-  }
-
-  // For waiting/scheduled: show next due date info
-  if (request.due_info?.due_type && request.next_due_at) {
-    const dueDate = new Date(request.next_due_at);
-    const formatted = dueDate.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-
-    switch (request.due_info.due_type) {
-      case "FOLLOW_UP":
-        return `Next follow-up: ${formatted}`;
-      case "STATUTORY":
-        return `Statutory due: ${formatted}`;
-      case "AGENCY_PROMISED":
-        return `Agency promised: ${formatted}`;
-      case "SNOOZED":
-        return `Snoozed until: ${formatted}`;
-    }
-  }
-
-  if (request.next_due_at) {
-    const dueDate = new Date(request.next_due_at);
-    const formatted = dueDate.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-    return `Due: ${formatted}`;
-  }
-
-  return null;
-}
-
-// Format the due date with type context
-function formatDueWithType(request: RequestListItem): { text: string; isOverdue: boolean } {
+// Format the due date with overdue severity
+function formatDueWithSeverity(request: RequestListItem): {
+  text: string;
+  overdueDays: number | null;
+  isOverdue: boolean;
+  typeChip: string | null;
+} {
   if (!request.next_due_at) {
-    return { text: "", isOverdue: false };
+    return { text: "", overdueDays: null, isOverdue: false, typeChip: null };
   }
 
   const dueDate = new Date(request.next_due_at);
   const now = new Date();
-  const isOverdue = dueDate < now;
+  const diffMs = now.getTime() - dueDate.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const isOverdue = diffDays > 0;
 
   const formatted = dueDate.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
 
-  // Add type prefix if available
-  let typePrefix = "";
+  // Type chip based on due_type
+  let typeChip: string | null = null;
   if (request.due_info?.due_type) {
     switch (request.due_info.due_type) {
       case "FOLLOW_UP":
-        typePrefix = "F/U ";
+        typeChip = "F/U";
         break;
       case "STATUTORY":
-        typePrefix = "Stat ";
+        typeChip = "Stat";
         break;
       case "AGENCY_PROMISED":
-        typePrefix = "Prom ";
+        typeChip = "Prom";
+        break;
+      case "SNOOZED":
+        typeChip = "Snz";
         break;
     }
   }
 
   return {
-    text: `${typePrefix}${formatted}`,
+    text: formatted,
+    overdueDays: isOverdue ? diffDays : null,
     isOverdue,
+    typeChip,
   };
 }
 
@@ -128,8 +83,7 @@ export function RequestRow({
     router.push(`/requests/detail?id=${request.id}`);
   };
 
-  const nextActionLine = getNextActionLine(request, variant);
-  const dueInfo = formatDueWithType(request);
+  const dueInfo = formatDueWithSeverity(request);
 
   // Agency display: hide state if empty or missing
   const agencyDisplay = request.state && request.state !== "—"
@@ -142,6 +96,40 @@ export function RequestRow({
     : variant === "waiting"
     ? "No response"
     : "";
+
+  // For paused rows, build a short inbound summary line
+  // This would ideally come from the API, but for now we build from available data
+  const getInboundSummary = (): string | null => {
+    if (!isPaused) return null;
+
+    const parts: string[] = [];
+
+    // Fee info
+    if (request.pause_reason === "FEE_QUOTE" && request.cost_amount) {
+      parts.push(`$${request.cost_amount} fee`);
+    }
+
+    // Add cost status context
+    if (request.cost_status === "QUOTED") {
+      parts.push("quote received");
+    } else if (request.cost_status === "INVOICED") {
+      parts.push("invoiced");
+    }
+
+    // For denial
+    if (request.pause_reason === "DENIAL") {
+      parts.push("request denied");
+    }
+
+    // For scope
+    if (request.pause_reason === "SCOPE") {
+      parts.push("clarification needed");
+    }
+
+    return parts.length > 0 ? parts.join(", ") : null;
+  };
+
+  const inboundSummary = getInboundSummary();
 
   return (
     <TableRow
@@ -159,47 +147,52 @@ export function RequestRow({
         </div>
       </TableCell>
 
-      {/* Subject / Agency + Next Action microline */}
+      {/* Subject / Agency + Inbound summary for paused */}
       <TableCell>
         <div className="flex flex-col gap-0.5">
-          <span className="font-medium truncate max-w-[250px]">
-            {truncate(request.subject, 45)}
+          <span className="font-medium truncate max-w-[280px]">
+            {truncate(request.subject, 50)}
           </span>
           <span className="text-xs text-muted-foreground">
             {agencyDisplay}
           </span>
-          {nextActionLine && (
-            <span className={cn(
-              "text-xs",
-              isPaused ? "text-amber-700 font-medium" : "text-muted-foreground"
-            )}>
-              {nextActionLine}
+          {/* Last inbound summary for paused rows */}
+          {isPaused && inboundSummary && (
+            <span className="text-xs text-amber-700 font-medium">
+              {inboundSummary}
             </span>
           )}
         </div>
       </TableCell>
 
-      {/* Gate chip - only for paused */}
+      {/* Gate - mandatory for paused, shows "Unknown" if missing */}
       {isPaused && (
         <TableCell>
-          {request.pause_reason && (
+          {request.pause_reason ? (
             <GateChip
               reason={request.pause_reason}
               costAmount={request.cost_amount}
             />
+          ) : (
+            <Badge variant="outline" className="gap-1 text-amber-700 border-amber-300 bg-amber-50">
+              <HelpCircle className="h-3 w-3" />
+              Unknown
+            </Badge>
           )}
         </TableCell>
       )}
 
-      {/* Stage */}
-      <TableCell>
-        <StageChip
-          status={request.status}
-          autopilotMode={request.autopilot_mode}
-          pauseReason={request.pause_reason}
-          nextDueAt={request.next_due_at}
-        />
-      </TableCell>
+      {/* Stage - only for non-paused rows */}
+      {!isPaused && (
+        <TableCell>
+          <StageChip
+            status={request.status}
+            autopilotMode={request.autopilot_mode}
+            pauseReason={request.pause_reason}
+            nextDueAt={request.next_due_at}
+          />
+        </TableCell>
+      )}
 
       {/* Inbound */}
       <TableCell className={cn(
@@ -209,19 +202,29 @@ export function RequestRow({
         {inboundDisplay}
       </TableCell>
 
-      {/* Due with type + overdue indicator */}
+      {/* Due with type chip + overdue severity */}
       <TableCell>
         {dueInfo.text ? (
-          <div className="flex items-center gap-1.5">
-            {dueInfo.isOverdue && (
-              <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-1.5">
+              {dueInfo.typeChip && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4">
+                  {dueInfo.typeChip}
+                </Badge>
+              )}
+              <span className={cn(
+                "text-sm",
+                dueInfo.isOverdue && "text-red-600 font-medium"
+              )}>
+                {dueInfo.text}
+              </span>
+            </div>
+            {dueInfo.overdueDays && dueInfo.overdueDays > 0 && (
+              <span className="text-xs text-red-600 font-medium flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                {dueInfo.overdueDays}d overdue
+              </span>
             )}
-            <span className={cn(
-              "text-sm",
-              dueInfo.isOverdue && "text-red-600 font-medium"
-            )}>
-              {dueInfo.text}
-            </span>
           </div>
         ) : null}
       </TableCell>

@@ -7,6 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -16,19 +21,19 @@ import type { RequestDetail, NextAction, AgencySummary, PauseReason, ThreadMessa
 import {
   CheckCircle,
   MessageSquare,
-  XCircle,
   DollarSign,
   FileQuestion,
-  Scale,
-  Globe,
   MoreHorizontal,
   ArrowRight,
   AlertTriangle,
   Loader2,
-  Pencil,
   UserCheck,
   Ban,
   Info,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -46,47 +51,96 @@ interface DecisionPanelProps {
   isLoading?: boolean;
 }
 
-// Extract key points from inbound message
-function extractAgencyPoints(request: RequestDetail, lastMsg?: ThreadMessage | null): string[] {
-  const points: string[] = [];
+// Normalized pause reason type (includes UNKNOWN)
+type NormalizedPauseReason = PauseReason | "UNKNOWN";
 
-  // Fee info
+// Normalize pause reason strings to expected enum values
+function normalizePauseReason(raw: string | null | undefined): NormalizedPauseReason {
+  if (!raw) return "UNKNOWN";
+  const v = raw.toUpperCase();
+
+  if (v.includes("FEE") || v.includes("QUOTE") || v.includes("COST") || v.includes("PAYMENT")) return "FEE_QUOTE";
+  if (v.includes("DENIAL") || v.includes("DENIED") || v.includes("REJECT")) return "DENIAL";
+  if (v.includes("SCOPE") || v.includes("CLARIF") || v.includes("BROAD")) return "SCOPE";
+  if (v.includes("ID") || v.includes("IDENTITY") || v.includes("VERIF")) return "ID_REQUIRED";
+  if (v.includes("SENSITIVE") || v.includes("REVIEW")) return "SENSITIVE";
+  if (v.includes("CLOSE") || v.includes("COMPLETE") || v.includes("DONE")) return "CLOSE_ACTION";
+
+  return "UNKNOWN";
+}
+
+// Extract agency points - gate-aware and deduped
+function extractAgencyPoints(
+  request: RequestDetail,
+  lastMsg?: ThreadMessage | null,
+  normalizedReason?: NormalizedPauseReason
+): string[] {
+  const out = new Set<string>();
+
+  // Always show known structured fields first
   if (request.cost_amount) {
-    const feeStr = `Fee estimate: $${request.cost_amount.toLocaleString()}`;
-    points.push(feeStr);
+    out.add(`Fee estimate: $${request.cost_amount.toLocaleString()}`);
   }
   if (request.fee_quote?.deposit_amount) {
-    points.push(`Deposit required: $${request.fee_quote.deposit_amount.toLocaleString()}`);
+    out.add(`Deposit required: $${request.fee_quote.deposit_amount.toLocaleString()}`);
   }
 
-  // Parse last message for common phrases
-  if (lastMsg?.body) {
-    const body = lastMsg.body.toLowerCase();
+  const text = lastMsg?.body ?? "";
+  const body = text.toLowerCase();
 
-    // BWC/video not available
-    if (body.includes("not subject to") && (body.includes("bwc") || body.includes("body") || body.includes("camera"))) {
-      points.push("BWC not subject to disclosure");
-    } else if (body.includes("not subject to disclosure") || body.includes("not disclosable")) {
-      points.push("Some records not disclosable");
-    }
+  if (!text) return Array.from(out).slice(0, 5);
 
-    // No video/footage
-    if (body.includes("no video") || body.includes("no footage") || body.includes("no interrogation")) {
-      points.push("No video/footage available");
-    }
+  // Money mentioned in message (e.g. $75 deposit, $300 estimate)
+  const amounts = [...text.matchAll(/\$([0-9][0-9,]*)/g)]
+    .map(m => Number(m[1].replace(/,/g, "")))
+    .filter(n => Number.isFinite(n) && n > 0);
 
-    // Exemption cited
-    if (body.includes("exempt") && !body.includes("non-exempt")) {
-      points.push("Exemption cited");
-    }
-
-    // Not held
-    if (body.includes("not held") || body.includes("do not have") || body.includes("don't have")) {
-      points.push("Some records not held");
-    }
+  // Heuristic: if agency mentions two amounts, call out "deposit" + "estimate"
+  if (amounts.length >= 2 && !request.cost_amount) {
+    const sorted = [...amounts].sort((a, b) => a - b);
+    out.add(`Agency mentions: $${sorted[0].toLocaleString()} deposit / $${sorted[sorted.length - 1].toLocaleString()} estimate`);
   }
 
-  return points;
+  // Timeline (12-15 weeks, 10 business days, etc.)
+  const timeMatch = text.match(/(\d+\s*-\s*\d+|\d+)\s*(weeks?|days?|business days?)/i);
+  if (timeMatch) out.add(`Timeline: ${timeMatch[0]}`);
+
+  // Payment method cues
+  if (body.includes("invoice")) out.add("Payment: invoice required");
+  if (body.includes("mail") && (body.includes("check") || body.includes("payment"))) out.add("Payment: mail-in payment");
+  if (body.includes("portal") && body.includes("pay")) out.add("Submission/payment via portal");
+
+  // Availability cues
+  if (body.includes("not subject to") && (body.includes("body") || body.includes("bwc") || body.includes("camera"))) {
+    out.add("BWC withheld (not subject to FOIA)");
+  }
+  if (body.includes("do not have") || body.includes("don't have") || body.includes("not held")) {
+    out.add("Some items not held");
+  }
+  if (body.includes("no interrogation")) out.add("No interrogation video");
+  if (body.includes("no video") || body.includes("no footage")) out.add("No video/footage available");
+
+  // IMPORTANT: don't add generic "Exemption cited" for fee quotes.
+  // Only add exemption if it's a DENIAL pause reason.
+  if (normalizedReason === "DENIAL" && body.includes("exempt") && !body.includes("non-exempt")) {
+    out.add("Exemption cited");
+  }
+
+  // Denial-specific
+  if (normalizedReason === "DENIAL") {
+    if (body.includes("investigative")) out.add("Investigative records exemption");
+    if (body.includes("privacy")) out.add("Privacy exemption cited");
+    if (body.includes("law enforcement")) out.add("Law enforcement exemption");
+  }
+
+  // Scope-specific
+  if (normalizedReason === "SCOPE") {
+    if (body.includes("too broad") || body.includes("overly broad")) out.add("Request deemed too broad");
+    if (body.includes("clarify") || body.includes("clarification")) out.add("Clarification requested");
+    if (body.includes("time frame") || body.includes("date range")) out.add("Need specific date range");
+  }
+
+  return Array.from(out).slice(0, 5);
 }
 
 // Gate-specific configuration
@@ -102,13 +156,29 @@ interface GateConfig {
     subtext?: (request: RequestDetail, costCap?: string) => string | null;
     recommended?: boolean;
   };
+  primarySubtext?: string[];
   secondaryAction?: {
     label: string;
     recommended?: boolean;
   };
   overflowActions: string[];
   getRecommendation?: (request: RequestDetail, nextAction: NextAction | null, agencyPoints: string[]) => string | null;
+  isSupported?: boolean; // Whether actions are wired up
 }
+
+// UNKNOWN gate fallback - always show something
+const UNKNOWN_GATE_CONFIG: GateConfig = {
+  icon: <AlertTriangle className="h-5 w-5" />,
+  color: "text-yellow-800",
+  bgColor: "bg-yellow-50",
+  borderColor: "border-yellow-300",
+  title: "Unknown Gate",
+  getQuestion: () => "This request is paused but the gate type is unknown. What do you want to do?",
+  primaryAction: { label: "Proceed" },
+  secondaryAction: { label: "Negotiate" },
+  overflowActions: ["Withdraw"],
+  isSupported: true,
+};
 
 const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   FEE_QUOTE: {
@@ -130,25 +200,25 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     },
     primaryAction: {
       label: "Proceed",
-      subtext: (r, cap) => {
-        const parts: string[] = [];
-        if (r.fee_quote?.deposit_amount) {
-          parts.push(`Pay $${r.fee_quote.deposit_amount} deposit`);
-        }
-        if (cap) {
-          parts.push(`cap at $${cap}`);
-        }
-        return parts.length > 0 ? parts.join("; ") : null;
-      },
+      subtext: () => null,
     },
+    primarySubtext: [
+      "Queues the drafted acceptance reply",
+      "Does NOT pay automatically",
+      "Sets status to Waiting: Payment",
+    ],
     secondaryAction: {
       label: "Negotiate",
-      recommended: false, // Will be set dynamically
+      recommended: false,
     },
     overflowActions: ["Request itemized breakdown", "Set cost cap", "Withdraw"],
     getRecommendation: (r, _, points) => {
       const hasUnavailable = points.some(p =>
-        p.includes("not subject") || p.includes("not disclosable") || p.includes("not available") || p.includes("not held")
+        p.toLowerCase().includes("not subject") ||
+        p.toLowerCase().includes("withheld") ||
+        p.toLowerCase().includes("not held") ||
+        p.toLowerCase().includes("no video") ||
+        p.toLowerCase().includes("no footage")
       );
       const highFee = r.cost_amount && r.cost_amount > 100;
 
@@ -163,6 +233,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       }
       return null;
     },
+    isSupported: true,
   },
   DENIAL: {
     icon: <Ban className="h-5 w-5" />,
@@ -179,6 +250,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     },
     overflowActions: ["Acknowledge & close", "Withdraw"],
     getRecommendation: () => "Review denial reason. If exemption cited, consider narrowing scope to non-exempt records.",
+    isSupported: true,
   },
   SCOPE: {
     icon: <FileQuestion className="h-5 w-5" />,
@@ -194,6 +266,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       label: "Clarify Request",
     },
     overflowActions: ["Withdraw"],
+    isSupported: true,
   },
   ID_REQUIRED: {
     icon: <UserCheck className="h-5 w-5" />,
@@ -209,6 +282,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       label: "Contest Requirement",
     },
     overflowActions: ["Withdraw"],
+    isSupported: false, // Not wired up yet
   },
   SENSITIVE: {
     icon: <AlertTriangle className="h-5 w-5" />,
@@ -224,6 +298,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       label: "Modify Request",
     },
     overflowActions: ["Withdraw"],
+    isSupported: false, // Not wired up yet
   },
   CLOSE_ACTION: {
     icon: <CheckCircle className="h-5 w-5" />,
@@ -239,6 +314,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       label: "Request More Records",
     },
     overflowActions: [],
+    isSupported: false, // Not wired up yet
   },
 };
 
@@ -257,9 +333,20 @@ export function DecisionPanel({
 }: DecisionPanelProps) {
   const [costCap, setCostCap] = useState<string>("");
   const [showCostCap, setShowCostCap] = useState(false);
+  const [draftExpanded, setDraftExpanded] = useState(false);
+
+  // Robust detection of whether decision is required
+  const pauseReasonRaw = request.pause_reason ?? null;
+  const isDecisionRequired =
+    Boolean(pauseReasonRaw) ||
+    request.requires_human ||
+    request.status?.toUpperCase() === "PAUSED" ||
+    request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
+    request.status?.toLowerCase().includes("needs_human") ||
+    Boolean(nextAction?.blocked_reason);
 
   // If not paused, show minimal status
-  if (!request.requires_human || !request.pause_reason) {
+  if (!isDecisionRequired) {
     return (
       <Card>
         <CardHeader className="pb-3">
@@ -277,20 +364,28 @@ export function DecisionPanel({
     );
   }
 
-  const config = GATE_CONFIGS[request.pause_reason];
-  if (!config) {
-    return null;
-  }
+  // Normalize the pause reason
+  const normalized = normalizePauseReason(pauseReasonRaw);
 
-  const agencyPoints = extractAgencyPoints(request, lastInboundMessage);
+  // Get config - NEVER return null, use UNKNOWN fallback
+  const config = normalized === "UNKNOWN"
+    ? UNKNOWN_GATE_CONFIG
+    : GATE_CONFIGS[normalized];
+
+  const agencyPoints = extractAgencyPoints(request, lastInboundMessage, normalized);
   const recommendation = config.getRecommendation?.(request, nextAction, agencyPoints);
   const shouldRecommendNegotiate = recommendation?.toLowerCase().includes("negotiat") ||
                                     recommendation?.toLowerCase().includes("narrow");
 
+  // Check if actions are supported
+  const isUnsupported = config.isSupported === false;
+
   const handlePrimaryClick = async () => {
-    if (request.pause_reason === "DENIAL") {
+    if (isUnsupported) return; // Safety check
+
+    if (normalized === "DENIAL") {
       onAppeal();
-    } else if (request.pause_reason === "SCOPE") {
+    } else if (normalized === "SCOPE") {
       onNarrowScope();
     } else {
       await onProceed(costCap ? parseFloat(costCap) : undefined);
@@ -298,7 +393,9 @@ export function DecisionPanel({
   };
 
   const handleSecondaryClick = () => {
-    if (request.pause_reason === "DENIAL") {
+    if (isUnsupported) return; // Safety check
+
+    if (normalized === "DENIAL") {
       onNarrowScope();
     } else {
       onNegotiate();
@@ -322,7 +419,7 @@ export function DecisionPanel({
           className={cn("font-semibold text-sm px-3 py-1", config.color, config.borderColor)}
         >
           {config.title}
-          {request.pause_reason === "FEE_QUOTE" && request.cost_amount && (
+          {normalized === "FEE_QUOTE" && request.cost_amount && (
             <> — ${request.cost_amount.toLocaleString()}
               {request.fee_quote?.deposit_amount && (
                 <span className="font-normal opacity-80">
@@ -332,6 +429,13 @@ export function DecisionPanel({
             </>
           )}
         </Badge>
+
+        {/* Show raw pause reason if unknown for debugging */}
+        {normalized === "UNKNOWN" && pauseReasonRaw && (
+          <p className="text-xs text-muted-foreground">
+            Raw value: <code className="bg-gray-100 px-1 rounded">{pauseReasonRaw}</code>
+          </p>
+        )}
 
         {/* The explicit decision question */}
         <p className="text-sm font-semibold">
@@ -368,10 +472,40 @@ export function DecisionPanel({
           </div>
         )}
 
+        {/* Fallback: No recommendation available */}
+        {!recommendation && !nextAction && agencyPoints.length === 0 && (
+          <div className="bg-gray-50 rounded-md p-3 border border-gray-200">
+            <div className="flex items-start gap-2">
+              <HelpCircle className="h-4 w-4 text-gray-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-gray-600 mb-1">No recommendation</p>
+                <p className="text-xs text-muted-foreground">
+                  Not enough context to suggest an action. Review the message and choose an action below.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <Separator className="bg-white/50" />
 
+        {/* Unsupported gate warning */}
+        {isUnsupported && (
+          <div className="bg-yellow-50 rounded-md p-3 border border-yellow-200">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-yellow-700 mb-1">Actions not yet implemented</p>
+                <p className="text-xs text-yellow-600">
+                  This gate type ({config.title}) doesn't have automated actions yet. Use the overflow menu to withdraw or take manual action.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Cost cap for fee quotes */}
-        {request.pause_reason === "FEE_QUOTE" && (
+        {normalized === "FEE_QUOTE" && (
           <div className="flex items-center gap-2 text-sm">
             <span className="text-muted-foreground">Cost cap:</span>
             {showCostCap || costCap ? (
@@ -408,7 +542,7 @@ export function DecisionPanel({
                 onClick={handleSecondaryClick}
                 variant="default"
                 className="w-full justify-between"
-                disabled={isLoading}
+                disabled={isLoading || isUnsupported}
               >
                 <span className="flex items-center gap-2">
                   <MessageSquare className="h-4 w-4" />
@@ -417,57 +551,67 @@ export function DecisionPanel({
                 </span>
                 <ArrowRight className="h-4 w-4" />
               </Button>
-              <Button
-                onClick={handlePrimaryClick}
-                variant="outline"
-                className="w-full justify-between bg-white"
-                disabled={isLoading}
-              >
-                <span className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4" />
-                  {config.primaryAction.label}
-                  {config.primaryAction.subtext?.(request, costCap) && (
-                    <span className="text-xs text-muted-foreground ml-1">
-                      ({config.primaryAction.subtext(request, costCap)})
-                    </span>
-                  )}
-                </span>
-                <ArrowRight className="h-4 w-4" />
-              </Button>
+              <div>
+                <Button
+                  onClick={handlePrimaryClick}
+                  variant="outline"
+                  className="w-full justify-between bg-white"
+                  disabled={isLoading || isUnsupported}
+                >
+                  <span className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4" />
+                    {config.primaryAction.label}
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+                {/* Primary button subtext explanation */}
+                {config.primarySubtext && (
+                  <ul className="mt-1 ml-1 text-[10px] text-muted-foreground space-y-0.5">
+                    {config.primarySubtext.map((line, i) => (
+                      <li key={i}>• {line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </>
           )}
 
           {/* Normal order: Primary first */}
           {!shouldRecommendNegotiate && (
             <>
-              <Button
-                onClick={handlePrimaryClick}
-                variant="default"
-                className="w-full justify-between"
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <span className="flex items-center gap-2">
-                    <CheckCircle className="h-4 w-4" />
-                    {config.primaryAction.label}
-                    {config.primaryAction.subtext?.(request, costCap) && (
-                      <span className="text-xs opacity-80">
-                        ({config.primaryAction.subtext(request, costCap)})
-                      </span>
-                    )}
-                  </span>
+              <div>
+                <Button
+                  onClick={handlePrimaryClick}
+                  variant="default"
+                  className="w-full justify-between"
+                  disabled={isLoading || isUnsupported}
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <span className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4" />
+                      {config.primaryAction.label}
+                    </span>
+                  )}
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+                {/* Primary button subtext explanation */}
+                {config.primarySubtext && (
+                  <ul className="mt-1 ml-1 text-[10px] text-muted-foreground space-y-0.5">
+                    {config.primarySubtext.map((line, i) => (
+                      <li key={i}>• {line}</li>
+                    ))}
+                  </ul>
                 )}
-                <ArrowRight className="h-4 w-4" />
-              </Button>
+              </div>
 
               {config.secondaryAction && (
                 <Button
                   onClick={handleSecondaryClick}
                   variant="outline"
                   className="w-full justify-between bg-white"
-                  disabled={isLoading}
+                  disabled={isLoading || isUnsupported}
                 >
                   <span className="flex items-center gap-2">
                     <MessageSquare className="h-4 w-4" />
@@ -479,7 +623,7 @@ export function DecisionPanel({
             </>
           )}
 
-          {/* Overflow menu */}
+          {/* Overflow menu - always available */}
           {config.overflowActions.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -510,16 +654,30 @@ export function DecisionPanel({
           )}
         </div>
 
-        {/* Link to draft if available */}
+        {/* Inline expandable draft preview */}
         {nextAction?.draft_content && (
-          <button
-            onClick={() => {
-              document.querySelector("[data-draft-preview]")?.scrollIntoView({ behavior: "smooth" });
-            }}
-            className="text-xs text-primary hover:underline block"
-          >
-            View prepared response draft →
-          </button>
+          <Collapsible open={draftExpanded} onOpenChange={setDraftExpanded}>
+            <CollapsibleTrigger asChild>
+              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-white/50 mt-2">
+                <span className="flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />
+                  View prepared response draft
+                </span>
+                {draftExpanded ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="bg-white/80 rounded-md p-3 text-sm border border-white/50">
+                <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed">
+                  {nextAction.draft_content}
+                </pre>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
       </CardContent>
     </Card>
