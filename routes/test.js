@@ -4152,7 +4152,7 @@ const E2E_SCENARIOS = {
         expected: {
             classification: 'FEE_QUOTE',
             fee_amount: 15,
-            action_type: 'APPROVE_FEE',
+            action_type: 'ACCEPT_FEE',
             auto_execute: true,
             requires_human: false
         },
@@ -4174,7 +4174,7 @@ const E2E_SCENARIOS = {
         expected: {
             classification: 'FEE_QUOTE',
             fee_amount: 350,
-            action_type: 'APPROVE_FEE',
+            action_type: 'ACCEPT_FEE',
             auto_execute: false,
             requires_human: true,
             pause_reason: 'FEE_QUOTE'
@@ -4284,7 +4284,7 @@ const E2E_SCENARIOS = {
         },
         expected: {
             classification: 'FEE_QUOTE',
-            action_type: 'APPROVE_FEE',
+            action_type: 'ACCEPT_FEE',
             email_blocked: true  // Special assertion
         },
         llm_stubs: {
