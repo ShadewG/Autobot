@@ -1,7 +1,13 @@
 /**
- * FOIA Case Graph Definition
+ * Inbound Response Graph (FOIA Case Graph)
  *
- * Main LangGraph state machine for FOIA case handling.
+ * LangGraph state machine for handling inbound agency responses.
+ *
+ * Flow:
+ * load_context → classify_inbound → update_constraints → decide_next_action →
+ * draft_response → safety_check → gate_or_execute → execute_action → commit_state
+ *
+ * Shares state schema with Initial Request Graph (FOIACaseStateAnnotation).
  *
  * P0 FIXES APPLIED:
  * 1. Checkpointer at compile time, thread_id at invoke time
@@ -449,5 +455,8 @@ module.exports = {
   createInitialState,
   resetThread,
   getThreadInfo,
-  getRedisClient
+  getRedisClient,
+  // Export lock utilities for reuse by other graphs
+  acquireCaseLock,
+  releaseCaseLock
 };

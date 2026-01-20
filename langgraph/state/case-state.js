@@ -5,12 +5,16 @@
  * - Store IDs, not full objects (fetch when needed)
  * - Keep state small for checkpoint efficiency
  * - Track what's needed for decisions and resumption
+ *
+ * Shared by both graphs:
+ * - Initial Request Graph: new FOIA request generation
+ * - Inbound Response Graph: handling agency replies
  */
 
 const { Annotation } = require("@langchain/langgraph");
 
 /**
- * FOIACaseState - Minimal, explicit state for the case graph
+ * FOIACaseState - Minimal, explicit state for both case graphs
  */
 const FOIACaseStateAnnotation = Annotation.Root({
   // === Identity ===
@@ -22,15 +26,23 @@ const FOIACaseStateAnnotation = Annotation.Root({
     reducer: (_, v) => v,
     default: () => null  // LangGraph thread_id: `case:${caseId}`
   }),
+  runId: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // agent_runs.id for auditability
+  }),
 
   // === Trigger Context ===
   triggerType: Annotation({
     reducer: (_, v) => v,
-    default: () => null  // 'agency_reply' | 'time_based_followup' | 'manual_review' | 'human_resume'
+    default: () => null  // 'initial_request' | 'agency_reply' | 'followup_trigger' | 'resume'
   }),
   latestInboundMessageId: Annotation({
     reducer: (_, v) => v,
     default: () => null
+  }),
+  scheduledKey: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // For followup triggers
   }),
 
   // === Analysis Results (from classify_inbound) ===
@@ -182,17 +194,29 @@ const FOIACaseStateAnnotation = Annotation.Root({
 
 /**
  * Create initial state for a case
+ *
+ * @param {number} caseId - The case ID
+ * @param {string} triggerType - 'initial_request' | 'agency_reply' | 'followup_trigger' | 'resume'
+ * @param {Object} options - Additional options
+ * @param {number} options.runId - agent_runs.id for auditability
+ * @param {number} options.messageId - Message ID for inbound triggers
+ * @param {string} options.scheduledKey - Key for followup triggers
+ * @param {string} options.autopilotMode - AUTO | SUPERVISED
+ * @param {string} options.threadId - Custom thread ID (default: case:${caseId})
+ * @param {Object} options.llmStubs - Stubbed LLM responses for testing
  */
 function createInitialState(caseId, triggerType, options = {}) {
   return {
     caseId,
-    threadId: `case:${caseId}`,
+    threadId: options.threadId || `case:${caseId}`,
+    runId: options.runId || null,
     triggerType,
     latestInboundMessageId: options.messageId || null,
+    scheduledKey: options.scheduledKey || null,
     autopilotMode: options.autopilotMode || 'SUPERVISED',
     adjustmentCount: 0,
     isComplete: false,
-    logs: [`Graph started: trigger=${triggerType}, caseId=${caseId}`],
+    logs: [`Graph started: trigger=${triggerType}, caseId=${caseId}, run=${options.runId || 'none'}`],
     errors: [],
     llmStubs: options.llmStubs || null  // For deterministic E2E testing
   };
