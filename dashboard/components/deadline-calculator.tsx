@@ -19,12 +19,14 @@ interface DeadlineCalculatorProps {
   milestones?: DeadlineMilestone[];
   stateDeadline?: StateDeadline;
   className?: string;
+  compact?: boolean; // Compact mode for embedding in other cards
 }
 
 export function DeadlineCalculator({
   milestones,
   stateDeadline,
   className,
+  compact = false,
 }: DeadlineCalculatorProps) {
   if (!milestones || milestones.length === 0) {
     return null;
@@ -119,6 +121,76 @@ export function DeadlineCalculator({
     };
   };
 
+  // Compact version: just progress bar and key dates
+  if (compact) {
+    return (
+      <div className={cn("space-y-2", className)}>
+        {/* Visual timeline bar */}
+        {submitted && statutoryDue && (
+          <div className="relative">
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
+              <span>{formatDate(submitted.date)}</span>
+              <span className={cn(
+                isOverdue ? "text-red-600 font-medium" : isAtRisk ? "text-amber-600 font-medium" : ""
+              )}>
+                {formatDate(statutoryDue.date)}
+                {isOverdue && " (overdue)"}
+                {isToday && " (today!)"}
+              </span>
+            </div>
+            <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className={cn(
+                  "absolute left-0 top-0 h-full rounded-full transition-all",
+                  isOverdue ? "bg-red-500" : isAtRisk ? "bg-amber-500" : "bg-green-500"
+                )}
+                style={{
+                  width: isOverdue
+                    ? "100%"
+                    : `${Math.min(
+                        100,
+                        ((now.getTime() - new Date(submitted.date).getTime()) /
+                          (new Date(statutoryDue.date).getTime() -
+                            new Date(submitted.date).getTime())) *
+                          100
+                      )}%`,
+                }}
+              />
+              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-gray-600 rounded-full border-2 border-white" />
+              <div
+                className={cn(
+                  "absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white",
+                  isOverdue ? "bg-red-600" : isAtRisk ? "bg-amber-600" : "bg-blue-600"
+                )}
+              />
+            </div>
+          </div>
+        )}
+        {/* Compact milestone list */}
+        <div className="flex flex-wrap gap-2 text-xs">
+          {milestones.map((milestone, index) => {
+            const display = getMilestoneDisplay(milestone);
+            const Icon = display.icon;
+            return (
+              <div
+                key={index}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-0.5 rounded",
+                  display.bgColor
+                )}
+              >
+                <Icon className={cn("h-3 w-3", display.color)} />
+                <span className="text-muted-foreground">{milestone.label.split(' ')[0]}</span>
+                <span className={cn("font-medium", display.color)}>{display.status}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Full version with card wrapper
   return (
     <Card className={cn("", className)}>
       <CardHeader className="pb-2">

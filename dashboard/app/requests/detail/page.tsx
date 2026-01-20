@@ -384,19 +384,29 @@ function RequestDetailContent() {
               </div>
 
               {/* Timeline - middle */}
-              <div className="lg:col-span-3 min-w-0 space-y-4">
-                {/* Deadline Calculator */}
-                {deadline_milestones && deadline_milestones.length > 0 && (
-                  <DeadlineCalculator
-                    milestones={deadline_milestones}
-                    stateDeadline={state_deadline}
-                  />
-                )}
+              <div className="lg:col-span-3 min-w-0">
                 <Card className="h-full">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Timeline</CardTitle>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Timeline</span>
+                      {state_deadline && (
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {state_deadline.state_code} - {state_deadline.response_days} business days
+                        </span>
+                      )}
+                    </CardTitle>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
+                    {/* Deadline Progress (compact) */}
+                    {deadline_milestones && deadline_milestones.length > 0 && (
+                      <DeadlineCalculator
+                        milestones={deadline_milestones}
+                        stateDeadline={state_deadline}
+                        compact
+                      />
+                    )}
+                    {deadline_milestones && deadline_milestones.length > 0 && <Separator />}
+                    {/* Activity Timeline */}
                     <Timeline events={timeline_events} />
                   </CardContent>
                 </Card>
@@ -431,23 +441,31 @@ function RequestDetailContent() {
           ) : (
             /* Not Paused Layout: Timeline | Conversation | Copilot */
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-              <div className="space-y-4 min-w-0">
-                {/* Deadline Calculator */}
-                {deadline_milestones && deadline_milestones.length > 0 && (
-                  <DeadlineCalculator
-                    milestones={deadline_milestones}
-                    stateDeadline={state_deadline}
-                  />
-                )}
-                <Card className="h-full">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Timeline</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <Timeline events={timeline_events} />
-                  </CardContent>
-                </Card>
-              </div>
+              <Card className="h-full min-w-0">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center justify-between">
+                    <span>Timeline</span>
+                    {state_deadline && (
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {state_deadline.state_code} - {state_deadline.response_days} business days
+                      </span>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Deadline Progress (compact) */}
+                  {deadline_milestones && deadline_milestones.length > 0 && (
+                    <DeadlineCalculator
+                      milestones={deadline_milestones}
+                      stateDeadline={state_deadline}
+                      compact
+                    />
+                  )}
+                  {deadline_milestones && deadline_milestones.length > 0 && <Separator />}
+                  {/* Activity Timeline */}
+                  <Timeline events={timeline_events} />
+                </CardContent>
+              </Card>
 
               <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
