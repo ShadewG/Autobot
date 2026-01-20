@@ -171,13 +171,24 @@ function RequestDetailContent() {
     mutate();
   };
 
+  const [isRevising, setIsRevising] = useState(false);
+
   const handleRevise = async (instruction: string) => {
     if (!id) return;
-    const result = await requestsAPI.revise(id, instruction, nextAction?.id);
-    if (result.next_action_proposal) {
-      setNextAction(result.next_action_proposal);
+    setIsRevising(true);
+    try {
+      const result = await requestsAPI.revise(id, instruction, nextAction?.id);
+      if (result.next_action_proposal) {
+        setNextAction(result.next_action_proposal);
+      }
+      setAdjustModalOpen(false);
+      mutate(); // Refresh data
+    } catch (error: any) {
+      console.error("Error revising action:", error);
+      alert(error.message || "Failed to revise action. There may not be a pending action to revise.");
+    } finally {
+      setIsRevising(false);
     }
-    setAdjustModalOpen(false);
   };
 
   const handleSendMessage = async (content: string) => {
@@ -599,7 +610,7 @@ function RequestDetailContent() {
         onOpenChange={setAdjustModalOpen}
         onSubmit={handleRevise}
         constraints={request.constraints}
-        isLoading={false}
+        isLoading={isRevising}
       />
 
       {/* Snooze Modal */}

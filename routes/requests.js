@@ -1018,22 +1018,87 @@ router.post('/:id/actions/revise', async (req, res) => {
             action_id ? [requestId, parseInt(action_id)] : [requestId]
         );
 
-        if (replyResult.rows.length === 0) {
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
             return res.status(404).json({
                 success: false,
-                error: 'No pending action found to revise'
+                error: 'Request not found'
             });
         }
 
-        const reply = replyResult.rows[0];
-        const caseData = await db.getCaseById(requestId);
-        const message = await db.getMessageById(reply.message_id);
+        let reply = replyResult.rows[0];
+        let message = reply ? await db.getMessageById(reply.message_id) : null;
 
-        // Use OpenAI to revise the draft
-        const OpenAI = require('openai');
-        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        // If no pending action, generate a new draft based on the instruction
+        if (!reply) {
+            // Get the latest inbound message for context
+            const thread = await db.getThreadByCaseId(requestId);
+            let latestInbound = null;
+            if (thread) {
+                const messagesResult = await db.query(
+                    `SELECT * FROM messages WHERE thread_id = $1 AND direction = 'inbound' ORDER BY received_at DESC LIMIT 1`,
+                    [thread.id]
+                );
+                latestInbound = messagesResult.rows[0];
+            }
 
-        const revisionPrompt = `You are helping revise a FOIA request response.
+            // Generate a new draft using the instruction
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const generatePrompt = `You are helping draft a FOIA request response.
+
+Context:
+- Agency: ${caseData.agency_name}
+- State: ${caseData.state}
+- Current status: ${caseData.status}
+- Pause reason: ${caseData.pause_reason || 'N/A'}
+${latestInbound ? `- Last message from agency: ${latestInbound.subject}` : ''}
+
+User instruction:
+${instruction}
+
+Please draft a professional email to send to the agency. Only output the email body text, no explanations.`;
+
+            const completion = await openai.chat.completions.create({
+                model: process.env.OPENAI_MODEL || 'gpt-4o',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a professional FOIA request assistant helping draft correspondence with government agencies.'
+                    },
+                    {
+                        role: 'user',
+                        content: generatePrompt
+                    }
+                ],
+                max_tokens: 1000
+            });
+
+            const draftContent = completion.choices[0].message.content;
+
+            // Create a new pending reply entry
+            const newReplyResult = await db.query(
+                `INSERT INTO auto_reply_queue (case_id, message_id, generated_reply, response_type, status, requires_approval, created_at, proposal_short, reasoning_jsonb)
+                 VALUES ($1, $2, $3, 'custom', 'pending', true, NOW(), $4, $5)
+                 RETURNING *`,
+                [
+                    requestId,
+                    latestInbound?.id || null,
+                    draftContent,
+                    `Custom: ${instruction.substring(0, 50)}...`,
+                    JSON.stringify(['Generated based on your instruction', instruction])
+                ]
+            );
+
+            reply = newReplyResult.rows[0];
+            message = latestInbound;
+        } else {
+            // Existing pending action - revise it
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const revisionPrompt = `You are helping revise a FOIA request response.
 
 Original draft:
 ${reply.generated_reply}
@@ -1047,53 +1112,55 @@ Context:
 
 Please provide the revised response following the user's instruction. Only output the revised response text, no explanations.`;
 
-        const completion = await openai.chat.completions.create({
-            model: process.env.OPENAI_MODEL || 'gpt-4o',
-            messages: [
-                {
-                    role: 'system',
-                    content: 'You are a professional FOIA request assistant helping revise correspondence with government agencies.'
-                },
-                {
-                    role: 'user',
-                    content: revisionPrompt
-                }
-            ],
-            max_tokens: 1000
-        });
+            const completion = await openai.chat.completions.create({
+                model: process.env.OPENAI_MODEL || 'gpt-4o',
+                messages: [
+                    {
+                        role: 'system',
+                        content: 'You are a professional FOIA request assistant helping revise correspondence with government agencies.'
+                    },
+                    {
+                        role: 'user',
+                        content: revisionPrompt
+                    }
+                ],
+                max_tokens: 1000
+            });
 
-        const revisedContent = completion.choices[0].message.content;
+            const revisedContent = completion.choices[0].message.content;
 
-        // Update the reply with revised content
-        const updatedReply = await db.updateAutoReplyQueueEntry(reply.id, {
-            generated_reply: revisedContent,
-            last_regenerated_at: new Date(),
-            metadata: JSON.stringify({
-                ...JSON.parse(reply.metadata || '{}'),
-                revision_instruction: instruction,
-                revised_at: new Date().toISOString()
-            })
-        });
+            // Update the reply with revised content
+            reply = await db.updateAutoReplyQueueEntry(reply.id, {
+                generated_reply: revisedContent,
+                last_regenerated_at: new Date(),
+                metadata: JSON.stringify({
+                    ...JSON.parse(reply.metadata || '{}'),
+                    revision_instruction: instruction,
+                    revised_at: new Date().toISOString()
+                })
+            });
+        }
 
-        // Parse JSONB fields from updated reply
-        const reasoning = updatedReply.reasoning_jsonb || ['Revised based on your instruction', instruction];
-        const warnings = updatedReply.warnings_jsonb || [];
-        const constraintsApplied = updatedReply.constraints_applied_jsonb || [];
+        // Parse JSONB fields from reply
+        const reasoning = reply.reasoning_jsonb || ['Generated based on your instruction', instruction];
+        const warnings = reply.warnings_jsonb || [];
+        const constraintsApplied = reply.constraints_applied_jsonb || [];
+        const draftContent = reply.generated_reply;
 
-        // Return updated next action
+        // Return next action
         const nextAction = {
-            id: String(updatedReply.id),
-            action_type: updatedReply.action_type || 'SEND_EMAIL',
-            proposal: updatedReply.proposal_short || `Send ${updatedReply.response_type || 'auto'} reply`,
-            proposal_short: updatedReply.proposal_short,
+            id: String(reply.id),
+            action_type: reply.action_type || 'SEND_EMAIL',
+            proposal: reply.proposal_short || `Send ${reply.response_type || 'auto'} reply`,
+            proposal_short: reply.proposal_short,
             reasoning: Array.isArray(reasoning) ? reasoning : [reasoning],
-            confidence: updatedReply.confidence_score ? parseFloat(updatedReply.confidence_score) : 0.8,
-            risk_flags: updatedReply.requires_approval ? ['Requires Approval'] : [],
+            confidence: reply.confidence_score ? parseFloat(reply.confidence_score) : 0.8,
+            risk_flags: reply.requires_approval ? ['Requires Approval'] : [],
             warnings: Array.isArray(warnings) ? warnings : [],
-            can_auto_execute: !updatedReply.requires_approval,
-            blocked_reason: updatedReply.blocked_reason || (updatedReply.requires_approval ? 'Requires human approval' : null),
-            draft_content: revisedContent,
-            draft_preview: revisedContent ? revisedContent.substring(0, 200) : null,
+            can_auto_execute: !reply.requires_approval,
+            blocked_reason: reply.blocked_reason || (reply.requires_approval ? 'Requires human approval' : null),
+            draft_content: draftContent,
+            draft_preview: draftContent ? draftContent.substring(0, 200) : null,
             constraints_applied: Array.isArray(constraintsApplied) ? constraintsApplied : []
         };
 
