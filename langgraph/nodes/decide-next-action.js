@@ -74,17 +74,16 @@ async function decideNextActionNode(state) {
           };
 
         case 'DISMISS':
-          reasoning.push('Human dismissed proposal, will generate new one');
+          reasoning.push('Human dismissed proposal - ending graph run');
+          // For now, DISMISS ends the graph. User can manually re-invoke later.
+          // TODO: Implement proper dismissal tracking
           return {
             proposalId: null,
             proposalKey: null,
-            draftSubject: null,
-            draftBodyText: null,
-            draftBodyHtml: null,
-            proposalReasoning: [],
-            humanDecision: null,  // Clear the decision
-            logs: [...logs, 'Proposal dismissed, generating new action'],
-            // Continue to re-evaluate - don't set nextNode
+            humanDecision: null,
+            isComplete: true,  // End the graph run
+            logs: [...logs, 'Proposal dismissed by user'],
+            proposalReasoning: reasoning
           };
 
         case 'WITHDRAW':
