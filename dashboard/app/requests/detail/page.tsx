@@ -44,9 +44,12 @@ import {
   AlertTriangle,
   CheckCircle,
   ExternalLink,
+  Play,
+  Bot,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
+import { AutopilotSelector } from "@/components/autopilot-selector";
 
 // Gate icons and colors
 const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; label: string }> = {
@@ -172,6 +175,25 @@ function RequestDetailContent() {
   };
 
   const [isRevising, setIsRevising] = useState(false);
+  const [isInvokingAgent, setIsInvokingAgent] = useState(false);
+
+  const handleInvokeAgent = async () => {
+    if (!id) return;
+    setIsInvokingAgent(true);
+    try {
+      const result = await requestsAPI.invokeAgent(id);
+      if (result.success) {
+        mutate(); // Refresh data
+      } else {
+        alert(result.message || "Failed to invoke agent");
+      }
+    } catch (error: any) {
+      console.error("Error invoking agent:", error);
+      alert(error.message || "Failed to invoke agent");
+    } finally {
+      setIsInvokingAgent(false);
+    }
+  };
 
   const handleRevise = async (instruction: string) => {
     if (!id) return;
@@ -284,6 +306,29 @@ function RequestDetailContent() {
             </h1>
             <p className="text-sm text-muted-foreground">{request.agency_name}</p>
           </div>
+
+          {/* Autopilot Mode Selector */}
+          <AutopilotSelector
+            requestId={request.id}
+            currentMode={request.autopilot_mode}
+            onModeChange={() => mutate()}
+            compact
+          />
+
+          {/* Run Agent Button */}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleInvokeAgent}
+            disabled={isInvokingAgent}
+          >
+            {isInvokingAgent ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4 mr-1" />
+            )}
+            Run Agent
+          </Button>
 
           {/* See in Notion button */}
           {request.notion_url && (

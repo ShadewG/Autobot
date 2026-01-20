@@ -8,6 +8,7 @@ export function NavLinks() {
   const pathname = usePathname();
   const isRequests = pathname.startsWith("/requests");
   const isAgencies = pathname.startsWith("/agencies");
+  const isRuns = pathname.startsWith("/runs");
 
   return (
     <nav className="flex items-center space-x-6 text-sm font-medium">
@@ -28,6 +29,15 @@ export function NavLinks() {
         )}
       >
         Agencies
+      </Link>
+      <Link
+        href="/runs"
+        className={cn(
+          "transition-colors hover:text-foreground/80",
+          isRuns ? "text-foreground" : "text-muted-foreground"
+        )}
+      >
+        Runs
       </Link>
     </nav>
   );

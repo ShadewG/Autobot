@@ -116,7 +116,75 @@ export const requestsAPI = {
       body: JSON.stringify({ reason }),
     });
   },
+
+  // Invoke agent on a request
+  invokeAgent: (
+    id: string,
+    triggerType?: string
+  ): Promise<{ success: boolean; run_id?: string; message?: string }> => {
+    return fetchAPI(`/requests/${id}/invoke-agent`, {
+      method: 'POST',
+      body: JSON.stringify({ trigger_type: triggerType || 'manual' }),
+    });
+  },
+
+  // Get agent runs for a request
+  getAgentRuns: (id: string): Promise<{ runs: AgentRun[] }> => {
+    return fetchAPI(`/requests/${id}/agent-runs`);
+  },
+
+  // Get agent run details with diff
+  getAgentRunDiff: (id: string, runId: string): Promise<AgentRunDiff> => {
+    return fetchAPI(`/requests/${id}/agent-runs/${runId}/diff`);
+  },
+
+  // Replay an agent run
+  replayAgentRun: (
+    id: string,
+    runId: string
+  ): Promise<{ success: boolean; new_run_id?: string }> => {
+    return fetchAPI(`/requests/${id}/agent-runs/${runId}/replay`, {
+      method: 'POST',
+    });
+  },
+
+  // Update autopilot mode
+  setAutopilotMode: (
+    id: string,
+    mode: 'AUTO' | 'SUPERVISED' | 'MANUAL'
+  ): Promise<{ success: boolean }> => {
+    return fetchAPI(`/requests/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ autopilot_mode: mode }),
+    });
+  },
 };
+
+// Agent run types
+export interface AgentRun {
+  id: string;
+  case_id: string;
+  trigger_type: string;
+  status: 'running' | 'completed' | 'failed' | 'gated';
+  started_at: string;
+  completed_at?: string;
+  error_message?: string;
+  node_trace?: string[];
+  final_action?: string;
+  gated_reason?: string;
+}
+
+export interface AgentRunDiff {
+  run: AgentRun;
+  state_before: Record<string, unknown>;
+  state_after: Record<string, unknown>;
+  logs: string[];
+  snapshots: Array<{
+    node: string;
+    timestamp: string;
+    state: Record<string, unknown>;
+  }>;
+}
 
 // SWR fetcher
 export const fetcher = <T>(url: string): Promise<T> => fetchAPI(url);
