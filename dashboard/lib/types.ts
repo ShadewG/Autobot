@@ -76,6 +76,8 @@ export interface RequestDetail extends RequestListItem {
   attachments: Attachment[];
   // Recipient info
   agency_email: string | null;
+  // External links
+  notion_url: string | null;
 }
 
 // Timeline Event for the timeline column

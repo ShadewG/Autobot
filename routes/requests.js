@@ -167,6 +167,11 @@ function toRequestDetail(caseData) {
     const constraints = parseConstraints(caseData);
     const feeQuote = parseFeeQuote(caseData);
 
+    // Build Notion URL from page ID
+    const notionUrl = caseData.notion_page_id
+        ? `https://notion.so/${caseData.notion_page_id.replace(/-/g, '')}`
+        : null;
+
     return {
         ...listItem,
         case_name: caseData.case_name,
@@ -184,6 +189,7 @@ function toRequestDetail(caseData) {
         fee_quote: feeQuote,
         portal_url: caseData.portal_url || null,
         portal_provider: caseData.portal_provider || null,
+        notion_url: notionUrl,
         submitted_at: caseData.send_date || null,
         statutory_due_at: listItem.due_info.statutory_due_at,
         attachments: [] // Will be populated from messages

@@ -42,6 +42,7 @@ import {
   UserCheck,
   AlertTriangle,
   CheckCircle,
+  ExternalLink,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -249,6 +250,18 @@ function RequestDetailContent() {
             </h1>
             <p className="text-sm text-muted-foreground">{request.agency_name}</p>
           </div>
+
+          {/* See in Notion button */}
+          {request.notion_url && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.open(request.notion_url!, "_blank")}
+            >
+              <ExternalLink className="h-4 w-4 mr-1" />
+              See in Notion
+            </Button>
+          )}
 
           {/* Overflow menu - always visible */}
           <DropdownMenu>
