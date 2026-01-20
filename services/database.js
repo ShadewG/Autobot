@@ -1533,6 +1533,250 @@ class DatabaseService {
     async getLatestResponseAnalysis(caseId) {
         return this.getAnalysisByCaseId(caseId);
     }
+
+    // =========================================================================
+    // EXECUTIONS TABLE (Migration 019)
+    // =========================================================================
+
+    /**
+     * Create an execution record with idempotency via execution_key
+     */
+    async createExecution(data) {
+        const result = await this.query(`
+            INSERT INTO executions (
+                case_id, proposal_id, run_id, execution_key, action_type,
+                status, provider, provider_payload
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (execution_key) DO NOTHING
+            RETURNING *
+        `, [
+            data.case_id,
+            data.proposal_id,
+            data.run_id,
+            data.execution_key,
+            data.action_type,
+            data.status || 'QUEUED',
+            data.provider,
+            data.provider_payload ? JSON.stringify(data.provider_payload) : null
+        ]);
+        return result.rows[0];
+    }
+
+    /**
+     * Get execution by its unique key
+     */
+    async getExecutionByKey(executionKey) {
+        const result = await this.query(
+            'SELECT * FROM executions WHERE execution_key = $1',
+            [executionKey]
+        );
+        return result.rows[0];
+    }
+
+    /**
+     * Update execution status and payload
+     */
+    async updateExecution(executionId, updates) {
+        const setClauses = [];
+        const values = [];
+        let paramIndex = 1;
+
+        for (const [key, value] of Object.entries(updates)) {
+            if (value !== undefined) {
+                setClauses.push(`${key} = $${paramIndex}`);
+                values.push(key.includes('payload') ? JSON.stringify(value) : value);
+                paramIndex++;
+            }
+        }
+
+        if (setClauses.length === 0) return null;
+
+        values.push(executionId);
+        const result = await this.query(`
+            UPDATE executions
+            SET ${setClauses.join(', ')}
+            WHERE id = $${paramIndex}
+            RETURNING *
+        `, values);
+        return result.rows[0];
+    }
+
+    /**
+     * Mark execution as sent with provider response
+     */
+    async markExecutionSent(executionKey, providerPayload) {
+        const result = await this.query(`
+            UPDATE executions
+            SET status = 'SENT',
+                provider_payload = $2,
+                provider_message_id = $3,
+                completed_at = NOW()
+            WHERE execution_key = $1
+            RETURNING *
+        `, [
+            executionKey,
+            JSON.stringify(providerPayload),
+            providerPayload?.messageId || providerPayload?.message_id
+        ]);
+        return result.rows[0];
+    }
+
+    /**
+     * Mark execution as failed
+     */
+    async markExecutionFailed(executionKey, errorMessage) {
+        const result = await this.query(`
+            UPDATE executions
+            SET status = 'FAILED',
+                error_message = $2,
+                retry_count = retry_count + 1,
+                completed_at = NOW()
+            WHERE execution_key = $1
+            RETURNING *
+        `, [executionKey, errorMessage]);
+        return result.rows[0];
+    }
+
+    /**
+     * Get executions for a proposal
+     */
+    async getExecutionsByProposalId(proposalId) {
+        const result = await this.query(
+            'SELECT * FROM executions WHERE proposal_id = $1 ORDER BY created_at DESC',
+            [proposalId]
+        );
+        return result.rows;
+    }
+
+    // =========================================================================
+    // DECISION_TRACES TABLE (Migration 019)
+    // =========================================================================
+
+    /**
+     * Create a decision trace record for observability
+     */
+    async createDecisionTrace(data) {
+        const result = await this.query(`
+            INSERT INTO decision_traces (
+                run_id, case_id, message_id,
+                classification, router_output, node_trace, gate_decision,
+                started_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+        `, [
+            data.run_id,
+            data.case_id,
+            data.message_id,
+            data.classification ? JSON.stringify(data.classification) : null,
+            data.router_output ? JSON.stringify(data.router_output) : null,
+            data.node_trace ? JSON.stringify(data.node_trace) : null,
+            data.gate_decision ? JSON.stringify(data.gate_decision) : null,
+            data.started_at || new Date()
+        ]);
+        return result.rows[0];
+    }
+
+    /**
+     * Update decision trace with completion data
+     */
+    async completeDecisionTrace(traceId, updates) {
+        const result = await this.query(`
+            UPDATE decision_traces
+            SET classification = COALESCE($2, classification),
+                router_output = COALESCE($3, router_output),
+                node_trace = COALESCE($4, node_trace),
+                gate_decision = COALESCE($5, gate_decision),
+                completed_at = NOW(),
+                duration_ms = EXTRACT(EPOCH FROM (NOW() - started_at)) * 1000
+            WHERE id = $1
+            RETURNING *
+        `, [
+            traceId,
+            updates.classification ? JSON.stringify(updates.classification) : null,
+            updates.router_output ? JSON.stringify(updates.router_output) : null,
+            updates.node_trace ? JSON.stringify(updates.node_trace) : null,
+            updates.gate_decision ? JSON.stringify(updates.gate_decision) : null
+        ]);
+        return result.rows[0];
+    }
+
+    /**
+     * Get decision trace by run ID
+     */
+    async getDecisionTraceByRunId(runId) {
+        const result = await this.query(
+            'SELECT * FROM decision_traces WHERE run_id = $1 ORDER BY created_at DESC LIMIT 1',
+            [runId]
+        );
+        return result.rows[0];
+    }
+
+    /**
+     * Get all decision traces for a case
+     */
+    async getDecisionTracesByCaseId(caseId, limit = 10) {
+        const result = await this.query(
+            'SELECT * FROM decision_traces WHERE case_id = $1 ORDER BY created_at DESC LIMIT $2',
+            [caseId, limit]
+        );
+        return result.rows;
+    }
+
+    // =========================================================================
+    // AGENT_RUNS UPDATES (Migration 019 additions)
+    // =========================================================================
+
+    /**
+     * Create agent run with full context (including new fields from migration 019)
+     */
+    async createAgentRunFull(data) {
+        const result = await this.query(`
+            INSERT INTO agent_runs (
+                case_id, trigger_type, langgraph_thread_id, message_id,
+                scheduled_key, autopilot_mode, status, metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+        `, [
+            data.case_id,
+            data.trigger_type,
+            data.langgraph_thread_id,
+            data.message_id,
+            data.scheduled_key,
+            data.autopilot_mode,
+            data.status || 'created',
+            data.metadata ? JSON.stringify(data.metadata) : '{}'
+        ]);
+        return result.rows[0];
+    }
+
+    /**
+     * Update message as processed by a run
+     */
+    async markMessageProcessed(messageId, runId, error = null) {
+        const result = await this.query(`
+            UPDATE messages
+            SET processed_at = NOW(),
+                processed_run_id = $2,
+                last_error = $3
+            WHERE id = $1
+            RETURNING *
+        `, [messageId, runId, error]);
+        return result.rows[0];
+    }
+
+    /**
+     * Link proposal to its creating run
+     */
+    async linkProposalToRun(proposalId, runId, pauseReason = null) {
+        const result = await this.query(`
+            UPDATE proposals
+            SET run_id = $2,
+                pause_reason = COALESCE($3, pause_reason)
+            WHERE id = $1
+            RETURNING *
+        `, [proposalId, runId, pauseReason]);
+        return result.rows[0];
+    }
 }
 
 module.exports = new DatabaseService();
