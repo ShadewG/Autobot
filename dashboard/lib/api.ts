@@ -105,6 +105,17 @@ export const requestsAPI = {
       body: JSON.stringify({ action_id: actionId }),
     });
   },
+
+  // Withdraw/close a request
+  withdraw: (
+    id: string,
+    reason?: string
+  ): Promise<{ success: boolean; message: string }> => {
+    return fetchAPI(`/requests/${id}/withdraw`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
 };
 
 // SWR fetcher

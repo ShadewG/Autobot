@@ -722,6 +722,63 @@ Be specific to ${caseData.state} law where possible.`;
 });
 
 /**
+ * POST /api/requests/:id/withdraw
+ * Withdraw/close a FOIA request
+ */
+router.post('/:id/withdraw', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const { reason } = req.body;
+    const log = logger.forCase(requestId);
+
+    try {
+        // Verify case exists
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        log.info(`Withdrawing request: ${reason || 'No reason given'}`);
+
+        // Update case to closed/withdrawn status
+        await db.updateCase(requestId, {
+            status: 'completed',
+            requires_human: false,
+            pause_reason: null,
+            autopilot_mode: 'MANUAL'
+        });
+
+        // Log the withdrawal activity
+        await db.logActivity('request_withdrawn', `Request withdrawn: ${reason || 'No reason given'}`, {
+            case_id: requestId,
+            reason: reason || null,
+            previous_status: caseData.status
+        });
+
+        // Dismiss any pending proposals
+        await db.query(
+            `UPDATE auto_reply_queue SET status = 'rejected' WHERE case_id = $1 AND status = 'pending'`,
+            [requestId]
+        );
+
+        log.info('Request withdrawn successfully');
+
+        res.json({
+            success: true,
+            message: 'Request withdrawn successfully'
+        });
+    } catch (error) {
+        log.error(`Error withdrawing request: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * PATCH /api/requests/:id
  * Update request fields (autopilot_mode, etc.)
  */

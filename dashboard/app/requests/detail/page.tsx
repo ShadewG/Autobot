@@ -136,8 +136,17 @@ function RequestDetailContent() {
 
   const handleWithdraw = async () => {
     if (!id) return;
-    // TODO: Implement withdraw
-    console.log("Withdraw request:", id);
+    if (!confirm("Are you sure you want to withdraw this request? This will close it permanently.")) {
+      return;
+    }
+    try {
+      await requestsAPI.withdraw(id, "Withdrawn by user");
+      mutate();
+      router.push("/requests");
+    } catch (error) {
+      console.error("Error withdrawing request:", error);
+      alert("Failed to withdraw request. Please try again.");
+    }
   };
 
   const handleNarrowScope = () => {
