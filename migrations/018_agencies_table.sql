@@ -3,6 +3,20 @@
 -- Enables two-way sync between PostgreSQL and Notion Police Departments database
 
 -- ============================================================================
+-- EXTENSIONS (must be created BEFORE using their features)
+-- ============================================================================
+
+-- Enable trigram extension for fuzzy search (safe to run even if already exists)
+-- Wrapped in DO block to handle environments where pg_trgm isn't available
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm extension not available, skipping fuzzy search support';
+END;
+$$;
+
+-- ============================================================================
 -- AGENCIES TABLE
 -- ============================================================================
 
@@ -74,11 +88,15 @@ CREATE INDEX IF NOT EXISTS idx_agencies_state ON agencies(state);
 CREATE INDEX IF NOT EXISTS idx_agencies_sync_status ON agencies(sync_status);
 CREATE INDEX IF NOT EXISTS idx_agencies_portal_url ON agencies(portal_url) WHERE portal_url IS NOT NULL;
 
--- Full-text search on agency name
-CREATE INDEX IF NOT EXISTS idx_agencies_name_trgm ON agencies USING gin (name gin_trgm_ops);
-
--- Enable trigram extension if not exists (for fuzzy search)
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- Full-text search on agency name (requires pg_trgm extension)
+-- Wrapped in DO block to skip if pg_trgm isn't available
+DO $$
+BEGIN
+    CREATE INDEX IF NOT EXISTS idx_agencies_name_trgm ON agencies USING gin (name gin_trgm_ops);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Skipping trigram index: pg_trgm extension not available';
+END;
+$$;
 
 -- ============================================================================
 -- AGENCY COMMENTS TABLE (for Notion comments sync)
