@@ -741,8 +741,13 @@
             if (!currentRun) return;
 
             try {
+                // Include selected scenario in case user changed it before resetting
                 const res = await fetch(`/api/test/e2e/runs/${currentRun.id}/reset`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scenario: selectedScenario  // Pass currently selected scenario
+                    })
                 });
 
                 const data = await res.json();
@@ -750,6 +755,11 @@
                 if (data.success) {
                     currentRun = data.run;
                     updateUI();
+                    // Update selectedScenario to match the run's scenario
+                    if (currentRun.scenario_key !== selectedScenario) {
+                        selectedScenario = currentRun.scenario_key;
+                        renderScenarios();
+                    }
                     log('Run reset', 'success');
                     renderPhaseTracker();
                 }

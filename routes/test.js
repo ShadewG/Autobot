@@ -4429,13 +4429,31 @@ router.get('/e2e/scenarios', (req, res) => {
 
 /**
  * POST /api/test/e2e/runs/:runId/reset
- * Reset a run to start fresh
+ * Reset a run to start fresh (optionally with a new scenario)
  */
 router.post('/e2e/runs/:runId/reset', async (req, res) => {
     try {
         const run = activeE2ERuns.get(req.params.runId);
         if (!run) {
             return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        // Check if a new scenario was specified
+        const { scenario: newScenarioKey } = req.body;
+        if (newScenarioKey && newScenarioKey !== run.scenario_key) {
+            const newScenario = E2E_SCENARIOS[newScenarioKey];
+            if (!newScenario) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Invalid scenario: ${newScenarioKey}`,
+                    available: Object.keys(E2E_SCENARIOS)
+                });
+            }
+            // Update to new scenario
+            run.scenario_key = newScenarioKey;
+            run.scenario_name = newScenario.name;
+            run.phases = newScenario.phases;
+            run.logs.push(`Scenario changed to: ${newScenario.name}`);
         }
 
         // Reset the case state
