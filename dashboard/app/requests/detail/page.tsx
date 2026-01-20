@@ -9,8 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { StatusBadge } from "@/components/status-badge";
-import { AutopilotChip } from "@/components/autopilot-chip";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { GateStatusChips } from "@/components/gate-status-chips";
+import { DueDisplay } from "@/components/due-display";
 import { Timeline } from "@/components/timeline";
 import { Thread } from "@/components/thread";
 import { Composer } from "@/components/composer";
@@ -24,6 +25,8 @@ import {
   Edit,
   XCircle,
   Loader2,
+  Calendar,
+  Clock,
 } from "lucide-react";
 
 function RequestDetailContent() {
@@ -128,31 +131,54 @@ function RequestDetailContent() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 flex-wrap">
-          <StatusBadge status={request.status} />
-          <AutopilotChip mode={request.autopilot_mode} />
-          <Separator orientation="vertical" className="h-5" />
-          <span className="text-sm text-muted-foreground">
-            Submitted: {formatDate(request.submitted_at)}
-          </span>
-          <span className="text-sm text-muted-foreground">
-            Last Inbound: {formatDate(request.last_inbound_at)}
-          </span>
-          <span className="text-sm text-muted-foreground">
-            Due: {formatDate(request.statutory_due_at)}
-          </span>
+        {/* Status chips row */}
+        <GateStatusChips
+          status={request.status}
+          pauseReason={request.pause_reason}
+          autopilotMode={request.autopilot_mode}
+          requiresHuman={request.requires_human}
+          blockedReason={nextAction?.blocked_reason}
+          className="mb-3"
+        />
+
+        {/* Dates row */}
+        <div className="flex items-center gap-4 flex-wrap text-sm">
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <Calendar className="h-3 w-3" />
+            <span>Submitted: {formatDate(request.submitted_at)}</span>
+          </div>
+          <div className="flex items-center gap-1 text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            <span>Last Inbound: {formatDate(request.last_inbound_at)}</span>
+          </div>
+          <Separator orientation="vertical" className="h-4" />
+          <DueDisplay
+            dueInfo={request.due_info}
+            nextDueAt={request.next_due_at}
+            statutoryDueAt={request.statutory_due_at}
+          />
         </div>
 
+        {/* Action buttons row */}
         <div className="flex items-center gap-2 mt-3">
           {nextAction && (
             <>
-              <Button size="sm" onClick={handleApprove}>
-                <CheckCircle className="h-4 w-4 mr-1" />
-                Approve & Send
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" onClick={handleApprove}>
+                    <CheckCircle className="h-4 w-4 mr-1" />
+                    Approve & Send: {nextAction.proposal_short || nextAction.proposal.split('.')[0]}
+                  </Button>
+                </TooltipTrigger>
+                {nextAction.draft_preview && (
+                  <TooltipContent className="max-w-sm">
+                    <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
               <Button size="sm" variant="outline">
                 <Edit className="h-4 w-4 mr-1" />
-                Ask AI to Adjust
+                Adjust
               </Button>
             </>
           )}

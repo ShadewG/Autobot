@@ -1,18 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import type { TimelineEvent, EventType } from "@/lib/types";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, cn } from "@/lib/utils";
 import {
   FileText,
   Send,
@@ -23,6 +23,13 @@ import {
   Globe,
   ChevronDown,
   ChevronRight,
+  MessageSquare,
+  Activity,
+  Search,
+  Bot,
+  AlertTriangle,
+  Filter,
+  Layers,
 } from "lucide-react";
 
 const eventIcons: Record<EventType, React.ReactNode> = {
@@ -33,6 +40,11 @@ const eventIcons: Record<EventType, React.ReactNode> = {
   DENIAL: <XCircle className="h-4 w-4" />,
   FOLLOW_UP: <Clock className="h-4 w-4" />,
   PORTAL_TASK: <Globe className="h-4 w-4" />,
+  GATE_TRIGGERED: <AlertTriangle className="h-4 w-4" />,
+  PROPOSAL_QUEUED: <Bot className="h-4 w-4" />,
+  HUMAN_DECISION: <Activity className="h-4 w-4" />,
+  CONSTRAINT_DETECTED: <AlertTriangle className="h-4 w-4" />,
+  SCOPE_UPDATED: <FileText className="h-4 w-4" />,
 };
 
 const eventColors: Record<EventType, string> = {
@@ -43,28 +55,75 @@ const eventColors: Record<EventType, string> = {
   DENIAL: "bg-red-100 text-red-800",
   FOLLOW_UP: "bg-orange-100 text-orange-800",
   PORTAL_TASK: "bg-cyan-100 text-cyan-800",
+  GATE_TRIGGERED: "bg-yellow-100 text-yellow-800",
+  PROPOSAL_QUEUED: "bg-indigo-100 text-indigo-800",
+  HUMAN_DECISION: "bg-green-100 text-green-800",
+  CONSTRAINT_DETECTED: "bg-orange-100 text-orange-800",
+  SCOPE_UPDATED: "bg-blue-100 text-blue-800",
 };
+
+// Category filter configuration
+const CATEGORY_FILTERS = [
+  { id: 'MESSAGE', label: 'Messages', icon: MessageSquare },
+  { id: 'STATUS', label: 'Status', icon: Activity },
+  { id: 'COST', label: 'Costs', icon: DollarSign },
+  { id: 'RESEARCH', label: 'Research', icon: Search },
+  { id: 'AGENT', label: 'Agent', icon: Bot },
+  { id: 'GATE', label: 'Gates', icon: AlertTriangle },
+] as const;
+
+type CategoryFilter = typeof CATEGORY_FILTERS[number]['id'];
 
 interface TimelineEventItemProps {
   event: TimelineEvent;
+  collapsed?: boolean;
+  mergedCount?: number;
 }
 
-function TimelineEventItem({ event }: TimelineEventItemProps) {
+function TimelineEventItem({ event, collapsed, mergedCount }: TimelineEventItemProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="flex gap-3 pb-4">
       <div
-        className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+        className={cn(
+          "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center",
           eventColors[event.type] || "bg-gray-100 text-gray-800"
-        }`}
+        )}
       >
         {eventIcons[event.type] || <FileText className="h-4 w-4" />}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm">{event.summary}</span>
-          {event.ai_audit && (
+          {mergedCount && mergedCount > 1 && (
+            <Badge variant="outline" className="text-[10px]">
+              <Layers className="h-2.5 w-2.5 mr-1" />
+              {mergedCount} merged
+            </Badge>
+          )}
+          {event.classification && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="secondary" className="text-[10px]">
+                  {event.classification.type} ({Math.round(event.classification.confidence * 100)}%)
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Classification confidence: {Math.round(event.classification.confidence * 100)}%</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {event.gate_details && (
+            <Badge
+              variant={event.gate_details.decision_status === 'PENDING' ? 'destructive' : 'secondary'}
+              className="text-[10px]"
+            >
+              {event.gate_details.gate_type}
+              {event.gate_details.fee_amount && ` $${event.gate_details.fee_amount}`}
+            </Badge>
+          )}
+          {(event.ai_audit || event.raw_content) && (
             <Button
               variant="ghost"
               size="sm"
@@ -82,42 +141,92 @@ function TimelineEventItem({ event }: TimelineEventItemProps) {
         <p className="text-xs text-muted-foreground">
           {formatDateTime(event.timestamp)}
         </p>
-        {expanded && event.ai_audit && (
-          <Card className="mt-2">
-            <CardHeader className="py-2 px-3">
-              <CardTitle className="text-xs">AI Analysis</CardTitle>
-            </CardHeader>
-            <CardContent className="py-2 px-3">
-              <ul className="text-xs space-y-1">
-                {event.ai_audit.summary.map((point, i) => (
-                  <li key={i} className="flex items-start gap-2">
-                    <span className="text-muted-foreground">•</span>
-                    <span>{point}</span>
-                  </li>
-                ))}
-              </ul>
-              {event.ai_audit.confidence !== undefined && (
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    Confidence:
-                  </span>
-                  <Badge variant="outline" className="text-xs">
-                    {Math.round(event.ai_audit.confidence * 100)}%
-                  </Badge>
-                </div>
-              )}
-              {event.ai_audit.risk_flags && event.ai_audit.risk_flags.length > 0 && (
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Flags:</span>
-                  {event.ai_audit.risk_flags.map((flag, i) => (
-                    <Badge key={i} variant="destructive" className="text-xs">
-                      {flag}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+
+        {expanded && (
+          <div className="mt-2 space-y-2">
+            {/* AI Audit */}
+            {event.ai_audit && (
+              <Card>
+                <CardHeader className="py-2 px-3">
+                  <CardTitle className="text-xs flex items-center gap-2">
+                    AI Analysis
+                    {event.ai_audit.confidence !== undefined && (
+                      <Badge variant="outline" className="text-[10px]">
+                        {Math.round(event.ai_audit.confidence * 100)}% confident
+                      </Badge>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="py-2 px-3 space-y-2">
+                  <ul className="text-xs space-y-1">
+                    {event.ai_audit.summary.map((point, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-muted-foreground">•</span>
+                        <span>{point}</span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Statute matches with confidence */}
+                  {event.ai_audit.statute_matches && event.ai_audit.statute_matches.length > 0 && (
+                    <div className="pt-2 border-t">
+                      <p className="text-xs text-muted-foreground mb-1">Statute Matches:</p>
+                      <div className="flex flex-wrap gap-1">
+                        {event.ai_audit.statute_matches.map((match, i) => (
+                          <Tooltip key={i}>
+                            <TooltipTrigger asChild>
+                              <Badge variant="outline" className="text-[10px]">
+                                {match.statute}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Match confidence: {Math.round(match.confidence * 100)}%</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {event.ai_audit.risk_flags && event.ai_audit.risk_flags.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Flags:</span>
+                      {event.ai_audit.risk_flags.map((flag, i) => (
+                        <Badge key={i} variant="destructive" className="text-[10px]">
+                          {flag}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
+
+                  {event.ai_audit.citations && event.ai_audit.citations.length > 0 && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs text-muted-foreground">Citations:</span>
+                      {event.ai_audit.citations.map((cite, i) => (
+                        <a
+                          key={i}
+                          href={cite.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary hover:underline"
+                        >
+                          {cite.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Raw content preview */}
+            {event.raw_content && !event.ai_audit && (
+              <div className="bg-muted rounded p-2 text-xs max-h-32 overflow-auto">
+                {event.raw_content.substring(0, 300)}
+                {event.raw_content.length > 300 && "..."}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -129,6 +238,60 @@ interface TimelineProps {
 }
 
 export function Timeline({ events }: TimelineProps) {
+  const [activeFilters, setActiveFilters] = useState<Set<CategoryFilter>>(new Set());
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Deduplicate and filter events
+  const processedEvents = useMemo(() => {
+    // First, deduplicate identical consecutive events
+    const deduped: (TimelineEvent & { mergedCount?: number })[] = [];
+    let lastEvent: TimelineEvent | null = null;
+    let mergeCount = 1;
+
+    for (const event of events) {
+      if (
+        lastEvent &&
+        lastEvent.type === event.type &&
+        lastEvent.summary === event.summary &&
+        Math.abs(new Date(lastEvent.timestamp).getTime() - new Date(event.timestamp).getTime()) < 60000 // Within 1 minute
+      ) {
+        // Merge with previous
+        mergeCount++;
+      } else {
+        if (lastEvent) {
+          deduped.push({ ...lastEvent, mergedCount: mergeCount > 1 ? mergeCount : undefined });
+        }
+        lastEvent = event;
+        mergeCount = 1;
+      }
+    }
+    if (lastEvent) {
+      deduped.push({ ...lastEvent, mergedCount: mergeCount > 1 ? mergeCount : undefined });
+    }
+
+    // Then filter by category
+    if (activeFilters.size === 0) {
+      return deduped;
+    }
+
+    return deduped.filter((e) => {
+      const category = e.category || 'STATUS';
+      return activeFilters.has(category as CategoryFilter);
+    });
+  }, [events, activeFilters]);
+
+  const toggleFilter = (filter: CategoryFilter) => {
+    setActiveFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(filter)) {
+        next.delete(filter);
+      } else {
+        next.add(filter);
+      }
+      return next;
+    });
+  };
+
   if (events.length === 0) {
     return (
       <div className="text-center py-4 text-muted-foreground text-sm">
@@ -138,12 +301,72 @@ export function Timeline({ events }: TimelineProps) {
   }
 
   return (
-    <ScrollArea className="h-[calc(100vh-300px)]">
-      <div className="pr-4">
-        {events.map((event) => (
-          <TimelineEventItem key={event.id} event={event} />
-        ))}
+    <div className="space-y-2">
+      {/* Filter toggle */}
+      <div className="flex items-center justify-between">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs"
+          onClick={() => setShowFilters(!showFilters)}
+        >
+          <Filter className="h-3 w-3 mr-1" />
+          Filter
+          {activeFilters.size > 0 && (
+            <Badge variant="secondary" className="ml-1 text-[10px]">
+              {activeFilters.size}
+            </Badge>
+          )}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {processedEvents.length} event{processedEvents.length !== 1 ? 's' : ''}
+        </span>
       </div>
-    </ScrollArea>
+
+      {/* Filter buttons */}
+      {showFilters && (
+        <div className="flex flex-wrap gap-1 pb-2 border-b">
+          {CATEGORY_FILTERS.map((filter) => {
+            const Icon = filter.icon;
+            const isActive = activeFilters.has(filter.id);
+            return (
+              <Button
+                key={filter.id}
+                variant={isActive ? "default" : "outline"}
+                size="sm"
+                className="h-6 text-[10px] px-2"
+                onClick={() => toggleFilter(filter.id)}
+              >
+                <Icon className="h-3 w-3 mr-1" />
+                {filter.label}
+              </Button>
+            );
+          })}
+          {activeFilters.size > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] px-2"
+              onClick={() => setActiveFilters(new Set())}
+            >
+              Clear
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Events */}
+      <ScrollArea className="h-[300px]">
+        <div className="pr-4">
+          {processedEvents.map((event) => (
+            <TimelineEventItem
+              key={event.id}
+              event={event}
+              mergedCount={event.mergedCount}
+            />
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }

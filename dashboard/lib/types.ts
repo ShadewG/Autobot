@@ -1,3 +1,14 @@
+// Due date information with context
+export interface DueInfo {
+  next_due_at: string | null;
+  due_type: 'FOLLOW_UP' | 'STATUTORY' | 'AGENCY_PROMISED' | 'SNOOZED' | null;
+  statutory_days: number | null; // e.g., 10 or 20 business days
+  statutory_due_at: string | null;
+  snoozed_until: string | null;
+  is_overdue: boolean;
+  overdue_days: number | null;
+}
+
 // Request List Item - Used in inbox tables
 export interface RequestListItem {
   id: string;
@@ -8,12 +19,40 @@ export interface RequestListItem {
   last_inbound_at: string | null;
   last_activity_at: string;
   next_due_at: string | null;
+  due_info?: DueInfo;
   requires_human: boolean;
   pause_reason: PauseReason | null;
   autopilot_mode: AutopilotMode;
   cost_status: CostStatus;
   cost_amount: number | null;
   at_risk: boolean;
+}
+
+// Scope item with availability status
+export interface ScopeItem {
+  name: string;
+  status: 'REQUESTED' | 'CONFIRMED_AVAILABLE' | 'NOT_DISCLOSABLE' | 'NOT_HELD' | 'PENDING';
+  reason?: string; // e.g., "SC § 23-1-240(B)" or "Agency confirmed not held"
+  confidence?: number;
+}
+
+// Detected constraint from agency or statute
+export interface Constraint {
+  type: 'EXEMPTION' | 'NOT_HELD' | 'REDACTION_REQUIRED' | 'FEE_REQUIRED';
+  description: string;
+  source: string; // e.g., "Agency response" or "SC § 23-1-240(B)"
+  confidence: number;
+  affected_items: string[];
+}
+
+// Fee quote details
+export interface FeeQuote {
+  total_amount: number;
+  deposit_amount: number | null;
+  currency: string;
+  itemization?: { item: string; amount: number }[];
+  quoted_at: string;
+  valid_until?: string;
 }
 
 // Request Detail - Extended info for detail page
@@ -24,6 +63,9 @@ export interface RequestDetail extends RequestListItem {
   requested_records: string;
   additional_details: string | null;
   scope_summary: string;
+  scope_items?: ScopeItem[];
+  constraints?: Constraint[];
+  fee_quote?: FeeQuote;
   portal_url: string | null;
   portal_provider: string | null;
   submitted_at: string | null;
@@ -36,10 +78,23 @@ export interface TimelineEvent {
   id: string;
   timestamp: string;
   type: EventType;
+  category: 'MESSAGE' | 'STATUS' | 'COST' | 'RESEARCH' | 'AGENT' | 'GATE';
   summary: string;
   raw_content?: string;
   ai_audit?: AIAudit;
   attachments?: Attachment[];
+  // For gate events
+  gate_details?: {
+    gate_type: PauseReason;
+    fee_amount?: number;
+    deposit_amount?: number;
+    decision_status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'MODIFIED';
+  };
+  // For message classification
+  classification?: {
+    type: string; // e.g., "FEE_QUOTE", "ACKNOWLEDGMENT", "DENIAL"
+    confidence: number;
+  };
 }
 
 // AI Audit data shown in timeline events
@@ -49,6 +104,7 @@ export interface AIAudit {
   confidence?: number;
   risk_flags?: string[];
   citations?: { label: string; url?: string }[];
+  statute_matches?: { statute: string; confidence: number }[];
 }
 
 // Thread Message for conversation view
@@ -67,12 +123,26 @@ export interface ThreadMessage {
 // Next Action Proposal from AI
 export interface NextAction {
   id: string;
+  action_type: 'FEE_NEGOTIATION' | 'FOLLOW_UP' | 'SCOPE_CLARIFICATION' | 'APPEAL' | 'ACCEPTANCE' | 'WITHDRAWAL' | 'CUSTOM';
   proposal: string;
+  proposal_short: string; // e.g., "Fee Negotiation Email"
   reasoning: string[];
   confidence: number;
   risk_flags: string[];
+  warnings?: string[]; // e.g., "This commits to paying $75 deposit"
   can_auto_execute: boolean;
+  blocked_reason?: string; // Why it can't auto-execute
   draft_content?: string;
+  draft_preview?: string; // First 2-3 lines for button hover
+  constraints_applied?: string[]; // Which constraints were considered
+}
+
+// Agency automation rules
+export interface AgencyRules {
+  fee_auto_approve_threshold: number | null;
+  always_human_gates: PauseReason[];
+  known_exemptions: string[]; // e.g., ["BWC exempt per SC § 23-1-240(B)"]
+  typical_response_days: number | null;
 }
 
 // Agency Summary
@@ -84,6 +154,7 @@ export interface AgencySummary {
   portal_url?: string;
   default_autopilot_mode: string;
   notes?: string;
+  rules?: AgencyRules;
 }
 
 // Attachment
@@ -132,7 +203,12 @@ export type EventType =
   | 'FEE_QUOTE'
   | 'DENIAL'
   | 'FOLLOW_UP'
-  | 'PORTAL_TASK';
+  | 'PORTAL_TASK'
+  | 'GATE_TRIGGERED'
+  | 'PROPOSAL_QUEUED'
+  | 'HUMAN_DECISION'
+  | 'CONSTRAINT_DETECTED'
+  | 'SCOPE_UPDATED';
 
 // Agency List Item
 export interface AgencyListItem {
