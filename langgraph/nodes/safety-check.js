@@ -13,9 +13,33 @@ const logger = require('../../services/logger');
  */
 async function safetyCheckNode(state) {
   const {
-    caseId, draftSubject, draftBodyText, constraints, scopeItems,
+    caseId, draftSubject, draftBodyText,
     proposalActionType
   } = state;
+
+  // Parse constraints and scopeItems - they may come as strings from DB
+  let constraints = state.constraints;
+  let scopeItems = state.scopeItems;
+
+  // Handle string-encoded arrays (from DB JSONB or text[])
+  if (typeof constraints === 'string') {
+    try {
+      constraints = JSON.parse(constraints);
+    } catch {
+      constraints = [];
+    }
+  }
+  if (typeof scopeItems === 'string') {
+    try {
+      scopeItems = JSON.parse(scopeItems);
+    } catch {
+      scopeItems = [];
+    }
+  }
+
+  // Ensure arrays
+  constraints = Array.isArray(constraints) ? constraints : [];
+  scopeItems = Array.isArray(scopeItems) ? scopeItems : [];
 
   const logs = [];
   const riskFlags = [];

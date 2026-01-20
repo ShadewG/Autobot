@@ -1503,6 +1503,36 @@ class DatabaseService {
 
         return null;
     }
+
+    // === Aliases for LangGraph nodes compatibility ===
+
+    // Alias: saveResponseAnalysis -> createResponseAnalysis
+    async saveResponseAnalysis(analysisData) {
+        // Map camelCase field names to snake_case for DB
+        return this.createResponseAnalysis({
+            message_id: analysisData.messageId,
+            case_id: analysisData.caseId,
+            intent: analysisData.intent,
+            confidence_score: analysisData.confidenceScore,
+            sentiment: analysisData.sentiment,
+            key_points: analysisData.keyPoints,
+            extracted_deadline: analysisData.extractedDeadline,
+            extracted_fee_amount: analysisData.extractedFeeAmount,
+            requires_action: analysisData.requiresAction,
+            suggested_action: analysisData.suggestedAction,
+            full_analysis_json: analysisData.fullAnalysisJson
+        });
+    }
+
+    // Alias: getResponseAnalysisByMessageId -> getAnalysisByMessageId
+    async getResponseAnalysisByMessageId(messageId) {
+        return this.getAnalysisByMessageId(messageId);
+    }
+
+    // Alias: getLatestResponseAnalysis -> getAnalysisByCaseId
+    async getLatestResponseAnalysis(caseId) {
+        return this.getAnalysisByCaseId(caseId);
+    }
 }
 
 module.exports = new DatabaseService();
