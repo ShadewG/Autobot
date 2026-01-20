@@ -636,6 +636,16 @@
         }
 
         function selectScenario(key) {
+            // If there's an active run with a different scenario, warn and clear it
+            if (currentRun && currentRun.scenario_key !== key) {
+                log(`⚠️ Scenario changed from ${currentRun.scenario_key} to ${key}. Current run cleared - create a new run.`, 'warn');
+                currentRun = null;
+                updateUI();
+                renderPhaseTracker();
+                renderSnapshots();
+                renderAssertions();
+                renderDecisionTrace();
+            }
             selectedScenario = key;
             renderScenarios();
             log(`Selected scenario: ${key}`, 'info');
@@ -747,14 +757,17 @@
         async function resetRun() {
             if (!currentRun) return;
 
+            // Check for scenario mismatch upfront
+            if (selectedScenario !== currentRun.scenario_key) {
+                log(`⚠️ Cannot reset: scenario changed from ${currentRun.scenario_key} to ${selectedScenario}. Create a new run instead.`, 'error');
+                return;
+            }
+
             try {
-                // Include selected scenario in case user changed it before resetting
                 const res = await fetch(`/api/test/e2e/runs/${currentRun.id}/reset`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        scenario: selectedScenario  // Pass currently selected scenario
-                    })
+                    body: JSON.stringify({})  // No scenario change allowed
                 });
 
                 const data = await res.json();
@@ -762,13 +775,14 @@
                 if (data.success) {
                     currentRun = data.run;
                     updateUI();
-                    // Update selectedScenario to match the run's scenario
-                    if (currentRun.scenario_key !== selectedScenario) {
-                        selectedScenario = currentRun.scenario_key;
-                        renderScenarios();
-                    }
                     log('Run reset', 'success');
                     renderPhaseTracker();
+                    renderSnapshots();
+                    renderAssertions();
+                    renderDecisionTrace();
+                } else {
+                    // Show backend error (e.g., scenario mismatch rejection)
+                    log(`Reset failed: ${data.error}`, 'error');
                 }
             } catch (error) {
                 log(`Error resetting run: ${error.message}`, 'error');
