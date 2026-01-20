@@ -81,36 +81,54 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_log_idempotency
     WHERE idempotency_key IS NOT NULL;
 
 -- ============================================
--- BACKFILL: Migrate existing fee data to JSONB
+-- BACKFILL: Migrate existing fee data to JSONB (if columns exist)
 -- ============================================
 
-UPDATE cases
-SET fee_quote_jsonb = jsonb_build_object(
-    'amount', last_fee_quote_amount,
-    'currency', COALESCE(last_fee_quote_currency, 'USD'),
-    'quoted_at', last_fee_quote_at,
-    'status', CASE
-        WHEN last_fee_quote_amount IS NOT NULL THEN 'QUOTED'
-        ELSE 'NONE'
-    END
-)
-WHERE last_fee_quote_amount IS NOT NULL
-  AND fee_quote_jsonb IS NULL;
+DO $$
+BEGIN
+    -- Only run if the legacy fee columns exist
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'cases' AND column_name = 'last_fee_quote_amount'
+    ) THEN
+        UPDATE cases
+        SET fee_quote_jsonb = jsonb_build_object(
+            'amount', last_fee_quote_amount,
+            'currency', COALESCE(last_fee_quote_currency, 'USD'),
+            'quoted_at', last_fee_quote_at,
+            'status', CASE
+                WHEN last_fee_quote_amount IS NOT NULL THEN 'QUOTED'
+                ELSE 'NONE'
+            END
+        )
+        WHERE last_fee_quote_amount IS NOT NULL
+          AND fee_quote_jsonb IS NULL;
+    END IF;
+END $$;
 
 -- ============================================
--- BACKFILL: Set due_info from existing deadline_date
+-- BACKFILL: Set due_info from existing deadline_date (if columns exist)
 -- ============================================
 
-UPDATE cases
-SET due_info_jsonb = jsonb_build_object(
-    'due_type', 'STATUTORY',
-    'statutory_due_at', deadline_date,
-    'statutory_days', sd.response_days
-)
-FROM state_deadlines sd
-WHERE cases.state = sd.state_code
-  AND cases.deadline_date IS NOT NULL
-  AND cases.due_info_jsonb = '{}'::jsonb;
+DO $$
+BEGIN
+    -- Only run if deadline_date column exists
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'cases' AND column_name = 'deadline_date'
+    ) THEN
+        UPDATE cases
+        SET due_info_jsonb = jsonb_build_object(
+            'due_type', 'STATUTORY',
+            'statutory_due_at', deadline_date,
+            'statutory_days', sd.response_days
+        )
+        FROM state_deadlines sd
+        WHERE cases.state = sd.state_code
+          AND cases.deadline_date IS NOT NULL
+          AND cases.due_info_jsonb = '{}'::jsonb;
+    END IF;
+END $$;
 
 -- ============================================
 -- HELPFUL COMMENTS
