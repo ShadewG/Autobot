@@ -904,6 +904,109 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
             return {};
         }
     }
+
+    /**
+     * Generate clarification response for LangGraph
+     * Used when agency requests more information
+     */
+    async generateClarificationResponse(message, analysis, caseData, options = {}) {
+        const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
+
+        const prompt = `You are responding to a public records request clarification from a government agency.
+
+AGENCY MESSAGE:
+${message.body_text || message.body || ''}
+
+ORIGINAL REQUEST:
+- Subject: ${caseData.subject_name || 'Unknown'}
+- Agency: ${caseData.agency_name || 'Unknown'}
+- Records Requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Various records'}
+- Incident Date: ${caseData.incident_date || 'Not specified'}
+- Location: ${caseData.incident_location || 'Not specified'}
+
+${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
+
+Generate a professional, helpful response that:
+1. Directly addresses their specific questions or requests for clarification
+2. Provides any additional details they need
+3. Offers to narrow the scope if it would be helpful
+4. Maintains a cooperative, professional tone
+5. Keeps under 200 words
+
+Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
+
+        try {
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5',
+                reasoning: { effort: 'low' },
+                text: { verbosity: 'medium' },
+                input: `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`
+            });
+
+            const bodyText = response.output_text?.trim() || '';
+            const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
+
+            return {
+                subject: subject,
+                body_text: bodyText,
+                body_html: `<p>${bodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
+                model: process.env.OPENAI_MODEL || 'gpt-5'
+            };
+        } catch (error) {
+            console.error('Error generating clarification response:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Generate fee acceptance response for LangGraph
+     * Used when auto-approving or human-approving a fee quote
+     */
+    async generateFeeAcceptance(caseData, feeAmount, options = {}) {
+        const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
+        const currency = options.currency || 'USD';
+
+        const prompt = `Generate a professional response accepting a fee quote for a public records request.
+
+CASE DETAILS:
+- Subject: ${caseData.subject_name || 'Unknown'}
+- Agency: ${caseData.agency_name || 'Unknown'}
+- State: ${caseData.state || 'Unknown'}
+- Fee Amount: $${typeof feeAmount === 'number' ? feeAmount.toFixed(2) : feeAmount}
+
+${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
+
+The response should:
+1. Confirm acceptance of the quoted fee amount
+2. Ask about payment method (check, money order, credit card, etc.)
+3. Request an invoice or mailing address if payment by mail is required
+4. Be brief and professional (under 150 words)
+5. Express appreciation for their assistance
+
+Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
+
+        try {
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5',
+                reasoning: { effort: 'low' },
+                text: { verbosity: 'medium' },
+                input: `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`
+            });
+
+            const bodyText = response.output_text?.trim() || '';
+            const subject = `RE: Fee Acceptance - ${caseData.subject_name || caseData.case_name || 'Records Request'}`;
+
+            return {
+                subject: subject,
+                body_text: bodyText,
+                body_html: `<p>${bodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
+                model: process.env.OPENAI_MODEL || 'gpt-5'
+            };
+        } catch (error) {
+            console.error('Error generating fee acceptance:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = new AIService();

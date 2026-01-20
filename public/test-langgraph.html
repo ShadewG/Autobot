@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LangGraph Agent Tester</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #60a5fa;
+        }
+
+        h2 {
+            font-size: 14px;
+            margin-bottom: 10px;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        h3 {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 8px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 320px 1fr 400px;
+            gap: 16px;
+        }
+
+        .panel {
+            background: #1e293b;
+            border-radius: 8px;
+            padding: 14px;
+            border: 1px solid #334155;
+            margin-bottom: 12px;
+        }
+
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 16px;
+            padding: 10px 16px;
+            background: #1e293b;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+        }
+
+        .status-dot.error { background: #ef4444; }
+        .status-dot.loading { background: #f59e0b; animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .cases-list {
+            max-height: 180px;
+            overflow-y: auto;
+            margin-bottom: 12px;
+        }
+
+        .case-item {
+            padding: 8px 10px;
+            background: #0f172a;
+            border-radius: 4px;
+            margin-bottom: 4px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .case-item:hover { border-color: #60a5fa; }
+        .case-item.selected { border-color: #60a5fa; background: #1e3a5f; }
+        .case-item .case-name { font-weight: 500; color: #f1f5f9; font-size: 13px; }
+        .case-item .case-meta { font-size: 11px; color: #64748b; margin-top: 2px; }
+
+        .case-status {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 500;
+            margin-left: 6px;
+        }
+
+        .case-status.needs_human_review { background: #f59e0b; color: #000; }
+        .case-status.awaiting_response { background: #3b82f6; color: #fff; }
+        .case-status.sent { background: #22c55e; color: #fff; }
+
+        button {
+            padding: 6px 12px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .btn-primary { background: #3b82f6; color: white; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-primary:disabled { background: #475569; cursor: not-allowed; }
+        .btn-secondary { background: #334155; color: #e2e8f0; }
+        .btn-secondary:hover { background: #475569; }
+        .btn-success { background: #22c55e; color: white; }
+        .btn-success:hover { background: #16a34a; }
+        .btn-warning { background: #f59e0b; color: #000; }
+        .btn-warning:hover { background: #d97706; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+
+        .btn-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .btn-sm {
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .input-group {
+            margin-bottom: 10px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-bottom: 4px;
+        }
+
+        .input-group input,
+        .input-group select,
+        .input-group textarea {
+            width: 100%;
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 13px;
+        }
+
+        .input-group textarea {
+            min-height: 60px;
+            font-family: monospace;
+            font-size: 11px;
+        }
+
+        .console {
+            background: #0f172a;
+            border-radius: 6px;
+            padding: 10px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #334155;
+        }
+
+        .console-line {
+            margin-bottom: 2px;
+            padding: 2px 0;
+        }
+
+        .console-line.info { color: #60a5fa; }
+        .console-line.success { color: #22c55e; }
+        .console-line.error { color: #ef4444; }
+        .console-line.warn { color: #f59e0b; }
+        .console-line.debug { color: #64748b; }
+
+        .console-timestamp {
+            color: #475569;
+            margin-right: 8px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 10px;
+        }
+
+        .tab {
+            padding: 5px 10px;
+            background: #334155;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        .tab.active { background: #3b82f6; }
+
+        .node-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+        }
+
+        .node-btn {
+            padding: 5px 6px;
+            font-size: 10px;
+            background: #334155;
+            border: 1px solid #475569;
+            border-radius: 4px;
+            color: #e2e8f0;
+            cursor: pointer;
+        }
+
+        .node-btn:hover { background: #475569; }
+
+        .queue-stats {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 6px;
+        }
+
+        .queue-stat {
+            text-align: center;
+            padding: 6px;
+            background: #0f172a;
+            border-radius: 4px;
+        }
+
+        .queue-stat .number {
+            font-size: 18px;
+            font-weight: bold;
+            color: #60a5fa;
+        }
+
+        .queue-stat .label {
+            font-size: 9px;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+
+        .state-viewer {
+            background: #0f172a;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .state-section {
+            padding: 10px;
+            border-bottom: 1px solid #334155;
+        }
+
+        .state-section:last-child { border-bottom: none; }
+
+        .state-section h4 {
+            font-size: 11px;
+            color: #60a5fa;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .state-section pre {
+            font-size: 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            color: #94a3b8;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+
+        .badge-green { background: #22c55e20; color: #22c55e; }
+        .badge-yellow { background: #f59e0b20; color: #f59e0b; }
+        .badge-red { background: #ef444420; color: #ef4444; }
+        .badge-blue { background: #3b82f620; color: #3b82f6; }
+
+        .assertions-panel {
+            background: #0f172a;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .assertion-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 0;
+            font-size: 11px;
+            border-bottom: 1px solid #1e293b;
+        }
+
+        .assertion-item:last-child { border-bottom: none; }
+        .assertion-pass { color: #22c55e; }
+        .assertion-fail { color: #ef4444; }
+        .assertion-icon { font-size: 14px; }
+
+        .action-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px;
+        }
+
+        .scenario-card {
+            padding: 8px;
+            background: #0f172a;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid #334155;
+            transition: all 0.2s;
+        }
+
+        .scenario-card:hover { border-color: #60a5fa; }
+        .scenario-card .scenario-name { font-size: 12px; font-weight: 500; color: #f1f5f9; }
+        .scenario-card .scenario-desc { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+        .divider {
+            height: 1px;
+            background: #334155;
+            margin: 12px 0;
+        }
+
+        .collapsible-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            padding: 4px 0;
+        }
+
+        .collapsible-header:hover h2 { color: #60a5fa; }
+        .collapsible-content { display: none; }
+        .collapsible-content.open { display: block; }
+
+        .lock-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+        }
+
+        .lock-indicator.locked { background: #f59e0b20; color: #f59e0b; }
+        .lock-indicator.unlocked { background: #22c55e20; color: #22c55e; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>LangGraph Agent Tester</h1>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-dot" id="status-dot"></div>
+                <span id="status-text">Connecting...</span>
+            </div>
+            <div class="status-item">
+                Nodes: <strong id="node-count">-</strong>
+            </div>
+            <div class="status-item">
+                Queue: <strong id="queue-count">-</strong>
+            </div>
+            <div class="status-item" id="lock-status">
+                <span class="lock-indicator unlocked">Unlocked</span>
+            </div>
+        </div>
+
+        <div class="grid">
+            <!-- LEFT COLUMN - Case Selection & Actions -->
+            <div class="left-panel">
+                <div class="panel">
+                    <h2>Case Selector</h2>
+                    <div class="cases-list" id="cases-list">
+                        <div style="color: #64748b; padding: 20px; text-align: center;">Loading...</div>
+                    </div>
+                    <div class="input-group">
+                        <label>Or enter Case ID:</label>
+                        <input type="number" id="case-id-input" placeholder="123">
+                    </div>
+                    <button class="btn-secondary btn-sm" onclick="fetchCases()">Refresh Cases</button>
+                </div>
+
+                <div class="panel">
+                    <h2>Quick Actions</h2>
+                    <div class="action-grid">
+                        <button class="btn-primary" onclick="invokeGraph()">Invoke Graph</button>
+                        <button class="btn-secondary" onclick="fetchState()">View State</button>
+                        <button class="btn-success" onclick="resumeWithAction('APPROVE')">Approve</button>
+                        <button class="btn-warning" onclick="resumeWithAction('ADJUST')">Adjust</button>
+                        <button class="btn-secondary" onclick="resumeWithAction('DISMISS')">Dismiss</button>
+                        <button class="btn-danger" onclick="resumeWithAction('WITHDRAW')">Withdraw</button>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <div class="input-group">
+                        <label>Adjust Instruction:</label>
+                        <textarea id="adjust-instruction" placeholder="Make the tone more formal..."></textarea>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Scenario Presets</h2>
+                    <div id="scenarios-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+                        <div class="scenario-card" onclick="applyScenario('fee_low')">
+                            <div class="scenario-name">Fee (Low)</div>
+                            <div class="scenario-desc">$15 fee quote</div>
+                        </div>
+                        <div class="scenario-card" onclick="applyScenario('fee_high')">
+                            <div class="scenario-name">Fee (High)</div>
+                            <div class="scenario-desc">$500+ fee</div>
+                        </div>
+                        <div class="scenario-card" onclick="applyScenario('denial')">
+                            <div class="scenario-name">Denial</div>
+                            <div class="scenario-desc">Request denied</div>
+                        </div>
+                        <div class="scenario-card" onclick="applyScenario('clarification')">
+                            <div class="scenario-name">Clarification</div>
+                            <div class="scenario-desc">Need more info</div>
+                        </div>
+                        <div class="scenario-card" onclick="applyScenario('portal_send')">
+                            <div class="scenario-name">Portal Case</div>
+                            <div class="scenario-desc">Send via portal</div>
+                        </div>
+                        <div class="scenario-card" onclick="applyScenario('hostile')">
+                            <div class="scenario-name">Hostile</div>
+                            <div class="scenario-desc">Hostile sentiment</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="collapsible-header" onclick="toggleSection('chaos')">
+                        <h2>Chaos Testing</h2>
+                        <span id="chaos-arrow">+</span>
+                    </div>
+                    <div id="chaos-content" class="collapsible-content">
+                        <p style="font-size: 10px; color: #64748b; margin-bottom: 8px;">Test concurrency and idempotency:</p>
+                        <div class="btn-group">
+                            <button class="btn-warning btn-sm" onclick="chaosDoubleInvoke()">Double Invoke</button>
+                            <button class="btn-warning btn-sm" onclick="chaosDoubleApprove()">Double Approve</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="collapsible-header" onclick="toggleSection('devtools')">
+                        <h2>Dev Tools</h2>
+                        <span id="devtools-arrow">+</span>
+                    </div>
+                    <div id="devtools-content" class="collapsible-content">
+                        <div class="btn-group">
+                            <button class="btn-danger btn-sm" onclick="forceUnlock()">Force Unlock</button>
+                            <button class="btn-danger btn-sm" onclick="resetThread()">Reset Thread</button>
+                            <button class="btn-secondary btn-sm" onclick="createFakeMessage()">Create Message</button>
+                        </div>
+                        <div class="input-group" style="margin-top: 8px;">
+                            <label>Fake Message Content:</label>
+                            <textarea id="fake-message" placeholder="Your request has been processed..."></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MIDDLE COLUMN - Console & Output -->
+            <div class="middle-panel">
+                <div class="panel" style="margin-bottom: 12px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <h2>Console Output</h2>
+                        <button class="btn-secondary btn-sm" onclick="clearConsole()">Clear</button>
+                    </div>
+                    <div class="console" id="console"></div>
+                </div>
+
+                <div class="panel">
+                    <h2>Queue Status</h2>
+                    <div class="queue-stats" id="queue-stats">
+                        <div class="queue-stat"><div class="number">-</div><div class="label">Waiting</div></div>
+                        <div class="queue-stat"><div class="number">-</div><div class="label">Active</div></div>
+                        <div class="queue-stat"><div class="number">-</div><div class="label">Completed</div></div>
+                        <div class="queue-stat"><div class="number">-</div><div class="label">Failed</div></div>
+                        <div class="queue-stat"><div class="number">-</div><div class="label">Delayed</div></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN - State & Assertions -->
+            <div class="right-panel">
+                <div class="panel">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <h2>Live State Viewer</h2>
+                        <button class="btn-secondary btn-sm" onclick="fetchState()">Refresh</button>
+                    </div>
+                    <div class="state-viewer" id="state-viewer">
+                        <div class="state-section">
+                            <p style="color: #64748b; text-align: center; padding: 20px; font-size: 11px;">Select a case to view state</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <h2>Assertions</h2>
+                        <button class="btn-secondary btn-sm" onclick="runAssertions()">Run</button>
+                    </div>
+                    <div class="assertions-panel" id="assertions-panel">
+                        <p style="color: #64748b; text-align: center; padding: 10px; font-size: 11px;">Click Run to validate state</p>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="collapsible-header" onclick="toggleSection('nodes')">
+                        <h2>Test Individual Nodes</h2>
+                        <span id="nodes-arrow">+</span>
+                    </div>
+                    <div id="nodes-content" class="collapsible-content">
+                        <div class="node-grid" id="node-grid"></div>
+                        <div class="input-group" style="margin-top: 8px;">
+                            <label>State JSON:</label>
+                            <textarea id="node-state" placeholder='{"caseId": 123}'></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let selectedCaseId = null;
+        let lastState = null;
+
+        // Section toggling
+        function toggleSection(name) {
+            const content = document.getElementById(`${name}-content`);
+            const arrow = document.getElementById(`${name}-arrow`);
+            content.classList.toggle('open');
+            arrow.textContent = content.classList.contains('open') ? '-' : '+';
+        }
+
+        // Console logging
+        function log(message, type = 'info') {
+            const consoleEl = document.getElementById('console');
+            const line = document.createElement('div');
+            line.className = `console-line ${type}`;
+            const time = new Date().toLocaleTimeString();
+            line.innerHTML = `<span class="console-timestamp">[${time}]</span>${escapeHtml(message)}`;
+            consoleEl.appendChild(line);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function logObject(label, obj, type = 'debug') {
+            log(`${label}:`, type);
+            const consoleEl = document.getElementById('console');
+            const pre = document.createElement('pre');
+            pre.style.color = '#94a3b8';
+            pre.style.marginLeft = '20px';
+            pre.style.marginBottom = '8px';
+            pre.style.fontSize = '10px';
+            pre.textContent = JSON.stringify(obj, null, 2);
+            consoleEl.appendChild(pre);
+            consoleEl.scrollTop = consoleEl.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '';
+            log('Console cleared', 'debug');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // API calls
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/test/langgraph/status');
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('status-dot').className = 'status-dot';
+                    document.getElementById('status-text').textContent = 'Connected';
+                    document.getElementById('node-count').textContent = data.available_nodes.length;
+                    document.getElementById('queue-count').textContent = data.queue_stats.waiting + data.queue_stats.active;
+
+                    // Populate node buttons
+                    const nodeGrid = document.getElementById('node-grid');
+                    nodeGrid.innerHTML = data.available_nodes.map(node =>
+                        `<button class="node-btn" onclick="testNode('${node}')">${node.replace('Node', '')}</button>`
+                    ).join('');
+
+                    log('LangGraph connected', 'success');
+                } else {
+                    throw new Error(data.error);
+                }
+            } catch (error) {
+                document.getElementById('status-dot').className = 'status-dot error';
+                document.getElementById('status-text').textContent = 'Error';
+                log(`Status check failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function fetchCases() {
+            try {
+                const res = await fetch('/api/test/langgraph/cases');
+                const data = await res.json();
+
+                if (data.success) {
+                    const list = document.getElementById('cases-list');
+                    if (data.cases.length === 0) {
+                        list.innerHTML = '<div style="color: #64748b; padding: 20px; text-align: center;">No cases</div>';
+                        return;
+                    }
+
+                    list.innerHTML = data.cases.map(c => `
+                        <div class="case-item" data-id="${c.id}" onclick="selectCase(${c.id})">
+                            <div class="case-name">
+                                #${c.id} ${(c.case_name || 'Unnamed').substring(0, 25)}
+                                <span class="case-status ${c.status}">${c.status}</span>
+                            </div>
+                            <div class="case-meta">${(c.agency_name || 'Unknown').substring(0, 30)}</div>
+                        </div>
+                    `).join('');
+
+                    log(`Loaded ${data.cases.length} cases`, 'info');
+                }
+            } catch (error) {
+                log(`Failed to load cases: ${error.message}`, 'error');
+            }
+        }
+
+        async function refreshQueue() {
+            try {
+                const res = await fetch('/api/test/langgraph/queue');
+                const data = await res.json();
+
+                if (data.success) {
+                    const stats = document.getElementById('queue-stats');
+                    stats.innerHTML = `
+                        <div class="queue-stat"><div class="number">${data.stats.waiting}</div><div class="label">Waiting</div></div>
+                        <div class="queue-stat"><div class="number">${data.stats.active}</div><div class="label">Active</div></div>
+                        <div class="queue-stat"><div class="number">${data.stats.completed}</div><div class="label">Completed</div></div>
+                        <div class="queue-stat"><div class="number">${data.stats.failed}</div><div class="label">Failed</div></div>
+                        <div class="queue-stat"><div class="number">${data.stats.delayed}</div><div class="label">Delayed</div></div>
+                    `;
+                }
+            } catch (error) {
+                log(`Queue refresh failed: ${error.message}`, 'error');
+            }
+        }
+
+        function selectCase(id) {
+            selectedCaseId = id;
+            document.querySelectorAll('.case-item').forEach(el => el.classList.remove('selected'));
+            document.querySelector(`.case-item[data-id="${id}"]`)?.classList.add('selected');
+            document.getElementById('case-id-input').value = id;
+            log(`Selected case #${id}`, 'info');
+            document.getElementById('node-state').value = JSON.stringify({ caseId: id }, null, 2);
+            fetchState();
+        }
+
+        function getCaseId() {
+            const inputId = document.getElementById('case-id-input').value;
+            return inputId ? parseInt(inputId) : selectedCaseId;
+        }
+
+        async function invokeGraph() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select or enter a case ID', 'error');
+                return;
+            }
+
+            log(`Invoking graph for case #${caseId}...`, 'info');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/invoke/${caseId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ trigger_type: 'MANUAL', sync: true })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Invoke successful`, 'success');
+                    if (data.result) {
+                        logObject('Result', data.result, 'success');
+                    }
+                    fetchState();
+                } else {
+                    log(`Invoke failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Invoke error: ${error.message}`, 'error');
+            }
+
+            refreshQueue();
+        }
+
+        async function resumeWithAction(action) {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select or enter a case ID', 'error');
+                return;
+            }
+
+            const instruction = document.getElementById('adjust-instruction').value;
+            log(`Resuming case #${caseId} with ${action}...`, 'info');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/resume/${caseId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, instruction, sync: true })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Resume successful (${action})`, 'success');
+                    if (data.result) {
+                        logObject('Result', data.result, 'success');
+                    }
+                    fetchState();
+                } else {
+                    log(`Resume failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Resume error: ${error.message}`, 'error');
+            }
+
+            refreshQueue();
+        }
+
+        async function fetchState() {
+            const caseId = getCaseId();
+            if (!caseId) return;
+
+            try {
+                const res = await fetch(`/api/test/langgraph/state/${caseId}`);
+                const data = await res.json();
+
+                if (data.success) {
+                    renderState(data);
+                    lastState = data;
+
+                    // Update lock indicator
+                    const lockStatus = document.getElementById('lock-status');
+                    if (data.lock?.is_locked) {
+                        lockStatus.innerHTML = '<span class="lock-indicator locked">Locked</span>';
+                    } else {
+                        lockStatus.innerHTML = '<span class="lock-indicator unlocked">Unlocked</span>';
+                    }
+                } else {
+                    log(`State fetch failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`State fetch error: ${error.message}`, 'error');
+            }
+        }
+
+        function renderState(data) {
+            const viewer = document.getElementById('state-viewer');
+
+            let html = '';
+
+            // Case info section
+            if (data.case_info) {
+                html += `
+                    <div class="state-section">
+                        <h4>Case Info <span class="badge badge-blue">#${data.case_info.id}</span></h4>
+                        <pre>${JSON.stringify({
+                            status: data.case_info.status,
+                            agency: data.case_info.agency_name,
+                            created: data.case_info.created_at
+                        }, null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            // Checkpoint state
+            if (data.checkpoint_state) {
+                const state = data.checkpoint_state;
+                html += `
+                    <div class="state-section">
+                        <h4>Checkpoint State</h4>
+                        <pre>${JSON.stringify(state, null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            // Pending proposals
+            if (data.proposals && data.proposals.length > 0) {
+                html += `
+                    <div class="state-section">
+                        <h4>Pending Proposals <span class="badge badge-yellow">${data.proposals.length}</span></h4>
+                        <pre>${JSON.stringify(data.proposals.map(p => ({
+                            id: p.id,
+                            type: p.proposal_type,
+                            status: p.status,
+                            created: p.created_at
+                        })), null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            // Recent jobs
+            if (data.agent_runs && data.agent_runs.length > 0) {
+                html += `
+                    <div class="state-section">
+                        <h4>Recent Agent Runs <span class="badge badge-green">${data.agent_runs.length}</span></h4>
+                        <pre>${JSON.stringify(data.agent_runs.map(r => ({
+                            id: r.id,
+                            status: r.status,
+                            started: r.started_at,
+                            duration: r.duration_ms
+                        })), null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            // Lock info
+            if (data.lock) {
+                const lockClass = data.lock.is_locked ? 'badge-yellow' : 'badge-green';
+                html += `
+                    <div class="state-section">
+                        <h4>Lock Status <span class="badge ${lockClass}">${data.lock.is_locked ? 'Locked' : 'Unlocked'}</span></h4>
+                    </div>
+                `;
+            }
+
+            viewer.innerHTML = html || '<div class="state-section"><p style="color: #64748b; text-align: center;">No state data</p></div>';
+        }
+
+        async function runAssertions() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            log(`Running assertions for case #${caseId}...`, 'info');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/assertions/${caseId}`);
+                const data = await res.json();
+
+                if (data.success) {
+                    renderAssertions(data.assertions);
+
+                    const passed = data.assertions.filter(a => a.passed).length;
+                    const total = data.assertions.length;
+                    log(`Assertions: ${passed}/${total} passed`, passed === total ? 'success' : 'warn');
+                } else {
+                    log(`Assertions failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Assertions error: ${error.message}`, 'error');
+            }
+        }
+
+        function renderAssertions(assertions) {
+            const panel = document.getElementById('assertions-panel');
+
+            panel.innerHTML = assertions.map(a => `
+                <div class="assertion-item ${a.passed ? 'assertion-pass' : 'assertion-fail'}">
+                    <span class="assertion-icon">${a.passed ? '✓' : '✗'}</span>
+                    <span>${escapeHtml(a.name)}</span>
+                </div>
+            `).join('');
+        }
+
+        async function applyScenario(scenario) {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            log(`Applying scenario "${scenario}" to case #${caseId}...`, 'info');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/scenario/${caseId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scenario })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Scenario "${scenario}" applied`, 'success');
+                    logObject('Created message', { id: data.message_id, subject: data.subject }, 'info');
+                    fetchState();
+                } else {
+                    log(`Scenario failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Scenario error: ${error.message}`, 'error');
+            }
+        }
+
+        async function chaosDoubleInvoke() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            log(`Running double-invoke chaos test on case #${caseId}...`, 'warn');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/chaos/double-invoke/${caseId}`, {
+                    method: 'POST'
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Double-invoke test completed`, 'success');
+                    logObject('Results', {
+                        job1_success: data.results.job1_success,
+                        job2_success: data.results.job2_success,
+                        both_succeeded: data.results.job1_success && data.results.job2_success,
+                        locking_worked: data.results.job1_success !== data.results.job2_success ||
+                                        (data.results.job1_error?.includes('lock') || data.results.job2_error?.includes('lock'))
+                    }, 'info');
+                } else {
+                    log(`Chaos test failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Chaos test error: ${error.message}`, 'error');
+            }
+
+            refreshQueue();
+        }
+
+        async function chaosDoubleApprove() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            // Need to find a pending proposal
+            if (!lastState?.proposals?.length) {
+                log('No pending proposals to test double-approve', 'warn');
+                return;
+            }
+
+            const proposalId = lastState.proposals[0].id;
+            log(`Running double-approve chaos test on proposal #${proposalId}...`, 'warn');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/chaos/double-approve/${caseId}/${proposalId}`, {
+                    method: 'POST'
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Double-approve test completed`, 'success');
+                    logObject('Results', {
+                        approve1_success: data.results.approve1_success,
+                        approve2_success: data.results.approve2_success,
+                        idempotency_worked: data.results.approve1_success && !data.results.approve2_success
+                    }, 'info');
+                } else {
+                    log(`Chaos test failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Chaos test error: ${error.message}`, 'error');
+            }
+
+            fetchState();
+        }
+
+        async function forceUnlock() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            log(`Force unlocking case #${caseId}...`, 'warn');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/force-unlock/${caseId}`, {
+                    method: 'POST'
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Case unlocked (was_locked: ${data.was_locked})`, 'success');
+                    fetchState();
+                } else {
+                    log(`Unlock failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Unlock error: ${error.message}`, 'error');
+            }
+        }
+
+        async function resetThread() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            if (!confirm('This will delete checkpoint and pending proposals. Continue?')) {
+                return;
+            }
+
+            log(`Resetting thread for case #${caseId}...`, 'warn');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/reset-thread/${caseId}`, {
+                    method: 'POST'
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Thread reset complete`, 'success');
+                    logObject('Deleted', data.deleted, 'info');
+                    fetchState();
+                } else {
+                    log(`Reset failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Reset error: ${error.message}`, 'error');
+            }
+        }
+
+        async function createFakeMessage() {
+            const caseId = getCaseId();
+            if (!caseId) {
+                log('Please select a case first', 'error');
+                return;
+            }
+
+            const content = document.getElementById('fake-message').value || 'Test message content';
+            log(`Creating fake message for case #${caseId}...`, 'info');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/create-message/${caseId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        subject: 'Test Message',
+                        content
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Message created: #${data.message_id}`, 'success');
+                    fetchState();
+                } else {
+                    log(`Create failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Create error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testNode(nodeName) {
+            let state;
+            try {
+                state = JSON.parse(document.getElementById('node-state').value || '{}');
+            } catch (e) {
+                log('Invalid JSON in state field', 'error');
+                return;
+            }
+
+            log(`Testing node: ${nodeName}`, 'info');
+
+            try {
+                const res = await fetch(`/api/test/langgraph/node/${nodeName}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ state })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    log(`Node ${nodeName} completed in ${data.duration_ms}ms`, 'success');
+                    logObject('Output', data.output, 'success');
+                } else {
+                    log(`Node failed: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                log(`Node test error: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto-refresh
+        setInterval(refreshQueue, 5000);
+        setInterval(() => {
+            if (selectedCaseId) fetchState();
+        }, 10000);
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            log('LangGraph Tester initialized', 'info');
+            fetchStatus();
+            fetchCases();
+            refreshQueue();
+        });
+
+        // Handle case ID input changes
+        document.getElementById('case-id-input').addEventListener('change', (e) => {
+            const id = parseInt(e.target.value);
+            if (id) {
+                selectedCaseId = id;
+                log(`Case ID set to #${id}`, 'info');
+                document.getElementById('node-state').value = JSON.stringify({ caseId: id }, null, 2);
+                fetchState();
+            }
+        });
+    </script>
+</body>
+</html>

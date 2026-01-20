@@ -1,5 +1,4 @@
 const { Queue, Worker } = require('bullmq');
-const Redis = require('ioredis');
 const sendgridService = require('../services/sendgrid-service');
 const aiService = require('../services/ai-service');
 const db = require('../services/database');
@@ -7,8 +6,28 @@ const notionService = require('../services/notion-service');
 const discordService = require('../services/discord-service');
 const foiaCaseAgent = require('../services/foia-case-agent');
 const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
+const caseLockService = require('../services/case-lock-service');
+const logger = require('../services/logger');
+const {
+    getRedisConnection,
+    getJobOptions,
+    generateEmailJobId,
+    moveToDeadLetterQueue
+} = require('./queue-config');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 const { isValidEmail } = require('../utils/contact-utils');
+
+// LangGraph agent queue (lazy loaded to avoid circular deps)
+let agentQueueModule = null;
+function getAgentQueueModule() {
+    if (!agentQueueModule) {
+        agentQueueModule = require('./agent-queue');
+    }
+    return agentQueueModule;
+}
+
+// Feature flag for LangGraph migration - HARDCODED TO TRUE
+const USE_LANGGRAPH = true;
 
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100');
 
@@ -19,38 +38,32 @@ const FORCE_INSTANT_EMAILS = (() => {
     return true;
 })();
 
-// Redis connection
-if (!process.env.REDIS_URL) {
-    console.error('❌ REDIS_URL environment variable is not set!');
-    console.error('Please set REDIS_URL in Railway environment variables.');
-    console.error('It should look like: redis://default:password@host:port');
-}
+// Get shared Redis connection
+const connection = getRedisConnection();
 
-const connection = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
-    maxRetriesPerRequest: null,
-    retryStrategy(times) {
-        if (times > 3) {
-            console.error('❌ Redis connection failed after 3 attempts');
-            return null; // Stop retrying
-        }
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-    }
+// Get standardized job options for each queue type
+const emailJobOptions = getJobOptions('email');
+const analysisJobOptions = getJobOptions('analysis');
+const generationJobOptions = getJobOptions('generation');
+const portalJobOptions = getJobOptions('portal');
+
+// Create queues with standardized options
+const emailQueue = new Queue('email-queue', {
+    connection,
+    defaultJobOptions: emailJobOptions
 });
-
-connection.on('connect', () => {
-    console.log('✅ Redis connected successfully');
+const analysisQueue = new Queue('analysis-queue', {
+    connection,
+    defaultJobOptions: analysisJobOptions
 });
-
-connection.on('error', (err) => {
-    console.error('❌ Redis connection error:', err.message);
+const generateQueue = new Queue('generate-queue', {
+    connection,
+    defaultJobOptions: generationJobOptions
 });
-
-// Create queues
-const emailQueue = new Queue('email-queue', { connection });
-const analysisQueue = new Queue('analysis-queue', { connection });
-const generateQueue = new Queue('generate-queue', { connection });
-const portalQueue = new Queue('portal-queue', { connection });
+const portalQueue = new Queue('portal-queue', {
+    connection,
+    defaultJobOptions: portalJobOptions
+});
 
 /**
  * Generate human-like delay for auto-replies (2-10 hours)
@@ -187,12 +200,30 @@ const emailWorker = new Worker('email-queue', async (job) => {
                 throw new Error(`Unknown email type: ${type}`);
         }
 
+        // Update proposal status if we have a proposalId
+        if (job.data.proposalId) {
+            await db.markProposalExecuted(job.data.proposalId, job.id);
+        }
+
         return result;
     } catch (error) {
-        console.error('Email job failed:', error);
+        const log = logger.forWorker('email-queue', job.id);
+        log.error(`Email job failed (attempt ${job.attemptsMade}/${emailJobOptions.attempts})`, {
+            error: error.message,
+            caseId
+        });
+
+        // If this is the final attempt, it will be moved to DLQ by the failed handler
         throw error;
     }
 }, { connection });
+
+// Handle email worker failures - move to DLQ after max attempts
+emailWorker.on('failed', async (job, error) => {
+    if (job.attemptsMade >= emailJobOptions.attempts) {
+        await moveToDeadLetterQueue('email-queue', job, error);
+    }
+});
 
 // ===== ANALYSIS QUEUE WORKER =====
 const analysisWorker = new Worker('analysis-queue', async (job) => {
@@ -273,31 +304,84 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         console.log(`\n🤖 Agent Status:`);
         console.log(`   Complex case: ${isComplexCase}`);
         console.log(`   Reason: ${analysis.intent}${feeAmount ? ` ($${feeAmount})` : ''}`);
+        console.log(`   LangGraph enabled: ${USE_LANGGRAPH}`);
 
         // If this is a complex case, let the agent handle it
         if (isComplexCase) {
-            console.log(`\n🚀 Delegating to FOIA Agent for complex case handling...`);
+            const agentLog = logger.forAgent(caseId, 'agency_reply');
 
-            try {
-                const agentResult = await foiaCaseAgent.handleCase(caseId, {
-                    type: 'agency_reply',  // Using standardized trigger type
-                    messageId: messageId
+            // === LANGGRAPH PATH ===
+            if (USE_LANGGRAPH) {
+                agentLog.info('Queuing to LangGraph agent for complex case handling');
+
+                try {
+                    const { enqueueAgentJob } = getAgentQueueModule();
+                    const agentJob = await enqueueAgentJob(caseId, 'INBOUND_MESSAGE', {
+                        messageId: messageId,
+                        analysisJobId: job.id
+                    });
+
+                    agentLog.info(`LangGraph agent job queued: ${agentJob.id}`);
+
+                    // Mark case as being handled by agent
+                    await db.query(
+                        'UPDATE cases SET agent_handled = true WHERE id = $1',
+                        [caseId]
+                    );
+
+                    // Don't run deterministic flow - LangGraph will handle everything
+                    return analysis;
+                } catch (agentError) {
+                    agentLog.error(`Failed to queue LangGraph agent: ${agentError.message}`);
+                    // Fall through to legacy agent or deterministic flow
+                }
+            }
+
+            // === LEGACY AGENT PATH ===
+            agentLog.info('Delegating to legacy FOIA Agent for complex case handling');
+
+            // Use case lock to ensure only one agent runs at a time (Deliverable 2)
+            const lockResult = await caseLockService.withCaseLock(
+                caseId,
+                'agency_reply',
+                async (runId) => {
+                    agentLog.info(`Agent run ${runId} acquired lock`);
+
+                    const agentResult = await foiaCaseAgent.handleCase(caseId, {
+                        type: 'agency_reply',
+                        messageId: messageId,
+                        runId: runId
+                    });
+
+                    agentLog.info(`Agent run ${runId} completed`, {
+                        iterations: agentResult.iterations
+                    });
+
+                    // Mark case as handled by agent
+                    await db.query(
+                        'UPDATE cases SET agent_handled = true WHERE id = $1',
+                        [caseId]
+                    );
+
+                    return agentResult;
+                },
+                { messageId, jobId: job.id }
+            );
+
+            if (lockResult.skipped) {
+                agentLog.warn('Agent run skipped - case locked by another process');
+                logger.agentRunEvent('skipped', {
+                    case_id: caseId,
+                    id: lockResult.runId,
+                    trigger_type: 'agency_reply',
+                    status: 'skipped_locked'
                 });
-
-                console.log(`✅ Agent handling complete`);
-                console.log(`   Iterations: ${agentResult.iterations}`);
-
-                // Mark case as handled by agent
-                await db.query(
-                    'UPDATE cases SET agent_handled = true WHERE id = $1',
-                    [caseId]
-                );
-
-                // Don't return early - let auto-reply logic also run
-                console.log(`ℹ️  Agent completed, now running auto-reply logic...`);
-            } catch (agentError) {
-                console.error(`❌ Agent failed, falling back to deterministic flow:`, agentError.message);
+                // Continue with deterministic flow as a fallback
+            } else if (!lockResult.success) {
+                agentLog.error(`Agent failed: ${lockResult.error}`);
                 // Continue with deterministic flow below as fallback
+            } else {
+                agentLog.info('Agent completed, now running auto-reply logic');
             }
         } else {
             console.log(`ℹ️  Simple case (${analysis.intent}), using deterministic flow`);

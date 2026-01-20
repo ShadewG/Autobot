@@ -2,6 +2,8 @@ const { OpenAI } = require('openai');
 const db = require('./database');
 const aiService = require('./ai-service');
 const notificationService = require('./notification-service');
+const actionValidator = require('./action-validator');
+const logger = require('./logger');
 
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
@@ -344,8 +346,10 @@ You MUST call log_decision at the end of every run with your reasoning, action, 
      * Main agent handler - called by workers
      */
     async handleCase(caseId, trigger) {
-        console.log(`\n🤖 FOIA Agent handling case ${caseId}`);
-        console.log(`   Trigger: ${trigger.type}`);
+        const runId = trigger.runId || null;
+        const log = logger.forAgent(caseId, trigger.type, runId);
+
+        log.info('FOIA Agent handling case');
 
         try {
             // Prepare initial message for agent
@@ -708,19 +712,26 @@ Then analyze the situation and decide what action to take.`
     }
 
     async sendEmail({ case_id, subject, body_html, body_text, delay_hours = 3, message_type }) {
+        const log = logger.forCase(case_id);
         const caseData = await db.getCaseById(case_id);
         if (!caseData) {
             return { error: 'Case not found' };
         }
 
-        // NEVER send emails if there's a portal_url - portal submission only
-        if (caseData.portal_url) {
-            console.log(`      🚫 BLOCKED: Case ${case_id} has portal_url - NO EMAIL will be sent`);
-            console.log(`      🌐 Portal URL: ${caseData.portal_url}`);
+        // Determine action type for validation
+        const actionType = message_type === 'followup' ? 'SEND_FOLLOWUP' :
+                          message_type === 'rebuttal' ? 'SEND_REBUTTAL' :
+                          message_type === 'clarification' ? 'SEND_CLARIFICATION' :
+                          'SEND_EMAIL';
+
+        // Validate against policy rules (Deliverable 4)
+        const validation = await actionValidator.isActionBlocked(case_id, actionType);
+        if (validation.blocked) {
+            log.warn(`Action ${actionType} blocked by policy: ${validation.reason}`);
             return {
                 success: false,
-                error: 'Portal submission required - email blocked',
-                portal_url: caseData.portal_url
+                error: validation.reason,
+                blocked_by_policy: true
             };
         }
 
@@ -799,11 +810,30 @@ Then analyze the situation and decide what action to take.`
 
         const recipientEmail = inboundFromEmail || caseData.agency_email;
 
+        // Create idempotent proposal before queueing email (Deliverable 3)
+        const latestInboundId = latestInbound.rows[0]?.id || null;
+        const proposal = await db.createOrUpdateProposal({
+            case_id: case_id,
+            message_id: latestInboundId,
+            generated_reply: body_text,
+            action_type: actionType,
+            response_type: message_type,
+            requires_approval: false,  // Agent is executing, no approval needed
+            status: 'approved',
+            proposal_short: `Send ${message_type} to ${caseData.agency_name || 'agency'}`,
+            reasoning_jsonb: ['Agent decided to send email based on case analysis'],
+            attempt: 0
+        });
+
+        log.info(`Created proposal ${proposal.id} for ${actionType}`);
+        logger.proposalEvent('created', proposal);
+
         const queue = getEmailQueue();
         const jobType = (message_type === 'follow_up' || message_type === 'followup')
             ? 'follow_up'
             : 'auto_reply';
 
+        // Use proposal ID in job for tracking
         await queue.add('send-email', {
             type: jobType,
             caseId: case_id,
@@ -811,7 +841,8 @@ Then analyze the situation and decide what action to take.`
             subject: subject,
             content: body_text,
             originalMessageId: originalMessageId,
-            instantReply: forceInstant
+            instantReply: forceInstant,
+            proposalId: proposal.id
         }, {
             delay: delay * 60 * 60 * 1000 // Convert to milliseconds
         });
@@ -820,7 +851,8 @@ Then analyze the situation and decide what action to take.`
             success: true,
             scheduled_for: sendAt.toISOString(),
             delay_hours: delay,
-            message_type: message_type
+            message_type: message_type,
+            proposalId: proposal.id
         };
     }
 

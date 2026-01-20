@@ -1,0 +1,193 @@
+/**
+ * LangGraph State Schema for FOIA Case Agent
+ *
+ * Design principles:
+ * - Store IDs, not full objects (fetch when needed)
+ * - Keep state small for checkpoint efficiency
+ * - Track what's needed for decisions and resumption
+ */
+
+const { Annotation } = require("@langchain/langgraph");
+
+/**
+ * FOIACaseState - Minimal, explicit state for the case graph
+ */
+const FOIACaseStateAnnotation = Annotation.Root({
+  // === Identity ===
+  caseId: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  threadId: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // LangGraph thread_id: `case:${caseId}`
+  }),
+
+  // === Trigger Context ===
+  triggerType: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // 'agency_reply' | 'time_based_followup' | 'manual_review' | 'human_resume'
+  }),
+  latestInboundMessageId: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+
+  // === Analysis Results (from classify_inbound) ===
+  classification: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // FEE_QUOTE | DENIAL | ACKNOWLEDGMENT | RECORDS_READY | CLARIFICATION_REQUEST | NO_RESPONSE
+  }),
+  classificationConfidence: Annotation({
+    reducer: (_, v) => v,
+    default: () => 0
+  }),
+  sentiment: Annotation({
+    reducer: (_, v) => v,
+    default: () => 'neutral'  // positive | neutral | negative | hostile
+  }),
+  extractedFeeAmount: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  extractedDeadline: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+
+  // === Constraints & Scope (persisted facts about this case) ===
+  constraints: Annotation({
+    reducer: (prev, v) => v ?? prev,
+    default: () => []  // ['BWC_EXEMPT', 'FEE_REQUIRED', 'ID_REQUIRED', etc.]
+  }),
+  scopeItems: Annotation({
+    reducer: (prev, v) => v ?? prev,
+    default: () => []  // Requested records with status
+  }),
+
+  // === Current Proposal ===
+  proposalId: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  proposalKey: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  proposalActionType: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // SEND_FOLLOWUP | SEND_REBUTTAL | SEND_CLARIFICATION | APPROVE_FEE | ESCALATE | NONE
+  }),
+  draftSubject: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  draftBodyText: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  draftBodyHtml: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+  proposalReasoning: Annotation({
+    reducer: (prev, v) => v ? [...(prev || []), ...v] : prev,
+    default: () => []
+  }),
+  proposalConfidence: Annotation({
+    reducer: (_, v) => v,
+    default: () => 0
+  }),
+  riskFlags: Annotation({
+    reducer: (_, v) => v,
+    default: () => []
+  }),
+  warnings: Annotation({
+    reducer: (_, v) => v,
+    default: () => []
+  }),
+  canAutoExecute: Annotation({
+    reducer: (_, v) => v,
+    default: () => false
+  }),
+
+  // === Gate/Interrupt State ===
+  requiresHuman: Annotation({
+    reducer: (_, v) => v,
+    default: () => false
+  }),
+  pauseReason: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // FEE_QUOTE | SCOPE | DENIAL | ID_REQUIRED | SENSITIVE | CLOSE_ACTION
+  }),
+  gateOptions: Annotation({
+    reducer: (_, v) => v,
+    default: () => ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW']
+  }),
+
+  // === Human Decision (populated on resume) ===
+  humanDecision: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // { action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string }
+  }),
+  adjustmentCount: Annotation({
+    reducer: (_, v) => v,
+    default: () => 0
+  }),
+
+  // === Execution State ===
+  actionExecuted: Annotation({
+    reducer: (_, v) => v,
+    default: () => false
+  }),
+  executionResult: Annotation({
+    reducer: (_, v) => v,
+    default: () => null
+  }),
+
+  // === Control Flow ===
+  autopilotMode: Annotation({
+    reducer: (_, v) => v,
+    default: () => 'SUPERVISED'  // AUTO | SUPERVISED | MANUAL
+  }),
+  isComplete: Annotation({
+    reducer: (_, v) => v,
+    default: () => false
+  }),
+  nextNode: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // For explicit routing
+  }),
+
+  // === Logs & Errors ===
+  logs: Annotation({
+    reducer: (prev, v) => v ? [...prev, ...v] : prev,
+    default: () => []
+  }),
+  errors: Annotation({
+    reducer: (prev, v) => v ? [...prev, ...v] : prev,
+    default: () => []
+  })
+});
+
+/**
+ * Create initial state for a case
+ */
+function createInitialState(caseId, triggerType, options = {}) {
+  return {
+    caseId,
+    threadId: `case:${caseId}`,
+    triggerType,
+    latestInboundMessageId: options.messageId || null,
+    autopilotMode: options.autopilotMode || 'SUPERVISED',
+    adjustmentCount: 0,
+    isComplete: false,
+    logs: [`Graph started: trigger=${triggerType}, caseId=${caseId}`],
+    errors: []
+  };
+}
+
+module.exports = {
+  FOIACaseStateAnnotation,
+  createInitialState
+};

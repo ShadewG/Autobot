@@ -3129,4 +3129,818 @@ router.get('/queue-status', async (req, res) => {
     }
 });
 
+// =========================================================================
+// LangGraph Test Endpoints
+// =========================================================================
+
+const langgraph = require('../langgraph');
+const { enqueueAgentJob, enqueueResumeJob, getQueueStats } = require('../queues/agent-queue');
+
+/**
+ * GET /api/test/langgraph/status
+ * Get LangGraph system status
+ */
+router.get('/langgraph/status', async (req, res) => {
+    try {
+        const queueStats = await getQueueStats();
+
+        res.json({
+            success: true,
+            langgraph_enabled: true,
+            queue_stats: queueStats,
+            available_nodes: Object.keys(langgraph.nodes),
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/invoke/:caseId
+ * Invoke the LangGraph agent for a specific case
+ */
+router.post('/langgraph/invoke/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const { trigger_type, sync } = req.body;
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Case not found'
+            });
+        }
+
+        // If sync mode, invoke directly (for testing)
+        if (sync) {
+            console.log(`[LangGraph Test] Invoking synchronously for case ${caseId}`);
+            const result = await langgraph.invokeFOIACaseGraph(
+                caseId,
+                trigger_type || 'MANUAL',
+                {}
+            );
+
+            return res.json({
+                success: true,
+                mode: 'sync',
+                result
+            });
+        }
+
+        // Otherwise queue the job
+        const job = await enqueueAgentJob(caseId, trigger_type || 'MANUAL', {});
+
+        res.json({
+            success: true,
+            mode: 'async',
+            job_id: job.id,
+            message: `Agent job queued for case ${caseId}`
+        });
+    } catch (error) {
+        console.error('LangGraph invoke error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: error.stack
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/resume/:caseId
+ * Resume a paused graph with a human decision
+ */
+router.post('/langgraph/resume/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const { action, instruction, sync } = req.body;
+
+        if (!action) {
+            return res.status(400).json({
+                success: false,
+                error: 'action is required (APPROVE, ADJUST, DISMISS, WITHDRAW)'
+            });
+        }
+
+        const decision = {
+            action,
+            instruction: instruction || null
+        };
+
+        // If sync mode, invoke directly (for testing)
+        if (sync) {
+            console.log(`[LangGraph Test] Resuming synchronously for case ${caseId}`);
+            const result = await langgraph.resumeFOIACaseGraph(caseId, decision);
+
+            return res.json({
+                success: true,
+                mode: 'sync',
+                result
+            });
+        }
+
+        // Otherwise queue the job
+        const job = await enqueueResumeJob(caseId, decision);
+
+        res.json({
+            success: true,
+            mode: 'async',
+            job_id: job.id,
+            message: `Resume job queued for case ${caseId}`
+        });
+    } catch (error) {
+        console.error('LangGraph resume error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: error.stack
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/node/:nodeName
+ * Test a specific node in isolation
+ */
+router.post('/langgraph/node/:nodeName', async (req, res) => {
+    try {
+        const { nodeName } = req.params;
+        const { state } = req.body;
+
+        const node = langgraph.nodes[nodeName];
+        if (!node) {
+            return res.status(404).json({
+                success: false,
+                error: `Node '${nodeName}' not found`,
+                available_nodes: Object.keys(langgraph.nodes)
+            });
+        }
+
+        console.log(`[LangGraph Test] Testing node: ${nodeName}`);
+        console.log(`[LangGraph Test] Input state:`, JSON.stringify(state, null, 2));
+
+        const startTime = Date.now();
+        const result = await node(state);
+        const duration = Date.now() - startTime;
+
+        console.log(`[LangGraph Test] Node result:`, JSON.stringify(result, null, 2));
+
+        res.json({
+            success: true,
+            node: nodeName,
+            duration_ms: duration,
+            input_state: state,
+            output: result
+        });
+    } catch (error) {
+        console.error(`LangGraph node test error (${req.params.nodeName}):`, error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            stack: error.stack
+        });
+    }
+});
+
+/**
+ * GET /api/test/langgraph/cases
+ * Get cases available for testing
+ */
+router.get('/langgraph/cases', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT id, case_name, agency_name, status, requires_human, pause_reason,
+                   langgraph_thread_id, updated_at
+            FROM cases
+            ORDER BY updated_at DESC
+            LIMIT 50
+        `);
+
+        res.json({
+            success: true,
+            count: result.rows.length,
+            cases: result.rows
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/test/langgraph/proposals/:caseId
+ * Get proposals for a case
+ */
+router.get('/langgraph/proposals/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+
+        const result = await db.query(`
+            SELECT * FROM proposals
+            WHERE case_id = $1
+            ORDER BY created_at DESC
+            LIMIT 20
+        `, [caseId]);
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            count: result.rows.length,
+            proposals: result.rows
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/test/langgraph/queue
+ * Get agent queue status
+ */
+router.get('/langgraph/queue', async (req, res) => {
+    try {
+        const stats = await getQueueStats();
+        const { agentQueue } = require('../queues/agent-queue');
+
+        const waiting = await agentQueue.getJobs(['waiting'], 0, 10);
+        const active = await agentQueue.getJobs(['active'], 0, 10);
+        const completed = await agentQueue.getJobs(['completed'], 0, 10);
+        const failed = await agentQueue.getJobs(['failed'], 0, 10);
+
+        res.json({
+            success: true,
+            stats,
+            jobs: {
+                waiting: waiting.map(j => ({ id: j.id, name: j.name, data: j.data })),
+                active: active.map(j => ({ id: j.id, name: j.name, data: j.data })),
+                completed: completed.map(j => ({ id: j.id, name: j.name, data: j.data, returnValue: j.returnvalue })),
+                failed: failed.map(j => ({ id: j.id, name: j.name, data: j.data, failedReason: j.failedReason }))
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/test/langgraph/state/:caseId
+ * Get full state for a case including proposals, jobs, locks
+ */
+router.get('/langgraph/state/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+
+        // Get case data
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        // Get proposals
+        const proposalsResult = await db.query(
+            `SELECT * FROM proposals WHERE case_id = $1 ORDER BY created_at DESC LIMIT 10`,
+            [caseId]
+        );
+
+        // Get latest inbound message
+        const latestInbound = await db.getLatestInboundMessage(caseId);
+
+        // Get email jobs for this case
+        const { emailQueue } = require('../queues/email-queue');
+        const allEmailJobs = await emailQueue.getJobs(['waiting', 'active', 'delayed', 'completed', 'failed']);
+        const caseEmailJobs = allEmailJobs.filter(j => j.data?.caseId === caseId || j.data?.case_id === caseId);
+
+        // Get agent jobs
+        const { agentQueue } = require('../queues/agent-queue');
+        const allAgentJobs = await agentQueue.getJobs(['waiting', 'active', 'completed', 'failed']);
+        const caseAgentJobs = allAgentJobs.filter(j => j.data?.caseId === caseId);
+
+        // Check lock status (advisory lock)
+        const lockKey = Math.abs(hashCodeSimple(`case:${caseId}`)) % 2147483647;
+        const lockCheck = await db.query(
+            `SELECT pg_try_advisory_lock($1) as available`,
+            [lockKey]
+        );
+        const lockAvailable = lockCheck.rows[0]?.available;
+        if (lockAvailable) {
+            // Release the test lock immediately
+            await db.query(`SELECT pg_advisory_unlock($1)`, [lockKey]);
+        }
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            case: {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                agency_name: caseData.agency_name,
+                status: caseData.status,
+                requires_human: caseData.requires_human,
+                pause_reason: caseData.pause_reason,
+                autopilot_mode: caseData.autopilot_mode,
+                portal_url: caseData.portal_url,
+                langgraph_thread_id: caseData.langgraph_thread_id,
+                updated_at: caseData.updated_at
+            },
+            latest_inbound: latestInbound ? {
+                id: latestInbound.id,
+                subject: latestInbound.subject,
+                received_at: latestInbound.received_at
+            } : null,
+            proposals: proposalsResult.rows.map(p => ({
+                id: p.id,
+                proposal_key: p.proposal_key,
+                action_type: p.action_type,
+                status: p.status,
+                execution_key: p.execution_key,
+                email_job_id: p.email_job_id,
+                human_decision: p.human_decision,
+                requires_human: p.requires_human,
+                can_auto_execute: p.can_auto_execute,
+                created_at: p.created_at,
+                executed_at: p.executed_at
+            })),
+            email_jobs: caseEmailJobs.slice(0, 5).map(j => ({
+                id: j.id,
+                name: j.name,
+                state: j.getState ? 'pending' : 'unknown',
+                data: { proposalId: j.data?.proposalId, executionKey: j.data?.executionKey },
+                timestamp: j.timestamp
+            })),
+            agent_jobs: caseAgentJobs.slice(0, 5).map(j => ({
+                id: j.id,
+                name: j.name,
+                data: j.data
+            })),
+            lock: {
+                key: lockKey,
+                available: lockAvailable,
+                thread_id: `case:${caseId}`
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// Simple hash function for lock key
+function hashCodeSimple(str) {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash;
+    }
+    return hash;
+}
+
+/**
+ * POST /api/test/langgraph/create-message/:caseId
+ * Create a fake inbound message for testing
+ */
+router.post('/langgraph/create-message/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const { subject, body, intent, fee_amount } = req.body;
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        // Get or create thread
+        let thread = await db.getThreadByCaseId(caseId);
+        if (!thread) {
+            thread = await db.createThread({
+                caseId,
+                agency_email: caseData.agency_email || 'test@agency.gov'
+            });
+        }
+
+        // Create message
+        const message = await db.query(`
+            INSERT INTO messages (
+                thread_id, case_id, direction, from_email, to_email,
+                subject, body_text, received_at, message_id
+            ) VALUES ($1, $2, 'inbound', $3, $4, $5, $6, NOW(), $7)
+            RETURNING *
+        `, [
+            thread.id,
+            caseId,
+            caseData.agency_email || 'test@agency.gov',
+            process.env.SENDGRID_FROM_EMAIL || 'test@foia.com',
+            subject || `Test message for case ${caseId}`,
+            body || 'This is a test inbound message.',
+            `test-${Date.now()}@test.local`
+        ]);
+
+        // Create analysis if intent provided
+        if (intent) {
+            await db.query(`
+                INSERT INTO response_analysis (
+                    message_id, intent, confidence_score, extracted_fee_amount,
+                    key_points, requires_action, suggested_action
+                ) VALUES ($1, $2, 0.9, $3, $4, true, $5)
+            `, [
+                message.rows[0].id,
+                intent,
+                fee_amount || null,
+                JSON.stringify(['Test analysis key point']),
+                intent === 'fee_request' ? 'approve_fee' : 'respond'
+            ]);
+        }
+
+        // Update case
+        await db.updateCase(caseId, {
+            status: 'responded',
+            last_response_date: new Date()
+        });
+
+        res.json({
+            success: true,
+            message: message.rows[0],
+            thread_id: thread.id
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/scenario/:caseId
+ * Set up a specific test scenario
+ */
+router.post('/langgraph/scenario/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const { scenario } = req.body;
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const scenarios = {
+            fee_low: {
+                intent: 'fee_request',
+                fee_amount: 25,
+                subject: 'Fee Quote - $25.00',
+                body: 'The estimated fee for your request is $25.00. Please confirm if you wish to proceed.',
+                updates: { autopilot_mode: 'AUTO' }
+            },
+            fee_high: {
+                intent: 'fee_request',
+                fee_amount: 250,
+                subject: 'Fee Quote - $250.00',
+                body: 'The estimated fee for your request is $250.00. Please confirm if you wish to proceed.',
+                updates: { autopilot_mode: 'SUPERVISED' }
+            },
+            denial: {
+                intent: 'denial',
+                subject: 'Records Request Denied',
+                body: 'Your request has been denied pursuant to exemption 7(A) - law enforcement investigation.',
+                updates: {}
+            },
+            clarification: {
+                intent: 'more_info_needed',
+                subject: 'Additional Information Needed',
+                body: 'Please provide more specific dates for the incident you are requesting records about.',
+                updates: {}
+            },
+            portal_send: {
+                intent: 'acknowledgment',
+                subject: 'Request Acknowledged',
+                body: 'Your request has been received via our portal.',
+                updates: { portal_url: 'https://test-portal.gov/requests', portal_provider: 'Test Portal' }
+            },
+            hostile: {
+                intent: 'denial',
+                subject: 'FINAL NOTICE - Request Denied',
+                body: 'This is your FINAL notice. Your frivolous request is DENIED. Do not contact us again.',
+                updates: {}
+            }
+        };
+
+        const config = scenarios[scenario];
+        if (!config) {
+            return res.status(400).json({
+                success: false,
+                error: `Unknown scenario: ${scenario}`,
+                available: Object.keys(scenarios)
+            });
+        }
+
+        // Apply case updates
+        if (Object.keys(config.updates).length > 0) {
+            await db.updateCase(caseId, config.updates);
+        }
+
+        // Create the message
+        const createRes = await fetch(`http://localhost:${process.env.PORT || 3000}/api/test/langgraph/create-message/${caseId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                subject: config.subject,
+                body: config.body,
+                intent: config.intent,
+                fee_amount: config.fee_amount
+            })
+        });
+
+        const createData = await createRes.json();
+
+        res.json({
+            success: true,
+            scenario,
+            config,
+            message: createData.message
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/force-unlock/:caseId
+ * Force release advisory lock (dev only)
+ */
+router.post('/langgraph/force-unlock/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const lockKey = Math.abs(hashCodeSimple(`case:${caseId}`)) % 2147483647;
+
+        // Try to unlock
+        await db.query(`SELECT pg_advisory_unlock_all()`);
+
+        res.json({
+            success: true,
+            message: 'All advisory locks released',
+            lock_key: lockKey
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/reset-thread/:caseId
+ * Reset LangGraph thread/checkpoint (dev only)
+ */
+router.post('/langgraph/reset-thread/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const { confirm } = req.body;
+
+        if (confirm !== 'RESET') {
+            return res.status(400).json({
+                success: false,
+                error: 'Must send { confirm: "RESET" } to reset thread'
+            });
+        }
+
+        // Clear proposals
+        await db.query(`DELETE FROM proposals WHERE case_id = $1`, [caseId]);
+
+        // Clear langgraph thread reference
+        await db.updateCase(caseId, {
+            langgraph_thread_id: null,
+            requires_human: false,
+            pause_reason: null
+        });
+
+        // Clear Redis checkpoint (if using Redis)
+        const threadId = `case:${caseId}`;
+        try {
+            const Redis = require('ioredis');
+            const redis = new Redis(process.env.REDIS_URL);
+            const keys = await redis.keys(`*${threadId}*`);
+            if (keys.length > 0) {
+                await redis.del(...keys);
+            }
+            await redis.quit();
+        } catch (e) {
+            console.warn('Could not clear Redis checkpoint:', e.message);
+        }
+
+        res.json({
+            success: true,
+            message: `Thread reset for case ${caseId}`,
+            thread_id: threadId
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/chaos/double-invoke/:caseId
+ * Fire two invocations concurrently to test locking
+ */
+router.post('/langgraph/chaos/double-invoke/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+
+        console.log(`[CHAOS] Double-invoke test for case ${caseId}`);
+
+        // Fire both invocations concurrently
+        const [result1, result2] = await Promise.allSettled([
+            langgraph.invokeFOIACaseGraph(caseId, 'CHAOS_TEST_1', {}),
+            langgraph.invokeFOIACaseGraph(caseId, 'CHAOS_TEST_2', {})
+        ]);
+
+        res.json({
+            success: true,
+            test: 'double_invoke',
+            results: [
+                {
+                    trigger: 'CHAOS_TEST_1',
+                    status: result1.status,
+                    value: result1.status === 'fulfilled' ? result1.value : null,
+                    error: result1.status === 'rejected' ? result1.reason?.message : null
+                },
+                {
+                    trigger: 'CHAOS_TEST_2',
+                    status: result2.status,
+                    value: result2.status === 'fulfilled' ? result2.value : null,
+                    error: result2.status === 'rejected' ? result2.reason?.message : null
+                }
+            ],
+            expected: 'One should succeed, one should fail or no-op due to lock'
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/test/langgraph/chaos/double-approve/:caseId/:proposalId
+ * Fire two approvals concurrently to test idempotency
+ */
+router.post('/langgraph/chaos/double-approve/:caseId/:proposalId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+        const proposalId = parseInt(req.params.proposalId);
+
+        console.log(`[CHAOS] Double-approve test for proposal ${proposalId}`);
+
+        // Fire both approvals concurrently
+        const [result1, result2] = await Promise.allSettled([
+            fetch(`http://localhost:${process.env.PORT || 3000}/api/requests/${caseId}/proposals/${proposalId}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).then(r => r.json()),
+            fetch(`http://localhost:${process.env.PORT || 3000}/api/requests/${caseId}/proposals/${proposalId}/approve`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            }).then(r => r.json())
+        ]);
+
+        res.json({
+            success: true,
+            test: 'double_approve',
+            results: [
+                { attempt: 1, ...result1 },
+                { attempt: 2, ...result2 }
+            ],
+            expected: 'One should succeed, one should return 409 (already executed)'
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/test/langgraph/assertions/:caseId
+ * Run assertions on case state
+ */
+router.get('/langgraph/assertions/:caseId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.caseId);
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        // Get proposals
+        const proposals = await db.query(
+            `SELECT * FROM proposals WHERE case_id = $1 ORDER BY created_at DESC`,
+            [caseId]
+        );
+
+        // Get executed proposals
+        const executedProposals = proposals.rows.filter(p => p.status === 'EXECUTED');
+
+        // Get email jobs
+        const { emailQueue } = require('../queues/email-queue');
+        const allJobs = await emailQueue.getJobs(['completed']);
+        const caseJobs = allJobs.filter(j => j.data?.caseId === caseId);
+
+        // Run assertions
+        const assertions = [];
+
+        // A1: No duplicate proposals with same key
+        const proposalKeys = proposals.rows.map(p => p.proposal_key);
+        const uniqueKeys = new Set(proposalKeys);
+        assertions.push({
+            name: 'no_duplicate_proposal_keys',
+            passed: proposalKeys.length === uniqueKeys.size,
+            expected: 'All proposal keys unique',
+            actual: `${proposalKeys.length} proposals, ${uniqueKeys.size} unique keys`
+        });
+
+        // A2: Executed proposals have execution_key
+        const executedWithoutKey = executedProposals.filter(p => !p.execution_key);
+        assertions.push({
+            name: 'executed_have_execution_key',
+            passed: executedWithoutKey.length === 0,
+            expected: 'All executed proposals have execution_key',
+            actual: `${executedWithoutKey.length} executed without key`
+        });
+
+        // A3: If requires_human, must have pause_reason
+        assertions.push({
+            name: 'requires_human_has_reason',
+            passed: !caseData.requires_human || caseData.pause_reason,
+            expected: 'If requires_human=true, pause_reason must be set',
+            actual: `requires_human=${caseData.requires_human}, pause_reason=${caseData.pause_reason}`
+        });
+
+        // A4: Portal cases should not have SEND actions executed
+        if (caseData.portal_url) {
+            const sendActions = executedProposals.filter(p =>
+                p.action_type?.startsWith('SEND_')
+            );
+            assertions.push({
+                name: 'portal_no_send_actions',
+                passed: sendActions.length === 0,
+                expected: 'Portal cases should not execute SEND actions',
+                actual: `${sendActions.length} SEND actions executed`
+            });
+        }
+
+        // A5: Email jobs match executed proposals
+        const proposalEmailJobs = executedProposals.filter(p => p.email_job_id);
+        assertions.push({
+            name: 'email_jobs_match_proposals',
+            passed: true, // Informational
+            expected: 'Each executed proposal with email should have job',
+            actual: `${proposalEmailJobs.length} proposals with email_job_id`
+        });
+
+        const passed = assertions.filter(a => a.passed).length;
+        const failed = assertions.filter(a => !a.passed).length;
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            summary: {
+                total: assertions.length,
+                passed,
+                failed
+            },
+            assertions
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

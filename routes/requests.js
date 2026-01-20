@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const db = require('../services/database');
+const actionValidator = require('../services/action-validator');
+const logger = require('../services/logger');
 
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
@@ -579,16 +582,24 @@ router.patch('/:id', async (req, res) => {
 /**
  * POST /api/requests/:id/actions/approve
  * Approve a pending action (e.g., send auto-reply)
+ *
+ * Implements exactly-once execution (Deliverable 1):
+ * 1. Check if already executed (return 409 if so)
+ * 2. Atomic claim execution slot
+ * 3. Validate against policy rules
+ * 4. Queue email with jobId: executionKey (BullMQ deduplication)
+ * 5. Mark executed
  */
 router.post('/:id/actions/approve', async (req, res) => {
-    try {
-        const requestId = parseInt(req.params.id);
-        const { action_id } = req.body;
+    const requestId = parseInt(req.params.id);
+    const { action_id } = req.body;
+    const log = logger.forCase(requestId);
 
+    try {
         // Find the pending reply
         const replyResult = await db.query(
             `SELECT * FROM auto_reply_queue
-             WHERE case_id = $1 AND status = 'pending'
+             WHERE case_id = $1 AND status IN ('pending', 'approved')
              ${action_id ? 'AND id = $2' : ''}
              ORDER BY created_at DESC
              LIMIT 1`,
@@ -603,8 +614,21 @@ router.post('/:id/actions/approve', async (req, res) => {
         }
 
         const reply = replyResult.rows[0];
+        log.info(`Approve request for proposal ${reply.id}`);
 
-        // Get the original message to reply to
+        // Step 1: Check if already executed
+        const executionStatus = await db.isProposalExecuted(reply.id);
+        if (executionStatus?.executed) {
+            log.warn(`Proposal ${reply.id} already executed at ${executionStatus.executedAt}`);
+            return res.status(409).json({
+                success: false,
+                error: 'Action already executed',
+                executed_at: executionStatus.executedAt,
+                email_job_id: executionStatus.emailJobId
+            });
+        }
+
+        // Get case and message data
         const message = await db.getMessageById(reply.message_id);
         const caseData = await db.getCaseById(requestId);
 
@@ -615,22 +639,50 @@ router.post('/:id/actions/approve', async (req, res) => {
             });
         }
 
-        // Queue the email for sending
+        // Step 2: Validate against policy rules
+        const validation = await actionValidator.validateAction(requestId, reply);
+        if (validation.blocked) {
+            log.warn(`Action blocked by policy: ${validation.violations.map(v => v.rule).join(', ')}`);
+            await actionValidator.blockProposal(reply.id, validation.violations);
+            return res.status(403).json({
+                success: false,
+                error: 'Action blocked by policy',
+                violations: validation.violations
+            });
+        }
+
+        // Step 3: Generate unique execution key
+        const executionKey = `exec-${requestId}-${reply.id}-${crypto.randomBytes(8).toString('hex')}`;
+
+        // Step 4: Atomic claim execution slot
+        const claimed = await db.claimProposalExecution(reply.id, executionKey);
+        if (!claimed) {
+            log.warn(`Failed to claim execution slot for proposal ${reply.id} - already claimed`);
+            return res.status(409).json({
+                success: false,
+                error: 'Action already being executed by another request'
+            });
+        }
+
+        log.info(`Claimed execution slot with key: ${executionKey}`);
+
+        // Step 5: Queue the email with execution key as job ID for deduplication
         const { emailQueue } = require('../queues/email-queue');
-        await emailQueue.add('send-auto-reply', {
+        const job = await emailQueue.add('send-auto-reply', {
             type: 'auto_reply',
             caseId: requestId,
             toEmail: message.from_email,
             subject: message.subject,
             content: reply.generated_reply,
-            originalMessageId: message.message_id
+            originalMessageId: message.message_id,
+            proposalId: reply.id,
+            executionKey: executionKey
+        }, {
+            jobId: executionKey  // BullMQ deduplication
         });
 
-        // Update reply status
-        await db.updateAutoReplyQueueEntry(reply.id, {
-            status: 'approved',
-            approved_at: new Date()
-        });
+        // Step 6: Mark executed
+        await db.markProposalExecuted(reply.id, job.id);
 
         // Clear requires_human if this was the blocking action
         await db.updateCase(requestId, {
@@ -638,12 +690,17 @@ router.post('/:id/actions/approve', async (req, res) => {
             pause_reason: null
         });
 
+        log.info(`Proposal ${reply.id} approved and queued (job: ${job.id})`);
+        logger.proposalEvent('approved', { ...reply, status: 'approved' });
+
         res.json({
             success: true,
-            message: 'Action approved and queued for sending'
+            message: 'Action approved and queued for sending',
+            execution_key: executionKey,
+            job_id: job.id
         });
     } catch (error) {
-        console.error('Error approving action:', error);
+        log.error(`Error approving action: ${error.message}`);
         res.status(500).json({
             success: false,
             error: error.message
@@ -804,6 +861,826 @@ router.post('/:id/actions/dismiss', async (req, res) => {
         });
     } catch (error) {
         console.error('Error dismissing action:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/requests/:id/agent-runs
+ * Get agent run history for a request (Deliverable 5: Observability)
+ */
+router.get('/:id/agent-runs', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+        const limit = parseInt(req.query.limit) || 20;
+
+        // Verify case exists
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        // Get agent runs with proposal details
+        const runs = await db.getAgentRunsByCaseId(requestId, limit);
+
+        // Transform runs for API response
+        const transformedRuns = runs.map(run => ({
+            id: run.id,
+            trigger_type: run.trigger_type,
+            started_at: run.started_at,
+            ended_at: run.ended_at,
+            duration_ms: run.ended_at && run.started_at
+                ? new Date(run.ended_at) - new Date(run.started_at)
+                : null,
+            status: run.status,
+            error: run.error || null,
+            lock_acquired: run.lock_acquired,
+            proposal: run.proposal_id ? {
+                id: run.proposal_id,
+                action_type: run.proposal_action_type,
+                status: run.proposal_status,
+                content_preview: run.proposal_content
+                    ? run.proposal_content.substring(0, 200)
+                    : null
+            } : null,
+            metadata: run.metadata || {}
+        }));
+
+        res.json({
+            success: true,
+            case_id: requestId,
+            count: transformedRuns.length,
+            agent_runs: transformedRuns
+        });
+    } catch (error) {
+        console.error('Error fetching agent runs:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// =========================================================================
+// LangGraph Proposal Endpoints (New Proposals Table)
+// =========================================================================
+
+/**
+ * GET /api/requests/:id/proposals
+ * Get pending proposals for a request (from new proposals table)
+ */
+router.get('/:id/proposals', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+
+        // Verify case exists
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        // Get proposals from new proposals table
+        const proposals = await db.getPendingProposalsByCaseId(requestId);
+
+        const transformedProposals = proposals.map(p => ({
+            id: p.id,
+            proposal_key: p.proposal_key,
+            action_type: p.action_type,
+            status: p.status,
+            draft_subject: p.draft_subject,
+            draft_preview: p.draft_body_text ? p.draft_body_text.substring(0, 200) : null,
+            reasoning: p.reasoning,
+            confidence: p.confidence ? parseFloat(p.confidence) : 0.8,
+            risk_flags: p.risk_flags || [],
+            warnings: p.warnings || [],
+            can_auto_execute: p.can_auto_execute,
+            requires_human: p.requires_human,
+            adjustment_count: p.adjustment_count || 0,
+            created_at: p.created_at
+        }));
+
+        res.json({
+            success: true,
+            case_id: requestId,
+            count: transformedProposals.length,
+            proposals: transformedProposals
+        });
+    } catch (error) {
+        console.error('Error fetching proposals:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/requests/:id/proposals/:proposalId
+ * Get a single proposal with full details
+ */
+router.get('/:id/proposals/:proposalId', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+        const proposalId = parseInt(req.params.proposalId);
+
+        const proposal = await db.getProposalById(proposalId);
+
+        if (!proposal || proposal.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Proposal not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            proposal: {
+                id: proposal.id,
+                proposal_key: proposal.proposal_key,
+                case_id: proposal.case_id,
+                trigger_message_id: proposal.trigger_message_id,
+                action_type: proposal.action_type,
+                status: proposal.status,
+                draft_subject: proposal.draft_subject,
+                draft_body_text: proposal.draft_body_text,
+                draft_body_html: proposal.draft_body_html,
+                reasoning: proposal.reasoning,
+                confidence: proposal.confidence ? parseFloat(proposal.confidence) : 0.8,
+                risk_flags: proposal.risk_flags || [],
+                warnings: proposal.warnings || [],
+                can_auto_execute: proposal.can_auto_execute,
+                requires_human: proposal.requires_human,
+                adjustment_count: proposal.adjustment_count || 0,
+                human_decision: proposal.human_decision,
+                human_decided_at: proposal.human_decided_at,
+                executed_at: proposal.executed_at,
+                email_job_id: proposal.email_job_id,
+                created_at: proposal.created_at,
+                updated_at: proposal.updated_at
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching proposal:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/proposals/:proposalId/approve
+ * Approve a LangGraph proposal and resume the graph
+ */
+router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const proposalId = parseInt(req.params.proposalId);
+    const log = logger.forCase(requestId);
+
+    try {
+        const proposal = await db.getProposalById(proposalId);
+
+        if (!proposal || proposal.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Proposal not found'
+            });
+        }
+
+        // Check if already executed
+        if (proposal.status === 'EXECUTED') {
+            return res.status(409).json({
+                success: false,
+                error: 'Proposal already executed',
+                executed_at: proposal.executed_at
+            });
+        }
+
+        // Check if not in pending state
+        if (proposal.status !== 'PENDING_APPROVAL') {
+            return res.status(400).json({
+                success: false,
+                error: `Proposal is in ${proposal.status} state, cannot approve`
+            });
+        }
+
+        log.info(`Approving proposal ${proposalId}`);
+
+        // Update proposal with human decision
+        await db.updateProposal(proposalId, {
+            status: 'APPROVED',
+            humanDecision: 'APPROVE',
+            humanDecidedAt: new Date()
+        });
+
+        // Queue the resume job to continue the LangGraph execution
+        const { enqueueResumeJob } = require('../queues/agent-queue');
+        const job = await enqueueResumeJob(requestId, {
+            action: 'APPROVE',
+            proposalId: proposalId
+        });
+
+        log.info(`Resume job enqueued (job: ${job.id})`);
+
+        res.json({
+            success: true,
+            message: 'Proposal approved, graph resuming',
+            proposal_id: proposalId,
+            job_id: job.id
+        });
+    } catch (error) {
+        log.error(`Error approving proposal: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/proposals/:proposalId/adjust
+ * Request adjustments to a proposal and resume graph with feedback
+ */
+router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const proposalId = parseInt(req.params.proposalId);
+    const { instruction, adjustments } = req.body;
+    const log = logger.forCase(requestId);
+
+    try {
+        if (!instruction && !adjustments) {
+            return res.status(400).json({
+                success: false,
+                error: 'Either instruction or adjustments is required'
+            });
+        }
+
+        const proposal = await db.getProposalById(proposalId);
+
+        if (!proposal || proposal.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Proposal not found'
+            });
+        }
+
+        if (proposal.status !== 'PENDING_APPROVAL') {
+            return res.status(400).json({
+                success: false,
+                error: `Proposal is in ${proposal.status} state, cannot adjust`
+            });
+        }
+
+        log.info(`Adjusting proposal ${proposalId}`);
+
+        // Update proposal with adjustment request
+        await db.updateProposal(proposalId, {
+            status: 'ADJUSTMENT_REQUESTED',
+            humanDecision: 'ADJUST',
+            humanDecidedAt: new Date(),
+            adjustmentCount: (proposal.adjustment_count || 0) + 1
+        });
+
+        // Queue the resume job with adjustments
+        const { enqueueResumeJob } = require('../queues/agent-queue');
+        const job = await enqueueResumeJob(requestId, {
+            action: 'ADJUST',
+            proposalId: proposalId,
+            instruction: instruction,
+            adjustments: adjustments
+        });
+
+        log.info(`Adjust resume job enqueued (job: ${job.id})`);
+
+        res.json({
+            success: true,
+            message: 'Adjustment requested, graph re-drafting',
+            proposal_id: proposalId,
+            job_id: job.id
+        });
+    } catch (error) {
+        log.error(`Error adjusting proposal: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/proposals/:proposalId/dismiss
+ * Dismiss a proposal and resume graph to try different action
+ */
+router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const proposalId = parseInt(req.params.proposalId);
+    const { reason } = req.body;
+    const log = logger.forCase(requestId);
+
+    try {
+        const proposal = await db.getProposalById(proposalId);
+
+        if (!proposal || proposal.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Proposal not found'
+            });
+        }
+
+        if (proposal.status !== 'PENDING_APPROVAL') {
+            return res.status(400).json({
+                success: false,
+                error: `Proposal is in ${proposal.status} state, cannot dismiss`
+            });
+        }
+
+        log.info(`Dismissing proposal ${proposalId}`);
+
+        // Update proposal as dismissed
+        await db.updateProposal(proposalId, {
+            status: 'DISMISSED',
+            humanDecision: 'DISMISS',
+            humanDecidedAt: new Date()
+        });
+
+        // Queue the resume job to take different action
+        const { enqueueResumeJob } = require('../queues/agent-queue');
+        const job = await enqueueResumeJob(requestId, {
+            action: 'DISMISS',
+            proposalId: proposalId,
+            reason: reason
+        });
+
+        log.info(`Dismiss resume job enqueued (job: ${job.id})`);
+
+        res.json({
+            success: true,
+            message: 'Proposal dismissed, graph will decide next action',
+            proposal_id: proposalId,
+            job_id: job.id
+        });
+    } catch (error) {
+        log.error(`Error dismissing proposal: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/proposals/:proposalId/withdraw
+ * Withdraw from processing entirely (no further agent action)
+ */
+router.post('/:id/proposals/:proposalId/withdraw', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const proposalId = parseInt(req.params.proposalId);
+    const { reason } = req.body;
+    const log = logger.forCase(requestId);
+
+    try {
+        const proposal = await db.getProposalById(proposalId);
+
+        if (!proposal || proposal.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Proposal not found'
+            });
+        }
+
+        log.info(`Withdrawing proposal ${proposalId}`);
+
+        // Update proposal as withdrawn
+        await db.updateProposal(proposalId, {
+            status: 'WITHDRAWN',
+            humanDecision: 'WITHDRAW',
+            humanDecidedAt: new Date()
+        });
+
+        // Mark case for manual handling (no auto-resume)
+        await db.updateCase(requestId, {
+            requires_human: true,
+            pause_reason: 'MANUAL',
+            autopilot_mode: 'MANUAL'
+        });
+
+        // Log the withdrawal
+        await db.logActivity('proposal_withdrawn', `Proposal withdrawn: ${reason || 'No reason given'}`, {
+            case_id: requestId,
+            proposal_id: proposalId,
+            reason: reason
+        });
+
+        log.info(`Proposal withdrawn, case set to MANUAL mode`);
+
+        res.json({
+            success: true,
+            message: 'Proposal withdrawn, case set to manual handling',
+            proposal_id: proposalId
+        });
+    } catch (error) {
+        log.error(`Error withdrawing proposal: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/invoke-agent
+ * Manually trigger the agent for a case
+ */
+router.post('/:id/invoke-agent', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const { trigger_type } = req.body;
+    const log = logger.forCase(requestId);
+
+    try {
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        log.info(`Manual agent invocation requested`);
+
+        const { enqueueAgentJob } = require('../queues/agent-queue');
+        const job = await enqueueAgentJob(requestId, trigger_type || 'MANUAL', {});
+
+        log.info(`Agent job enqueued (job: ${job.id})`);
+
+        res.json({
+            success: true,
+            message: 'Agent invoked',
+            job_id: job.id
+        });
+    } catch (error) {
+        log.error(`Error invoking agent: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// =========================================================================
+// Replay / Dry-Run Tooling
+// =========================================================================
+
+/**
+ * POST /api/requests/:id/agent-runs/:runId/replay
+ * Replay an agent run for debugging purposes.
+ *
+ * Query params:
+ * - mode: 'dry_run' (default) or 'live'
+ *
+ * Dry-run mode:
+ * - Runs full agent logic
+ * - Generates proposals and logs
+ * - Never sends emails or takes real actions
+ * - Stores diff against original run
+ */
+router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const runId = parseInt(req.params.runId);
+    const mode = req.query.mode || 'dry_run';
+    const log = logger.forCase(requestId);
+
+    try {
+        // Verify case exists
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        // Get the original run
+        const originalRun = await db.getAgentRunById(runId);
+        if (!originalRun || originalRun.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Agent run not found'
+            });
+        }
+
+        log.info(`Replaying agent run ${runId} in ${mode} mode`);
+
+        // Create a new agent run record for the replay
+        const replayRun = await db.createAgentRun(requestId, `REPLAY_${originalRun.trigger_type}`, {
+            is_replay: true,
+            replay_of_run_id: runId,
+            dry_run: mode === 'dry_run',
+            original_trigger_type: originalRun.trigger_type,
+            original_started_at: originalRun.started_at
+        });
+
+        // Update the run to mark it as a replay
+        await db.updateAgentRun(replayRun.id, {
+            is_replay: true,
+            replay_of_run_id: runId,
+            dry_run: mode === 'dry_run'
+        });
+
+        if (mode === 'dry_run') {
+            // Dry-run mode: simulate agent without taking actions
+            const actionValidator = require('../services/action-validator');
+
+            // Get the original proposal if any
+            let originalProposal = null;
+            if (originalRun.proposal_id) {
+                const result = await db.query(
+                    'SELECT * FROM auto_reply_queue WHERE id = $1',
+                    [originalRun.proposal_id]
+                );
+                originalProposal = result.rows[0];
+            }
+
+            // Simulate what the agent would do now
+            const latestMessage = await db.getLatestInboundMessage(requestId);
+            const analysis = latestMessage ? await db.getAnalysisByMessageId(latestMessage.id) : null;
+
+            // Build simulated proposal (simplified - real implementation would run full agent)
+            const simulatedProposal = {
+                case_id: requestId,
+                action_type: analysis?.suggested_action || 'UNKNOWN',
+                reasoning: ['Dry-run simulation based on current case state'],
+                confidence: analysis?.confidence_score || 0.5,
+                warnings: [],
+                requires_human: true
+            };
+
+            // Validate the simulated action
+            const validation = await actionValidator.validateAction(requestId, simulatedProposal, analysis);
+
+            // Store diff in the replay run
+            const diff = {
+                original_proposal: originalProposal ? {
+                    action_type: originalProposal.action_type,
+                    status: originalProposal.status,
+                    confidence: originalProposal.confidence_score
+                } : null,
+                simulated_proposal: {
+                    action_type: simulatedProposal.action_type,
+                    confidence: simulatedProposal.confidence,
+                    would_be_blocked: validation.blocked,
+                    violations: validation.violations
+                },
+                routing_changes: [],
+                executed_at: new Date().toISOString()
+            };
+
+            await db.updateAgentRun(replayRun.id, {
+                status: 'completed',
+                ended_at: new Date(),
+                replay_diff: JSON.stringify(diff)
+            });
+
+            // Log activity
+            await db.logActivity('agent_run_replayed', `Dry-run replay of run ${runId}`, {
+                case_id: requestId,
+                original_run_id: runId,
+                replay_run_id: replayRun.id,
+                mode: 'dry_run'
+            });
+
+            res.json({
+                success: true,
+                message: 'Dry-run replay completed',
+                replay_run_id: replayRun.id,
+                original_run_id: runId,
+                mode: 'dry_run',
+                diff: diff
+            });
+        } else {
+            // Live mode: actually re-run the agent
+            log.warn('Live replay mode requested - queueing agent job');
+
+            const { enqueueAgentJob } = require('../queues/agent-queue');
+            const job = await enqueueAgentJob(requestId, `REPLAY_${originalRun.trigger_type}`, {
+                replayRunId: replayRun.id,
+                originalRunId: runId
+            });
+
+            await db.updateAgentRun(replayRun.id, {
+                metadata: JSON.stringify({
+                    ...replayRun.metadata,
+                    job_id: job.id
+                })
+            });
+
+            res.json({
+                success: true,
+                message: 'Live replay queued',
+                replay_run_id: replayRun.id,
+                original_run_id: runId,
+                mode: 'live',
+                job_id: job.id
+            });
+        }
+    } catch (error) {
+        log.error(`Error replaying agent run: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/requests/:id/agent-runs/:runId/diff
+ * Get the diff for a replay run
+ */
+router.get('/:id/agent-runs/:runId/diff', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const runId = parseInt(req.params.runId);
+
+    try {
+        const run = await db.getAgentRunById(runId);
+
+        if (!run || run.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Agent run not found'
+            });
+        }
+
+        if (!run.is_replay) {
+            return res.status(400).json({
+                success: false,
+                error: 'This is not a replay run'
+            });
+        }
+
+        // Get the original run for comparison
+        let originalRun = null;
+        if (run.replay_of_run_id) {
+            originalRun = await db.getAgentRunById(run.replay_of_run_id);
+        }
+
+        res.json({
+            success: true,
+            run_id: runId,
+            is_replay: true,
+            dry_run: run.dry_run,
+            original_run_id: run.replay_of_run_id,
+            diff: run.replay_diff,
+            original_run: originalRun ? {
+                id: originalRun.id,
+                trigger_type: originalRun.trigger_type,
+                status: originalRun.status,
+                started_at: originalRun.started_at,
+                ended_at: originalRun.ended_at
+            } : null
+        });
+    } catch (error) {
+        console.error('Error fetching replay diff:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// =========================================================================
+// DLQ Management Endpoints
+// =========================================================================
+
+/**
+ * GET /api/dlq
+ * Get dead letter queue items
+ */
+router.get('/dlq', async (req, res) => {
+    try {
+        const { getDLQItems } = require('../queues/queue-config');
+        const { queue_name, resolution, limit, offset } = req.query;
+
+        const items = await getDLQItems({
+            queueName: queue_name,
+            resolution: resolution || 'pending',
+            limit: parseInt(limit) || 50,
+            offset: parseInt(offset) || 0
+        });
+
+        res.json({
+            success: true,
+            count: items.length,
+            items: items
+        });
+    } catch (error) {
+        console.error('Error fetching DLQ items:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/dlq/:id/retry
+ * Retry a DLQ item
+ */
+router.post('/dlq/:id/retry', async (req, res) => {
+    try {
+        const dlqId = parseInt(req.params.id);
+        const { retryDLQItem } = require('../queues/queue-config');
+
+        const result = await retryDLQItem(dlqId);
+
+        res.json({
+            success: true,
+            message: 'DLQ item retried',
+            new_job_id: result.newJobId
+        });
+    } catch (error) {
+        console.error('Error retrying DLQ item:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/dlq/:id/discard
+ * Discard a DLQ item
+ */
+router.post('/dlq/:id/discard', async (req, res) => {
+    try {
+        const dlqId = parseInt(req.params.id);
+        const { reason } = req.body;
+        const { discardDLQItem } = require('../queues/queue-config');
+
+        await discardDLQItem(dlqId, reason || 'Manually discarded');
+
+        res.json({
+            success: true,
+            message: 'DLQ item discarded'
+        });
+    } catch (error) {
+        console.error('Error discarding DLQ item:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// =========================================================================
+// Reaper Status Endpoint
+// =========================================================================
+
+/**
+ * GET /api/reaper/status
+ * Get reaper status and recent audit log
+ */
+router.get('/reaper/status', async (req, res) => {
+    try {
+        const reaperService = require('../services/reaper-service');
+        const status = await reaperService.getReaperStatus(parseInt(req.query.limit) || 20);
+
+        res.json({
+            success: true,
+            ...status
+        });
+    } catch (error) {
+        console.error('Error fetching reaper status:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/reaper/run
+ * Manually trigger the reapers
+ */
+router.post('/reaper/run', async (req, res) => {
+    try {
+        const reaperService = require('../services/reaper-service');
+        const results = await reaperService.runReapers();
+
+        res.json({
+            success: true,
+            message: 'Reapers executed',
+            results
+        });
+    } catch (error) {
+        console.error('Error running reapers:', error);
         res.status(500).json({
             success: false,
             error: error.message

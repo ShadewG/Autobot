@@ -1273,6 +1273,23 @@
             portal_status_failed: 'error',
             portal_instruction_received: 'warn'
         };
+        const LOG_METADATA_LABELS = {
+            run_id: 'Run ID',
+            task_id: 'Task ID',
+            task_url: 'Skyvern Run',
+            recording_url: 'Replay',
+            portal_url: 'Portal',
+            portal_provider: 'Provider',
+            stage: 'Stage',
+            engine: 'Engine',
+            status: 'Status',
+            submission_status: 'Submission',
+            confirmation_number: 'Confirmation #',
+            error: 'Error',
+            message_id: 'Message',
+            instructions: 'Instructions',
+            case_id: 'Case ID'
+        };
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1403,6 +1420,114 @@
                 }
             }
             return clean;
+        }
+
+        function normalizeLogMetadata(metadata) {
+            if (!metadata) return {};
+            if (typeof metadata === 'object') {
+                return metadata;
+            }
+            try {
+                return JSON.parse(metadata);
+            } catch (error) {
+                return {};
+            }
+        }
+
+        function renderMetadataChip(label, value, options = {}) {
+            if (!value && value !== 0) return '';
+            const variant = options.variant || 'muted';
+            const content = options.link
+                ? `<a href="${escapeHtml(String(value))}" target="_blank" rel="noopener">${escapeHtml(options.linkLabel || label)}</a>`
+                : `${escapeHtml(label)}: ${escapeHtml(String(value))}`;
+            return `<span class="status-chip ${variant}">${content}</span>`;
+        }
+
+        function renderLogMetadata(entry) {
+            const metadata = normalizeLogMetadata(entry?.metadata);
+            const keys = Object.keys(metadata || {});
+            if (!keys.length) {
+                return '';
+            }
+
+            const chips = [];
+            const details = [];
+
+            const portalUrl = metadata.portal_url;
+            if (portalUrl) {
+                chips.push(renderMetadataChip('Portal', portalUrl, { link: portalUrl, variant: 'info', linkLabel: 'Portal' }));
+            }
+
+            const taskUrl = metadata.task_url;
+            if (taskUrl) {
+                const label = /workflow/i.test(taskUrl) ? 'Workflow' : 'Task';
+                chips.push(renderMetadataChip(label, taskUrl, { link: taskUrl, variant: 'info', linkLabel: label }));
+            }
+
+            const recordingUrl = metadata.recording_url;
+            if (recordingUrl) {
+                chips.push(renderMetadataChip('Replay', recordingUrl, { link: recordingUrl, variant: 'info', linkLabel: 'Replay' }));
+            }
+
+            const runId = metadata.run_id || metadata.task_id;
+            if (runId) {
+                chips.push(renderMetadataChip('Run ID', runId, { variant: 'muted' }));
+            }
+
+            const engine = metadata.engine;
+            if (engine) {
+                chips.push(renderMetadataChip('Engine', engine, { variant: 'muted' }));
+            }
+
+            const submissionStatus = metadata.submission_status || metadata.status;
+            if (submissionStatus) {
+                chips.push(renderMetadataChip('Status', submissionStatus, { variant: 'muted' }));
+            }
+
+            const confirmation = metadata.confirmation_number;
+            if (confirmation) {
+                chips.push(renderMetadataChip('Confirmation', confirmation, { variant: 'success' }));
+            }
+
+            const stage = metadata.stage;
+            if (stage) {
+                details.push(`Stage: ${escapeHtml(String(stage))}`);
+            }
+
+            const error = metadata.error;
+            if (error) {
+                chips.push(`<span class="status-chip danger">${escapeHtml(String(error))}</span>`);
+            }
+
+            const highlightKeys = new Set([
+                'portal_url',
+                'task_url',
+                'recording_url',
+                'run_id',
+                'task_id',
+                'engine',
+                'status',
+                'submission_status',
+                'confirmation_number',
+                'stage',
+                'error'
+            ]);
+
+            const extras = Object.entries(metadata)
+                .filter(([key, value]) => !highlightKeys.has(key) && value !== null && value !== undefined && value !== '')
+                .slice(0, 4)
+                .map(([key, value]) => `${escapeHtml(LOG_METADATA_LABELS[key] || key)}: ${escapeHtml(String(value))}`);
+
+            const chipRow = chips.length
+                ? `<div class="review-portal-summary" style="margin-top:6px;">${chips.join('')}</div>`
+                : '';
+            const detailRow = extras.length
+                ? `<div class="case-meta">${extras.join(' • ')}</div>`
+                : details.length
+                    ? `<div class="case-meta">${details.join(' • ')}</div>`
+                    : '';
+
+            return chipRow || detailRow ? `${chipRow}${detailRow}` : '';
         }
 
         function escapeHtml(str = '') {
@@ -1798,6 +1923,7 @@
                             ${isNew ? '<span class="status-chip info">new</span>' : ''}
                         </div>
                         <div>${description || '<em>No details</em>'}</div>
+                        ${renderLogMetadata(entry)}
                     </div>
                 `;
             }).join('');

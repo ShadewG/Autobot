@@ -67,7 +67,11 @@ app.use('/api/agencies', agencyRoutes);
 const cronService = require('./services/cron-service');
 const discordService = require('./services/discord-service');
 const { emailWorker, analysisWorker, generateWorker, portalWorker } = require('./queues/email-queue');
+const { createAgentWorker } = require('./workers/agent-worker');
 const fs = require('fs');
+
+// LangGraph agent worker instance
+let agentWorker = null;
 
 /**
  * Run database migrations automatically
@@ -202,6 +206,11 @@ async function startServer() {
         console.log('   ✓ Analysis worker started');
         console.log('   ✓ Generate worker started');
 
+        // Start LangGraph agent worker
+        console.log('\nStarting LangGraph agent worker...');
+        agentWorker = createAgentWorker();
+        console.log('   ✓ LangGraph agent worker started');
+
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`\n🤖 Autobot MVP Server Running`);
             console.log(`   Port: ${PORT}`);
@@ -215,9 +224,11 @@ async function startServer() {
             console.log(`\n   ✓ Database migrations applied`);
             console.log(`   ✓ Automated follow-ups enabled`);
             console.log(`   ✓ BullMQ workers running`);
+            console.log(`   ✓ LangGraph agent enabled`);
             console.log(`   ✓ Notion sync every 15 minutes`);
             console.log(`   ✓ Adaptive learning system active`);
-            console.log(`   ✓ Ready to receive requests!\n`);
+            console.log(`   ✓ Ready to receive requests!`);
+            console.log(`\n   Test LangGraph: http://localhost:${PORT}/test-langgraph.html\n`);
         });
     } catch (error) {
         console.error('Failed to start server:', error);
@@ -229,6 +240,7 @@ async function startServer() {
 process.on('SIGTERM', async () => {
     console.log('SIGTERM received, shutting down gracefully...');
     cronService.stop();
+    if (agentWorker) await agentWorker.close();
     await db.close();
     process.exit(0);
 });
@@ -236,6 +248,7 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
     console.log('SIGINT received, shutting down gracefully...');
     cronService.stop();
+    if (agentWorker) await agentWorker.close();
     await db.close();
     process.exit(0);
 });

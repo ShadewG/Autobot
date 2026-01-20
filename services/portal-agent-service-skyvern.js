@@ -503,159 +503,56 @@ class PortalAgentServiceSkyvern {
     }
 
     /**
-     * Submit to portal using Skyvern
+     * Submit to portal using Skyvern (workflow only)
      */
     async submitToPortal(caseData, portalUrl, options = {}) {
-        const { maxSteps = 25, dryRun = false } = options;
+        const { dryRun = false } = options;
 
         if (!this.apiKey) {
             throw new Error('SKYVERN_API_KEY not set! Get your key from https://app.skyvern.com');
         }
 
+        if (!this.workflowId) {
+            throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode is required');
+        }
+
         const runId = uuidv4();
-        const defaultPortalEmail = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-        const useWorkflow = this._workflowEnabled();
+
+        console.log(`🤖 Starting Skyvern workflow for case: ${caseData.case_name}`);
+        console.log(`   Portal: ${portalUrl}`);
+        console.log(`   Mode: workflow (forced)`);
+        console.log(`   Dry run: ${dryRun}`);
+        console.log(`   Workflow endpoint: ${this.workflowRunUrl}`);
+
+        await database.logActivity(
+            'portal_run_started',
+            `Skyvern portal automation started for ${caseData.case_name}`,
+            {
+                case_id: caseData.id || null,
+                portal_url: portalUrl,
+                dry_run: dryRun,
+                max_steps: null,
+                run_id: runId,
+                engine: 'skyvern_workflow'
+            }
+        );
 
         try {
-            console.log(`🤖 Starting Skyvern agent for case: ${caseData.case_name}`);
-            console.log(`   Portal: ${portalUrl}`);
-            console.log(`   Mode: ${useWorkflow ? 'workflow' : 'task-runner'}`);
-            if (!useWorkflow) {
-                console.log(`   Max steps: ${maxSteps}`);
-            }
-            console.log(`   Dry run: ${dryRun}`);
-            console.log(`   API: ${useWorkflow ? this.workflowRunUrl : this.baseUrl}`);
-
-            await database.logActivity(
-                'portal_run_started',
-                `Skyvern portal automation started for ${caseData.case_name}`,
-                {
-                    case_id: caseData.id || null,
-                    portal_url: portalUrl,
-                    dry_run: dryRun,
-                    max_steps: useWorkflow ? null : maxSteps,
-                    run_id: runId,
-                    engine: useWorkflow ? 'skyvern_workflow' : 'skyvern'
-                }
-            );
-
-            if (useWorkflow) {
-                return await this._submitViaWorkflow({
-                    caseData,
-                    portalUrl,
-                    dryRun,
-                    runId
-                });
-            }
-
-            console.log(`\n🔍 Checking for existing portal account...`);
-            let existingAccount = await database.getPortalAccountByUrl(portalUrl);
-            let accountEmailUsed = existingAccount?.email || defaultPortalEmail;
-            let accountPassword = existingAccount?.password || 'Insanity!0M';
-            const hadExistingAccount = !!existingAccount;
-
-            if (hadExistingAccount) {
-                await database.updatePortalAccountLastUsed(existingAccount.id);
-            }
-
-            const contactInfo = this.buildStandardContactInfo(caseData);
-
-            const accountStage = await this._runAccountStage({
+            return await this._submitViaWorkflow({
                 caseData,
                 portalUrl,
-                accountEmail: accountEmailUsed,
-                accountPassword,
-                contactInfo,
-                existingAccount,
                 dryRun,
-                maxSteps,
                 runId
             });
-
-            if (!accountStage.success) {
-                return accountStage.result;
-            }
-
-            if (!hadExistingAccount) {
-                await this._persistNewPortalAccount({
-                    caseData,
-                    portalUrl,
-                    taskId: accountStage.taskId,
-                    email: accountEmailUsed,
-                    password: accountPassword
-                });
-            }
-
-            const submissionUrl = accountStage.requestFormUrl || caseData.last_portal_task_url || portalUrl;
-            const portalProvider = existingAccount?.portal_type || accountStage.extracted?.portal_provider || 'Auto-detected';
-
-            await database.updateCasePortalStatus(caseData.id, {
-                portal_url: portalUrl,
-                portal_provider: portalProvider,
-                last_portal_task_url: submissionUrl,
-                last_portal_details: JSON.stringify(accountStage.extracted || {})
-            });
-
-            const submissionStage = await this._runSubmissionStage({
-                caseData,
-                portalUrl,
-                accountEmail: accountEmailUsed,
-                accountPassword,
-                contactInfo,
-                submissionUrl,
-                dryRun,
-                maxSteps,
-                runId,
-                portalProvider
-            });
-
-            return submissionStage.result;
         } catch (error) {
-            console.error('❌ Skyvern agent failed:', error.message);
-
-            // Extract more details from error response
-            let errorMessage = error.message;
-            if (error.response) {
-                errorMessage = error.response.data?.message || error.response.data?.error || error.message;
-                console.error(`   Status: ${error.response.status}`);
-                console.error(`   Details: ${JSON.stringify(error.response.data, null, 2)}`);
-            }
-
-            const result = {
-                success: false,
-                error: errorMessage,
-                runId,
-                engine: useWorkflow ? 'skyvern_workflow' : 'skyvern'
-            };
-
-            await database.logActivity(
-                'portal_run_failed',
-                `Skyvern portal automation crashed for ${caseData.case_name}: ${errorMessage}`,
-                {
-                    case_id: caseData.id || null,
-                    portal_url: portalUrl,
-                    dry_run: dryRun,
-                    max_steps: maxSteps,
-                    run_id: runId,
-                    engine: 'skyvern',
-                    task_url: null,
-                    error: errorMessage
-                }
-            );
-
-            return result;
+            console.error('❌ Skyvern workflow submission failed:', error.message);
+            throw error;
         }
     }
 
     /**
      * Workflow helper utilities
      */
-    _workflowEnabled() {
-        if (!this.workflowId) return false;
-        if (process.env.SKYVERN_USE_WORKFLOW === 'false') return false;
-        return true;
-    }
-
     _buildWorkflowRunUrl(workflowRunId, workflowResponse = {}) {
         const direct =
             workflowResponse.workflow_run_url ||
@@ -784,6 +681,7 @@ class PortalAgentServiceSkyvern {
             await database.updatePortalAccountLastUsed(portalAccount.id);
         }
 
+        const totpIdentifier = process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
         const parameters = this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun });
         const requestBody = {
             workflow_id: this.workflowId,
@@ -793,7 +691,8 @@ class PortalAgentServiceSkyvern {
             browser_address: this.workflowBrowserAddress,
             run_with: 'agent',
             ai_fallback: true,
-            extra_http_headers: {}
+            extra_http_headers: {},
+            totp_identifier: totpIdentifier
         };
 
         const safeLog = JSON.parse(JSON.stringify(requestBody));

@@ -243,6 +243,28 @@ class DiscordService {
     }
 
     /**
+     * Notify when an action is blocked by policy
+     */
+    async notifyBlockedAction(data) {
+        const violationsList = data.violations
+            .filter(v => v.action === 'BLOCK')
+            .map(v => `• [${v.rule}] ${v.reason}`)
+            .join('\n');
+
+        await this.notify({
+            title: '🚫 Action Blocked',
+            description: `Action blocked for **${data.caseName || 'Case #' + data.caseId}**`,
+            color: 0xf56565, // Red
+            fields: [
+                { name: 'Case ID', value: `#${data.caseId}`, inline: true },
+                { name: 'Agency', value: data.agencyName || 'Unknown', inline: true },
+                { name: 'Action Type', value: data.actionType || 'Unknown', inline: true },
+                { name: 'Violations', value: violationsList || 'Unknown', inline: false }
+            ]
+        });
+    }
+
+    /**
      * Notify bulk sync
      */
     async notifyBulkSync(syncedCount, queuedCount, reviewCount) {
@@ -254,6 +276,57 @@ class DiscordService {
                 { name: '📤 Queued', value: `${queuedCount}`, inline: true },
                 { name: '⚠️ Review', value: `${reviewCount}`, inline: true },
                 { name: '📊 Total', value: `${syncedCount}`, inline: true }
+            ]
+        });
+    }
+
+    /**
+     * Notify when case needs review (LangGraph proposal pending)
+     */
+    async notifyCaseNeedsReview(caseData, proposalInfo) {
+        const actionEmoji = {
+            'SEND_FOLLOWUP': '📧',
+            'SEND_REBUTTAL': '⚔️',
+            'SEND_CLARIFICATION': '❓',
+            'APPROVE_FEE': '💰',
+            'ESCALATE': '🚨'
+        };
+
+        await this.notify({
+            title: '📋 Proposal Needs Review',
+            description: `A proposal for **${caseData.case_name || 'Case #' + caseData.id}** is waiting for review`,
+            color: 0xfbbf24, // Yellow
+            fields: [
+                { name: 'Case ID', value: `#${caseData.id}`, inline: true },
+                { name: 'Agency', value: caseData.agency_name || 'Unknown', inline: true },
+                { name: 'Action', value: `${actionEmoji[proposalInfo.actionType] || '📋'} ${proposalInfo.actionType || 'Unknown'}`, inline: true },
+                { name: 'Reason', value: proposalInfo.reason || 'Requires human approval', inline: false },
+                ...(proposalInfo.proposalId ? [{ name: 'Proposal ID', value: `#${proposalInfo.proposalId}`, inline: true }] : [])
+            ]
+        });
+    }
+
+    /**
+     * Notify when case is escalated (from LangGraph ESCALATE action)
+     */
+    async sendCaseEscalation(caseData, escalation) {
+        const urgencyColor = {
+            'low': 0x48bb78,      // Green
+            'medium': 0xfbbf24,   // Yellow
+            'high': 0xed8936,     // Orange
+            'critical': 0xf56565  // Red
+        };
+
+        await this.notify({
+            title: '🚨 Case Escalated by Agent',
+            description: `Agent has escalated **${caseData.case_name || 'Case #' + caseData.id}**`,
+            color: urgencyColor[escalation.urgency] || 0xf56565,
+            fields: [
+                { name: 'Case ID', value: `#${caseData.id}`, inline: true },
+                { name: 'Agency', value: caseData.agency_name || 'Unknown', inline: true },
+                { name: 'Urgency', value: (escalation.urgency || 'medium').toUpperCase(), inline: true },
+                { name: 'Reason', value: escalation.reason || 'No reason provided', inline: false },
+                ...(escalation.suggested_action ? [{ name: 'Suggested Action', value: escalation.suggested_action, inline: false }] : [])
             ]
         });
     }
