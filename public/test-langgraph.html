@@ -565,6 +565,14 @@
                         <span id="nodes-arrow">+</span>
                     </div>
                     <div id="nodes-content" class="collapsible-content">
+                        <div class="input-group">
+                            <label>Run Mode:</label>
+                            <select id="node-mode">
+                                <option value="unit">Unit (fast, bypasses graph)</option>
+                                <option value="graph">Graph (real execution with checkpoints)</option>
+                            </select>
+                        </div>
+                        <p id="mode-warning" style="font-size: 10px; color: #f59e0b; margin-bottom: 8px; display: none;"></p>
                         <div class="node-grid" id="node-grid"></div>
                         <div class="input-group" style="margin-top: 8px;">
                             <label>State JSON:</label>
@@ -1167,27 +1175,100 @@
                 return;
             }
 
-            log(`Testing node: ${nodeName}`, 'info');
+            const mode = document.getElementById('node-mode').value;
+            const caseId = state.caseId || getCaseId();
+
+            // Validate caseId for graph mode
+            if (mode === 'graph' && !caseId) {
+                log('Graph mode requires caseId in state or case selector', 'error');
+                return;
+            }
+
+            log(`Testing node: ${nodeName} (mode: ${mode})`, 'info');
 
             try {
                 const res = await fetch(`/api/test/langgraph/node/${nodeName}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ state })
+                    body: JSON.stringify({ state, mode, caseId })
                 });
 
                 const data = await res.json();
 
                 if (data.success) {
                     log(`Node ${nodeName} completed in ${data.duration_ms}ms`, 'success');
-                    logObject('Output', data.output, 'success');
+
+                    // Show warning for unit mode
+                    if (data.warning) {
+                        log(`Warning: ${data.warning}`, 'warn');
+                    }
+
+                    // Different output based on mode
+                    if (data.mode === 'graph') {
+                        // Graph mode: show rich output
+                        if (data.interrupted) {
+                            log(`Node interrupted (expected for gate nodes)`, 'info');
+                            logObject('Interrupt data', data.interrupt_data, 'info');
+                        }
+
+                        if (data.checkpoint_info) {
+                            log(`Checkpoint: ${data.checkpoint_info.thread_id}`, 'debug');
+                        }
+
+                        logObject('Node output', data.node_output || data.all_updates, 'success');
+
+                        if (data.pre_state && data.post_state) {
+                            // Show state diff (simplified)
+                            log('State changes:', 'info');
+                            const preKeys = Object.keys(data.pre_state || {});
+                            const postKeys = Object.keys(data.post_state || {});
+                            const allKeys = [...new Set([...preKeys, ...postKeys])];
+
+                            const changes = {};
+                            for (const key of allKeys) {
+                                const pre = JSON.stringify(data.pre_state?.[key]);
+                                const post = JSON.stringify(data.post_state?.[key]);
+                                if (pre !== post) {
+                                    changes[key] = { before: data.pre_state?.[key], after: data.post_state?.[key] };
+                                }
+                            }
+                            if (Object.keys(changes).length > 0) {
+                                logObject('Changed fields', changes, 'debug');
+                            } else {
+                                log('No state changes detected', 'debug');
+                            }
+                        }
+                    } else {
+                        // Unit mode: simple output
+                        logObject('Output', data.output, 'success');
+                    }
                 } else {
                     log(`Node failed: ${data.error}`, 'error');
+                    if (data.stack) {
+                        log(data.stack, 'debug');
+                    }
                 }
             } catch (error) {
                 log(`Node test error: ${error.message}`, 'error');
             }
         }
+
+        // Update mode warning when selection changes
+        document.addEventListener('DOMContentLoaded', () => {
+            const modeSelect = document.getElementById('node-mode');
+            const warning = document.getElementById('mode-warning');
+
+            modeSelect.addEventListener('change', () => {
+                if (modeSelect.value === 'unit') {
+                    warning.textContent = 'Unit mode bypasses graph runtime (no checkpointing, reducers, or routing)';
+                    warning.style.display = 'block';
+                } else {
+                    warning.textContent = 'Graph mode runs with full checkpointing and state management';
+                    warning.style.color = '#22c55e';
+                    warning.style.display = 'block';
+                }
+            });
+        });
 
         // Auto-refresh
         setInterval(refreshQueue, 5000);

@@ -95,33 +95,33 @@ const FOIACaseStateAnnotation = Annotation.Root({
     default: () => []
   }),
   proposalConfidence: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => 0
   }),
   riskFlags: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => []
   }),
   warnings: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => []
   }),
   canAutoExecute: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => false
   }),
 
   // === Gate/Interrupt State ===
   requiresHuman: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => false
   }),
   pauseReason: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null  // FEE_QUOTE | SCOPE | DENIAL | ID_REQUIRED | SENSITIVE | CLOSE_ACTION
   }),
   gateOptions: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW']
   }),
 
@@ -151,7 +151,7 @@ const FOIACaseStateAnnotation = Annotation.Root({
 
   // === Control Flow ===
   autopilotMode: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => 'SUPERVISED'  // AUTO | SUPERVISED | MANUAL
   }),
   isComplete: Annotation({

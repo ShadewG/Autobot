@@ -3268,39 +3268,215 @@ router.post('/langgraph/resume/:caseId', async (req, res) => {
 });
 
 /**
+ * Node name mapping: graph node names (snake_case) to export names (camelCase)
+ */
+const GRAPH_NODE_MAPPING = {
+    'load_context': 'loadContextNode',
+    'classify_inbound': 'classifyInboundNode',
+    'update_constraints': 'updateConstraintsNode',
+    'decide_next_action': 'decideNextActionNode',
+    'draft_response': 'draftResponseNode',
+    'safety_check': 'safetyCheckNode',
+    'gate_or_execute': 'gateOrExecuteNode',
+    'execute_action': 'executeActionNode',
+    'commit_state': 'commitStateNode'
+};
+
+/**
+ * Get the node that runs BEFORE the target node in the graph
+ * Used for updateState's asNode parameter
+ */
+const NODE_PREDECESSORS = {
+    'load_context': null,  // First node, no predecessor
+    'classify_inbound': 'load_context',
+    'update_constraints': 'classify_inbound',
+    'decide_next_action': 'update_constraints',
+    'draft_response': 'decide_next_action',
+    'safety_check': 'draft_response',
+    'gate_or_execute': 'safety_check',
+    'execute_action': 'gate_or_execute',
+    'commit_state': 'execute_action'
+};
+
+/**
  * POST /api/test/langgraph/node/:nodeName
- * Test a specific node in isolation
+ * Test a specific node with two modes:
+ * - mode: 'unit' (default) - Direct node call, fast but bypasses graph runtime
+ * - mode: 'graph' - Real execution with checkpointing, reducers, and routing
  */
 router.post('/langgraph/node/:nodeName', async (req, res) => {
     try {
         const { nodeName } = req.params;
-        const { state } = req.body;
+        const { state, mode = 'unit', caseId } = req.body;
 
-        const node = langgraph.nodes[nodeName];
-        if (!node) {
+        // Normalize node name (accept both snake_case and camelCase)
+        const graphNodeName = GRAPH_NODE_MAPPING[nodeName] ? nodeName :
+            Object.keys(GRAPH_NODE_MAPPING).find(k => GRAPH_NODE_MAPPING[k] === nodeName);
+        const exportedNodeName = GRAPH_NODE_MAPPING[graphNodeName];
+
+        if (!exportedNodeName) {
             return res.status(404).json({
                 success: false,
                 error: `Node '${nodeName}' not found`,
-                available_nodes: Object.keys(langgraph.nodes)
+                available_nodes: Object.keys(GRAPH_NODE_MAPPING),
+                hint: 'Use snake_case names like "load_context" or "draft_response"'
             });
         }
 
-        console.log(`[LangGraph Test] Testing node: ${nodeName}`);
-        console.log(`[LangGraph Test] Input state:`, JSON.stringify(state, null, 2));
+        const node = langgraph.nodes[exportedNodeName];
+        if (!node) {
+            return res.status(500).json({
+                success: false,
+                error: `Node function '${exportedNodeName}' not exported from langgraph module`
+            });
+        }
 
-        const startTime = Date.now();
-        const result = await node(state);
-        const duration = Date.now() - startTime;
+        console.log(`[LangGraph Test] Testing node: ${graphNodeName} (mode: ${mode})`);
 
-        console.log(`[LangGraph Test] Node result:`, JSON.stringify(result, null, 2));
+        // === UNIT MODE: Direct call, bypasses graph runtime ===
+        if (mode === 'unit') {
+            console.log(`[LangGraph Test] Unit mode - direct call`);
+            console.log(`[LangGraph Test] Input state:`, JSON.stringify(state, null, 2));
 
-        res.json({
-            success: true,
-            node: nodeName,
-            duration_ms: duration,
-            input_state: state,
-            output: result
+            const startTime = Date.now();
+            const result = await node(state);
+            const duration = Date.now() - startTime;
+
+            console.log(`[LangGraph Test] Node result:`, JSON.stringify(result, null, 2));
+
+            return res.json({
+                success: true,
+                mode: 'unit',
+                node: graphNodeName,
+                duration_ms: duration,
+                warning: 'Unit mode bypasses graph runtime (no checkpointing, reducers, or routing)',
+                input_state: state,
+                output: result
+            });
+        }
+
+        // === GRAPH MODE: Real execution with checkpointing ===
+        if (mode === 'graph') {
+            console.log(`[LangGraph Test] Graph mode - real execution with checkpointing`);
+
+            // Require caseId for graph mode (needed for proper state)
+            if (!caseId && !state?.caseId) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'caseId is required for graph mode',
+                    hint: 'Provide caseId in request body or in state.caseId'
+                });
+            }
+
+            const effectiveCaseId = caseId || state.caseId;
+            const graph = await langgraph.getCompiledGraph();
+            const threadId = `test:node:${graphNodeName}:${effectiveCaseId}:${Date.now()}`;
+            const config = { configurable: { thread_id: threadId } };
+
+            const startTime = Date.now();
+
+            // Get predecessor node for updateState
+            const predecessorNode = NODE_PREDECESSORS[graphNodeName];
+
+            // Merge provided state with required fields
+            const seedState = {
+                caseId: effectiveCaseId,
+                triggerType: state?.triggerType || 'NODE_TEST',
+                ...state
+            };
+
+            let preState = null;
+            let postState = null;
+            let nodeUpdates = [];
+
+            try {
+                if (predecessorNode) {
+                    // Seed state "as if" predecessor node just completed
+                    console.log(`[LangGraph Test] Seeding state as if '${predecessorNode}' completed`);
+                    await graph.updateState(config, seedState, predecessorNode);
+
+                    // Get pre-state (before target node runs)
+                    const preStateSnapshot = await graph.getState(config);
+                    preState = preStateSnapshot?.values || null;
+                } else {
+                    // First node - just set initial state
+                    preState = seedState;
+                }
+
+                // Run graph with interruptAfter to stop right after target node
+                console.log(`[LangGraph Test] Invoking with interruptAfter: ['${graphNodeName}']`);
+
+                // Use stream to capture node updates
+                const stream = await graph.stream(
+                    predecessorNode ? null : seedState,
+                    {
+                        ...config,
+                        streamMode: 'updates',
+                        interruptAfter: [graphNodeName]
+                    }
+                );
+
+                // Collect stream updates
+                for await (const update of stream) {
+                    nodeUpdates.push(update);
+                    console.log(`[LangGraph Test] Stream update:`, JSON.stringify(update, null, 2));
+                }
+
+                // Get post-state (after target node ran)
+                const postStateSnapshot = await graph.getState(config);
+                postState = postStateSnapshot?.values || null;
+
+                const duration = Date.now() - startTime;
+
+                // Extract just the target node's output from updates
+                const targetNodeOutput = nodeUpdates.find(u => u[graphNodeName])?.[graphNodeName] || null;
+
+                return res.json({
+                    success: true,
+                    mode: 'graph',
+                    node: graphNodeName,
+                    thread_id: threadId,
+                    duration_ms: duration,
+                    pre_state: preState,
+                    post_state: postState,
+                    node_output: targetNodeOutput,
+                    all_updates: nodeUpdates,
+                    checkpoint_info: {
+                        thread_id: threadId,
+                        checkpoint_id: postStateSnapshot?.config?.configurable?.checkpoint_id
+                    }
+                });
+
+            } catch (graphError) {
+                // Check if it's an interrupt (expected for gate_or_execute)
+                if (graphError.message?.includes('interrupt') || graphError.name === 'GraphInterrupt') {
+                    const postStateSnapshot = await graph.getState(config);
+                    postState = postStateSnapshot?.values || null;
+                    const duration = Date.now() - startTime;
+
+                    return res.json({
+                        success: true,
+                        mode: 'graph',
+                        node: graphNodeName,
+                        thread_id: threadId,
+                        duration_ms: duration,
+                        interrupted: true,
+                        interrupt_data: postStateSnapshot?.tasks?.[0]?.interrupts?.[0] || null,
+                        pre_state: preState,
+                        post_state: postState,
+                        all_updates: nodeUpdates
+                    });
+                }
+                throw graphError;
+            }
+        }
+
+        return res.status(400).json({
+            success: false,
+            error: `Invalid mode: '${mode}'`,
+            valid_modes: ['unit', 'graph']
         });
+
     } catch (error) {
         console.error(`LangGraph node test error (${req.params.nodeName}):`, error);
         res.status(500).json({
