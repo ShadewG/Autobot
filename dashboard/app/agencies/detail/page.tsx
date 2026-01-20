@@ -294,7 +294,7 @@ function AgencyDetailContent() {
             <TableHeader>
               <TableRow>
                 <TableHead>ID</TableHead>
-                <TableHead>Case Name</TableHead>
+                <TableHead>Request</TableHead>
                 <TableHead>Subject</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Sent</TableHead>

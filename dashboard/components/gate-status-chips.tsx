@@ -24,7 +24,7 @@ const STATUS_CONFIG: Record<RequestStatus, { label: string; variant: "default" |
   AWAITING_RESPONSE: { label: "Awaiting Response", variant: "default" },
   RECEIVED_RESPONSE: { label: "Response Received", variant: "default" },
   CLOSED: { label: "Closed", variant: "outline" },
-  NEEDS_HUMAN_REVIEW: { label: "Needs Review", variant: "destructive" },
+  NEEDS_HUMAN_REVIEW: { label: "Paused", variant: "destructive" },
 };
 
 const PAUSE_ICON: Record<PauseReason, React.ComponentType<{ className?: string }>> = {

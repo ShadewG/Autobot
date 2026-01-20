@@ -36,9 +36,13 @@ import {
   Calendar,
   Clock,
   MoreHorizontal,
-  Trash2,
   Ban,
+  AlarmClock,
 } from "lucide-react";
+import { PauseReasonBar } from "@/components/pause-reason-bar";
+import { ApprovalDiff } from "@/components/approval-diff";
+import { ProposalStatusBadge, type ProposalState } from "@/components/proposal-status";
+import { SnoozeModal } from "@/components/snooze-modal";
 
 function RequestDetailContent() {
   const router = useRouter();
@@ -47,6 +51,9 @@ function RequestDetailContent() {
 
   const [nextAction, setNextAction] = useState<NextAction | null>(null);
   const [adjustModalOpen, setAdjustModalOpen] = useState(false);
+  const [snoozeModalOpen, setSnoozeModalOpen] = useState(false);
+  const [proposalState, setProposalState] = useState<ProposalState>("PENDING");
+  const [isApproving, setIsApproving] = useState(false);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
@@ -62,7 +69,20 @@ function RequestDetailContent() {
 
   const handleApprove = async () => {
     if (!id) return;
-    await requestsAPI.approve(id, nextAction?.id);
+    setIsApproving(true);
+    try {
+      await requestsAPI.approve(id, nextAction?.id);
+      setProposalState("QUEUED");
+      mutate();
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleSnooze = async (snoozeUntil: string) => {
+    if (!id) return;
+    // TODO: Implement snooze API endpoint
+    console.log("Snooze until:", snoozeUntil);
     mutate();
   };
 
@@ -151,11 +171,22 @@ function RequestDetailContent() {
           autopilotMode={request.autopilot_mode}
           requiresHuman={request.requires_human}
           blockedReason={nextAction?.blocked_reason}
-          className="mb-3"
+          className="mb-2"
         />
 
+        {/* Why paused - single line explanation */}
+        {request.requires_human && request.pause_reason && (
+          <PauseReasonBar
+            pauseReason={request.pause_reason}
+            costAmount={request.cost_amount}
+            autopilotMode={request.autopilot_mode}
+            agencyRules={agency_summary.rules}
+            blockedReason={nextAction?.blocked_reason}
+          />
+        )}
+
         {/* Dates row */}
-        <div className="flex items-center gap-4 flex-wrap text-sm">
+        <div className="flex items-center gap-4 flex-wrap text-sm mt-3">
           <div className="flex items-center gap-1 text-muted-foreground">
             <Calendar className="h-3 w-3" />
             <span>Submitted: {formatDate(request.submitted_at)}</span>
@@ -174,14 +205,28 @@ function RequestDetailContent() {
 
         {/* Action buttons row - Primary + Secondary + Overflow */}
         <div className="flex items-center gap-2 mt-3">
-          {/* Primary: Approve & Send */}
-          {nextAction && (
+          {/* Show status badge if proposal is queued/sent */}
+          {proposalState !== "PENDING" && (
+            <ProposalStatusBadge state={proposalState} />
+          )}
+
+          {/* Primary: Approve & Queue */}
+          {nextAction && proposalState === "PENDING" && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" onClick={handleApprove}>
-                  <CheckCircle className="h-4 w-4 mr-1" />
-                  Approve & Send: {nextAction.proposal_short || nextAction.proposal.split('.')[0]}
-                </Button>
+                <div className="flex flex-col items-start">
+                  <Button size="sm" onClick={handleApprove} disabled={isApproving}>
+                    {isApproving ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <CheckCircle className="h-4 w-4 mr-1" />
+                    )}
+                    Approve & Queue: {nextAction.proposal_short || nextAction.proposal.split('.')[0]}
+                  </Button>
+                  <span className="text-[10px] text-muted-foreground ml-1 mt-0.5">
+                    Will send in ~2-10 hours
+                  </span>
+                </div>
               </TooltipTrigger>
               {nextAction.draft_preview && (
                 <TooltipContent className="max-w-sm">
@@ -192,7 +237,7 @@ function RequestDetailContent() {
           )}
 
           {/* Secondary: Adjust */}
-          {nextAction && (
+          {nextAction && proposalState === "PENDING" && (
             <Button size="sm" variant="outline" onClick={() => setAdjustModalOpen(true)}>
               <Edit className="h-4 w-4 mr-1" />
               Adjust
@@ -207,7 +252,7 @@ function RequestDetailContent() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {nextAction && (
+              {nextAction && proposalState === "PENDING" && (
                 <>
                   <DropdownMenuItem onClick={handleDismiss}>
                     <Ban className="h-4 w-4 mr-2" />
@@ -216,6 +261,11 @@ function RequestDetailContent() {
                   <DropdownMenuSeparator />
                 </>
               )}
+              <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}>
+                <AlarmClock className="h-4 w-4 mr-2" />
+                Snooze / Remind me
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem>
                 <XCircle className="h-4 w-4 mr-2" />
                 Withdraw request
@@ -227,6 +277,17 @@ function RequestDetailContent() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+
+        {/* What changes if I approve - micro-diff */}
+        {nextAction && proposalState === "PENDING" && (
+          <div className="mt-2">
+            <ApprovalDiff
+              nextAction={nextAction}
+              feeQuote={request.fee_quote}
+              scopeItems={request.scope_items}
+            />
+          </div>
+        )}
       </div>
 
       {/* Tabs */}
@@ -382,6 +443,13 @@ function RequestDetailContent() {
         onSubmit={handleRevise}
         constraints={request.constraints}
         isLoading={false}
+      />
+
+      {/* Snooze Modal */}
+      <SnoozeModal
+        open={snoozeModalOpen}
+        onOpenChange={setSnoozeModalOpen}
+        onSnooze={handleSnooze}
       />
     </div>
   );

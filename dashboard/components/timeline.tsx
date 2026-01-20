@@ -64,15 +64,33 @@ const eventColors: Record<EventType, string> = {
 
 // Category filter configuration
 const CATEGORY_FILTERS = [
-  { id: 'MESSAGE', label: 'Messages', icon: MessageSquare },
-  { id: 'STATUS', label: 'Status', icon: Activity },
-  { id: 'COST', label: 'Costs', icon: DollarSign },
-  { id: 'RESEARCH', label: 'Research', icon: Search },
-  { id: 'AGENT', label: 'Agent', icon: Bot },
-  { id: 'GATE', label: 'Gates', icon: AlertTriangle },
+  { id: 'MESSAGE', label: 'Messages', icon: MessageSquare, isDecisionRelevant: true },
+  { id: 'STATUS', label: 'Status', icon: Activity, isDecisionRelevant: false },
+  { id: 'COST', label: 'Costs', icon: DollarSign, isDecisionRelevant: true },
+  { id: 'RESEARCH', label: 'Research', icon: Search, isDecisionRelevant: false },
+  { id: 'AGENT', label: 'Agent', icon: Bot, isDecisionRelevant: true },
+  { id: 'GATE', label: 'Gates', icon: AlertTriangle, isDecisionRelevant: true },
 ] as const;
 
 type CategoryFilter = typeof CATEGORY_FILTERS[number]['id'];
+
+// Decision-relevant event types (for default filter)
+const DECISION_RELEVANT_TYPES: EventType[] = [
+  'FEE_QUOTE',
+  'DENIAL',
+  'GATE_TRIGGERED',
+  'PROPOSAL_QUEUED',
+  'HUMAN_DECISION',
+  'SENT',
+  'RECEIVED',
+];
+
+// Get default filters (decision-relevant categories)
+const getDefaultFilters = (): Set<CategoryFilter> => {
+  return new Set(
+    CATEGORY_FILTERS.filter((f) => f.isDecisionRelevant).map((f) => f.id)
+  );
+};
 
 interface TimelineEventItemProps {
   event: TimelineEvent;
@@ -238,8 +256,10 @@ interface TimelineProps {
 }
 
 export function Timeline({ events }: TimelineProps) {
-  const [activeFilters, setActiveFilters] = useState<Set<CategoryFilter>>(new Set());
+  // Default to decision-relevant events
+  const [activeFilters, setActiveFilters] = useState<Set<CategoryFilter>>(getDefaultFilters);
   const [showFilters, setShowFilters] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   // Deduplicate and filter events
   const processedEvents = useMemo(() => {
@@ -269,8 +289,8 @@ export function Timeline({ events }: TimelineProps) {
       deduped.push({ ...lastEvent, mergedCount: mergeCount > 1 ? mergeCount : undefined });
     }
 
-    // Then filter by category
-    if (activeFilters.size === 0) {
+    // Then filter by category (unless showAll is true)
+    if (showAll) {
       return deduped;
     }
 
@@ -278,7 +298,7 @@ export function Timeline({ events }: TimelineProps) {
       const category = e.category || 'STATUS';
       return activeFilters.has(category as CategoryFilter);
     });
-  }, [events, activeFilters]);
+  }, [events, activeFilters, showAll]);
 
   const toggleFilter = (filter: CategoryFilter) => {
     setActiveFilters((prev) => {
@@ -300,24 +320,32 @@ export function Timeline({ events }: TimelineProps) {
     );
   }
 
+  const totalEvents = events.length;
+  const filteredOut = totalEvents - processedEvents.length;
+
   return (
     <div className="space-y-2">
       {/* Filter toggle */}
       <div className="flex items-center justify-between">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={() => setShowFilters(!showFilters)}
-        >
-          <Filter className="h-3 w-3 mr-1" />
-          Filter
-          {activeFilters.size > 0 && (
-            <Badge variant="secondary" className="ml-1 text-[10px]">
-              {activeFilters.size}
-            </Badge>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setShowFilters(!showFilters)}
+          >
+            <Filter className="h-3 w-3 mr-1" />
+            {showAll ? 'All' : 'Decisions'}
+          </Button>
+          {!showAll && filteredOut > 0 && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="text-[10px] text-primary hover:underline"
+            >
+              +{filteredOut} more
+            </button>
           )}
-        </Button>
+        </div>
         <span className="text-xs text-muted-foreground">
           {processedEvents.length} event{processedEvents.length !== 1 ? 's' : ''}
         </span>
@@ -326,30 +354,49 @@ export function Timeline({ events }: TimelineProps) {
       {/* Filter buttons */}
       {showFilters && (
         <div className="flex flex-wrap gap-1 pb-2 border-b">
+          <Button
+            variant={showAll ? "default" : "outline"}
+            size="sm"
+            className="h-6 text-[10px] px-2"
+            onClick={() => {
+              setShowAll(!showAll);
+              if (!showAll) {
+                setActiveFilters(new Set());
+              } else {
+                setActiveFilters(getDefaultFilters());
+              }
+            }}
+          >
+            {showAll ? 'Show all' : 'All events'}
+          </Button>
           {CATEGORY_FILTERS.map((filter) => {
             const Icon = filter.icon;
             const isActive = activeFilters.has(filter.id);
             return (
               <Button
                 key={filter.id}
-                variant={isActive ? "default" : "outline"}
+                variant={isActive && !showAll ? "default" : "outline"}
                 size="sm"
                 className="h-6 text-[10px] px-2"
-                onClick={() => toggleFilter(filter.id)}
+                onClick={() => {
+                  setShowAll(false);
+                  toggleFilter(filter.id);
+                }}
+                disabled={showAll}
               >
                 <Icon className="h-3 w-3 mr-1" />
                 {filter.label}
               </Button>
             );
           })}
-          {activeFilters.size > 0 && (
+          {!showAll && activeFilters.size > 0 && activeFilters.size !== getDefaultFilters().size && (
             <Button
               variant="ghost"
               size="sm"
               className="h-6 text-[10px] px-2"
-              onClick={() => setActiveFilters(new Set())}
+              onClick={() => setActiveFilters(getDefaultFilters())}
             >
-              Clear
+              Reset
             </Button>
           )}
         </div>

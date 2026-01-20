@@ -102,7 +102,7 @@ export const STATUS_LABELS: Record<string, string> = {
   AWAITING_RESPONSE: 'Awaiting Response',
   RECEIVED_RESPONSE: 'Response Received',
   CLOSED: 'Closed',
-  NEEDS_HUMAN_REVIEW: 'Needs Review',
+  NEEDS_HUMAN_REVIEW: 'Paused',
 };
 
 // Autopilot mode display labels

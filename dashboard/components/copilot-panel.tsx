@@ -194,68 +194,49 @@ export function CopilotPanel({
           </CardContent>
         </Card>
 
-        {/* Agency Info with inline rules */}
+        {/* Agency Info - simplified, key info only */}
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
-              Agency Profile
+              Agency
               <a
                 href={`/agencies/detail?id=${agency.id}`}
                 className="text-xs text-primary hover:underline"
               >
                 <ExternalLink className="h-3 w-3 inline mr-1" />
-                View
+                Full profile
               </a>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
-            <p className="font-medium">{agency.name}</p>
-            <p className="text-muted-foreground">{agency.state}</p>
-            <Badge variant="outline">{agency.submission_method}</Badge>
+            {/* Key info: name + submission method */}
+            <div className="flex items-center justify-between">
+              <span className="font-medium">{agency.name}</span>
+              <Badge variant="outline">{agency.submission_method}</Badge>
+            </div>
 
-            {/* Inline rules */}
+            {/* Key rules: only fee threshold + always-human gates */}
             {agency.rules && (
-              <div className="pt-2 space-y-1 text-xs border-t">
+              <div className="text-xs space-y-1">
                 {agency.rules.fee_auto_approve_threshold !== null && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Fee threshold:</span>
-                    <span>{formatCurrency(agency.rules.fee_auto_approve_threshold)}</span>
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Auto-approve fees under</span>
+                    <span className="font-medium text-foreground">
+                      {formatCurrency(agency.rules.fee_auto_approve_threshold)}
+                    </span>
                   </div>
                 )}
                 {agency.rules.always_human_gates.length > 0 && (
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1 flex-wrap">
                     <span className="text-muted-foreground">Always-human:</span>
-                    <div className="flex gap-1">
-                      {agency.rules.always_human_gates.map((g, i) => (
-                        <Badge key={i} variant="outline" className="text-[10px]">
-                          {g}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {agency.rules.known_exemptions.length > 0 && (
-                  <div>
-                    <span className="text-muted-foreground">Known exemptions:</span>
-                    <div className="mt-1 space-y-0.5">
-                      {agency.rules.known_exemptions.map((e, i) => (
-                        <p key={i} className="text-[10px] text-orange-600">{e}</p>
-                      ))}
-                    </div>
+                    {agency.rules.always_human_gates.map((g, i) => (
+                      <Badge key={i} variant="secondary" className="text-[10px]">
+                        {g}
+                      </Badge>
+                    ))}
                   </div>
                 )}
               </div>
-            )}
-
-            {agency.portal_url && (
-              <a
-                href={agency.portal_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-primary hover:underline block"
-              >
-                Portal Link
-              </a>
             )}
           </CardContent>
         </Card>
