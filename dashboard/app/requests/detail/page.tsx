@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, Suspense, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,21 +16,18 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GateStatusChips } from "@/components/gate-status-chips";
 import { DueDisplay } from "@/components/due-display";
 import { Timeline } from "@/components/timeline";
 import { Thread } from "@/components/thread";
 import { Composer } from "@/components/composer";
 import { CopilotPanel } from "@/components/copilot-panel";
 import { AdjustModal } from "@/components/adjust-modal";
+import { DecisionPanel } from "@/components/decision-panel";
 import { requestsAPI, fetcher } from "@/lib/api";
-import type { RequestWorkspaceResponse, NextAction } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import type { RequestWorkspaceResponse, NextAction, PauseReason } from "@/lib/types";
+import { formatDate, cn } from "@/lib/utils";
 import {
   ArrowLeft,
-  CheckCircle,
-  Edit,
-  XCircle,
   Loader2,
   Calendar,
   Clock,
@@ -40,16 +36,49 @@ import {
   AlarmClock,
   Globe,
   Mail,
-  FileText,
-  ExternalLink,
   DollarSign,
+  FileQuestion,
+  XCircle,
+  UserCheck,
+  AlertTriangle,
+  CheckCircle,
 } from "lucide-react";
-import { PauseReasonBar } from "@/components/pause-reason-bar";
-import { ApprovalDiff } from "@/components/approval-diff";
-import { ProposalStatus, ProposalStatusBadge, type ProposalState } from "@/components/proposal-status";
+import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
-import { RecipientDisplay } from "@/components/recipient-display";
-import { Input } from "@/components/ui/input";
+
+// Gate icons and colors
+const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; label: string }> = {
+  FEE_QUOTE: {
+    icon: <DollarSign className="h-4 w-4" />,
+    color: "text-amber-700 bg-amber-100 border-amber-300",
+    label: "Fee Quote",
+  },
+  DENIAL: {
+    icon: <XCircle className="h-4 w-4" />,
+    color: "text-red-700 bg-red-100 border-red-300",
+    label: "Denial",
+  },
+  SCOPE: {
+    icon: <FileQuestion className="h-4 w-4" />,
+    color: "text-orange-700 bg-orange-100 border-orange-300",
+    label: "Scope Issue",
+  },
+  ID_REQUIRED: {
+    icon: <UserCheck className="h-4 w-4" />,
+    color: "text-blue-700 bg-blue-100 border-blue-300",
+    label: "ID Required",
+  },
+  SENSITIVE: {
+    icon: <AlertTriangle className="h-4 w-4" />,
+    color: "text-purple-700 bg-purple-100 border-purple-300",
+    label: "Sensitive",
+  },
+  CLOSE_ACTION: {
+    icon: <CheckCircle className="h-4 w-4" />,
+    color: "text-green-700 bg-green-100 border-green-300",
+    label: "Ready to Close",
+  },
+};
 
 function RequestDetailContent() {
   const router = useRouter();
@@ -62,8 +91,6 @@ function RequestDetailContent() {
   const [proposalState, setProposalState] = useState<ProposalState>("PENDING");
   const [isApproving, setIsApproving] = useState(false);
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
-  const [costCap, setCostCap] = useState<string>("");
-  const [showCostCapInput, setShowCostCapInput] = useState(false);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
@@ -77,15 +104,21 @@ function RequestDetailContent() {
     }
   }, [data?.next_action_proposal]);
 
-  const handleApprove = async () => {
+  // Get last inbound message
+  const lastInboundMessage = useMemo(() => {
+    if (!data?.thread_messages) return null;
+    const inbound = data.thread_messages.filter(m => m.direction === "INBOUND");
+    return inbound.length > 0 ? inbound[inbound.length - 1] : null;
+  }, [data?.thread_messages]);
+
+  const handleProceed = async (costCap?: number) => {
     if (!id) return;
     setIsApproving(true);
     try {
-      const result = await requestsAPI.approve(id, nextAction?.id, costCap ? parseFloat(costCap) : undefined);
+      const result = await requestsAPI.approve(id, nextAction?.id, costCap);
       setProposalState("QUEUED");
-      // Calculate estimated send time (2-10 hours from now)
-      const minDelay = 2 * 60 * 60 * 1000; // 2 hours
-      const maxDelay = 10 * 60 * 60 * 1000; // 10 hours
+      const minDelay = 2 * 60 * 60 * 1000;
+      const maxDelay = 10 * 60 * 60 * 1000;
       const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
       const estimated = new Date(Date.now() + randomDelay);
       setScheduledSendAt(result?.scheduled_send_at || estimated.toISOString());
@@ -95,9 +128,28 @@ function RequestDetailContent() {
     }
   };
 
+  const handleNegotiate = () => {
+    setAdjustModalOpen(true);
+  };
+
+  const handleWithdraw = async () => {
+    if (!id) return;
+    // TODO: Implement withdraw
+    console.log("Withdraw request:", id);
+  };
+
+  const handleNarrowScope = () => {
+    // Open adjust modal with scope narrowing preset
+    setAdjustModalOpen(true);
+  };
+
+  const handleAppeal = () => {
+    // Open adjust modal with appeal preset
+    setAdjustModalOpen(true);
+  };
+
   const handleSnooze = async (snoozeUntil: string) => {
     if (!id) return;
-    // TODO: Implement snooze API endpoint
     console.log("Snooze until:", snoozeUntil);
     mutate();
   };
@@ -111,15 +163,7 @@ function RequestDetailContent() {
     setAdjustModalOpen(false);
   };
 
-  const handleDismiss = async () => {
-    if (!id) return;
-    await requestsAPI.dismiss(id, nextAction?.id);
-    setNextAction(null);
-    mutate();
-  };
-
   const handleSendMessage = async (content: string) => {
-    // This would send a manual message
     console.log("Send message:", content);
     mutate();
   };
@@ -158,12 +202,31 @@ function RequestDetailContent() {
   }
 
   const { request, timeline_events, thread_messages, agency_summary } = data;
+  const isPaused = request.requires_human && request.pause_reason;
+  const gateDisplay = request.pause_reason ? GATE_DISPLAY[request.pause_reason] : null;
+
+  // Build pause context string
+  const getPauseContext = () => {
+    if (!request.pause_reason) return null;
+
+    if (request.pause_reason === "FEE_QUOTE") {
+      const parts = [];
+      if (request.cost_amount) parts.push(`$${request.cost_amount.toLocaleString()} estimate`);
+      if (request.fee_quote?.deposit_amount) parts.push(`$${request.fee_quote.deposit_amount} deposit`);
+      return parts.length > 0 ? parts.join(", ") : null;
+    }
+
+    return null;
+  };
+
+  const pauseContext = getPauseContext();
 
   return (
-    <div className="space-y-6">
-      {/* Sticky Header */}
-      <div className="sticky top-14 z-40 bg-background border-b pb-4 -mx-6 px-6 pt-2">
-        <div className="flex items-center gap-4 mb-3">
+    <div className="space-y-4">
+      {/* Compact Header */}
+      <div className="sticky top-14 z-40 bg-background border-b pb-3 -mx-6 px-6 pt-2">
+        {/* Back + Title row */}
+        <div className="flex items-center gap-4 mb-2">
           <Button
             variant="ghost"
             size="sm"
@@ -172,86 +235,55 @@ function RequestDetailContent() {
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back
           </Button>
-          <div>
-            <h1 className="text-lg font-semibold">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-lg font-semibold truncate">
               Request #{request.id} — {request.subject}
             </h1>
             <p className="text-sm text-muted-foreground">{request.agency_name}</p>
           </div>
+
+          {/* Overflow menu - always visible */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}>
+                <AlarmClock className="h-4 w-4 mr-2" />
+                Snooze / Remind me
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleWithdraw}>
+                <Ban className="h-4 w-4 mr-2" />
+                Withdraw request
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Mark complete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
-        {/* Status chips row */}
-        <GateStatusChips
-          status={request.status}
-          pauseReason={request.pause_reason}
-          autopilotMode={request.autopilot_mode}
-          requiresHuman={request.requires_human}
-          blockedReason={nextAction?.blocked_reason}
-          className="mb-2"
-        />
-
-        {/* Why paused - single line explanation */}
-        {request.requires_human && request.pause_reason && (
-          <PauseReasonBar
-            pauseReason={request.pause_reason}
-            costAmount={request.cost_amount}
-            autopilotMode={request.autopilot_mode}
-            agencyRules={agency_summary.rules}
-            blockedReason={nextAction?.blocked_reason}
-          />
+        {/* Gate status - prominent when paused */}
+        {isPaused && gateDisplay && (
+          <div className={cn(
+            "flex items-center gap-3 px-3 py-2 rounded-md border mb-2",
+            gateDisplay.color
+          )}>
+            {gateDisplay.icon}
+            <span className="font-semibold">
+              Paused: {gateDisplay.label}
+              {pauseContext && <span className="font-normal"> — {pauseContext}</span>}
+            </span>
+          </div>
         )}
 
-        {/* Dates row */}
-        <div className="flex items-center gap-4 flex-wrap text-sm mt-3">
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Calendar className="h-3 w-3" />
-            <span>Submitted: {formatDate(request.submitted_at)}</span>
-          </div>
-          <div className="flex items-center gap-1 text-muted-foreground">
-            <Clock className="h-3 w-3" />
-            <span>Last Inbound: {formatDate(request.last_inbound_at)}</span>
-          </div>
-          <Separator orientation="vertical" className="h-4" />
-          <DueDisplay
-            dueInfo={request.due_info}
-            nextDueAt={request.next_due_at}
-            statutoryDueAt={request.statutory_due_at}
-          />
-        </div>
-
-        {/* Quick links row - Last inbound + Draft */}
-        <div className="flex items-center gap-3 mt-3 text-xs">
-          {thread_messages.filter(m => m.direction === 'INBOUND').length > 0 && (
-            <button
-              onClick={() => {
-                const lastInbound = thread_messages.filter(m => m.direction === 'INBOUND').pop();
-                if (lastInbound) {
-                  document.getElementById(`msg-${lastInbound.id}`)?.scrollIntoView({ behavior: 'smooth' });
-                }
-              }}
-              className="flex items-center gap-1 text-primary hover:underline"
-            >
-              <Mail className="h-3 w-3" />
-              Last inbound
-            </button>
-          )}
-          {nextAction?.draft_content && (
-            <button
-              onClick={() => {
-                // Scroll to draft preview in copilot panel
-                document.querySelector('[data-draft-preview]')?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="flex items-center gap-1 text-primary hover:underline"
-            >
-              <FileText className="h-3 w-3" />
-              View draft
-            </button>
-          )}
-        </div>
-
-        {/* Status display after approval */}
+        {/* Status after approval */}
         {proposalState !== "PENDING" && (
-          <div className="mt-3">
+          <div className="mb-2">
             <ProposalStatus
               state={proposalState}
               scheduledFor={scheduledSendAt}
@@ -259,145 +291,26 @@ function RequestDetailContent() {
           </div>
         )}
 
-        {/* Action buttons row - Primary + Secondary + Overflow */}
-        {proposalState === "PENDING" && (
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {/* Recipient display - critical for trust */}
-            {nextAction && (
-              <RecipientDisplay
-                channel={nextAction.channel || agency_summary.submission_method}
-                recipientEmail={nextAction.recipient_email || request.agency_email || undefined}
-                portalProvider={nextAction.portal_provider || agency_summary.portal_provider}
-              />
-            )}
-
-            {/* Primary: Approve & Queue (or Queue Portal Run for portal) */}
-            {nextAction && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" onClick={handleApprove} disabled={isApproving}>
-                    {isApproving ? (
-                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                    ) : (nextAction.channel || agency_summary.submission_method) === 'PORTAL' ? (
-                      <Globe className="h-4 w-4 mr-1" />
-                    ) : (
-                      <CheckCircle className="h-4 w-4 mr-1" />
-                    )}
-                    {(nextAction.channel || agency_summary.submission_method) === 'PORTAL'
-                      ? `Queue Portal Run: ${nextAction.proposal_short || 'Submit'}`
-                      : `Approve & Queue: ${nextAction.proposal_short || nextAction.proposal.split('.')[0]}`
-                    }
-                  </Button>
-                </TooltipTrigger>
-                {nextAction.draft_preview && (
-                  <TooltipContent className="max-w-sm">
-                    <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            )}
-
-            {/* Cost cap pill - inline */}
-            {nextAction && request.pause_reason === 'FEE_QUOTE' && (
-              <>
-                {showCostCapInput ? (
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-muted-foreground">Cap:</span>
-                    <Input
-                      type="number"
-                      placeholder="$"
-                      value={costCap}
-                      onChange={(e) => setCostCap(e.target.value)}
-                      className="w-20 h-7 text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 px-2"
-                      onClick={() => setShowCostCapInput(false)}
-                    >
-                      <XCircle className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ) : costCap ? (
-                  <Badge variant="outline" className="gap-1 text-xs cursor-pointer" onClick={() => setShowCostCapInput(true)}>
-                    <DollarSign className="h-3 w-3" />
-                    Cap: ${costCap}
-                  </Badge>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-xs text-muted-foreground"
-                    onClick={() => setShowCostCapInput(true)}
-                  >
-                    <DollarSign className="h-3 w-3 mr-1" />
-                    Set cap
-                  </Button>
-                )}
-              </>
-            )}
-
-            {/* Secondary: Adjust */}
-            {nextAction && (
-              <Button size="sm" variant="outline" onClick={() => setAdjustModalOpen(true)}>
-                <Edit className="h-4 w-4 mr-1" />
-                Adjust
-              </Button>
-            )}
-
-            {/* Overflow menu */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="ghost">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {nextAction && (
-                  <>
-                    <DropdownMenuItem onClick={handleDismiss}>
-                      <Ban className="h-4 w-4 mr-2" />
-                      Dismiss proposal
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}>
-                  <AlarmClock className="h-4 w-4 mr-2" />
-                  Snooze / Remind me
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Withdraw request
-                </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Mark complete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+        {/* Dates row - compact */}
+        <div className="flex items-center gap-4 flex-wrap text-xs text-muted-foreground">
+          <div className="flex items-center gap-1">
+            <Calendar className="h-3 w-3" />
+            <span>Submitted: {formatDate(request.submitted_at)}</span>
           </div>
-        )}
-
-        {/* What changes if I approve - micro-diff */}
-        {nextAction && proposalState === "PENDING" && (
-          <div className="mt-2">
-            <ApprovalDiff
-              nextAction={nextAction}
-              feeQuote={request.fee_quote}
-              scopeItems={request.scope_items}
-              costCap={costCap ? parseFloat(costCap) : undefined}
-              channel={nextAction.channel || agency_summary.submission_method}
-              recipientEmail={nextAction.recipient_email || request.agency_email || undefined}
-              portalProvider={nextAction.portal_provider || agency_summary.portal_provider}
-            />
+          <div className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            <span>Last Inbound: {formatDate(request.last_inbound_at)}</span>
           </div>
-        )}
+          <Separator orientation="vertical" className="h-3" />
+          <DueDisplay
+            dueInfo={request.due_info}
+            nextDueAt={request.next_due_at}
+            statutoryDueAt={request.statutory_due_at}
+          />
+        </div>
       </div>
 
-      {/* Tabs */}
+      {/* Main Content - Different layout for paused vs not paused */}
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -405,44 +318,106 @@ function RequestDetailContent() {
           <TabsTrigger value="agency">Agency</TabsTrigger>
         </TabsList>
 
-        {/* Overview Tab - 3 Column Layout */}
         <TabsContent value="overview" className="mt-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Timeline Column */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Timeline</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Timeline events={timeline_events} />
-              </CardContent>
-            </Card>
+          {isPaused ? (
+            /* Paused Layout: Conversation | Timeline | Decision Panel */
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+              {/* Conversation - takes most space, user needs to read this first */}
+              <div className="lg:col-span-5">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Mail className="h-4 w-4" />
+                      Conversation
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <Thread messages={thread_messages} />
+                    <Composer onSend={handleSendMessage} />
+                  </CardContent>
+                </Card>
+              </div>
 
-            {/* Conversation Column */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Conversation</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Thread messages={thread_messages} />
-                <Composer onSend={handleSendMessage} />
-              </CardContent>
-            </Card>
+              {/* Timeline - middle */}
+              <div className="lg:col-span-3">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Timeline</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Timeline events={timeline_events} />
+                  </CardContent>
+                </Card>
+              </div>
 
-            {/* Copilot Column */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Copilot</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CopilotPanel
-                  request={request}
-                  nextAction={nextAction}
-                  agency={agency_summary}
-                />
-              </CardContent>
-            </Card>
-          </div>
+              {/* Decision Panel - sticky on right */}
+              <div className="lg:col-span-4">
+                <div className="sticky top-48">
+                  <DecisionPanel
+                    request={request}
+                    nextAction={nextAction}
+                    agency={agency_summary}
+                    lastInboundMessage={lastInboundMessage}
+                    onProceed={handleProceed}
+                    onNegotiate={handleNegotiate}
+                    onWithdraw={handleWithdraw}
+                    onNarrowScope={handleNarrowScope}
+                    onAppeal={handleAppeal}
+                    isLoading={isApproving}
+                  />
+
+                  {/* Draft preview below decision panel */}
+                  {nextAction?.draft_content && (
+                    <Card className="mt-4" data-draft-preview>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm">Prepared Response</CardTitle>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="bg-muted rounded p-3 text-sm max-h-48 overflow-auto whitespace-pre-wrap">
+                          {nextAction.draft_content}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* Not Paused Layout: Timeline | Conversation | Copilot */
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Timeline</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Timeline events={timeline_events} />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Conversation</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Thread messages={thread_messages} />
+                  <Composer onSend={handleSendMessage} />
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base">Copilot</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CopilotPanel
+                    request={request}
+                    nextAction={nextAction}
+                    agency={agency_summary}
+                  />
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </TabsContent>
 
         {/* Agent Log Tab */}
@@ -543,7 +518,7 @@ function RequestDetailContent() {
         </TabsContent>
       </Tabs>
 
-      {/* Adjust Modal - controlled from header */}
+      {/* Adjust Modal */}
       <AdjustModal
         open={adjustModalOpen}
         onOpenChange={setAdjustModalOpen}

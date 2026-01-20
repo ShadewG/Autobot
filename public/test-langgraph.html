@@ -395,6 +395,9 @@
         <h1>LangGraph Agent Tester</h1>
 
         <div class="status-bar">
+            <div class="status-item" id="dry-run-badge">
+                <span class="badge badge-green" style="font-size: 12px; padding: 4px 10px;">DRY RUN</span>
+            </div>
             <div class="status-item">
                 <div class="status-dot" id="status-dot"></div>
                 <span id="status-text">Connecting...</span>
@@ -404,6 +407,9 @@
             </div>
             <div class="status-item">
                 Queue: <strong id="queue-count">-</strong>
+            </div>
+            <div class="status-item">
+                Checkpointer: <strong id="checkpointer-type">-</strong>
             </div>
             <div class="status-item" id="lock-status">
                 <span class="lock-indicator unlocked">Unlocked</span>
@@ -628,6 +634,15 @@
                     document.getElementById('status-text').textContent = 'Connected';
                     document.getElementById('node-count').textContent = data.available_nodes.length;
                     document.getElementById('queue-count').textContent = data.queue_stats.waiting + data.queue_stats.active;
+                    document.getElementById('checkpointer-type').textContent = data.checkpointer_type || 'unknown';
+
+                    // Update DRY_RUN badge
+                    const dryRunBadge = document.getElementById('dry-run-badge');
+                    if (data.dry_run) {
+                        dryRunBadge.innerHTML = '<span class="badge badge-green" style="font-size: 12px; padding: 4px 10px;">DRY RUN ON</span>';
+                    } else {
+                        dryRunBadge.innerHTML = '<span class="badge badge-red" style="font-size: 12px; padding: 4px 10px;">LIVE MODE</span>';
+                    }
 
                     // Populate node buttons
                     const nodeGrid = document.getElementById('node-grid');
@@ -635,7 +650,7 @@
                         `<button class="node-btn" onclick="testNode('${node}')">${node.replace('Node', '')}</button>`
                     ).join('');
 
-                    log('LangGraph connected', 'success');
+                    log(`LangGraph connected (DRY_RUN=${data.dry_run}, checkpointer=${data.checkpointer_type})`, 'success');
                 } else {
                     throw new Error(data.error);
                 }
@@ -811,27 +826,44 @@
 
             let html = '';
 
+            // DRY RUN indicator
+            if (data.dry_run !== undefined) {
+                html += `
+                    <div class="state-section" style="padding: 6px 10px; background: ${data.dry_run ? '#22c55e15' : '#ef444415'};">
+                        <span style="font-size: 11px; color: ${data.dry_run ? '#22c55e' : '#ef4444'};">
+                            ${data.dry_run ? '✓ DRY RUN - No emails will be sent' : '⚠ LIVE MODE - Emails WILL be sent!'}
+                        </span>
+                    </div>
+                `;
+            }
+
             // Case info section
-            if (data.case_info) {
+            if (data.case) {
                 html += `
                     <div class="state-section">
-                        <h4>Case Info <span class="badge badge-blue">#${data.case_info.id}</span></h4>
+                        <h4>Case Info <span class="badge badge-blue">#${data.case.id}</span></h4>
                         <pre>${JSON.stringify({
-                            status: data.case_info.status,
-                            agency: data.case_info.agency_name,
-                            created: data.case_info.created_at
+                            status: data.case.status,
+                            requires_human: data.case.requires_human,
+                            pause_reason: data.case.pause_reason,
+                            portal_url: data.case.portal_url,
+                            thread_id: data.case.langgraph_thread_id,
+                            updated: data.case.updated_at
                         }, null, 2)}</pre>
                     </div>
                 `;
             }
 
-            // Checkpoint state
-            if (data.checkpoint_state) {
-                const state = data.checkpoint_state;
+            // Thread/Checkpoint info
+            if (data.thread) {
                 html += `
                     <div class="state-section">
-                        <h4>Checkpoint State</h4>
-                        <pre>${JSON.stringify(state, null, 2)}</pre>
+                        <h4>Thread Info <span class="badge badge-blue">${data.thread.checkpointCount || 0} checkpoints</span></h4>
+                        <pre>${JSON.stringify({
+                            thread_id: data.thread.threadId,
+                            checkpoint_count: data.thread.checkpointCount,
+                            latest_key: data.thread.latestCheckpointKey
+                        }, null, 2)}</pre>
                     </div>
                 `;
             }
@@ -840,38 +872,50 @@
             if (data.proposals && data.proposals.length > 0) {
                 html += `
                     <div class="state-section">
-                        <h4>Pending Proposals <span class="badge badge-yellow">${data.proposals.length}</span></h4>
+                        <h4>Proposals <span class="badge badge-yellow">${data.proposals.length}</span></h4>
                         <pre>${JSON.stringify(data.proposals.map(p => ({
                             id: p.id,
-                            type: p.proposal_type,
+                            action: p.action_type,
                             status: p.status,
-                            created: p.created_at
+                            execution_key: p.execution_key,
+                            human_decision: p.human_decision
                         })), null, 2)}</pre>
                     </div>
                 `;
-            }
-
-            // Recent jobs
-            if (data.agent_runs && data.agent_runs.length > 0) {
+            } else {
                 html += `
                     <div class="state-section">
-                        <h4>Recent Agent Runs <span class="badge badge-green">${data.agent_runs.length}</span></h4>
-                        <pre>${JSON.stringify(data.agent_runs.map(r => ({
-                            id: r.id,
-                            status: r.status,
-                            started: r.started_at,
-                            duration: r.duration_ms
-                        })), null, 2)}</pre>
+                        <h4>Proposals <span class="badge badge-green">0</span></h4>
+                        <p style="color: #64748b; font-size: 10px;">No proposals</p>
                     </div>
                 `;
             }
 
             // Lock info
             if (data.lock) {
-                const lockClass = data.lock.is_locked ? 'badge-yellow' : 'badge-green';
+                const lockAvailable = data.lock.available;
+                const lockClass = lockAvailable ? 'badge-green' : 'badge-yellow';
                 html += `
                     <div class="state-section">
-                        <h4>Lock Status <span class="badge ${lockClass}">${data.lock.is_locked ? 'Locked' : 'Unlocked'}</span></h4>
+                        <h4>Lock Status <span class="badge ${lockClass}">${lockAvailable ? 'Available' : 'Locked'}</span></h4>
+                        <pre>${JSON.stringify({
+                            key: data.lock.key,
+                            thread_id: data.lock.thread_id
+                        }, null, 2)}</pre>
+                    </div>
+                `;
+            }
+
+            // Latest inbound
+            if (data.latest_inbound) {
+                html += `
+                    <div class="state-section">
+                        <h4>Latest Inbound Message</h4>
+                        <pre>${JSON.stringify({
+                            id: data.latest_inbound.id,
+                            subject: data.latest_inbound.subject,
+                            received: data.latest_inbound.received_at
+                        }, null, 2)}</pre>
                     </div>
                 `;
             }

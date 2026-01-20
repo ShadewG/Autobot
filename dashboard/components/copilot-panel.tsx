@@ -1,11 +1,9 @@
 "use client";
 
-import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { DecisionPanel } from "./decision-panel";
 import { ConstraintsDisplay } from "./constraints-display";
 import { ScopeBreakdown } from "./scope-breakdown";
 import type {
@@ -25,41 +23,16 @@ interface CopilotPanelProps {
   request: RequestDetail;
   nextAction: NextAction | null;
   agency: AgencySummary;
-  onDecision?: (decision: string, params?: Record<string, unknown>) => Promise<void>;
 }
 
 export function CopilotPanel({
   request,
   nextAction,
   agency,
-  onDecision,
 }: CopilotPanelProps) {
-  const [isLoading, setIsLoading] = useState(false);
-
-  const handleDecision = async (decision: string, params?: Record<string, unknown>) => {
-    if (onDecision) {
-      setIsLoading(true);
-      try {
-        await onDecision(decision, params);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-  };
-
   return (
     <ScrollArea className="h-[calc(100vh-300px)]">
       <div className="space-y-4 pr-4">
-        {/* Decision Panel (if paused) */}
-        {request.requires_human && request.pause_reason && (
-          <DecisionPanel
-            pauseReason={request.pause_reason}
-            feeQuote={request.fee_quote}
-            agencyRules={agency.rules}
-            onDecision={handleDecision}
-            isLoading={isLoading}
-          />
-        )}
 
         {/* Constraints detected */}
         {request.constraints && request.constraints.length > 0 && (

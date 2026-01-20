@@ -2,190 +2,524 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import type { PauseReason, FeeQuote, AgencyRules } from "@/lib/types";
-import { formatCurrency, PAUSE_REASON_LABELS } from "@/lib/utils";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import type { RequestDetail, NextAction, AgencySummary, PauseReason, ThreadMessage } from "@/lib/types";
 import {
-  AlertTriangle,
-  DollarSign,
-  Scale,
-  Ban,
-  UserCheck,
   CheckCircle,
-  ChevronDown,
-  ChevronRight,
+  MessageSquare,
+  XCircle,
+  DollarSign,
+  FileQuestion,
+  Scale,
+  Globe,
+  MoreHorizontal,
+  ArrowRight,
+  AlertTriangle,
+  Loader2,
+  Pencil,
+  UserCheck,
+  Ban,
   Info,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface DecisionPanelProps {
-  pauseReason: PauseReason;
-  feeQuote?: FeeQuote;
-  agencyRules?: AgencyRules;
-  onDecision: (decision: string, params?: Record<string, unknown>) => void;
+  request: RequestDetail;
+  nextAction: NextAction | null;
+  agency: AgencySummary;
+  lastInboundMessage?: ThreadMessage | null;
+  onProceed: (costCap?: number) => Promise<void>;
+  onNegotiate: () => void;
+  onWithdraw: () => void;
+  onNarrowScope: () => void;
+  onAppeal: () => void;
+  onOpenPortal?: () => void;
   isLoading?: boolean;
 }
 
-// Single recommended action per gate type
-const RECOMMENDATIONS: Record<PauseReason, { id: string; label: string }> = {
-  FEE_QUOTE: { id: "approve_deposit", label: "Proceed with deposit" },
-  SCOPE: { id: "accept", label: "Accept narrowed scope" },
-  DENIAL: { id: "appeal", label: "File appeal" },
-  ID_REQUIRED: { id: "provide_id", label: "Provide ID" },
-  SENSITIVE: { id: "modify", label: "Modify request" },
-  CLOSE_ACTION: { id: "complete", label: "Mark complete" },
-};
+// Extract key points from inbound message
+function extractAgencyPoints(request: RequestDetail, lastMsg?: ThreadMessage | null): string[] {
+  const points: string[] = [];
 
-// Alternative options (shown when expanded)
-const ALTERNATIVES: Record<PauseReason, { id: string; label: string }[]> = {
-  FEE_QUOTE: [
-    { id: "request_itemization", label: "Request itemized estimate" },
-    { id: "narrow_scope", label: "Narrow scope to reduce cost" },
-  ],
-  SCOPE: [
-    { id: "counter", label: "Counter-propose" },
-    { id: "clarify", label: "Request clarification" },
-  ],
-  DENIAL: [
-    { id: "revise", label: "Revise & resubmit" },
-    { id: "escalate", label: "Escalate" },
-  ],
-  ID_REQUIRED: [
-    { id: "request_waiver", label: "Request waiver" },
-  ],
-  SENSITIVE: [
-    { id: "proceed", label: "Proceed with caution" },
-    { id: "escalate", label: "Escalate for review" },
-  ],
-  CLOSE_ACTION: [
-    { id: "continue", label: "Continue pursuing" },
-  ],
-};
+  // Fee info
+  if (request.cost_amount) {
+    const feeStr = `Fee estimate: $${request.cost_amount.toLocaleString()}`;
+    points.push(feeStr);
+  }
+  if (request.fee_quote?.deposit_amount) {
+    points.push(`Deposit required: $${request.fee_quote.deposit_amount.toLocaleString()}`);
+  }
 
-const GATE_ICONS: Record<PauseReason, React.ComponentType<{ className?: string }>> = {
-  FEE_QUOTE: DollarSign,
-  SCOPE: Scale,
-  DENIAL: Ban,
-  ID_REQUIRED: UserCheck,
-  SENSITIVE: AlertTriangle,
-  CLOSE_ACTION: CheckCircle,
+  // Parse last message for common phrases
+  if (lastMsg?.body) {
+    const body = lastMsg.body.toLowerCase();
+
+    // BWC/video not available
+    if (body.includes("not subject to") && (body.includes("bwc") || body.includes("body") || body.includes("camera"))) {
+      points.push("BWC not subject to disclosure");
+    } else if (body.includes("not subject to disclosure") || body.includes("not disclosable")) {
+      points.push("Some records not disclosable");
+    }
+
+    // No video/footage
+    if (body.includes("no video") || body.includes("no footage") || body.includes("no interrogation")) {
+      points.push("No video/footage available");
+    }
+
+    // Exemption cited
+    if (body.includes("exempt") && !body.includes("non-exempt")) {
+      points.push("Exemption cited");
+    }
+
+    // Not held
+    if (body.includes("not held") || body.includes("do not have") || body.includes("don't have")) {
+      points.push("Some records not held");
+    }
+  }
+
+  return points;
+}
+
+// Gate-specific configuration
+interface GateConfig {
+  icon: React.ReactNode;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  title: string;
+  getQuestion: (request: RequestDetail) => string;
+  primaryAction: {
+    label: string;
+    subtext?: (request: RequestDetail, costCap?: string) => string | null;
+    recommended?: boolean;
+  };
+  secondaryAction?: {
+    label: string;
+    recommended?: boolean;
+  };
+  overflowActions: string[];
+  getRecommendation?: (request: RequestDetail, nextAction: NextAction | null, agencyPoints: string[]) => string | null;
+}
+
+const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
+  FEE_QUOTE: {
+    icon: <DollarSign className="h-5 w-5" />,
+    color: "text-amber-700",
+    bgColor: "bg-amber-50",
+    borderColor: "border-amber-300",
+    title: "Fee Quote",
+    getQuestion: (r) => {
+      const deposit = r.fee_quote?.deposit_amount;
+      const total = r.cost_amount;
+      if (deposit && total) {
+        return `Do we proceed with $${deposit.toLocaleString()} deposit toward ~$${total.toLocaleString()} total?`;
+      }
+      if (total) {
+        return `Approve $${total.toLocaleString()} fee to proceed?`;
+      }
+      return "Approve the quoted fee to proceed?";
+    },
+    primaryAction: {
+      label: "Proceed",
+      subtext: (r, cap) => {
+        const parts: string[] = [];
+        if (r.fee_quote?.deposit_amount) {
+          parts.push(`Pay $${r.fee_quote.deposit_amount} deposit`);
+        }
+        if (cap) {
+          parts.push(`cap at $${cap}`);
+        }
+        return parts.length > 0 ? parts.join("; ") : null;
+      },
+    },
+    secondaryAction: {
+      label: "Negotiate",
+      recommended: false, // Will be set dynamically
+    },
+    overflowActions: ["Request itemized breakdown", "Set cost cap", "Withdraw"],
+    getRecommendation: (r, _, points) => {
+      const hasUnavailable = points.some(p =>
+        p.includes("not subject") || p.includes("not disclosable") || p.includes("not available") || p.includes("not held")
+      );
+      const highFee = r.cost_amount && r.cost_amount > 100;
+
+      if (hasUnavailable && highFee) {
+        return "Consider negotiating: Fee is significant and some records unavailable. Request itemization or narrow scope to exclude unavailable items.";
+      }
+      if (hasUnavailable) {
+        return "Some records unavailable. Consider narrowing scope before proceeding.";
+      }
+      if (highFee) {
+        return "Fee above average. Consider requesting itemization.";
+      }
+      return null;
+    },
+  },
+  DENIAL: {
+    icon: <Ban className="h-5 w-5" />,
+    color: "text-red-700",
+    bgColor: "bg-red-50",
+    borderColor: "border-red-300",
+    title: "Denial",
+    getQuestion: () => "How should we respond to the denial?",
+    primaryAction: {
+      label: "Send Appeal",
+    },
+    secondaryAction: {
+      label: "Narrow & Retry",
+    },
+    overflowActions: ["Acknowledge & close", "Withdraw"],
+    getRecommendation: () => "Review denial reason. If exemption cited, consider narrowing scope to non-exempt records.",
+  },
+  SCOPE: {
+    icon: <FileQuestion className="h-5 w-5" />,
+    color: "text-orange-700",
+    bgColor: "bg-orange-50",
+    borderColor: "border-orange-300",
+    title: "Scope Issue",
+    getQuestion: () => "Agency needs scope clarification. How should we respond?",
+    primaryAction: {
+      label: "Narrow Scope",
+    },
+    secondaryAction: {
+      label: "Clarify Request",
+    },
+    overflowActions: ["Withdraw"],
+  },
+  ID_REQUIRED: {
+    icon: <UserCheck className="h-5 w-5" />,
+    color: "text-blue-700",
+    bgColor: "bg-blue-50",
+    borderColor: "border-blue-300",
+    title: "ID Required",
+    getQuestion: () => "Agency requires identity verification to proceed.",
+    primaryAction: {
+      label: "Provide ID",
+    },
+    secondaryAction: {
+      label: "Contest Requirement",
+    },
+    overflowActions: ["Withdraw"],
+  },
+  SENSITIVE: {
+    icon: <AlertTriangle className="h-5 w-5" />,
+    color: "text-purple-700",
+    bgColor: "bg-purple-50",
+    borderColor: "border-purple-300",
+    title: "Sensitive Content",
+    getQuestion: () => "Request flagged for sensitive content review.",
+    primaryAction: {
+      label: "Approve & Continue",
+    },
+    secondaryAction: {
+      label: "Modify Request",
+    },
+    overflowActions: ["Withdraw"],
+  },
+  CLOSE_ACTION: {
+    icon: <CheckCircle className="h-5 w-5" />,
+    color: "text-green-700",
+    bgColor: "bg-green-50",
+    borderColor: "border-green-300",
+    title: "Ready to Close",
+    getQuestion: () => "Request appears complete. Confirm closure?",
+    primaryAction: {
+      label: "Confirm Complete",
+    },
+    secondaryAction: {
+      label: "Request More Records",
+    },
+    overflowActions: [],
+  },
 };
 
 export function DecisionPanel({
-  pauseReason,
-  feeQuote,
-  agencyRules,
-  onDecision,
+  request,
+  nextAction,
+  agency,
+  lastInboundMessage,
+  onProceed,
+  onNegotiate,
+  onWithdraw,
+  onNarrowScope,
+  onAppeal,
+  onOpenPortal,
   isLoading,
 }: DecisionPanelProps) {
-  const [showAlternatives, setShowAlternatives] = useState(false);
-  const [showCostCap, setShowCostCap] = useState(false);
   const [costCap, setCostCap] = useState<string>("");
+  const [showCostCap, setShowCostCap] = useState(false);
 
-  const Icon = GATE_ICONS[pauseReason];
-  const recommendation = RECOMMENDATIONS[pauseReason];
-  const alternatives = ALTERNATIVES[pauseReason];
+  // If not paused, show minimal status
+  if (!request.requires_human || !request.pause_reason) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2 text-green-700">
+            <CheckCircle className="h-4 w-4" />
+            No Decision Required
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Autopilot is handling this request.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
-  const showFeeDetails = pauseReason === "FEE_QUOTE" && feeQuote;
+  const config = GATE_CONFIGS[request.pause_reason];
+  if (!config) {
+    return null;
+  }
+
+  const agencyPoints = extractAgencyPoints(request, lastInboundMessage);
+  const recommendation = config.getRecommendation?.(request, nextAction, agencyPoints);
+  const shouldRecommendNegotiate = recommendation?.toLowerCase().includes("negotiat") ||
+                                    recommendation?.toLowerCase().includes("narrow");
+
+  const handlePrimaryClick = async () => {
+    if (request.pause_reason === "DENIAL") {
+      onAppeal();
+    } else if (request.pause_reason === "SCOPE") {
+      onNarrowScope();
+    } else {
+      await onProceed(costCap ? parseFloat(costCap) : undefined);
+    }
+  };
+
+  const handleSecondaryClick = () => {
+    if (request.pause_reason === "DENIAL") {
+      onNarrowScope();
+    } else {
+      onNegotiate();
+    }
+  };
 
   return (
-    <Card className="border-yellow-200 bg-yellow-50/50 dark:bg-yellow-950/20 dark:border-yellow-800">
+    <Card className={cn("border-2", config.borderColor, config.bgColor)}>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Icon className="h-4 w-4 text-yellow-600" />
-          {PAUSE_REASON_LABELS[pauseReason]}
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className={cn("text-base flex items-center gap-2", config.color)}>
+            {config.icon}
+            Decision Required
+          </CardTitle>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {/* Fee details - compact */}
-        {showFeeDetails && (
-          <div className="bg-white dark:bg-gray-900 rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Fee</span>
-              <span className="font-bold text-lg">{formatCurrency(feeQuote.amount)}</span>
-            </div>
-            {feeQuote.deposit_amount && (
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Deposit</span>
-                <span>{formatCurrency(feeQuote.deposit_amount)}</span>
+      <CardContent className="space-y-4">
+        {/* Gate type + amount badge */}
+        <Badge
+          variant="outline"
+          className={cn("font-semibold text-sm px-3 py-1", config.color, config.borderColor)}
+        >
+          {config.title}
+          {request.pause_reason === "FEE_QUOTE" && request.cost_amount && (
+            <> — ${request.cost_amount.toLocaleString()}
+              {request.fee_quote?.deposit_amount && (
+                <span className="font-normal opacity-80">
+                  {" "}(${request.fee_quote.deposit_amount} deposit)
+                </span>
+              )}
+            </>
+          )}
+        </Badge>
+
+        {/* The explicit decision question */}
+        <p className="text-sm font-semibold">
+          {config.getQuestion(request)}
+        </p>
+
+        {/* Agency says section */}
+        {agencyPoints.length > 0 && (
+          <div className="bg-white/60 rounded-md p-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Agency says:
+            </p>
+            <ul className="text-sm space-y-1">
+              {agencyPoints.map((point, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span className="text-muted-foreground mt-0.5">•</span>
+                  <span>{point}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Recommendation */}
+        {recommendation && (
+          <div className="bg-white/80 rounded-md p-3 border border-amber-200">
+            <div className="flex items-start gap-2">
+              <Info className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-amber-700 mb-1">Recommendation</p>
+                <p className="text-sm">{recommendation}</p>
               </div>
+            </div>
+          </div>
+        )}
+
+        <Separator className="bg-white/50" />
+
+        {/* Cost cap for fee quotes */}
+        {request.pause_reason === "FEE_QUOTE" && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Cost cap:</span>
+            {showCostCap || costCap ? (
+              <div className="flex items-center gap-1">
+                <span>$</span>
+                <Input
+                  type="number"
+                  value={costCap}
+                  onChange={(e) => setCostCap(e.target.value)}
+                  className="w-24 h-7 bg-white"
+                  placeholder="Max total"
+                  autoFocus={showCostCap && !costCap}
+                />
+              </div>
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs px-2"
+                onClick={() => setShowCostCap(true)}
+              >
+                Set maximum...
+              </Button>
             )}
           </div>
         )}
 
-        {/* Single recommendation line */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-[10px]">Recommended</Badge>
-            <span className="text-sm font-medium">{recommendation.label}</span>
-          </div>
-          <button
-            onClick={() => setShowAlternatives(!showAlternatives)}
-            className="text-xs text-primary hover:underline"
-          >
-            {showAlternatives ? "Hide options" : "Change..."}
-          </button>
+        {/* Action buttons - stacked for prominence */}
+        <div className="space-y-2 pt-2">
+          {/* Show Negotiate first if recommended */}
+          {shouldRecommendNegotiate && config.secondaryAction && (
+            <>
+              <Button
+                onClick={handleSecondaryClick}
+                variant="default"
+                className="w-full justify-between"
+                disabled={isLoading}
+              >
+                <span className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4" />
+                  {config.secondaryAction.label}
+                  <Badge variant="secondary" className="ml-1 text-[10px]">Recommended</Badge>
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+              <Button
+                onClick={handlePrimaryClick}
+                variant="outline"
+                className="w-full justify-between bg-white"
+                disabled={isLoading}
+              >
+                <span className="flex items-center gap-2">
+                  <CheckCircle className="h-4 w-4" />
+                  {config.primaryAction.label}
+                  {config.primaryAction.subtext?.(request, costCap) && (
+                    <span className="text-xs text-muted-foreground ml-1">
+                      ({config.primaryAction.subtext(request, costCap)})
+                    </span>
+                  )}
+                </span>
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+
+          {/* Normal order: Primary first */}
+          {!shouldRecommendNegotiate && (
+            <>
+              <Button
+                onClick={handlePrimaryClick}
+                variant="default"
+                className="w-full justify-between"
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4" />
+                    {config.primaryAction.label}
+                    {config.primaryAction.subtext?.(request, costCap) && (
+                      <span className="text-xs opacity-80">
+                        ({config.primaryAction.subtext(request, costCap)})
+                      </span>
+                    )}
+                  </span>
+                )}
+                <ArrowRight className="h-4 w-4" />
+              </Button>
+
+              {config.secondaryAction && (
+                <Button
+                  onClick={handleSecondaryClick}
+                  variant="outline"
+                  className="w-full justify-between bg-white"
+                  disabled={isLoading}
+                >
+                  <span className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    {config.secondaryAction.label}
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              )}
+            </>
+          )}
+
+          {/* Overflow menu */}
+          {config.overflowActions.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="w-full">
+                  <MoreHorizontal className="h-4 w-4 mr-2" />
+                  More options
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="center" className="w-52">
+                {config.overflowActions.map((action) => (
+                  <DropdownMenuItem
+                    key={action}
+                    onClick={() => {
+                      if (action === "Withdraw" || action === "Acknowledge & close") {
+                        onWithdraw();
+                      } else if (action === "Set cost cap") {
+                        setShowCostCap(true);
+                      } else if (action === "Request itemized breakdown") {
+                        onNegotiate();
+                      }
+                    }}
+                  >
+                    {action}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
 
-        {/* Alternatives (collapsed by default) */}
-        {showAlternatives && (
-          <div className="space-y-1 pl-2 border-l-2 border-muted">
-            {alternatives.map((alt) => (
-              <button
-                key={alt.id}
-                onClick={() => onDecision(alt.id)}
-                disabled={isLoading}
-                className="block text-sm text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
-              >
-                {alt.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Cost cap - collapsed */}
-        {pauseReason === "FEE_QUOTE" && (
-          <Collapsible open={showCostCap} onOpenChange={setShowCostCap}>
-            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              {showCostCap ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              Optional: set max cost...
-            </CollapsibleTrigger>
-            <CollapsibleContent className="pt-2">
-              <div className="flex gap-2">
-                <Input
-                  type="number"
-                  placeholder="$"
-                  value={costCap}
-                  onChange={(e) => setCostCap(e.target.value)}
-                  className="w-20 h-7 text-sm"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  onClick={() => onDecision("set_cap", { cap: parseFloat(costCap) })}
-                  disabled={!costCap || isLoading}
-                >
-                  Apply
-                </Button>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        )}
-
-        {/* Why paused - subtle */}
-        {agencyRules && agencyRules.fee_auto_approve_threshold !== null && pauseReason === "FEE_QUOTE" && (
-          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-            <Info className="h-2.5 w-2.5" />
-            Fee exceeds ${agencyRules.fee_auto_approve_threshold} auto-approve threshold
-          </p>
+        {/* Link to draft if available */}
+        {nextAction?.draft_content && (
+          <button
+            onClick={() => {
+              document.querySelector("[data-draft-preview]")?.scrollIntoView({ behavior: "smooth" });
+            }}
+            className="text-xs text-primary hover:underline block"
+          >
+            View prepared response draft →
+          </button>
         )}
       </CardContent>
     </Card>
