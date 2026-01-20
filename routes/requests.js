@@ -68,11 +68,18 @@ function buildDueInfo(caseData) {
 
 /**
  * Parse scope items from JSONB or derive from requested_records
+ * Normalizes format to use 'name' (frontend expects 'name', some backend uses 'item')
  */
 function parseScopeItems(caseData) {
     // Use JSONB if available
     if (caseData.scope_items_jsonb && Array.isArray(caseData.scope_items_jsonb) && caseData.scope_items_jsonb.length > 0) {
-        return caseData.scope_items_jsonb;
+        // Normalize: some sources use 'item', frontend expects 'name'
+        return caseData.scope_items_jsonb.map(si => ({
+            name: si.name || si.item || 'Unknown Item',
+            status: si.status || 'REQUESTED',
+            reason: si.reason || null,
+            confidence: si.confidence
+        }));
     }
 
     // Derive from requested_records array

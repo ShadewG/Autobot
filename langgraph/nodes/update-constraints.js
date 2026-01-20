@@ -15,18 +15,34 @@ const logger = require('../../services/logger');
 
 /**
  * Merge scope updates from analysis with existing scope items
+ * Handles both 'name' and 'item' formats for compatibility
  */
 function mergeScopeUpdates(existing, updates) {
-  const byItem = new Map(existing.map(s => [s.item.toLowerCase(), s]));
+  // Normalize existing: use 'name' as canonical key, but handle 'item' too
+  const byItem = new Map(existing.map(s => {
+    const itemName = (s.name || s.item || '').toLowerCase();
+    return [itemName, { ...s, name: s.name || s.item }];
+  }));
 
   for (const update of updates) {
-    const key = update.item.toLowerCase();
-    if (byItem.has(key)) {
-      // Update existing
-      byItem.set(key, { ...byItem.get(key), ...update });
+    // Handle both 'name' and 'item' in updates
+    const itemName = (update.name || update.item || '').toLowerCase();
+    if (!itemName) continue;
+
+    if (byItem.has(itemName)) {
+      // Update existing - merge with normalized name
+      const existing = byItem.get(itemName);
+      byItem.set(itemName, {
+        ...existing,
+        ...update,
+        name: existing.name || update.name || update.item
+      });
     } else {
-      // Add new
-      byItem.set(key, update);
+      // Add new with normalized name
+      byItem.set(itemName, {
+        ...update,
+        name: update.name || update.item
+      });
     }
   }
 
