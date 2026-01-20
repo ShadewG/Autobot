@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import Link from "next/link";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { NavLinks } from "@/components/nav-links";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -23,23 +25,10 @@ export default function RootLayout({
             <nav className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
               <div className="container flex h-14 items-center">
                 <div className="mr-4 flex">
-                  <a href="/requests" className="mr-6 flex items-center space-x-2">
+                  <Link href="/requests" className="mr-6 flex items-center space-x-2">
                     <span className="font-bold">FOIA Dashboard</span>
-                  </a>
-                  <nav className="flex items-center space-x-6 text-sm font-medium">
-                    <a
-                      href="/requests"
-                      className="transition-colors hover:text-foreground/80 text-foreground"
-                    >
-                      Requests
-                    </a>
-                    <a
-                      href="/agencies"
-                      className="transition-colors hover:text-foreground/80 text-muted-foreground"
-                    >
-                      Agencies
-                    </a>
-                  </nav>
+                  </Link>
+                  <NavLinks />
                 </div>
               </div>
             </nav>

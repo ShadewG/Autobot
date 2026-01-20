@@ -98,7 +98,7 @@ interface TimelineEventItemProps {
   mergedCount?: number;
 }
 
-function TimelineEventItem({ event, collapsed, mergedCount }: TimelineEventItemProps) {
+const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, mergedCount }: TimelineEventItemProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -249,7 +249,7 @@ function TimelineEventItem({ event, collapsed, mergedCount }: TimelineEventItemP
       </div>
     </div>
   );
-}
+});
 
 interface TimelineProps {
   events: TimelineEvent[];
@@ -300,7 +300,7 @@ export function Timeline({ events }: TimelineProps) {
     });
   }, [events, activeFilters, showAll]);
 
-  const toggleFilter = (filter: CategoryFilter) => {
+  const toggleFilter = useCallback((filter: CategoryFilter) => {
     setActiveFilters((prev) => {
       const next = new Set(prev);
       if (next.has(filter)) {
@@ -310,7 +310,7 @@ export function Timeline({ events }: TimelineProps) {
       }
       return next;
     });
-  };
+  }, []);
 
   if (events.length === 0) {
     return (

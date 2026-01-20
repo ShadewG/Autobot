@@ -11,6 +11,10 @@
     "postinstall": "playwright install chromium --with-deps || echo 'Playwright install failed, continuing...'",
     "test": "mocha --recursive tests/",
     "test:chaos": "mocha tests/chaos/reliability.test.js --timeout 30000",
+    "test:golden": "mocha tests/golden-cases/golden.test.js --timeout 60000",
+    "test:golden:update": "mocha tests/golden-cases/golden.test.js --timeout 60000 -- --update-snapshots",
+    "test:load": "node tests/load/staging-load-test.js",
+    "verify:migrations": "node scripts/verify-migrations.js",
     "dashboard": "cd dashboard && npm run dev",
     "dashboard:build": "cd dashboard && npm run build",
     "dashboard:install": "cd dashboard && npm install"
