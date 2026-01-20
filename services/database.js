@@ -1076,6 +1076,22 @@ class DatabaseService {
     }
 
     /**
+     * Get the latest pending proposal for a case.
+     * Used to recover action_type when state is lost during resume.
+     */
+    async getLatestPendingProposal(caseId) {
+        const result = await this.query(
+            `SELECT * FROM proposals
+             WHERE case_id = $1
+             AND status IN ('PENDING_APPROVAL', 'DRAFT')
+             ORDER BY created_at DESC
+             LIMIT 1`,
+            [caseId]
+        );
+        return result.rows[0];
+    }
+
+    /**
      * Update a proposal.
      */
     async updateProposal(proposalId, updates) {

@@ -34,16 +34,35 @@ function generateProposalKey(state) {
  */
 async function gateOrExecuteNode(state) {
   const {
-    caseId, proposalActionType, canAutoExecute, requiresHuman,
+    caseId, canAutoExecute, requiresHuman,
     pauseReason, draftSubject, draftBodyText, draftBodyHtml,
     proposalReasoning, proposalConfidence, riskFlags, warnings,
     gateOptions, adjustmentCount
   } = state;
 
+  // Get proposalActionType with fallback - it may be lost during resume
+  let proposalActionType = state.proposalActionType;
+
   const logs = [];
 
+  // If proposalActionType is missing, try to recover from latest pending proposal for this case
+  if (!proposalActionType) {
+    const pendingProposal = await db.getLatestPendingProposal(caseId);
+    if (pendingProposal?.action_type) {
+      proposalActionType = pendingProposal.action_type;
+      logs.push(`Recovered action_type from pending proposal: ${proposalActionType}`);
+    } else {
+      // Last resort - use a default
+      logs.push(`WARNING: No proposalActionType in state and no pending proposal, defaulting to NONE`);
+      proposalActionType = 'NONE';
+    }
+  }
+
   // P0 FIX #2: Generate deterministic key for idempotent upsert
-  const proposalKey = generateProposalKey(state);
+  const proposalKey = generateProposalKey({
+    ...state,
+    proposalActionType  // Use the recovered value
+  });
 
   // P0 FIX #2: IDEMPOTENT proposal creation (upsert, not insert)
   // This is SAFE to re-run on resume because of ON CONFLICT
