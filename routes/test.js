@@ -4744,7 +4744,7 @@ async function createInboundMessage(caseId, threadId, config) {
     });
 
     // Update email thread with latest message info
-    await db.updateEmailThread(threadId, {
+    await db.updateThread(threadId, {
         last_message_at: new Date()
     });
 
