@@ -202,7 +202,15 @@ function RequestDetailContent() {
   }
 
   const { request, timeline_events, thread_messages, agency_summary } = data;
-  const isPaused = request.requires_human && request.pause_reason;
+
+  // Robust detection of whether request is paused (same pattern as DecisionPanel)
+  const isPaused =
+    Boolean(request.pause_reason) ||
+    request.requires_human ||
+    request.status?.toUpperCase() === "PAUSED" ||
+    request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
+    request.status?.toLowerCase().includes("needs_human");
+
   const gateDisplay = request.pause_reason ? GATE_DISPLAY[request.pause_reason] : null;
 
   // Build pause context string
@@ -321,10 +329,10 @@ function RequestDetailContent() {
         <TabsContent value="overview" className="mt-4">
           {isPaused ? (
             /* Paused Layout: Conversation | Timeline | Decision Panel */
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
               {/* Conversation - takes most space, user needs to read this first */}
-              <div className="lg:col-span-5">
-                <Card>
+              <div className="lg:col-span-5 min-w-0">
+                <Card className="h-full">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base flex items-center gap-2">
                       <Mail className="h-4 w-4" />
@@ -333,14 +341,15 @@ function RequestDetailContent() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <Thread messages={thread_messages} />
+                    <Separator />
                     <Composer onSend={handleSendMessage} />
                   </CardContent>
                 </Card>
               </div>
 
               {/* Timeline - middle */}
-              <div className="lg:col-span-3">
-                <Card>
+              <div className="lg:col-span-3 min-w-0">
+                <Card className="h-full">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">Timeline</CardTitle>
                   </CardHeader>
@@ -351,8 +360,8 @@ function RequestDetailContent() {
               </div>
 
               {/* Decision Panel - sticky on right */}
-              <div className="lg:col-span-4">
-                <div className="sticky top-48">
+              <div className="lg:col-span-4 min-w-0">
+                <div className="sticky top-48 space-y-4">
                   <DecisionPanel
                     request={request}
                     nextAction={nextAction}
@@ -366,26 +375,19 @@ function RequestDetailContent() {
                     isLoading={isApproving}
                   />
 
-                  {/* Draft preview below decision panel */}
-                  {nextAction?.draft_content && (
-                    <Card className="mt-4" data-draft-preview>
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Prepared Response</CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="bg-muted rounded p-3 text-sm max-h-48 overflow-auto whitespace-pre-wrap">
-                          {nextAction.draft_content}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
+                  {/* Copilot info below decision panel for context */}
+                  <CopilotPanel
+                    request={request}
+                    nextAction={nextAction}
+                    agency={agency_summary}
+                  />
                 </div>
               </div>
             </div>
           ) : (
             /* Not Paused Layout: Timeline | Conversation | Copilot */
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <Card>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+              <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Timeline</CardTitle>
                 </CardHeader>
@@ -394,17 +396,18 @@ function RequestDetailContent() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Conversation</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Thread messages={thread_messages} />
+                  <Separator />
                   <Composer onSend={handleSendMessage} />
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base">Copilot</CardTitle>
                 </CardHeader>

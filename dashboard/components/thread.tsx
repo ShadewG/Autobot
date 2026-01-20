@@ -22,34 +22,37 @@ const MessageBubble = memo(function MessageBubble({ message }: MessageBubbleProp
   const isOutbound = message.direction === "OUTBOUND";
 
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-1 w-full max-w-[85%] min-w-0",
-        isOutbound ? "ml-auto items-end" : "mr-auto items-start"
-      )}
-    >
-      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap min-w-0">
+    <div className="w-full">
+      {/* Header - always full width */}
+      <div className={cn(
+        "flex items-center gap-1.5 text-xs text-muted-foreground mb-1",
+        isOutbound ? "justify-end" : "justify-start"
+      )}>
         {channelIcons[message.channel]}
         <span>{isOutbound ? "To:" : "From:"}</span>
-        <span className="font-medium truncate max-w-[150px]">
+        <span className="font-medium truncate max-w-[200px]">
           {isOutbound ? message.to_email : message.from_email}
         </span>
         <span>•</span>
         <span className="whitespace-nowrap">{formatDateTime(message.sent_at)}</span>
       </div>
+
+      {/* Message bubble - full width, colored border to indicate direction */}
       <div
         className={cn(
-          "rounded-lg p-3 w-full overflow-hidden",
+          "rounded-lg p-3 w-full border-l-4",
           isOutbound
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted"
+            ? "bg-primary/5 border-l-primary"
+            : "bg-muted border-l-amber-500"
         )}
       >
-        <p className="text-xs font-medium mb-1 break-words">{message.subject}</p>
-        <p className="text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">{message.body}</p>
+        <p className="text-xs font-semibold mb-1.5">{message.subject}</p>
+        <p className="text-sm whitespace-pre-wrap break-words">{message.body}</p>
       </div>
+
+      {/* Attachments */}
       {message.attachments.length > 0 && (
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap mt-1.5">
           {message.attachments.map((att, i) => (
             <Badge key={i} variant="outline" className="text-xs">
               {att.filename}
@@ -75,8 +78,8 @@ export function Thread({ messages }: ThreadProps) {
   }
 
   return (
-    <ScrollArea className="h-[300px] w-full">
-      <div className="space-y-4 pr-4 overflow-hidden">
+    <ScrollArea className="h-[400px] w-full">
+      <div className="space-y-4 pr-2 w-full">
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
