@@ -58,6 +58,17 @@ async function gateOrExecuteNode(state) {
     }
   }
 
+  // DEFENSIVE: NONE actions should never create proposals
+  // The graph routing should send NONE to "end", but guard here just in case
+  if (proposalActionType === 'NONE') {
+    logs.push('NONE action type - skipping proposal creation, completing graph');
+    return {
+      isComplete: true,
+      logs,
+      proposalActionType: 'NONE'
+    };
+  }
+
   // P0 FIX #2: Generate deterministic key for idempotent upsert
   const proposalKey = generateProposalKey({
     ...state,

@@ -171,6 +171,12 @@ const FOIACaseStateAnnotation = Annotation.Root({
   errors: Annotation({
     reducer: (prev, v) => v ? [...prev, ...v] : prev,
     default: () => []
+  }),
+
+  // === Testing/Deterministic Mode ===
+  llmStubs: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // { classify: {...}, draft: {...} } - stubbed LLM responses for E2E testing
   })
 });
 
@@ -187,7 +193,8 @@ function createInitialState(caseId, triggerType, options = {}) {
     adjustmentCount: 0,
     isComplete: false,
     logs: [`Graph started: trigger=${triggerType}, caseId=${caseId}`],
-    errors: []
+    errors: [],
+    llmStubs: options.llmStubs || null  // For deterministic E2E testing
   };
 }
 

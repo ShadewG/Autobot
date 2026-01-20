@@ -13,7 +13,7 @@ const logger = require('../../services/logger');
  * Analyze inbound message and classify intent
  */
 async function classifyInboundNode(state) {
-  const { caseId, latestInboundMessageId, triggerType } = state;
+  const { caseId, latestInboundMessageId, triggerType, llmStubs } = state;
 
   // Skip classification for time-based triggers (no new message)
   if (triggerType === 'time_based_followup') {
@@ -43,6 +43,40 @@ async function classifyInboundNode(state) {
         errors: [`Message ${latestInboundMessageId} not found`],
         classification: 'UNKNOWN',
         classificationConfidence: 0
+      };
+    }
+
+    // DETERMINISTIC MODE: Use stubbed classification if provided
+    if (llmStubs?.classify) {
+      const stub = llmStubs.classify;
+      logger.info('Using stubbed classification for E2E testing', { caseId, stub });
+
+      // Save stubbed analysis to DB (for consistency)
+      await db.saveResponseAnalysis({
+        messageId: latestInboundMessageId,
+        caseId,
+        intent: stub.classification?.toLowerCase().replace('_', '_') || 'unknown',
+        confidenceScore: stub.confidence || 0.95,
+        sentiment: stub.sentiment || 'neutral',
+        keyPoints: stub.key_points || [],
+        extractedDeadline: stub.deadline || null,
+        extractedFeeAmount: stub.fee_amount || null,
+        requiresAction: true,
+        suggestedAction: stub.suggested_action || null,
+        fullAnalysisJson: { stubbed: true, ...stub }
+      });
+
+      return {
+        classification: stub.classification,
+        classificationConfidence: stub.confidence || 0.95,
+        sentiment: stub.sentiment || 'neutral',
+        extractedFeeAmount: stub.fee_amount || null,
+        extractedDeadline: stub.deadline || null,
+        logs: [
+          `[STUBBED] Classified as ${stub.classification} (confidence: ${stub.confidence || 0.95}), ` +
+          `sentiment: ${stub.sentiment || 'neutral'}, ` +
+          `fee: ${stub.fee_amount || 'none'}`
+        ]
       };
     }
 

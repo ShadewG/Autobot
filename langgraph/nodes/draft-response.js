@@ -15,12 +15,27 @@ const logger = require('../../services/logger');
 async function draftResponseNode(state) {
   const {
     caseId, proposalActionType, constraints, scopeItems,
-    extractedFeeAmount, adjustmentInstruction: stateAdjustmentInstruction
+    extractedFeeAmount, adjustmentInstruction: stateAdjustmentInstruction,
+    llmStubs
   } = state;
 
   const logs = [];
 
   try {
+    // DETERMINISTIC MODE: Use stubbed draft if provided
+    if (llmStubs?.draft) {
+      const stub = llmStubs.draft;
+      logger.info('Using stubbed draft for E2E testing', { caseId, stub });
+      logs.push(`[STUBBED] Draft created from test stub`);
+
+      return {
+        draftSubject: stub.subject || `[Stubbed] Response for ${proposalActionType}`,
+        draftBodyText: stub.body || stub.body_text || 'Stubbed response body',
+        draftBodyHtml: stub.body_html || null,
+        logs
+      };
+    }
+
     const caseData = await db.getCaseById(caseId);
     const messages = await db.getMessagesByCaseId(caseId);
     const latestInbound = messages.filter(m => m.direction === 'inbound').pop();

@@ -4518,14 +4518,18 @@ async function executePhase(run) {
     try {
         switch (phase) {
             case 'setup': {
-                // Apply case setup
-                if (scenario.case_setup) {
-                    await db.updateCase(run.case_id, scenario.case_setup);
-                    run.logs.push(`Applied case setup: ${JSON.stringify(scenario.case_setup)}`);
-                }
+                // Generate thread_id for LangGraph
+                const langgraphThreadId = `case:${run.case_id}`;
+                run.artifacts.thread_id = langgraphThreadId;
 
-                // Generate thread_id
-                run.artifacts.thread_id = `case:${run.case_id}`;
+                // Apply case setup AND set langgraph_thread_id in the same update
+                const caseUpdate = {
+                    ...(scenario.case_setup || {}),
+                    langgraph_thread_id: langgraphThreadId
+                };
+                await db.updateCase(run.case_id, caseUpdate);
+                run.logs.push(`Applied case setup: ${JSON.stringify(caseUpdate)}`);
+
                 await captureStateSnapshot(run, 'after_setup');
                 break;
             }
@@ -4562,10 +4566,17 @@ async function executePhase(run) {
                 // Invoke the graph (via worker or direct)
                 const triggerType = scenario.inbound ? 'agency_reply' : 'time_based_followup';
 
+                // Pass llm_stubs for deterministic mode
+                const invokeOptions = {
+                    e2e_run_id: run.id,
+                    llmStubs: run.deterministic ? scenario.llm_stubs : null
+                };
+
                 if (run.use_worker) {
                     const job = await enqueueAgentJob(run.case_id, triggerType, {
                         e2e_run_id: run.id,
-                        deterministic: run.deterministic
+                        deterministic: run.deterministic,
+                        llm_stubs: run.deterministic ? scenario.llm_stubs : null
                     });
                     run.artifacts.job_ids.push(job.id);
                     run.logs.push(`Enqueued agent job: ${job.id}`);
@@ -4577,7 +4588,7 @@ async function executePhase(run) {
                     const result = await langgraph.invokeFOIACaseGraph(
                         run.case_id,
                         triggerType,
-                        { e2e_run_id: run.id }
+                        invokeOptions
                     );
                     run.logs.push(`Direct invoke result: ${result.status}`);
 
@@ -4679,7 +4690,7 @@ async function waitForJob(job, timeoutMs = 30000) {
  */
 async function ensureEmailThread(caseId) {
     const caseData = await db.getCaseById(caseId);
-    let thread = await db.getEmailThreadByCaseId(caseId);
+    let thread = await db.getThreadByCaseId(caseId);
 
     if (!thread) {
         thread = await db.createEmailThread({
