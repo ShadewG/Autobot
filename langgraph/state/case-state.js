@@ -130,6 +130,10 @@ const FOIACaseStateAnnotation = Annotation.Root({
     reducer: (_, v) => v,
     default: () => null  // { action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string }
   }),
+  adjustmentInstruction: Annotation({
+    reducer: (_, v) => v,
+    default: () => null  // The human's instruction for ADJUST actions
+  }),
   adjustmentCount: Annotation({
     reducer: (_, v) => v,
     default: () => 0

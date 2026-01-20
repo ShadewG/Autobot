@@ -66,6 +66,8 @@ async function decideNextActionNode(state) {
         case 'ADJUST':
           reasoning.push(`Human requested adjustment: ${humanDecision.instruction}`);
           return {
+            proposalActionType: state.proposalActionType,  // PRESERVE action type
+            adjustmentInstruction: humanDecision.instruction,  // Pass instruction to draft node
             proposalReasoning: reasoning,
             logs: [...logs, 'Re-drafting with adjustment instruction'],
             nextNode: 'draft_response'

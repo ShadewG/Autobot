@@ -1024,6 +1024,11 @@ class DatabaseService {
             RETURNING *
         `;
 
+        // Serialize JSONB fields properly
+        const reasoningJson = proposalData.reasoning
+            ? JSON.stringify(proposalData.reasoning)
+            : null;
+
         const values = [
             proposalData.proposalKey,
             proposalData.caseId,
@@ -1032,7 +1037,7 @@ class DatabaseService {
             proposalData.draftSubject || null,
             proposalData.draftBodyText || null,
             proposalData.draftBodyHtml || null,
-            proposalData.reasoning || null,
+            reasoningJson,
             proposalData.confidence || 0.8,
             proposalData.riskFlags || [],
             proposalData.warnings || [],
