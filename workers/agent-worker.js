@@ -49,7 +49,15 @@ const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL) || 30000; //
  * processes a case at a time. Creates agent_run records for observability.
  */
 async function processInvokeJob(job) {
-  const { caseId, triggerType, messageId, scheduledFollowupId, replayRunId, originalRunId } = job.data;
+  const {
+    caseId, triggerType,
+    // Support both camelCase and snake_case for E2E compatibility
+    messageId, message_id,
+    scheduledFollowupId, scheduled_followup_id,
+    replayRunId, originalRunId,
+    llmStubs, llm_stubs,
+    deterministic
+  } = job.data;
   const log = logger.forAgent ? logger.forAgent(caseId, triggerType) : logger;
 
   log.info('Processing invoke-graph job', {
@@ -76,9 +84,22 @@ async function processInvokeJob(job) {
 
       try {
         // Build options based on trigger type
+        // Support both camelCase and snake_case for E2E compatibility
         const options = { runId };
-        if (messageId) options.messageId = messageId;
-        if (scheduledFollowupId) options.scheduledFollowupId = scheduledFollowupId;
+        const actualMessageId = messageId || message_id;
+        const actualFollowupId = scheduledFollowupId || scheduled_followup_id;
+        const actualLlmStubs = llmStubs || llm_stubs;
+
+        if (actualMessageId) options.messageId = actualMessageId;
+        if (actualFollowupId) options.scheduledFollowupId = actualFollowupId;
+        if (actualLlmStubs) options.llmStubs = actualLlmStubs;  // Pass through for E2E testing
+
+        log.info('Invoking graph with options', {
+          caseId,
+          triggerType,
+          messageId: actualMessageId,
+          hasLlmStubs: !!actualLlmStubs
+        });
 
         // Run the graph
         const result = await invokeFOIACaseGraph(caseId, triggerType, options);
