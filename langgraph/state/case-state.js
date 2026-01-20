@@ -35,23 +35,23 @@ const FOIACaseStateAnnotation = Annotation.Root({
 
   // === Analysis Results (from classify_inbound) ===
   classification: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null  // FEE_QUOTE | DENIAL | ACKNOWLEDGMENT | RECORDS_READY | CLARIFICATION_REQUEST | NO_RESPONSE
   }),
   classificationConfidence: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => 0
   }),
   sentiment: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => 'neutral'  // positive | neutral | negative | hostile
   }),
   extractedFeeAmount: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
   extractedDeadline: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
 
@@ -67,27 +67,27 @@ const FOIACaseStateAnnotation = Annotation.Root({
 
   // === Current Proposal ===
   proposalId: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
   proposalKey: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
   proposalActionType: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null  // SEND_FOLLOWUP | SEND_REBUTTAL | SEND_CLARIFICATION | APPROVE_FEE | ESCALATE | NONE
   }),
   draftSubject: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
   draftBodyText: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
   draftBodyHtml: Annotation({
-    reducer: (_, v) => v,
+    reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
   proposalReasoning: Annotation({
