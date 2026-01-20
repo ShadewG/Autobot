@@ -8,11 +8,19 @@
  * - Use execution_key to prevent duplicate sends
  * - Store email_job_id to track what was queued
  *
+ * DRY_RUN MODE: When enabled, no actual emails are sent
+ * - Still creates proposals and agent_runs for inspection
+ * - Returns what WOULD have been done
+ *
  * Handles: send_email, schedule_followup, update_status
  */
 
 const db = require('../../services/database');
 const logger = require('../../services/logger');
+
+// DRY_RUN mode - prevents actual email sending in testing
+// Default ON unless explicitly set to 'false'
+const DRY_RUN = process.env.LANGGRAPH_DRY_RUN !== 'false';
 
 // Lazy load to avoid circular dependencies
 let emailQueueModule = null;
@@ -112,6 +120,35 @@ async function executeActionNode(state) {
       const delayMinutes = Math.floor(Math.random() * 480) + 120;
       const delayMs = delayMinutes * 60 * 1000;
 
+      // DRY_RUN MODE: Don't actually queue email
+      if (DRY_RUN) {
+        executionResult = {
+          action: 'dry_run_blocked',
+          dryRun: true,
+          wouldHaveDone: {
+            action: 'email_queued',
+            to: caseData.agency_email,
+            subject: draftSubject,
+            bodyPreview: (draftBodyText || '').substring(0, 200),
+            messageType: proposalActionType.toLowerCase().replace('send_', '').replace('approve_', ''),
+            delayMinutes,
+            scheduledFor: new Date(Date.now() + delayMs).toISOString()
+          }
+        };
+
+        logs.push(`[DRY_RUN] Would have queued email to ${caseData.agency_email}, scheduled in ${delayMinutes} minutes`);
+
+        // Still update proposal status for tracking
+        await db.updateProposal(proposalId, {
+          status: 'EXECUTED',
+          executedAt: new Date(),
+          emailJobId: `dry_run_${executionKey}`
+        });
+
+        break;
+      }
+
+      // REAL MODE: Actually queue the email
       // P0 FIX #3: Use execution_key as job ID for idempotency
       const job = await emailQueue.add('send-email', {
         caseId,
@@ -238,4 +275,4 @@ async function executeActionNode(state) {
   };
 }
 
-module.exports = { executeActionNode };
+module.exports = { executeActionNode, DRY_RUN };

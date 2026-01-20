@@ -156,19 +156,26 @@ function createFOIACaseGraphBuilder() {
  * Create checkpointer based on config
  * P0 FIX #1: Checkpointer is passed at compile time, NOT invoke time
  */
+let _redisClient = null;
+
+async function getRedisClient() {
+  if (!_redisClient) {
+    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    _redisClient = createClient({ url: redisUrl });
+    _redisClient.on('error', (err) => logger.error('Redis checkpointer error', { error: err.message }));
+    await _redisClient.connect();
+    logger.info('Redis checkpointer client connected');
+  }
+  return _redisClient;
+}
+
 async function createCheckpointer() {
   const checkpointerType = process.env.LANGGRAPH_CHECKPOINTER || 'redis';
 
   if (checkpointerType === 'redis') {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-    // node-redis v4+ requires explicit connect
-    const client = createClient({ url: redisUrl });
-    client.on('error', (err) => logger.error('Redis checkpointer error', { error: err.message }));
-    await client.connect();
-
-    logger.info('Redis checkpointer connected');
-    return new RedisSaver({ client });
+    const client = await getRedisClient();
+    // RedisSaver takes client as FIRST argument, not in an object
+    return new RedisSaver(client);
   }
 
   // Fallback to memory (not recommended for production)
@@ -337,10 +344,84 @@ async function resumeFOIACaseGraph(caseId, humanDecision) {
   }
 }
 
+/**
+ * Reset thread - delete all checkpoints for a case
+ * Used for testing/iteration
+ */
+async function resetThread(caseId) {
+  const client = await getRedisClient();
+  const threadId = `case:${caseId}`;
+
+  // Find and delete all keys for this thread
+  const patterns = [
+    `checkpoint:${threadId}:*`,
+    `write_keys_zset:${threadId}:*`,
+    `writes:${threadId}:*`
+  ];
+
+  let deletedCount = 0;
+  for (const pattern of patterns) {
+    // Use SCAN instead of KEYS for production safety
+    let cursor = 0;
+    do {
+      const result = await client.scan(cursor, { MATCH: pattern, COUNT: 100 });
+      cursor = result.cursor;
+      if (result.keys.length > 0) {
+        await client.del(result.keys);
+        deletedCount += result.keys.length;
+      }
+    } while (cursor !== 0);
+  }
+
+  logger.info('Thread reset', { caseId, threadId, deletedCount });
+  return { threadId, deletedCount };
+}
+
+/**
+ * Get thread state/checkpoint info
+ */
+async function getThreadInfo(caseId) {
+  const client = await getRedisClient();
+  const threadId = `case:${caseId}`;
+
+  // Find checkpoint keys
+  const pattern = `checkpoint:${threadId}:*`;
+  let checkpoints = [];
+
+  let cursor = 0;
+  do {
+    const result = await client.scan(cursor, { MATCH: pattern, COUNT: 100 });
+    cursor = result.cursor;
+    checkpoints = checkpoints.concat(result.keys);
+  } while (cursor !== 0);
+
+  checkpoints.sort().reverse();
+
+  let latestCheckpoint = null;
+  if (checkpoints.length > 0) {
+    try {
+      latestCheckpoint = await client.json.get(checkpoints[0]);
+    } catch (e) {
+      // JSON module might not be available
+      latestCheckpoint = await client.get(checkpoints[0]);
+    }
+  }
+
+  return {
+    threadId,
+    checkpointCount: checkpoints.length,
+    latestCheckpointKey: checkpoints[0] || null,
+    latestCheckpoint
+  };
+}
+
 module.exports = {
   createFOIACaseGraphBuilder,
   getCompiledGraph,
   invokeFOIACaseGraph,
   resumeFOIACaseGraph,
-  createInitialState
+  createInitialState,
+  resetThread,
+  getThreadInfo,
+  getRedisClient
 };

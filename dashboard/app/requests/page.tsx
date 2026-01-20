@@ -1,12 +1,76 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { InboxSections } from "@/components/inbox-sections";
 import { requestsAPI, fetcher } from "@/lib/api";
-import type { RequestsListResponse } from "@/lib/types";
+import type { RequestsListResponse, RequestListItem, PauseReason } from "@/lib/types";
 import { Search, Loader2 } from "lucide-react";
+
+// Pause reason priority for sorting (lower = higher priority)
+const PAUSE_PRIORITY: Record<PauseReason, number> = {
+  FEE_QUOTE: 1,    // Fast to clear
+  DENIAL: 2,
+  SCOPE: 3,
+  ID_REQUIRED: 4,
+  SENSITIVE: 5,
+  CLOSE_ACTION: 6,
+};
+
+// Sort by: overdue first, then at-risk, then by due date, then by pause priority
+function sortPaused(requests: RequestListItem[]): RequestListItem[] {
+  const now = new Date();
+
+  return [...requests].sort((a, b) => {
+    // 1. Overdue items first
+    const aOverdue = a.next_due_at ? new Date(a.next_due_at) < now : false;
+    const bOverdue = b.next_due_at ? new Date(b.next_due_at) < now : false;
+    if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+
+    // 2. At-risk items next
+    if (a.at_risk !== b.at_risk) return a.at_risk ? -1 : 1;
+
+    // 3. Sort by pause reason priority (Fee Quote first)
+    const aPriority = a.pause_reason ? PAUSE_PRIORITY[a.pause_reason] || 99 : 99;
+    const bPriority = b.pause_reason ? PAUSE_PRIORITY[b.pause_reason] || 99 : 99;
+    if (aPriority !== bPriority) return aPriority - bPriority;
+
+    // 4. Sort by due date (earliest first)
+    if (a.next_due_at && b.next_due_at) {
+      return new Date(a.next_due_at).getTime() - new Date(b.next_due_at).getTime();
+    }
+    if (a.next_due_at) return -1;
+    if (b.next_due_at) return 1;
+
+    return 0;
+  });
+}
+
+// Sort by: overdue first, then at-risk, then by due date
+function sortWaiting(requests: RequestListItem[]): RequestListItem[] {
+  const now = new Date();
+
+  return [...requests].sort((a, b) => {
+    // 1. Overdue items first
+    const aOverdue = a.next_due_at ? new Date(a.next_due_at) < now : false;
+    const bOverdue = b.next_due_at ? new Date(b.next_due_at) < now : false;
+    if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+
+    // 2. At-risk items next
+    if (a.at_risk !== b.at_risk) return a.at_risk ? -1 : 1;
+
+    // 3. Sort by due date (earliest first)
+    if (a.next_due_at && b.next_due_at) {
+      return new Date(a.next_due_at).getTime() - new Date(b.next_due_at).getTime();
+    }
+    if (a.next_due_at) return -1;
+    if (b.next_due_at) return 1;
+
+    // 4. Fall back to last activity
+    return new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime();
+  });
+}
 
 export default function RequestsPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -14,25 +78,19 @@ export default function RequestsPage() {
   const { data, error, isLoading, mutate } = useSWR<RequestsListResponse>(
     "/requests",
     fetcher,
-    { refreshInterval: 30000 } // Refresh every 30 seconds
+    { refreshInterval: 30000 }
   );
 
   const handleApprove = async (id: string) => {
-    try {
-      await requestsAPI.approve(id);
-      mutate(); // Refresh the list
-    } catch (err) {
-      console.error("Failed to approve:", err);
-    }
+    // Navigate to detail page for review
+    window.location.href = `/requests/detail?id=${id}`;
   };
 
   const handleAdjust = (id: string) => {
-    // Navigate to detail page with adjust dialog open
     window.location.href = `/requests/detail?id=${id}&adjust=true`;
   };
 
   const handleSnooze = async (id: string) => {
-    // For V1, snooze for 24 hours
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
 
@@ -46,12 +104,15 @@ export default function RequestsPage() {
     }
   };
 
-  // Filter requests locally (V1 approach)
-  const filterRequests = (requests: typeof data) => {
-    if (!requests?.requests) return { paused: [], ongoing: [] };
+  // Split requests into 3 categories
+  const { paused, waiting, scheduled } = useMemo(() => {
+    if (!data?.requests) {
+      return { paused: [], waiting: [], scheduled: [] };
+    }
 
-    let filtered = requests.requests;
+    let filtered = data.requests;
 
+    // Apply search filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(
@@ -62,46 +123,33 @@ export default function RequestsPage() {
       );
     }
 
-    const paused = filtered.filter((r) => r.requires_human);
-    const ongoing = filtered.filter((r) => !r.requires_human);
+    const now = new Date();
 
-    // Sort paused by due date, then by pause reason priority
-    const pausePriority: Record<string, number> = {
-      FEE_QUOTE: 1,
-      DENIAL: 2,
-      SCOPE: 3,
-      ID_REQUIRED: 4,
-      SENSITIVE: 5,
-      CLOSE_ACTION: 6,
-    };
+    // Paused: requires_human = true
+    const pausedItems = filtered.filter((r) => r.requires_human);
 
-    paused.sort((a, b) => {
-      // First sort by at_risk
-      if (a.at_risk !== b.at_risk) return a.at_risk ? -1 : 1;
+    // Not paused items
+    const notPaused = filtered.filter((r) => !r.requires_human);
 
-      // Then by due date
-      if (a.next_due_at && b.next_due_at) {
-        return new Date(a.next_due_at).getTime() - new Date(b.next_due_at).getTime();
-      }
-      if (a.next_due_at) return -1;
-      if (b.next_due_at) return 1;
-
-      // Then by pause reason priority
-      const aPriority = a.pause_reason ? pausePriority[a.pause_reason] || 99 : 99;
-      const bPriority = b.pause_reason ? pausePriority[b.pause_reason] || 99 : 99;
-      return aPriority - bPriority;
+    // Scheduled: has next_due_at in the future and not paused
+    const scheduledItems = notPaused.filter((r) => {
+      if (!r.next_due_at) return false;
+      const dueDate = new Date(r.next_due_at);
+      // Consider it "scheduled" if the due date is in the future
+      // and it's a follow-up type (not statutory deadline)
+      return dueDate > now && r.due_info?.due_type === "FOLLOW_UP";
     });
 
-    // Sort ongoing by last activity
-    ongoing.sort(
-      (a, b) =>
-        new Date(b.last_activity_at).getTime() - new Date(a.last_activity_at).getTime()
-    );
+    // Waiting: everything else not paused and not in scheduled
+    const scheduledIds = new Set(scheduledItems.map((r) => r.id));
+    const waitingItems = notPaused.filter((r) => !scheduledIds.has(r.id));
 
-    return { paused, ongoing };
-  };
-
-  const { paused, ongoing } = filterRequests(data);
+    return {
+      paused: sortPaused(pausedItems),
+      waiting: sortWaiting(waitingItems),
+      scheduled: sortWaiting(scheduledItems),
+    };
+  }, [data, searchQuery]);
 
   if (error) {
     return (
@@ -117,16 +165,14 @@ export default function RequestsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Requests</h1>
-        <div className="flex items-center gap-4">
-          <div className="relative w-64">
-            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search requests..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8"
-            />
-          </div>
+        <div className="relative w-64">
+          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search requests..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-8"
+          />
         </div>
       </div>
 
@@ -138,7 +184,8 @@ export default function RequestsPage() {
       ) : (
         <InboxSections
           paused={paused}
-          ongoing={ongoing}
+          waiting={waiting}
+          scheduled={scheduled}
           onApprove={handleApprove}
           onAdjust={handleAdjust}
           onSnooze={handleSnooze}

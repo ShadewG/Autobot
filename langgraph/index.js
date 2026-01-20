@@ -9,7 +9,10 @@ const {
   getCompiledGraph,
   invokeFOIACaseGraph,
   resumeFOIACaseGraph,
-  createInitialState
+  createInitialState,
+  resetThread,
+  getThreadInfo,
+  getRedisClient
 } = require('./graph/foia-case-graph');
 
 const { FOIACaseStateAnnotation } = require('./state/case-state');
@@ -25,6 +28,11 @@ const { gateOrExecuteNode } = require('./nodes/gate-or-execute');
 const { executeActionNode } = require('./nodes/execute-action');
 const { commitStateNode } = require('./nodes/commit-state');
 
+// DRY_RUN mode - prevents actual email sending in testing
+const DRY_RUN = process.env.LANGGRAPH_DRY_RUN === 'true' ||
+                process.env.NODE_ENV === 'development' ||
+                process.env.LANGGRAPH_DRY_RUN !== 'false'; // Default ON unless explicitly disabled
+
 module.exports = {
   // Main graph functions
   createFOIACaseGraphBuilder,
@@ -32,6 +40,14 @@ module.exports = {
   invokeFOIACaseGraph,
   resumeFOIACaseGraph,
   createInitialState,
+
+  // Thread management
+  resetThread,
+  getThreadInfo,
+  getRedisClient,
+
+  // Configuration
+  DRY_RUN,
 
   // State schema
   FOIACaseStateAnnotation,

@@ -3143,10 +3143,14 @@ const { enqueueAgentJob, enqueueResumeJob, getQueueStats } = require('../queues/
 router.get('/langgraph/status', async (req, res) => {
     try {
         const queueStats = await getQueueStats();
+        const dryRun = process.env.LANGGRAPH_DRY_RUN !== 'false';
 
         res.json({
             success: true,
             langgraph_enabled: true,
+            dry_run: dryRun,
+            dry_run_reason: dryRun ? 'LANGGRAPH_DRY_RUN not set to false' : 'Disabled by LANGGRAPH_DRY_RUN=false',
+            checkpointer_type: process.env.LANGGRAPH_CHECKPOINTER || 'redis',
             queue_stats: queueStats,
             available_nodes: Object.keys(langgraph.nodes),
             timestamp: new Date().toISOString()
@@ -3440,6 +3444,17 @@ router.get('/langgraph/state/:caseId', async (req, res) => {
             await db.query(`SELECT pg_advisory_unlock($1)`, [lockKey]);
         }
 
+        // Get thread/checkpoint info
+        let threadInfo = null;
+        try {
+            threadInfo = await langgraph.getThreadInfo(caseId);
+        } catch (e) {
+            threadInfo = { error: e.message };
+        }
+
+        // DRY_RUN status
+        const dryRun = process.env.LANGGRAPH_DRY_RUN !== 'false';
+
         res.json({
             success: true,
             case_id: caseId,
@@ -3489,7 +3504,9 @@ router.get('/langgraph/state/:caseId', async (req, res) => {
                 key: lockKey,
                 available: lockAvailable,
                 thread_id: `case:${caseId}`
-            }
+            },
+            thread: threadInfo,
+            dry_run: dryRun
         });
     } catch (error) {
         res.status(500).json({
@@ -3714,17 +3731,10 @@ router.post('/langgraph/force-unlock/:caseId', async (req, res) => {
 router.post('/langgraph/reset-thread/:caseId', async (req, res) => {
     try {
         const caseId = parseInt(req.params.caseId);
-        const { confirm } = req.body;
-
-        if (confirm !== 'RESET') {
-            return res.status(400).json({
-                success: false,
-                error: 'Must send { confirm: "RESET" } to reset thread'
-            });
-        }
 
         // Clear proposals
-        await db.query(`DELETE FROM proposals WHERE case_id = $1`, [caseId]);
+        const proposalsResult = await db.query(`DELETE FROM proposals WHERE case_id = $1 RETURNING id`, [caseId]);
+        const proposalsDeleted = proposalsResult.rows?.length || 0;
 
         // Clear langgraph thread reference
         await db.updateCase(caseId, {
@@ -3733,16 +3743,11 @@ router.post('/langgraph/reset-thread/:caseId', async (req, res) => {
             pause_reason: null
         });
 
-        // Clear Redis checkpoint (if using Redis)
-        const threadId = `case:${caseId}`;
+        // Clear Redis checkpoint using langgraph module
+        let checkpointsDeleted = 0;
         try {
-            const Redis = require('ioredis');
-            const redis = new Redis(process.env.REDIS_URL);
-            const keys = await redis.keys(`*${threadId}*`);
-            if (keys.length > 0) {
-                await redis.del(...keys);
-            }
-            await redis.quit();
+            const result = await langgraph.resetThread(caseId);
+            checkpointsDeleted = result.deletedCount;
         } catch (e) {
             console.warn('Could not clear Redis checkpoint:', e.message);
         }
@@ -3750,7 +3755,11 @@ router.post('/langgraph/reset-thread/:caseId', async (req, res) => {
         res.json({
             success: true,
             message: `Thread reset for case ${caseId}`,
-            thread_id: threadId
+            deleted: {
+                proposals: proposalsDeleted,
+                checkpoints: checkpointsDeleted
+            },
+            thread_id: `case:${caseId}`
         });
     } catch (error) {
         res.status(500).json({
