@@ -32,7 +32,7 @@ class AIService {
             // Try GPT-5 first (latest and most capable for FOIA generation)
             try {
                 const response = await this.openai.chat.completions.create({
-                    model: process.env.OPENAI_MODEL || 'gpt-5',
+                    model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                     messages: [
                         {
                             role: 'system',
@@ -64,7 +64,7 @@ class AIService {
                 }
 
                 // Store generated request with strategy info
-                const modelUsed = process.env.OPENAI_MODEL || 'gpt-5';
+                const modelUsed = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
                 await db.createGeneratedRequest({
                     case_id: caseData.id,
                     request_text: requestText,
@@ -298,7 +298,7 @@ Return ONLY valid JSON, no other text.`;
 
             // Use GPT-5 with medium reasoning for analysis (better at understanding nuance)
             const response = await this.openai.responses.create({
-                model: 'gpt-5',
+                model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'medium' },
                 text: { verbosity: 'low' },  // Low verbosity for JSON output
                 input: `${responseHandlingPrompts.analysisSystemPrompt}
@@ -381,7 +381,7 @@ Return ONLY the email body text, no subject line or metadata.`;
 
             // Use GPT-5 with medium reasoning for normal replies
             const response = await this.openai.responses.create({
-                model: 'gpt-5',
+                model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'medium' },  // Medium reasoning for all communication
                 text: { verbosity: 'medium' },
                 input: `${responseHandlingPrompts.autoReplySystemPrompt}
@@ -431,7 +431,7 @@ Focus on:
 Return concise legal citations and key statutory language with sources.`;
 
             const response = await this.openai.responses.create({
-                model: 'gpt-5',
+                model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'medium' },  // Medium reasoning for legal analysis
                 text: { verbosity: 'medium' },
                 tools: [
@@ -450,7 +450,7 @@ Return concise legal citations and key statutory language with sources.`;
             // Fallback to GPT-5-mini without web search
             try {
                 const fallbackResponse = await this.openai.chat.completions.create({
-                    model: 'gpt-5-mini',
+                    model: 'gpt-5.2-2025-12-11',
                     messages: [
                         {
                             role: 'system',
@@ -462,7 +462,7 @@ Return concise legal citations and key statutory language with sources.`;
                         }
                     ],
                     temperature: 0.3,
-                    max_tokens: 1500
+                    max_completion_tokens: 1500  // gpt-5 models use max_completion_tokens
                 });
 
                 return fallbackResponse.choices[0].message.content;
@@ -535,7 +535,7 @@ Return ONLY the email body text, no subject line.`;
 
             // Use GPT-5 with medium reasoning for strategic rebuttal generation
             const response = await this.openai.responses.create({
-                model: 'gpt-5',
+                model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'medium' },  // Medium reasoning for strategic legal writing
                 text: { verbosity: 'medium' },
                 input: `${denialResponsePrompts.denialRebuttalSystemPrompt}
@@ -591,7 +591,7 @@ If nothing better is found, set the relevant fields to null but explain in notes
 Respond with JSON ONLY.`;
 
             const response = await this.openai.responses.create({
-                model: 'gpt-5',
+                model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'low' },
                 text: { verbosity: 'low' },
                 tools: [{ type: 'web_search' }],
@@ -650,7 +650,7 @@ ${followUpCount > 0 ? '6. Note this is a follow-up and we\'re still awaiting res
 Return ONLY the email body text.`;
 
             const response = await this.openai.chat.completions.create({
-                model: 'gpt-5-mini',
+                model: 'gpt-5.2-2025-12-11',
                 messages: [
                     {
                         role: 'system',
@@ -662,7 +662,7 @@ Return ONLY the email body text.`;
                     }
                 ],
                 temperature: 0.7,
-                max_tokens: 600
+                max_completion_tokens: 600  // gpt-5 models use max_completion_tokens
             });
 
             return response.choices[0].message.content;
@@ -723,7 +723,7 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
 
         try {
             const response = await this.openai.responses.create({
-                model: 'gpt-5',
+                model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'low' },
                 text: { verbosity: 'medium' },
                 input: `${responseHandlingPrompts.autoReplySystemPrompt}
@@ -733,7 +733,7 @@ ${prompt}`
 
             return {
                 reply_text: response.output_text?.trim(),
-                model: 'gpt-5'
+                model: 'gpt-5.2-2025-12-11'
             };
         } catch (error) {
             console.error('Error generating fee response:', error);
@@ -748,22 +748,22 @@ ${prompt}`
         if (!usage) return 0;
 
         const prices = {
-            'gpt-5': {
+            'gpt-5.2-2025-12-11': {
                 input: 0.00002,  // $0.02 per 1K input tokens
                 output: 0.00008,  // $0.08 per 1K output tokens
                 reasoning: 0.00008  // $0.08 per 1K reasoning tokens
             },
-            'gpt-5-mini': {
+            'gpt-5.2-2025-12-11': {
                 input: 0.000001,  // $0.001 per 1K tokens
                 output: 0.000004,
                 reasoning: 0.000004
             }
         };
 
-        const modelPrices = prices[model] || prices['gpt-5-mini'];
+        const modelPrices = prices[model] || prices['gpt-5.2-2025-12-11'];
 
         // GPT-5 and other reasoning models track reasoning tokens separately
-        if (model.startsWith('gpt-5')) {
+        if (model.startsWith('gpt-5.2-2025-12-11')) {
             const inputCost = ((usage.prompt_tokens || 0) / 1000) * modelPrices.input;
             const outputCost = ((usage.completion_tokens || 0) / 1000) * modelPrices.output;
             const reasoningCost = ((usage.reasoning_tokens || 0) / 1000) * (modelPrices.reasoning || 0);
@@ -872,7 +872,7 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
             const prompt = promptParts.join('\n\n');
 
             const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5',
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'low' },
                 text: { verbosity: 'low' },
                 input: `${systemPrompt}\n\nSchema:\n${schema}\n\n${prompt}`
@@ -937,7 +937,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
 
         try {
             const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5',
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'low' },
                 text: { verbosity: 'medium' },
                 input: `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`
@@ -950,7 +950,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
                 subject: subject,
                 body_text: bodyText,
                 body_html: `<p>${bodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
-                model: process.env.OPENAI_MODEL || 'gpt-5'
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11'
             };
         } catch (error) {
             console.error('Error generating clarification response:', error);
@@ -987,7 +987,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
 
         try {
             const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5',
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'low' },
                 text: { verbosity: 'medium' },
                 input: `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`
@@ -1000,7 +1000,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
                 subject: subject,
                 body_text: bodyText,
                 body_html: `<p>${bodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
-                model: process.env.OPENAI_MODEL || 'gpt-5'
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11'
             };
         } catch (error) {
             console.error('Error generating fee acceptance:', error);
