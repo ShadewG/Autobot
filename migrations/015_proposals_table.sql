@@ -2,14 +2,17 @@
 -- Description: Add proposals table for LangGraph agent workflow
 -- CRITICAL: Uses proposal_key for idempotency (P0 fix #2)
 
+-- Drop existing incomplete proposals table (safe - this table is new)
+DROP TABLE IF EXISTS proposals CASCADE;
+
 -- Proposals table for NextActionProposal
-CREATE TABLE IF NOT EXISTS proposals (
+CREATE TABLE proposals (
     id SERIAL PRIMARY KEY,
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
 
     -- IDEMPOTENCY KEY (P0 fix): deterministic key for upsert
     -- Format: {case_id}:{trigger_message_id}:{action_type}:{attempt}
-    proposal_key VARCHAR(255) NOT NULL,
+    proposal_key VARCHAR(255) NOT NULL UNIQUE,
 
     -- Proposal content
     action_type VARCHAR(50) NOT NULL,  -- SEND_FOLLOWUP, SEND_REBUTTAL, SEND_CLARIFICATION, APPROVE_FEE, ESCALATE, SUBMIT_PORTAL, etc.
@@ -32,7 +35,7 @@ CREATE TABLE IF NOT EXISTS proposals (
     status VARCHAR(50) DEFAULT 'DRAFT',  -- DRAFT, PENDING_APPROVAL, APPROVED, EXECUTED, SUPERSEDED, REJECTED, DISMISSED
 
     -- EXECUTION IDEMPOTENCY (P0 fix #3)
-    execution_key VARCHAR(255),  -- Set when execution starts, prevents duplicate sends
+    execution_key VARCHAR(255) UNIQUE,  -- Set when execution starts, prevents duplicate sends
     email_job_id VARCHAR(255),          -- BullMQ job ID if email was queued
 
     -- Human interaction
@@ -56,70 +59,12 @@ CREATE TABLE IF NOT EXISTS proposals (
     executed_at TIMESTAMP WITH TIME ZONE
 );
 
--- Add missing columns if table already exists (idempotent)
-DO $$
-BEGIN
-    -- Add execution_key if not exists
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'execution_key') THEN
-        ALTER TABLE proposals ADD COLUMN execution_key VARCHAR(255);
-    END IF;
-
-    -- Add email_job_id if not exists
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'email_job_id') THEN
-        ALTER TABLE proposals ADD COLUMN email_job_id VARCHAR(255);
-    END IF;
-
-    -- Add human_decision columns if not exists
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'human_decision') THEN
-        ALTER TABLE proposals ADD COLUMN human_decision VARCHAR(50);
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'human_decided_at') THEN
-        ALTER TABLE proposals ADD COLUMN human_decided_at TIMESTAMP WITH TIME ZONE;
-    END IF;
-
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'human_decided_by') THEN
-        ALTER TABLE proposals ADD COLUMN human_decided_by VARCHAR(255);
-    END IF;
-
-    -- Add adjustment_count if not exists
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'adjustment_count') THEN
-        ALTER TABLE proposals ADD COLUMN adjustment_count INTEGER DEFAULT 0;
-    END IF;
-END $$;
-
--- Add unique constraints (idempotent)
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'proposals_proposal_key_key') THEN
-        ALTER TABLE proposals ADD CONSTRAINT proposals_proposal_key_key UNIQUE (proposal_key);
-    END IF;
-EXCEPTION WHEN duplicate_table THEN
-    NULL;
-END $$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'proposals_execution_key_key') THEN
-        ALTER TABLE proposals ADD CONSTRAINT proposals_execution_key_key UNIQUE (execution_key);
-    END IF;
-EXCEPTION WHEN duplicate_table THEN
-    NULL;
-END $$;
-
--- Indexes for proposals (safe - IF NOT EXISTS)
-CREATE INDEX IF NOT EXISTS idx_proposals_case_id ON proposals(case_id);
-CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals(status);
-CREATE INDEX IF NOT EXISTS idx_proposals_thread_id ON proposals(langgraph_thread_id);
-CREATE INDEX IF NOT EXISTS idx_proposals_key ON proposals(proposal_key);
-
--- Create execution_key index only if column exists
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'proposals' AND column_name = 'execution_key') THEN
-        CREATE INDEX IF NOT EXISTS idx_proposals_execution_key ON proposals(execution_key);
-    END IF;
-END $$;
+-- Indexes for proposals
+CREATE INDEX idx_proposals_case_id ON proposals(case_id);
+CREATE INDEX idx_proposals_status ON proposals(status);
+CREATE INDEX idx_proposals_thread_id ON proposals(langgraph_thread_id);
+CREATE INDEX idx_proposals_key ON proposals(proposal_key);
+CREATE INDEX idx_proposals_execution_key ON proposals(execution_key);
 
 -- Add langgraph_thread_id to cases table
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS langgraph_thread_id VARCHAR(255);
@@ -129,8 +74,11 @@ CREATE INDEX IF NOT EXISTS idx_cases_langgraph_thread_id ON cases(langgraph_thre
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS constraints TEXT[] DEFAULT '{}';
 ALTER TABLE cases ADD COLUMN IF NOT EXISTS scope_items JSONB DEFAULT '[]';
 
+-- Drop and recreate escalations table (also new and empty)
+DROP TABLE IF EXISTS escalations CASCADE;
+
 -- Escalations table for ESCALATE action type
-CREATE TABLE IF NOT EXISTS escalations (
+CREATE TABLE escalations (
     id SERIAL PRIMARY KEY,
     case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
 
@@ -154,9 +102,9 @@ CREATE TABLE IF NOT EXISTS escalations (
 );
 
 -- Indexes for escalations
-CREATE INDEX IF NOT EXISTS idx_escalations_case_id ON escalations(case_id);
-CREATE INDEX IF NOT EXISTS idx_escalations_status ON escalations(status);
-CREATE INDEX IF NOT EXISTS idx_escalations_execution_key ON escalations(execution_key);
+CREATE INDEX idx_escalations_case_id ON escalations(case_id);
+CREATE INDEX idx_escalations_status ON escalations(status);
+CREATE INDEX idx_escalations_execution_key ON escalations(execution_key);
 
 -- Add last_followup_sent_at to follow_up_schedule if not exists
 ALTER TABLE follow_up_schedule ADD COLUMN IF NOT EXISTS last_followup_sent_at TIMESTAMP WITH TIME ZONE;
@@ -167,11 +115,9 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'follow_up_schedule_case_id_key'
     ) THEN
-        -- Only create if no existing constraint
         BEGIN
             ALTER TABLE follow_up_schedule ADD CONSTRAINT follow_up_schedule_case_id_key UNIQUE (case_id);
         EXCEPTION WHEN unique_violation THEN
-            -- If duplicate values exist, we can't add the constraint
             RAISE NOTICE 'Cannot add unique constraint on follow_up_schedule.case_id due to duplicates';
         END;
     END IF;
