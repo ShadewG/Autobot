@@ -4566,15 +4566,17 @@ async function executePhase(run) {
                 // Invoke the graph (via worker or direct)
                 const triggerType = scenario.inbound ? 'agency_reply' : 'time_based_followup';
 
-                // Pass llm_stubs for deterministic mode
+                // Pass llm_stubs for deterministic mode AND messageId for the graph
                 const invokeOptions = {
                     e2e_run_id: run.id,
+                    messageId: run.artifacts.inbound_message_id,  // Pass the injected message ID
                     llmStubs: run.deterministic ? scenario.llm_stubs : null
                 };
 
                 if (run.use_worker) {
                     const job = await enqueueAgentJob(run.case_id, triggerType, {
                         e2e_run_id: run.id,
+                        message_id: run.artifacts.inbound_message_id,
                         deterministic: run.deterministic,
                         llm_stubs: run.deterministic ? scenario.llm_stubs : null
                     });
@@ -4735,10 +4737,15 @@ async function createInboundMessage(caseId, threadId, config) {
         received_at: new Date()
     });
 
-    // Update case with latest inbound
+    // Update case status (note: cases table doesn't have latest_inbound_message_id)
     await db.updateCase(caseId, {
-        latest_inbound_message_id: message.id,
-        status: 'needs_review'
+        status: 'needs_review',
+        last_response_date: new Date()
+    });
+
+    // Update email thread with latest message info
+    await db.updateEmailThread(threadId, {
+        last_message_at: new Date()
     });
 
     return message;
