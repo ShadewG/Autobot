@@ -114,7 +114,7 @@ export function DecisionPanel({
           <div className="bg-white dark:bg-gray-900 rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Total quoted</span>
-              <span className="font-bold text-lg">{formatCurrency(feeQuote.total_amount)}</span>
+              <span className="font-bold text-lg">{formatCurrency(feeQuote.amount)}</span>
             </div>
             {feeQuote.deposit_amount && (
               <div className="flex items-center justify-between">
@@ -122,10 +122,10 @@ export function DecisionPanel({
                 <span className="font-medium">{formatCurrency(feeQuote.deposit_amount)}</span>
               </div>
             )}
-            {feeQuote.itemization && feeQuote.itemization.length > 0 && (
+            {feeQuote.breakdown && feeQuote.breakdown.length > 0 && (
               <div className="pt-2 border-t">
                 <p className="text-xs text-muted-foreground mb-1">Itemization:</p>
-                {feeQuote.itemization.map((item, i) => (
+                {feeQuote.breakdown.map((item, i) => (
                   <div key={i} className="flex justify-between text-xs">
                     <span>{item.item}</span>
                     <span>{formatCurrency(item.amount)}</span>
@@ -143,7 +143,7 @@ export function DecisionPanel({
             <div>
               <p className="font-medium">Why this requires approval:</p>
               {pauseReason === "FEE_QUOTE" && agencyRules.fee_auto_approve_threshold !== null && (
-                <p>Fee ({formatCurrency(feeQuote?.total_amount || 0)}) exceeds auto-approve threshold ({formatCurrency(agencyRules.fee_auto_approve_threshold)})</p>
+                <p>Fee ({formatCurrency(feeQuote?.amount || 0)}) exceeds auto-approve threshold ({formatCurrency(agencyRules.fee_auto_approve_threshold)})</p>
               )}
               {agencyRules.always_human_gates.includes(pauseReason) && (
                 <p>This gate type always requires human review for this agency</p>

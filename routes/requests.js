@@ -20,12 +20,98 @@ const STATUS_MAP = {
 };
 
 /**
- * Derive cost_status from fee fields
+ * Derive cost_status from fee fields (supports both legacy columns and JSONB)
  */
 function deriveCostStatus(caseData) {
+    // Check JSONB first
+    if (caseData.fee_quote_jsonb?.status) {
+        return caseData.fee_quote_jsonb.status;
+    }
+    // Fall back to legacy columns
     if (!caseData.last_fee_quote_amount) return 'NONE';
-    // For now, we only track QUOTED status since we don't have invoiced/paid tracking yet
     return 'QUOTED';
+}
+
+/**
+ * Build due_info object from case data
+ */
+function buildDueInfo(caseData) {
+    const dueInfo = caseData.due_info_jsonb || {};
+    const nextDueAt = caseData.next_due_at || caseData.deadline_date;
+
+    // Calculate overdue status
+    let isOverdue = false;
+    let overdueDays = null;
+    if (nextDueAt) {
+        const dueDate = new Date(nextDueAt);
+        const now = new Date();
+        if (dueDate < now) {
+            isOverdue = true;
+            overdueDays = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
+        }
+    }
+
+    return {
+        next_due_at: nextDueAt || null,
+        due_type: dueInfo.due_type || (caseData.deadline_date ? 'STATUTORY' : null),
+        statutory_days: dueInfo.statutory_days || null,
+        statutory_due_at: dueInfo.statutory_due_at || caseData.deadline_date || null,
+        snoozed_until: dueInfo.snoozed_until || null,
+        is_overdue: isOverdue,
+        overdue_days: overdueDays
+    };
+}
+
+/**
+ * Parse scope items from JSONB or derive from requested_records
+ */
+function parseScopeItems(caseData) {
+    // Use JSONB if available
+    if (caseData.scope_items_jsonb && Array.isArray(caseData.scope_items_jsonb) && caseData.scope_items_jsonb.length > 0) {
+        return caseData.scope_items_jsonb;
+    }
+
+    // Derive from requested_records array
+    if (Array.isArray(caseData.requested_records)) {
+        return caseData.requested_records.map(name => ({
+            name,
+            status: 'REQUESTED'
+        }));
+    }
+
+    return [];
+}
+
+/**
+ * Parse constraints from JSONB
+ */
+function parseConstraints(caseData) {
+    if (caseData.constraints_jsonb && Array.isArray(caseData.constraints_jsonb)) {
+        return caseData.constraints_jsonb;
+    }
+    return [];
+}
+
+/**
+ * Parse fee quote from JSONB or legacy columns
+ */
+function parseFeeQuote(caseData) {
+    // Use JSONB if available
+    if (caseData.fee_quote_jsonb && caseData.fee_quote_jsonb.amount) {
+        return caseData.fee_quote_jsonb;
+    }
+
+    // Fall back to legacy columns
+    if (caseData.last_fee_quote_amount) {
+        return {
+            amount: parseFloat(caseData.last_fee_quote_amount),
+            currency: caseData.last_fee_quote_currency || 'USD',
+            quoted_at: caseData.last_fee_quote_at,
+            status: 'QUOTED'
+        };
+    }
+
+    return null;
 }
 
 /**
@@ -47,6 +133,9 @@ function toRequestListItem(caseData) {
         ? `${caseData.subject_name}${caseData.requested_records?.length ? ` — ${Array.isArray(caseData.requested_records) ? caseData.requested_records.slice(0, 2).join(', ') : 'Records Request'}` : ''}`
         : caseData.case_name || 'Unknown Request';
 
+    const dueInfo = buildDueInfo(caseData);
+    const feeQuote = parseFeeQuote(caseData);
+
     return {
         id: String(caseData.id),
         subject: subject,
@@ -55,13 +144,14 @@ function toRequestListItem(caseData) {
         status: STATUS_MAP[caseData.status] || 'DRAFT',
         last_inbound_at: caseData.last_response_date || null,
         last_activity_at: caseData.updated_at || caseData.created_at,
-        next_due_at: caseData.next_due_at || caseData.deadline_date || null,
+        next_due_at: dueInfo.next_due_at,
+        due_info: dueInfo,
         requires_human: caseData.requires_human || false,
         pause_reason: caseData.pause_reason || null,
         autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
         cost_status: deriveCostStatus(caseData),
-        cost_amount: caseData.last_fee_quote_amount ? parseFloat(caseData.last_fee_quote_amount) : null,
-        at_risk: isAtRisk(caseData.next_due_at || caseData.deadline_date)
+        cost_amount: feeQuote?.amount || null,
+        at_risk: isAtRisk(dueInfo.next_due_at)
     };
 }
 
@@ -70,6 +160,9 @@ function toRequestListItem(caseData) {
  */
 function toRequestDetail(caseData) {
     const listItem = toRequestListItem(caseData);
+    const scopeItems = parseScopeItems(caseData);
+    const constraints = parseConstraints(caseData);
+    const feeQuote = parseFeeQuote(caseData);
 
     return {
         ...listItem,
@@ -83,10 +176,13 @@ function toRequestDetail(caseData) {
         scope_summary: Array.isArray(caseData.requested_records)
             ? caseData.requested_records.slice(0, 3).join(', ')
             : caseData.requested_records || 'General records request',
+        scope_items: scopeItems,
+        constraints: constraints,
+        fee_quote: feeQuote,
         portal_url: caseData.portal_url || null,
         portal_provider: caseData.portal_provider || null,
         submitted_at: caseData.send_date || null,
-        statutory_due_at: caseData.deadline_date || null,
+        statutory_due_at: listItem.due_info.statutory_due_at,
         attachments: [] // Will be populated from messages
     };
 }
@@ -109,6 +205,25 @@ function toThreadMessage(message) {
 }
 
 /**
+ * Map event types to categories
+ */
+const EVENT_CATEGORY_MAP = {
+    'email_sent': 'MESSAGE',
+    'email_received': 'MESSAGE',
+    'case_created': 'STATUS',
+    'followup_scheduled': 'STATUS',
+    'fee_quote_received': 'COST',
+    'denial_received': 'GATE',
+    'portal_submission': 'AGENT',
+    'portal_task_started': 'AGENT',
+    'portal_task_completed': 'AGENT',
+    'portal_task_failed': 'AGENT',
+    'gate_triggered': 'GATE',
+    'constraint_detected': 'RESEARCH',
+    'scope_updated': 'STATUS'
+};
+
+/**
  * Transform activity log to TimelineEvent format
  */
 function toTimelineEvent(activity, analysisMap = {}) {
@@ -122,24 +237,47 @@ function toTimelineEvent(activity, analysisMap = {}) {
         'portal_submission': 'PORTAL_TASK',
         'portal_task_started': 'PORTAL_TASK',
         'portal_task_completed': 'PORTAL_TASK',
-        'portal_task_failed': 'PORTAL_TASK'
+        'portal_task_failed': 'PORTAL_TASK',
+        'gate_triggered': 'GATE_TRIGGERED',
+        'constraint_detected': 'CONSTRAINT_DETECTED',
+        'scope_updated': 'SCOPE_UPDATED',
+        'proposal_queued': 'PROPOSAL_QUEUED',
+        'human_decision': 'HUMAN_DECISION'
     };
+
+    // Extract meta from meta_jsonb if available
+    const meta = activity.meta_jsonb || activity.metadata || {};
 
     const event = {
         id: String(activity.id),
         timestamp: activity.created_at,
         type: typeMap[activity.event_type] || 'CREATED',
         summary: activity.description || activity.event_type,
-        raw_content: activity.metadata?.raw_content || null
+        category: meta.category || EVENT_CATEGORY_MAP[activity.event_type] || 'STATUS',
+        raw_content: meta.raw_content || activity.metadata?.raw_content || null
     };
 
-    // Add AI audit if we have analysis for this message
-    if (activity.message_id && analysisMap[activity.message_id]) {
+    // Add classification if present
+    if (meta.classification) {
+        event.classification = meta.classification;
+    }
+
+    // Add gate details if present
+    if (meta.gate_details) {
+        event.gate_details = meta.gate_details;
+    }
+
+    // Add AI audit from meta or from analysis
+    if (meta.ai_audit) {
+        event.ai_audit = meta.ai_audit;
+    } else if (activity.message_id && analysisMap[activity.message_id]) {
         const analysis = analysisMap[activity.message_id];
         event.ai_audit = {
             summary: analysis.key_points || [],
             confidence: analysis.confidence_score ? parseFloat(analysis.confidence_score) : null,
-            risk_flags: analysis.requires_action ? ['Requires Action'] : []
+            risk_flags: analysis.requires_action ? ['Requires Action'] : [],
+            statute_matches: analysis.full_analysis_json?.statute_matches || null,
+            citations: analysis.full_analysis_json?.citations || null
         };
     }
 
@@ -293,7 +431,7 @@ router.get('/:id/workspace', async (req, res) => {
         );
         const timelineEvents = activityResult.rows.map(a => toTimelineEvent(a, analysisMap));
 
-        // Build next action proposal from latest analysis
+        // Build next action proposal from latest pending reply
         let nextActionProposal = null;
         const latestPendingReply = await db.query(
             `SELECT * FROM auto_reply_queue
@@ -305,18 +443,35 @@ router.get('/:id/workspace', async (req, res) => {
 
         if (latestPendingReply.rows.length > 0) {
             const reply = latestPendingReply.rows[0];
+
+            // Parse JSONB fields with fallbacks
+            const reasoning = reply.reasoning_jsonb || ['AI-generated response to agency message'];
+            const warnings = reply.warnings_jsonb || [];
+            const constraintsApplied = reply.constraints_applied_jsonb || [];
+
             nextActionProposal = {
                 id: String(reply.id),
-                proposal: `Send ${reply.response_type || 'auto'} reply`,
-                reasoning: ['AI-generated response to agency message'],
+                action_type: reply.action_type || 'SEND_EMAIL',
+                proposal: reply.proposal_short || `Send ${reply.response_type || 'auto'} reply`,
+                proposal_short: reply.proposal_short,
+                reasoning: Array.isArray(reasoning) ? reasoning : [reasoning],
                 confidence: reply.confidence_score ? parseFloat(reply.confidence_score) : 0.8,
                 risk_flags: reply.requires_approval ? ['Requires Approval'] : [],
+                warnings: Array.isArray(warnings) ? warnings : [],
                 can_auto_execute: !reply.requires_approval,
-                draft_content: reply.generated_reply
+                blocked_reason: reply.blocked_reason || (reply.requires_approval ? 'Requires human approval' : null),
+                draft_content: reply.generated_reply,
+                draft_preview: reply.generated_reply ? reply.generated_reply.substring(0, 200) : null,
+                constraints_applied: Array.isArray(constraintsApplied) ? constraintsApplied : []
             };
         }
 
-        // Build agency summary
+        // Build agency summary with rules
+        // Note: In a full implementation, these rules would come from an agencies table
+        // For now, we derive some from case context or use defaults
+        const feeQuote = parseFeeQuote(caseData);
+        const constraints = parseConstraints(caseData);
+
         const agencySummary = {
             id: String(requestId), // Use case ID as placeholder since we don't have agency table
             name: caseData.agency_name || '—',
@@ -324,7 +479,16 @@ router.get('/:id/workspace', async (req, res) => {
             submission_method: caseData.portal_url ? 'PORTAL' : 'EMAIL',
             portal_url: caseData.portal_url || undefined,
             default_autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
-            notes: undefined
+            notes: caseData.contact_research_notes || undefined,
+            // Agency rules (derived or default - in full implementation these would be stored)
+            rules: {
+                fee_auto_approve_threshold: 50.00, // Default threshold
+                always_human_gates: ['DENIAL', 'SENSITIVE'], // Default gates requiring human
+                known_exemptions: constraints
+                    .filter(c => c.type === 'EXEMPTION')
+                    .map(c => c.description),
+                typical_response_days: null // Would come from agency stats
+            }
         };
 
         res.json({
@@ -570,15 +734,26 @@ Please provide the revised response following the user's instruction. Only outpu
             })
         });
 
+        // Parse JSONB fields from updated reply
+        const reasoning = updatedReply.reasoning_jsonb || ['Revised based on your instruction', instruction];
+        const warnings = updatedReply.warnings_jsonb || [];
+        const constraintsApplied = updatedReply.constraints_applied_jsonb || [];
+
         // Return updated next action
         const nextAction = {
             id: String(updatedReply.id),
-            proposal: `Send ${updatedReply.response_type || 'auto'} reply`,
-            reasoning: ['Revised based on your instruction', instruction],
+            action_type: updatedReply.action_type || 'SEND_EMAIL',
+            proposal: updatedReply.proposal_short || `Send ${updatedReply.response_type || 'auto'} reply`,
+            proposal_short: updatedReply.proposal_short,
+            reasoning: Array.isArray(reasoning) ? reasoning : [reasoning],
             confidence: updatedReply.confidence_score ? parseFloat(updatedReply.confidence_score) : 0.8,
             risk_flags: updatedReply.requires_approval ? ['Requires Approval'] : [],
+            warnings: Array.isArray(warnings) ? warnings : [],
             can_auto_execute: !updatedReply.requires_approval,
-            draft_content: revisedContent
+            blocked_reason: updatedReply.blocked_reason || (updatedReply.requires_approval ? 'Requires human approval' : null),
+            draft_content: revisedContent,
+            draft_preview: revisedContent ? revisedContent.substring(0, 200) : null,
+            constraints_applied: Array.isArray(constraintsApplied) ? constraintsApplied : []
         };
 
         res.json({

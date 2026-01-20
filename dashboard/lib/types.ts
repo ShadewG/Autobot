@@ -47,11 +47,14 @@ export interface Constraint {
 
 // Fee quote details
 export interface FeeQuote {
-  total_amount: number;
-  deposit_amount: number | null;
+  amount: number;
   currency: string;
-  itemization?: { item: string; amount: number }[];
-  quoted_at: string;
+  quoted_at: string | null;
+  status: 'NONE' | 'QUOTED' | 'INVOICED' | 'APPROVED' | 'PAID';
+  deposit_amount?: number | null;
+  breakdown?: { item: string; amount: number }[];
+  waiver_possible?: boolean;
+  notes?: string;
   valid_until?: string;
 }
 
@@ -120,12 +123,26 @@ export interface ThreadMessage {
   attachments: Attachment[];
 }
 
+// Action types for NextAction
+export type ActionType =
+  | 'SEND_EMAIL'
+  | 'SEND_PORTAL'
+  | 'FEE_NEGOTIATION'
+  | 'FOLLOW_UP'
+  | 'SCOPE_CLARIFICATION'
+  | 'APPEAL'
+  | 'ACCEPTANCE'
+  | 'WITHDRAWAL'
+  | 'ESCALATE'
+  | 'NARROW_SCOPE'
+  | 'CUSTOM';
+
 // Next Action Proposal from AI
 export interface NextAction {
   id: string;
-  action_type: 'FEE_NEGOTIATION' | 'FOLLOW_UP' | 'SCOPE_CLARIFICATION' | 'APPEAL' | 'ACCEPTANCE' | 'WITHDRAWAL' | 'CUSTOM';
+  action_type: ActionType;
   proposal: string;
-  proposal_short: string; // e.g., "Fee Negotiation Email"
+  proposal_short?: string; // e.g., "Fee Negotiation Email" - for button text
   reasoning: string[];
   confidence: number;
   risk_flags: string[];
