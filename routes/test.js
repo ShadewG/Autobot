@@ -4606,6 +4606,14 @@ async function executePhase(run) {
                 if (caseAfter.requires_human) {
                     run.status = 'awaiting_human';
                     run.logs.push('Hit human gate - awaiting decision');
+
+                    // CRITICAL: Advance to human_gate phase so we don't re-run process
+                    const humanGateIndex = run.phases.indexOf('human_gate');
+                    if (humanGateIndex > run.current_phase_index) {
+                        run.current_phase_index = humanGateIndex;
+                        run.current_phase = 'human_gate';
+                        run.logs.push('Advanced to human_gate phase');
+                    }
                 }
                 break;
             }

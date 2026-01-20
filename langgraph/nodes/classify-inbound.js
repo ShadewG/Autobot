@@ -51,6 +51,9 @@ async function classifyInboundNode(state) {
       const stub = llmStubs.classify;
       logger.info('Using stubbed classification for E2E testing', { caseId, stub });
 
+      // Ensure fee_amount is a number (not string)
+      const feeAmount = stub.fee_amount != null ? Number(stub.fee_amount) : null;
+
       // Save stubbed analysis to DB (for consistency)
       await db.saveResponseAnalysis({
         messageId: latestInboundMessageId,
@@ -60,7 +63,7 @@ async function classifyInboundNode(state) {
         sentiment: stub.sentiment || 'neutral',
         keyPoints: stub.key_points || [],
         extractedDeadline: stub.deadline || null,
-        extractedFeeAmount: stub.fee_amount || null,
+        extractedFeeAmount: feeAmount,
         requiresAction: true,
         suggestedAction: stub.suggested_action || null,
         fullAnalysisJson: { stubbed: true, ...stub }
@@ -70,12 +73,12 @@ async function classifyInboundNode(state) {
         classification: stub.classification,
         classificationConfidence: stub.confidence || 0.95,
         sentiment: stub.sentiment || 'neutral',
-        extractedFeeAmount: stub.fee_amount || null,
+        extractedFeeAmount: feeAmount,
         extractedDeadline: stub.deadline || null,
         logs: [
           `[STUBBED] Classified as ${stub.classification} (confidence: ${stub.confidence || 0.95}), ` +
           `sentiment: ${stub.sentiment || 'neutral'}, ` +
-          `fee: ${stub.fee_amount || 'none'}`
+          `fee: ${feeAmount ?? 'none'}`
         ]
       };
     }

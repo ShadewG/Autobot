@@ -118,15 +118,17 @@ async function decideNextActionNode(state) {
     // === Deterministic routing based on classification ===
 
     // 1. FEE QUOTE handling
-    if (classification === 'FEE_QUOTE' && extractedFeeAmount) {
-      reasoning.push(`Fee quote received: $${extractedFeeAmount}`);
+    if (classification === 'FEE_QUOTE' && extractedFeeAmount != null) {
+      // Coerce fee amount to number for comparisons
+      const fee = Number(extractedFeeAmount);
+      reasoning.push(`Fee quote received: $${fee}`);
 
       // Determine fee action based on thresholds
       // Under FEE_AUTO_APPROVE_MAX: Accept (auto in AUTO mode)
       // FEE_AUTO_APPROVE_MAX to FEE_NEGOTIATE_THRESHOLD: Accept with review
       // Over FEE_NEGOTIATE_THRESHOLD: Negotiate
 
-      if (extractedFeeAmount <= FEE_AUTO_APPROVE_MAX && autopilotMode === 'AUTO') {
+      if (fee <= FEE_AUTO_APPROVE_MAX && autopilotMode === 'AUTO') {
         reasoning.push(`Fee under threshold ($${FEE_AUTO_APPROVE_MAX}), auto-approving`);
         return {
           proposalActionType: 'ACCEPT_FEE',
@@ -134,10 +136,10 @@ async function decideNextActionNode(state) {
           requiresHuman: false,
           pauseReason: null,
           proposalReasoning: reasoning,
-          logs: [...logs, `Auto-accepting fee: $${extractedFeeAmount}`],
+          logs: [...logs, `Auto-accepting fee: $${fee}`],
           nextNode: 'draft_response'
         };
-      } else if (extractedFeeAmount <= FEE_NEGOTIATE_THRESHOLD) {
+      } else if (fee <= FEE_NEGOTIATE_THRESHOLD) {
         // Medium fee - accept but gate for human review
         reasoning.push(`Fee within acceptable range, gating for human review`);
         return {
@@ -146,7 +148,7 @@ async function decideNextActionNode(state) {
           requiresHuman: true,
           pauseReason: 'FEE_QUOTE',
           proposalReasoning: reasoning,
-          logs: [...logs, `Gating fee acceptance: $${extractedFeeAmount}`],
+          logs: [...logs, `Gating fee acceptance: $${fee}`],
           nextNode: 'draft_response'
         };
       } else {
@@ -158,7 +160,7 @@ async function decideNextActionNode(state) {
           requiresHuman: true,
           pauseReason: 'FEE_QUOTE',
           proposalReasoning: reasoning,
-          logs: [...logs, `High fee - recommending negotiation: $${extractedFeeAmount}`],
+          logs: [...logs, `High fee - recommending negotiation: $${fee}`],
           nextNode: 'draft_response'
         };
       }
