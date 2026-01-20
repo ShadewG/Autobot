@@ -102,7 +102,7 @@ class CronService {
         setTimeout(async () => {
             try {
                 console.log('Running initial agency sync from Notion...');
-                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 200 });
+                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 2000 });
                 console.log(`Initial agency sync completed: ${result.created} created, ${result.updated} updated`);
             } catch (error) {
                 console.error('Error in initial agency sync:', error);
