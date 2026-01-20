@@ -170,7 +170,9 @@ async function getRedisClient() {
 }
 
 async function createCheckpointer() {
-  const checkpointerType = process.env.LANGGRAPH_CHECKPOINTER || 'memory';  // Default to memory for now
+  // TEMPORARY: Force MemorySaver to debug checkpoint issues
+  // TODO: Fix RedisSaver compatibility with node-redis v5
+  const checkpointerType = 'memory';  // process.env.LANGGRAPH_CHECKPOINTER || 'memory';
 
   if (checkpointerType === 'redis') {
     try {
@@ -184,9 +186,9 @@ async function createCheckpointer() {
     }
   }
 
-  // Fallback to memory (works but data lost on restart)
+  // Use MemorySaver (works but data lost on restart)
   const { MemorySaver } = require("@langchain/langgraph");
-  logger.warn('Using MemorySaver - checkpoints will be lost on restart');
+  logger.info('Using MemorySaver for checkpoints');
   return new MemorySaver();
 }
 
