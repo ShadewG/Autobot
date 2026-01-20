@@ -170,17 +170,23 @@ async function getRedisClient() {
 }
 
 async function createCheckpointer() {
-  const checkpointerType = process.env.LANGGRAPH_CHECKPOINTER || 'redis';
+  const checkpointerType = process.env.LANGGRAPH_CHECKPOINTER || 'memory';  // Default to memory for now
 
   if (checkpointerType === 'redis') {
-    const client = await getRedisClient();
-    // RedisSaver takes client as FIRST argument, not in an object
-    return new RedisSaver(client);
+    try {
+      const client = await getRedisClient();
+      // RedisSaver takes client as FIRST argument, not in an object
+      const saver = new RedisSaver(client);
+      logger.info('Using RedisSaver for checkpoints');
+      return saver;
+    } catch (redisError) {
+      logger.error('RedisSaver creation failed, falling back to MemorySaver', { error: redisError.message });
+    }
   }
 
-  // Fallback to memory (not recommended for production)
+  // Fallback to memory (works but data lost on restart)
   const { MemorySaver } = require("@langchain/langgraph");
-  logger.warn('Using MemorySaver - not recommended for production');
+  logger.warn('Using MemorySaver - checkpoints will be lost on restart');
   return new MemorySaver();
 }
 
