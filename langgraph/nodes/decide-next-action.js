@@ -6,7 +6,7 @@
  */
 
 const db = require('../../services/database');
-const logger = require('../../utils/logger');
+const logger = require('../../services/logger');
 
 // Fee threshold from env
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX) || 100;

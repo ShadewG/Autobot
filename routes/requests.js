@@ -1346,6 +1346,13 @@ router.post('/:id/invoke-agent', async (req, res) => {
  * Query params:
  * - mode: 'dry_run' (default) or 'live'
  *
+ * Body (optional overrides for testing):
+ * - autopilotMode: 'AUTO' | 'SUPERVISED' | 'MANUAL'
+ * - feeThreshold: number (override FEE_AUTO_APPROVE_MAX)
+ * - simulatePortal: boolean (pretend case has/doesn't have portal_url)
+ * - humanDecision: { action: 'approve'|'adjust'|'dismiss', reason?: string }
+ * - forceConfidence: number (override analysis confidence)
+ *
  * Dry-run mode:
  * - Runs full agent logic
  * - Generates proposals and logs
@@ -1358,9 +1365,19 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
     const mode = req.query.mode || 'dry_run';
     const log = logger.forCase(requestId);
 
+    // Extract override options from request body
+    const overrides = {
+        autopilotMode: req.body.autopilotMode || null,
+        feeThreshold: req.body.feeThreshold || null,
+        simulatePortal: req.body.simulatePortal ?? null,
+        humanDecision: req.body.humanDecision || null,
+        forceConfidence: req.body.forceConfidence || null,
+        forceActionType: req.body.forceActionType || null
+    };
+
     try {
         // Verify case exists
-        const caseData = await db.getCaseById(requestId);
+        let caseData = await db.getCaseById(requestId);
         if (!caseData) {
             return res.status(404).json({
                 success: false,
@@ -1377,7 +1394,18 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
             });
         }
 
-        log.info(`Replaying agent run ${runId} in ${mode} mode`);
+        log.info(`Replaying agent run ${runId} in ${mode} mode`, { overrides });
+
+        // Apply overrides to case data (for dry-run simulation)
+        const effectiveCaseData = { ...caseData };
+        if (overrides.autopilotMode) {
+            effectiveCaseData.autopilot_mode = overrides.autopilotMode;
+        }
+        if (overrides.simulatePortal === true) {
+            effectiveCaseData.portal_url = effectiveCaseData.portal_url || 'https://simulated-portal.example.com';
+        } else if (overrides.simulatePortal === false) {
+            effectiveCaseData.portal_url = null;
+        }
 
         // Create a new agent run record for the replay
         const replayRun = await db.createAgentRun(requestId, `REPLAY_${originalRun.trigger_type}`, {
@@ -1385,7 +1413,8 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
             replay_of_run_id: runId,
             dry_run: mode === 'dry_run',
             original_trigger_type: originalRun.trigger_type,
-            original_started_at: originalRun.started_at
+            original_started_at: originalRun.started_at,
+            overrides_applied: overrides
         });
 
         // Update the run to mark it as a replay
@@ -1409,39 +1438,139 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
                 originalProposal = result.rows[0];
             }
 
+            // Get original proposal from proposals table too
+            let originalProposalNew = null;
+            if (originalRun.proposal_id) {
+                const pResult = await db.query(
+                    'SELECT * FROM proposals WHERE id = $1',
+                    [originalRun.proposal_id]
+                );
+                originalProposalNew = pResult.rows[0];
+            }
+
             // Simulate what the agent would do now
             const latestMessage = await db.getLatestInboundMessage(requestId);
             const analysis = latestMessage ? await db.getAnalysisByMessageId(latestMessage.id) : null;
 
-            // Build simulated proposal (simplified - real implementation would run full agent)
+            // Apply confidence override
+            let effectiveConfidence = analysis?.confidence_score || 0.5;
+            if (overrides.forceConfidence !== null) {
+                effectiveConfidence = overrides.forceConfidence;
+            }
+
+            // Determine effective action type
+            let effectiveActionType = analysis?.suggested_action || 'UNKNOWN';
+            if (overrides.forceActionType) {
+                effectiveActionType = overrides.forceActionType;
+            }
+
+            // Build simulated proposal
             const simulatedProposal = {
                 case_id: requestId,
-                action_type: analysis?.suggested_action || 'UNKNOWN',
+                action_type: effectiveActionType,
                 reasoning: ['Dry-run simulation based on current case state'],
-                confidence: analysis?.confidence_score || 0.5,
+                confidence: effectiveConfidence,
                 warnings: [],
-                requires_human: true
+                requires_human: effectiveCaseData.autopilot_mode !== 'AUTO'
             };
 
-            // Validate the simulated action
-            const validation = await actionValidator.validateAction(requestId, simulatedProposal, analysis);
+            // Calculate whether this would auto-execute
+            const FEE_THRESHOLD = overrides.feeThreshold ||
+                parseInt(process.env.FEE_AUTO_APPROVE_MAX) || 100;
 
-            // Store diff in the replay run
+            let canAutoExecute = false;
+            if (effectiveCaseData.autopilot_mode === 'AUTO') {
+                if (effectiveActionType === 'SEND_FOLLOWUP') {
+                    canAutoExecute = true;
+                } else if (effectiveActionType === 'APPROVE_FEE') {
+                    const feeAmount = analysis?.fee_amount || 0;
+                    canAutoExecute = feeAmount <= FEE_THRESHOLD;
+                } else if (effectiveActionType === 'MARK_COMPLETE') {
+                    canAutoExecute = effectiveConfidence >= 0.9;
+                }
+            }
+
+            simulatedProposal.can_auto_execute = canAutoExecute;
+
+            // Validate the simulated action
+            const validation = await actionValidator.validateAction(
+                requestId,
+                simulatedProposal,
+                analysis,
+                effectiveCaseData  // Pass effective case data with overrides
+            );
+
+            // Build state snapshot for debugging
+            const stateSnapshot = {
+                case: {
+                    id: requestId,
+                    status: effectiveCaseData.status,
+                    autopilot_mode: effectiveCaseData.autopilot_mode,
+                    has_portal: !!effectiveCaseData.portal_url,
+                    requires_human: effectiveCaseData.requires_human,
+                    pause_reason: effectiveCaseData.pause_reason,
+                    last_fee_quote_amount: effectiveCaseData.last_fee_quote_amount
+                },
+                analysis: analysis ? {
+                    classification: analysis.classification,
+                    suggested_action: analysis.suggested_action,
+                    confidence: analysis.confidence_score,
+                    fee_amount: analysis.fee_amount
+                } : null,
+                config: {
+                    fee_threshold: FEE_THRESHOLD,
+                    autopilot_enabled: effectiveCaseData.autopilot_mode !== 'MANUAL'
+                }
+            };
+
+            // Build comprehensive diff
             const diff = {
                 original_proposal: originalProposal ? {
                     action_type: originalProposal.action_type,
                     status: originalProposal.status,
-                    confidence: originalProposal.confidence_score
-                } : null,
+                    confidence: originalProposal.confidence_score,
+                    draft_subject: originalProposal.subject,
+                    draft_body_preview: (originalProposal.generated_reply || '').substring(0, 200)
+                } : (originalProposalNew ? {
+                    action_type: originalProposalNew.action_type,
+                    status: originalProposalNew.status,
+                    confidence: originalProposalNew.confidence,
+                    draft_subject: originalProposalNew.draft_subject,
+                    draft_body_preview: (originalProposalNew.draft_body_text || '').substring(0, 200)
+                } : null),
                 simulated_proposal: {
                     action_type: simulatedProposal.action_type,
                     confidence: simulatedProposal.confidence,
+                    can_auto_execute: simulatedProposal.can_auto_execute,
                     would_be_blocked: validation.blocked,
-                    violations: validation.violations
+                    requires_human: simulatedProposal.requires_human
                 },
-                routing_changes: [],
+                state_snapshot: stateSnapshot,
+                validator_result: {
+                    valid: validation.valid,
+                    blocked: validation.blocked,
+                    violations: validation.violations,
+                    rules_checked: validation.rules_checked || []
+                },
+                overrides_applied: overrides,
+                changes_detected: {
+                    action_type_changed: originalProposal?.action_type !== simulatedProposal.action_type,
+                    confidence_changed: originalProposal?.confidence_score !== simulatedProposal.confidence,
+                    blocking_changed: validation.blocked !== (originalProposal?.status === 'blocked')
+                },
                 executed_at: new Date().toISOString()
             };
+
+            // Simulate human decision if provided
+            if (overrides.humanDecision) {
+                diff.simulated_human_decision = {
+                    action: overrides.humanDecision.action,
+                    reason: overrides.humanDecision.reason,
+                    would_result_in: overrides.humanDecision.action === 'approve'
+                        ? (validation.blocked ? 'BLOCKED' : 'EXECUTED')
+                        : (overrides.humanDecision.action === 'dismiss' ? 'DISMISSED' : 'ADJUSTED')
+                };
+            }
 
             await db.updateAgentRun(replayRun.id, {
                 status: 'completed',
@@ -1454,7 +1583,8 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
                 case_id: requestId,
                 original_run_id: runId,
                 replay_run_id: replayRun.id,
-                mode: 'dry_run'
+                mode: 'dry_run',
+                overrides_applied: Object.keys(overrides).filter(k => overrides[k] !== null).length > 0
             });
 
             res.json({
@@ -1463,7 +1593,9 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
                 replay_run_id: replayRun.id,
                 original_run_id: runId,
                 mode: 'dry_run',
-                diff: diff
+                diff: diff,
+                state_snapshot: stateSnapshot,
+                overrides_applied: overrides
             });
         } else {
             // Live mode: actually re-run the agent

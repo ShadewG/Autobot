@@ -12,7 +12,7 @@
  */
 
 const db = require('../../services/database');
-const logger = require('../../utils/logger');
+const logger = require('../../services/logger');
 
 // Lazy load to avoid circular dependencies
 let emailQueueModule = null;

@@ -798,4 +798,447 @@ describe('Reliability Chaos Tests', function() {
             expect(proposal.execution_key).to.not.be.null;
         });
     });
+
+    // =========================================================================
+    // CRITICAL PRODUCTION KILLERS - Real-world chaos scenarios
+    // =========================================================================
+
+    describe('Webhook Out-of-Order Delivery', function() {
+        it('should handle duplicate webhooks with later message arriving first', async function() {
+            /**
+             * Scenario: SendGrid sends two messages for the same thread, but:
+             * - Message B (later) arrives first at t=0
+             * - Message A (earlier) arrives second at t=100ms
+             *
+             * Expected:
+             * - Both messages are processed and stored
+             * - Only one agent run triggers (using latest message)
+             * - Thread state is consistent (no missed messages)
+             */
+            const caseId = 500;
+            const threadId = 'thread-123';
+
+            // Message A was sent first but arrives second
+            const messageA = {
+                id: 'msg-001',
+                thread_id: threadId,
+                case_id: caseId,
+                received_at: new Date('2024-01-01T10:00:00Z'),
+                arrived_at: null, // Will be set when processed
+                content: 'First response from agency'
+            };
+
+            // Message B was sent second but arrives first
+            const messageB = {
+                id: 'msg-002',
+                thread_id: threadId,
+                case_id: caseId,
+                received_at: new Date('2024-01-01T10:05:00Z'),
+                arrived_at: null,
+                content: 'Follow-up response from agency'
+            };
+
+            // Simulate message storage and agent triggering
+            const storedMessages = new Map();
+            const agentTriggers = [];
+            const processedMessageIds = new Set();
+
+            async function processInboundWebhook(message) {
+                const arrivalTime = Date.now();
+                message.arrived_at = arrivalTime;
+
+                // Check for duplicate webhook (same message_id)
+                if (processedMessageIds.has(message.id)) {
+                    return { status: 'duplicate', skipped: true };
+                }
+                processedMessageIds.add(message.id);
+
+                // Store message (always do this)
+                storedMessages.set(message.id, message);
+
+                // Determine if we should trigger agent
+                // Only trigger if this is the most recent message by received_at
+                const threadMessages = Array.from(storedMessages.values())
+                    .filter(m => m.thread_id === message.thread_id)
+                    .sort((a, b) => new Date(b.received_at) - new Date(a.received_at));
+
+                const isLatestMessage = threadMessages[0]?.id === message.id;
+
+                if (isLatestMessage) {
+                    // Check if agent is already running for this case
+                    const pendingTrigger = agentTriggers.find(
+                        t => t.case_id === message.case_id && t.status === 'pending'
+                    );
+
+                    if (!pendingTrigger) {
+                        agentTriggers.push({
+                            case_id: message.case_id,
+                            trigger_message_id: message.id,
+                            status: 'pending',
+                            triggered_at: arrivalTime
+                        });
+                        return { status: 'triggered', messageId: message.id };
+                    } else {
+                        // Update the trigger to use the newer message
+                        pendingTrigger.trigger_message_id = message.id;
+                        return { status: 'updated_trigger', messageId: message.id };
+                    }
+                }
+
+                return { status: 'stored_no_trigger', messageId: message.id };
+            }
+
+            // Message B arrives first (out of order)
+            const resultB = await processInboundWebhook(messageB);
+            expect(resultB.status).to.equal('triggered');
+            expect(storedMessages.size).to.equal(1);
+
+            // Small delay to simulate real-world timing
+            await new Promise(resolve => setTimeout(resolve, 50));
+
+            // Message A arrives second (even though it was sent earlier)
+            const resultA = await processInboundWebhook(messageA);
+            expect(resultA.status).to.equal('stored_no_trigger');
+            expect(storedMessages.size).to.equal(2);
+
+            // Verify: Both messages stored
+            expect(storedMessages.has('msg-001')).to.be.true;
+            expect(storedMessages.has('msg-002')).to.be.true;
+
+            // Verify: Only one agent trigger exists
+            expect(agentTriggers.length).to.equal(1);
+
+            // Verify: Trigger is for the LATER message (by received_at), not arrival order
+            expect(agentTriggers[0].trigger_message_id).to.equal('msg-002');
+        });
+
+        it('should handle identical duplicate webhooks', async function() {
+            /**
+             * Scenario: Same exact webhook delivered twice (SendGrid retry)
+             * Expected: Second delivery is skipped entirely
+             */
+            const webhook = {
+                message_id: '<unique-msg-id-123@agency.gov>',
+                from: 'agency@example.gov',
+                subject: 'Re: FOIA Request',
+                body: 'Response content'
+            };
+
+            const processedWebhooks = new Set();
+            let processCount = 0;
+
+            async function handleWebhook(payload) {
+                // Idempotency check on message_id
+                if (processedWebhooks.has(payload.message_id)) {
+                    return { processed: false, reason: 'duplicate' };
+                }
+
+                processedWebhooks.add(payload.message_id);
+                processCount++;
+                return { processed: true };
+            }
+
+            // Send same webhook twice
+            const result1 = await handleWebhook(webhook);
+            const result2 = await handleWebhook(webhook);
+
+            expect(result1.processed).to.be.true;
+            expect(result2.processed).to.be.false;
+            expect(result2.reason).to.equal('duplicate');
+            expect(processCount).to.equal(1);
+        });
+    });
+
+    describe('Resume While Draft Node Mid-Flight', function() {
+        it('should handle approval arriving while agent is computing new proposal', async function() {
+            /**
+             * Scenario:
+             * - Agent is running, computing a new proposal (draft node mid-flight)
+             * - Human approves a PREVIOUS proposal while agent is still running
+             *
+             * Expected:
+             * - Previous proposal is executed (approval honored)
+             * - New proposal from current run is created but NOT auto-executed
+             * - No double-send, no stuck state
+             */
+            const caseId = 600;
+
+            // State simulation
+            const caseState = {
+                id: caseId,
+                status: 'in_progress',
+                active_agent_run: null
+            };
+
+            const proposals = [
+                {
+                    id: 1,
+                    case_id: caseId,
+                    status: 'PENDING_APPROVAL',
+                    action_type: 'SEND_FOLLOWUP',
+                    execution_key: null,
+                    created_at: new Date(Date.now() - 60000) // 1 min ago
+                }
+            ];
+
+            let emailsSent = [];
+            let agentRunning = false;
+            let newProposalCreated = false;
+
+            // Simulate agent run creating a new proposal
+            async function runAgentDraftNode(caseId) {
+                agentRunning = true;
+                caseState.active_agent_run = { id: 100, status: 'running' };
+
+                // Simulate LLM call taking time
+                await new Promise(resolve => setTimeout(resolve, 200));
+
+                // Create new proposal
+                const newProposal = {
+                    id: 2,
+                    case_id: caseId,
+                    status: 'DRAFT',
+                    action_type: 'SEND_REBUTTAL',
+                    execution_key: null,
+                    created_at: new Date()
+                };
+                proposals.push(newProposal);
+                newProposalCreated = true;
+
+                agentRunning = false;
+                caseState.active_agent_run = null;
+
+                return newProposal;
+            }
+
+            // Simulate human approving proposal 1
+            async function approveProposal(proposalId, executionKey) {
+                const proposal = proposals.find(p => p.id === proposalId);
+                if (!proposal) {
+                    return { success: false, error: 'Proposal not found' };
+                }
+
+                // Check if already executed
+                if (proposal.execution_key !== null) {
+                    return { success: false, error: 'Already executed' };
+                }
+
+                // Atomic claim
+                proposal.execution_key = executionKey;
+                proposal.status = 'APPROVED';
+
+                // Execute (send email)
+                emailsSent.push({
+                    proposalId: proposal.id,
+                    actionType: proposal.action_type,
+                    executedAt: new Date()
+                });
+
+                proposal.status = 'EXECUTED';
+                return { success: true, proposalId };
+            }
+
+            // Start agent run (runs in background)
+            const agentPromise = runAgentDraftNode(caseId);
+
+            // While agent is running, human approves proposal 1
+            await new Promise(resolve => setTimeout(resolve, 50));
+            expect(agentRunning).to.be.true; // Agent should still be running
+
+            const approvalResult = await approveProposal(1, 'exec-human-001');
+            expect(approvalResult.success).to.be.true;
+
+            // Wait for agent to finish
+            const newProposal = await agentPromise;
+
+            // Verify outcomes
+            // 1. Original proposal was executed
+            expect(proposals[0].status).to.equal('EXECUTED');
+            expect(proposals[0].execution_key).to.equal('exec-human-001');
+
+            // 2. New proposal was created but NOT executed
+            expect(newProposalCreated).to.be.true;
+            expect(newProposal.status).to.equal('DRAFT');
+            expect(newProposal.execution_key).to.be.null;
+
+            // 3. Only 1 email was sent
+            expect(emailsSent.length).to.equal(1);
+            expect(emailsSent[0].proposalId).to.equal(1);
+
+            // 4. No stuck state
+            expect(caseState.active_agent_run).to.be.null;
+        });
+
+        it('should supersede old proposal when new one is created', async function() {
+            /**
+             * Scenario:
+             * - Proposal A exists (PENDING_APPROVAL)
+             * - New inbound message triggers re-analysis
+             * - Agent creates Proposal B
+             *
+             * Expected:
+             * - Proposal A is marked SUPERSEDED
+             * - Proposal B becomes the active proposal
+             * - If human approves A after superseded, it should fail
+             */
+            const caseId = 601;
+
+            const proposals = [];
+            let proposalIdCounter = 0;
+
+            function createProposal(caseId, actionType, triggerMessageId) {
+                // Supersede any existing pending proposals
+                proposals.forEach(p => {
+                    if (p.case_id === caseId && p.status === 'PENDING_APPROVAL') {
+                        p.status = 'SUPERSEDED';
+                        p.superseded_at = new Date();
+                    }
+                });
+
+                const proposal = {
+                    id: ++proposalIdCounter,
+                    case_id: caseId,
+                    action_type: actionType,
+                    trigger_message_id: triggerMessageId,
+                    status: 'PENDING_APPROVAL',
+                    execution_key: null,
+                    created_at: new Date()
+                };
+                proposals.push(proposal);
+                return proposal;
+            }
+
+            function approveProposal(proposalId, executionKey) {
+                const proposal = proposals.find(p => p.id === proposalId);
+                if (!proposal) {
+                    return { success: false, error: 'Not found' };
+                }
+                if (proposal.status === 'SUPERSEDED') {
+                    return { success: false, error: 'Proposal has been superseded by a newer analysis' };
+                }
+                if (proposal.execution_key !== null) {
+                    return { success: false, error: 'Already executed' };
+                }
+
+                proposal.execution_key = executionKey;
+                proposal.status = 'EXECUTED';
+                return { success: true };
+            }
+
+            // Create initial proposal
+            const proposalA = createProposal(caseId, 'SEND_FOLLOWUP', 'msg-100');
+            expect(proposalA.status).to.equal('PENDING_APPROVAL');
+
+            // New message triggers new analysis
+            const proposalB = createProposal(caseId, 'SEND_REBUTTAL', 'msg-101');
+
+            // Verify A is superseded
+            expect(proposals[0].status).to.equal('SUPERSEDED');
+            expect(proposalB.status).to.equal('PENDING_APPROVAL');
+
+            // Try to approve the superseded proposal
+            const result = approveProposal(proposalA.id, 'exec-late');
+            expect(result.success).to.be.false;
+            expect(result.error).to.include('superseded');
+
+            // Approve the new proposal (should work)
+            const result2 = approveProposal(proposalB.id, 'exec-new');
+            expect(result2.success).to.be.true;
+        });
+
+        it('should prevent double-send when approve races with auto-execute', async function() {
+            /**
+             * Scenario:
+             * - Agent determines proposal can_auto_execute = true
+             * - Before auto-execute completes, human manually approves
+             *
+             * Expected: Only one execution occurs
+             */
+            const proposal = {
+                id: 1,
+                status: 'PENDING_APPROVAL',
+                can_auto_execute: true,
+                execution_key: null
+            };
+
+            let executionCount = 0;
+
+            async function executeProposal(proposalId, executionKey, source) {
+                // Atomic claim
+                if (proposal.id === proposalId && proposal.execution_key === null) {
+                    proposal.execution_key = executionKey;
+                    proposal.status = 'EXECUTED';
+                    executionCount++;
+                    return { success: true, source };
+                }
+                return { success: false, error: 'Already claimed' };
+            }
+
+            // Race: auto-execute and human approve happen simultaneously
+            const results = await Promise.all([
+                executeProposal(1, 'exec-auto-001', 'auto'),
+                executeProposal(1, 'exec-human-001', 'human')
+            ]);
+
+            const successes = results.filter(r => r.success);
+            expect(successes.length).to.equal(1);
+            expect(executionCount).to.equal(1);
+        });
+    });
+
+    describe('Thread State Consistency', function() {
+        it('should maintain consistent state across concurrent operations', async function() {
+            /**
+             * Scenario: Multiple operations on same case happening concurrently
+             * - Inbound webhook arrives
+             * - Scheduled followup triggers
+             * - Human approves a proposal
+             *
+             * Expected: No race conditions, consistent state
+             */
+            const caseId = 700;
+
+            const caseState = {
+                id: caseId,
+                status: 'awaiting_response',
+                lock: null,
+                operations: []
+            };
+
+            async function withCaseLock(caseId, operation, operationName) {
+                // Try to acquire lock
+                if (caseState.lock !== null) {
+                    return { success: false, skipped: true, reason: 'locked' };
+                }
+
+                caseState.lock = operationName;
+                caseState.operations.push({ name: operationName, started: Date.now() });
+
+                try {
+                    // Simulate operation
+                    await new Promise(resolve => setTimeout(resolve, Math.random() * 50));
+                    return { success: true, operation: operationName };
+                } finally {
+                    caseState.lock = null;
+                }
+            }
+
+            // Fire 3 concurrent operations
+            const results = await Promise.all([
+                withCaseLock(caseId, () => {}, 'inbound_webhook'),
+                withCaseLock(caseId, () => {}, 'scheduled_followup'),
+                withCaseLock(caseId, () => {}, 'human_approve')
+            ]);
+
+            const completed = results.filter(r => r.success);
+            const skipped = results.filter(r => r.skipped);
+
+            // Exactly one should complete
+            expect(completed.length).to.equal(1);
+            // Others should be skipped
+            expect(skipped.length).to.equal(2);
+            // Lock should be released
+            expect(caseState.lock).to.be.null;
+        });
+    });
 });

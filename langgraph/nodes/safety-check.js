@@ -6,7 +6,7 @@
  * Example: Don't request BWC if agency already said it's exempt.
  */
 
-const logger = require('../../utils/logger');
+const logger = require('../../services/logger');
 
 /**
  * Validate draft against constraints

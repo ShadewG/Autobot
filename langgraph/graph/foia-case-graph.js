@@ -24,7 +24,7 @@ const { gateOrExecuteNode } = require("../nodes/gate-or-execute");
 const { executeActionNode } = require("../nodes/execute-action");
 const { commitStateNode } = require("../nodes/commit-state");
 
-const logger = require("../../utils/logger");
+const logger = require("../../services/logger");
 const db = require("../../services/database");
 
 // Max iterations to prevent runaway

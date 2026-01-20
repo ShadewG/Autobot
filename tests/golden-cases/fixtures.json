@@ -1,0 +1,663 @@
+{
+  "description": "Golden test cases for FOIA agent regression testing",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-20",
+  "cases": [
+    {
+      "id": "fee-under-threshold",
+      "name": "Fee Quote Under Threshold ($50)",
+      "description": "Agency sends fee quote below auto-approve threshold - should auto-approve",
+      "inputs": {
+        "caseData": {
+          "id": 1001,
+          "status": "awaiting_response",
+          "agency_name": "City of Springfield Records",
+          "email": "records@springfield.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": ["budget_max_100"],
+          "scope_items": [{"type": "documents", "description": "Police incident reports"}]
+        },
+        "inboundMessage": {
+          "from": "records@springfield.gov",
+          "subject": "Re: FOIA Request - Fee Estimate",
+          "body": "Your request has been received. We estimate the cost to fulfill this request is $50.00. Please remit payment to proceed.",
+          "received_at": "2024-01-15T10:00:00Z"
+        },
+        "config": {
+          "feeAutoApproveMax": 100,
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "FEE_QUOTE",
+          "confidence": 0.95,
+          "feeAmount": 50.00
+        },
+        "actionType": "APPROVE_FEE",
+        "shouldInterrupt": false,
+        "canAutoExecute": true,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "fee_approved",
+            "last_fee_quote_amount": 50.00
+          },
+          "proposal": {
+            "status": "EXECUTED",
+            "action_type": "APPROVE_FEE"
+          }
+        }
+      }
+    },
+    {
+      "id": "fee-over-threshold",
+      "name": "Fee Quote Over Threshold ($250)",
+      "description": "Agency sends fee quote above threshold - should interrupt for human review",
+      "inputs": {
+        "caseData": {
+          "id": 1002,
+          "status": "awaiting_response",
+          "agency_name": "State Records Office",
+          "email": "foia@state.gov",
+          "portal_url": null,
+          "autopilot_mode": "SUPERVISED",
+          "constraints": ["budget_max_100"],
+          "scope_items": [{"type": "emails", "description": "All emails from director"}]
+        },
+        "inboundMessage": {
+          "from": "foia@state.gov",
+          "subject": "FOIA Fee Notification",
+          "body": "The estimated fee for your records request is $250.00. This includes $150 for search time and $100 for copying. Please indicate if you wish to proceed.",
+          "received_at": "2024-01-15T14:30:00Z"
+        },
+        "config": {
+          "feeAutoApproveMax": 100,
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "FEE_QUOTE",
+          "confidence": 0.92,
+          "feeAmount": 250.00
+        },
+        "actionType": "APPROVE_FEE",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": false,
+          "blocked": true,
+          "violations": [
+            {
+              "rule": "FEE_WITHOUT_APPROVAL",
+              "action": "BLOCK",
+              "reason": "Fee amount $250.00 exceeds threshold $100"
+            }
+          ]
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "fee_over_threshold"
+          },
+          "proposal": {
+            "status": "PENDING_APPROVAL",
+            "action_type": "APPROVE_FEE"
+          }
+        }
+      }
+    },
+    {
+      "id": "denial-weak",
+      "name": "Weak Denial (Partial)",
+      "description": "Agency partially denies - suggest rebuttal with high confidence",
+      "inputs": {
+        "caseData": {
+          "id": 1003,
+          "status": "awaiting_response",
+          "agency_name": "County Sheriff's Office",
+          "email": "records@sheriff.county.gov",
+          "portal_url": null,
+          "autopilot_mode": "SUPERVISED",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Use of force reports 2023"}]
+        },
+        "inboundMessage": {
+          "from": "records@sheriff.county.gov",
+          "subject": "Partial Response to FOIA Request",
+          "body": "We are providing some responsive documents. However, portions have been redacted pursuant to exemption (b)(7)(C) for personal privacy. The names of involved officers have been withheld.",
+          "received_at": "2024-01-16T09:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "PARTIAL_DENIAL",
+          "confidence": 0.88,
+          "exemptions": ["b7C"]
+        },
+        "actionType": "SEND_REBUTTAL",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "denial_response"
+          },
+          "proposal": {
+            "status": "PENDING_APPROVAL",
+            "action_type": "SEND_REBUTTAL",
+            "draftContains": ["privacy exemption", "public interest", "officer names"]
+          }
+        }
+      }
+    },
+    {
+      "id": "denial-strong",
+      "name": "Strong Denial (Full with Glomar)",
+      "description": "Agency issues full denial with Glomar - should NOT auto-rebuttal",
+      "inputs": {
+        "caseData": {
+          "id": 1004,
+          "status": "awaiting_response",
+          "agency_name": "Federal Bureau of Investigation",
+          "email": "foipa@fbi.gov",
+          "portal_url": null,
+          "autopilot_mode": "SUPERVISED",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Investigation files"}]
+        },
+        "inboundMessage": {
+          "from": "foipa@fbi.gov",
+          "subject": "FOIA Request - Final Response",
+          "body": "We can neither confirm nor deny the existence of records responsive to your request. The mere acknowledgment of such records would cause harm to national security. This response is made pursuant to Exemption 1 and Exemption 7(A).",
+          "received_at": "2024-01-17T11:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "FULL_DENIAL",
+          "confidence": 0.95,
+          "exemptions": ["b1", "b7A"],
+          "isGlomar": true
+        },
+        "actionType": "ESCALATE",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": [
+            {
+              "rule": "EXEMPT_REQUEST_REBUTTAL",
+              "action": "BLOCK",
+              "reason": "High-confidence exemption with Glomar - auto-rebuttal blocked"
+            }
+          ]
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "strong_denial"
+          },
+          "proposal": {
+            "status": "PENDING_APPROVAL",
+            "action_type": "ESCALATE"
+          }
+        }
+      }
+    },
+    {
+      "id": "clarification-request",
+      "name": "Agency Requests Clarification",
+      "description": "Agency asks for scope clarification - should respond with clarification",
+      "inputs": {
+        "caseData": {
+          "id": 1005,
+          "status": "awaiting_response",
+          "agency_name": "Department of Education",
+          "email": "foia@ed.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Student performance data"}]
+        },
+        "inboundMessage": {
+          "from": "foia@ed.gov",
+          "subject": "Clarification Needed - FOIA Request",
+          "body": "Your request for 'student performance data' is too broad. Please clarify: (1) Which schools or districts? (2) What time period? (3) What specific metrics?",
+          "received_at": "2024-01-18T08:30:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "CLARIFICATION_REQUEST",
+          "confidence": 0.97,
+          "clarificationNeeded": ["scope", "timeframe", "specifics"]
+        },
+        "actionType": "SEND_CLARIFICATION",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "clarification_needed"
+          },
+          "proposal": {
+            "status": "PENDING_APPROVAL",
+            "action_type": "SEND_CLARIFICATION"
+          }
+        }
+      }
+    },
+    {
+      "id": "portal-case-block",
+      "name": "Portal Case (Email Blocked)",
+      "description": "Case with portal URL - email actions should be blocked",
+      "inputs": {
+        "caseData": {
+          "id": 1006,
+          "status": "awaiting_response",
+          "agency_name": "Los Angeles Police Department",
+          "email": null,
+          "portal_url": "https://lapdonline.org/foia-portal",
+          "autopilot_mode": "SUPERVISED",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Body camera footage"}]
+        },
+        "inboundMessage": {
+          "from": "system@lapdonline.org",
+          "subject": "FOIA Portal Update",
+          "body": "A response has been posted to your FOIA request in the portal. Please log in to view.",
+          "received_at": "2024-01-19T15:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "STATUS_UPDATE",
+          "confidence": 0.85
+        },
+        "actionType": "SUBMIT_PORTAL",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": false,
+          "blocked": true,
+          "violations": [
+            {
+              "rule": "PORTAL_CASE_EMAIL",
+              "action": "BLOCK",
+              "reason": "Case has portal URL - email action blocked"
+            }
+          ]
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "portal_case"
+          },
+          "proposal": {
+            "status": "BLOCKED",
+            "blocked_reason": "PORTAL_CASE_EMAIL"
+          }
+        }
+      }
+    },
+    {
+      "id": "followup-1",
+      "name": "No Response Followup #1 (14 days)",
+      "description": "First followup after 14 days of no response",
+      "inputs": {
+        "caseData": {
+          "id": 1007,
+          "status": "awaiting_response",
+          "agency_name": "City Clerk's Office",
+          "email": "clerk@city.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "City council minutes"}],
+          "created_at": "2024-01-01T10:00:00Z",
+          "last_outbound_at": "2024-01-01T10:00:00Z"
+        },
+        "triggerType": "SCHEDULED_FOLLOWUP",
+        "scheduledFollowup": {
+          "followup_number": 1,
+          "days_since_last": 14
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "SCHEDULED_TRIGGER",
+          "followupNumber": 1
+        },
+        "actionType": "SEND_FOLLOWUP",
+        "shouldInterrupt": false,
+        "canAutoExecute": true,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "awaiting_response"
+          },
+          "proposal": {
+            "status": "EXECUTED",
+            "action_type": "SEND_FOLLOWUP",
+            "draftContains": ["checking in", "status update", "original request"]
+          },
+          "followUpSchedule": {
+            "followup_count": 1,
+            "last_followup_sent_at": "SET"
+          }
+        }
+      }
+    },
+    {
+      "id": "followup-2",
+      "name": "No Response Followup #2 (28 days)",
+      "description": "Second followup after 28 days - more urgent tone",
+      "inputs": {
+        "caseData": {
+          "id": 1008,
+          "status": "awaiting_response",
+          "agency_name": "City Clerk's Office",
+          "email": "clerk@city.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "City council minutes"}],
+          "created_at": "2023-12-15T10:00:00Z",
+          "last_outbound_at": "2024-01-01T10:00:00Z"
+        },
+        "triggerType": "SCHEDULED_FOLLOWUP",
+        "scheduledFollowup": {
+          "followup_number": 2,
+          "days_since_last": 14
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "SCHEDULED_TRIGGER",
+          "followupNumber": 2
+        },
+        "actionType": "SEND_FOLLOWUP",
+        "shouldInterrupt": false,
+        "canAutoExecute": true,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "awaiting_response"
+          },
+          "proposal": {
+            "status": "EXECUTED",
+            "action_type": "SEND_FOLLOWUP",
+            "draftContains": ["second followup", "response deadline", "statutory timeframe"]
+          },
+          "followUpSchedule": {
+            "followup_count": 2,
+            "last_followup_sent_at": "SET"
+          }
+        }
+      }
+    },
+    {
+      "id": "hostile-sentiment",
+      "name": "Hostile Response Detection",
+      "description": "Agency sends hostile/threatening response - require human review",
+      "inputs": {
+        "caseData": {
+          "id": 1009,
+          "status": "awaiting_response",
+          "agency_name": "Small Town Police",
+          "email": "chief@smalltown.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Arrest records"}]
+        },
+        "inboundMessage": {
+          "from": "chief@smalltown.gov",
+          "subject": "RE: Your FOIA Request",
+          "body": "We don't take kindly to outsiders snooping around here. You better think twice before requesting more records. This is a small town and word gets around. Consider this your only warning.",
+          "received_at": "2024-01-20T09:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "HOSTILE_RESPONSE",
+          "confidence": 0.92,
+          "sentiment": "hostile",
+          "threatLevel": "medium"
+        },
+        "actionType": "ESCALATE",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": [
+            {
+              "rule": "HOSTILE_SENTIMENT_AUTO",
+              "action": "REQUIRE_APPROVAL",
+              "reason": "Hostile sentiment detected - human review required"
+            }
+          ]
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "hostile_response"
+          },
+          "proposal": {
+            "status": "PENDING_APPROVAL",
+            "action_type": "ESCALATE"
+          }
+        }
+      }
+    },
+    {
+      "id": "low-confidence",
+      "name": "Low Confidence Analysis",
+      "description": "Agent can't confidently classify response - gate for human review",
+      "inputs": {
+        "caseData": {
+          "id": 1010,
+          "status": "awaiting_response",
+          "agency_name": "State Archives",
+          "email": "archives@state.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Historical maps"}]
+        },
+        "inboundMessage": {
+          "from": "archives@state.gov",
+          "subject": "Your Request",
+          "body": "Regarding your inquiry, we have located some materials that may be of interest. However, the collection is being reorganized. We'll be in touch. Also, there may be fees depending on what you need. Let us know how you'd like to proceed.",
+          "received_at": "2024-01-20T11:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true,
+          "confidenceThreshold": 0.75
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "AMBIGUOUS",
+          "confidence": 0.55,
+          "possibleTypes": ["STATUS_UPDATE", "FEE_QUOTE", "CLARIFICATION_REQUEST"]
+        },
+        "actionType": "WAIT",
+        "shouldInterrupt": true,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "needs_human_review",
+            "requires_human": true,
+            "pause_reason": "low_confidence"
+          },
+          "proposal": {
+            "status": "PENDING_APPROVAL",
+            "action_type": "WAIT"
+          }
+        }
+      }
+    },
+    {
+      "id": "already-completed",
+      "name": "Already Completed Case",
+      "description": "Case already marked complete - no action should be taken",
+      "inputs": {
+        "caseData": {
+          "id": 1011,
+          "status": "completed",
+          "agency_name": "Library Archives",
+          "email": "archives@library.org",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Book inventory"}],
+          "completed_at": "2024-01-10T12:00:00Z"
+        },
+        "inboundMessage": {
+          "from": "archives@library.org",
+          "subject": "Additional Information",
+          "body": "Just wanted to follow up - we found a few more documents that might be relevant to your previous request. Let us know if you'd like them.",
+          "received_at": "2024-01-20T14:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "POST_COMPLETION",
+          "confidence": 0.90
+        },
+        "actionType": "NO_ACTION",
+        "shouldInterrupt": false,
+        "canAutoExecute": false,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "completed"
+          },
+          "proposal": null
+        },
+        "notes": "Case already completed - message logged but no proposal created"
+      }
+    },
+    {
+      "id": "documents-received",
+      "name": "Documents Received (Full Response)",
+      "description": "Agency provides full responsive documents - mark complete",
+      "inputs": {
+        "caseData": {
+          "id": 1012,
+          "status": "awaiting_response",
+          "agency_name": "Parks Department",
+          "email": "parks@city.gov",
+          "portal_url": null,
+          "autopilot_mode": "AUTO",
+          "constraints": [],
+          "scope_items": [{"type": "documents", "description": "Park maintenance contracts"}]
+        },
+        "inboundMessage": {
+          "from": "parks@city.gov",
+          "subject": "FOIA Response - Documents Attached",
+          "body": "Please find attached all responsive documents to your request. This includes 15 maintenance contracts from 2023. This concludes our response to your FOIA request.",
+          "attachments": [
+            {"filename": "contracts_2023.pdf", "size": 2500000}
+          ],
+          "received_at": "2024-01-20T16:00:00Z"
+        },
+        "config": {
+          "autopilotEnabled": true
+        }
+      },
+      "expected": {
+        "classification": {
+          "type": "FULL_RESPONSE",
+          "confidence": 0.95,
+          "hasAttachments": true
+        },
+        "actionType": "MARK_COMPLETE",
+        "shouldInterrupt": false,
+        "canAutoExecute": true,
+        "validatorOutcome": {
+          "valid": true,
+          "blocked": false,
+          "violations": []
+        },
+        "dbStateChanges": {
+          "case": {
+            "status": "completed",
+            "completed_at": "SET"
+          },
+          "proposal": {
+            "status": "EXECUTED",
+            "action_type": "MARK_COMPLETE"
+          }
+        }
+      }
+    }
+  ]
+}

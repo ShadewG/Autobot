@@ -7,7 +7,7 @@
 
 const aiService = require('../../services/ai-service');
 const db = require('../../services/database');
-const logger = require('../../utils/logger');
+const logger = require('../../services/logger');
 
 /**
  * Draft the appropriate response based on proposalActionType

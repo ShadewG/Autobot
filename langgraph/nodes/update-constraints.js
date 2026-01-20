@@ -11,7 +11,7 @@
  */
 
 const db = require('../../services/database');
-const logger = require('../../utils/logger');
+const logger = require('../../services/logger');
 
 /**
  * Merge scope updates from analysis with existing scope items

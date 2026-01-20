@@ -10,7 +10,7 @@
  */
 
 const db = require('../../services/database');
-const logger = require('../../utils/logger');
+const logger = require('../../services/logger');
 
 /**
  * Load all context needed for decision-making
