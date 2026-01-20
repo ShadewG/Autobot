@@ -23,32 +23,32 @@ function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div
       className={cn(
-        "flex flex-col gap-1 max-w-[85%]",
+        "flex flex-col gap-1 w-full max-w-[85%] min-w-0",
         isOutbound ? "ml-auto items-end" : "mr-auto items-start"
       )}
     >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className="flex items-center gap-1 text-xs text-muted-foreground flex-wrap min-w-0">
         {channelIcons[message.channel]}
         <span>{isOutbound ? "To:" : "From:"}</span>
-        <span className="font-medium">
+        <span className="font-medium truncate max-w-[150px]">
           {isOutbound ? message.to_email : message.from_email}
         </span>
         <span>•</span>
-        <span>{formatDateTime(message.sent_at)}</span>
+        <span className="whitespace-nowrap">{formatDateTime(message.sent_at)}</span>
       </div>
       <div
         className={cn(
-          "rounded-lg p-3",
+          "rounded-lg p-3 w-full overflow-hidden",
           isOutbound
             ? "bg-primary text-primary-foreground"
             : "bg-muted"
         )}
       >
-        <p className="text-xs font-medium mb-1">{message.subject}</p>
-        <p className="text-sm whitespace-pre-wrap">{message.body}</p>
+        <p className="text-xs font-medium mb-1 break-words">{message.subject}</p>
+        <p className="text-sm whitespace-pre-wrap break-words overflow-wrap-anywhere">{message.body}</p>
       </div>
       {message.attachments.length > 0 && (
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap">
           {message.attachments.map((att, i) => (
             <Badge key={i} variant="outline" className="text-xs">
               {att.filename}
@@ -74,8 +74,8 @@ export function Thread({ messages }: ThreadProps) {
   }
 
   return (
-    <ScrollArea className="h-[calc(100vh-400px)]">
-      <div className="space-y-4 pr-4">
+    <ScrollArea className="h-[300px] w-full">
+      <div className="space-y-4 pr-4 overflow-hidden">
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
