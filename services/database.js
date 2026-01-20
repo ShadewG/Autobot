@@ -979,9 +979,10 @@ class DatabaseService {
                 langgraph_thread_id, adjustment_count
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (proposal_key) DO UPDATE SET
-                -- Don't update if already executed
+                -- Don't update if already executed, and preserve existing if new is null
                 action_type = CASE
                     WHEN proposals.status = 'EXECUTED' THEN proposals.action_type
+                    WHEN EXCLUDED.action_type IS NULL THEN proposals.action_type
                     ELSE EXCLUDED.action_type
                 END,
                 draft_subject = CASE
