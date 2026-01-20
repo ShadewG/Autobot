@@ -392,9 +392,13 @@ ${prompt}`
             const replyText = response.output_text;
             const confidenceThreshold = parseFloat(process.env.AUTO_REPLY_CONFIDENCE_THRESHOLD) || 0.8;
 
+            // Normalize output format: always return { subject, body_text, body_html }
             return {
+                subject: null,  // Auto-replies don't generate subjects
+                body_text: replyText,
+                body_html: null,
+                // Metadata
                 should_auto_reply: analysis.confidence_score >= confidenceThreshold,
-                reply_text: replyText,
                 confidence: analysis.confidence_score,
                 requires_approval: analysis.confidence_score < confidenceThreshold
             };
@@ -547,9 +551,13 @@ ${prompt}`
 
             console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars) with GPT-5`);
 
+            // Normalize output format: always return { subject, body_text, body_html }
             return {
+                subject: null,  // Rebuttals don't generate subjects (use RE: pattern)
+                body_text: rebuttalText,
+                body_html: null,
+                // Metadata
                 should_auto_reply: true,
-                reply_text: rebuttalText,
                 confidence: 0.85, // High confidence for strategic rebuttals
                 denial_subtype: denialSubtype,
                 is_denial_rebuttal: true
@@ -665,7 +673,14 @@ Return ONLY the email body text.`;
                 max_completion_tokens: 600  // gpt-5 models use max_completion_tokens
             });
 
-            return response.choices[0].message.content;
+            const bodyText = response.choices[0].message.content;
+
+            // Normalize output format: always return { subject, body_text, body_html }
+            return {
+                subject: `Follow-up: Public Records Request - ${caseData.subject_name || 'Request'}`,
+                body_text: bodyText,
+                body_html: null
+            };
         } catch (error) {
             console.error('Error generating follow-up:', error);
             throw error;
@@ -731,9 +746,16 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
 ${prompt}`
             });
 
+            const bodyText = response.output_text?.trim();
+
+            // Normalize output format: always return { subject, body_text, body_html }
             return {
-                reply_text: response.output_text?.trim(),
-                model: 'gpt-5.2-2025-12-11'
+                subject: `RE: Fee Response - Public Records Request - ${caseData.subject_name || 'Request'}`,
+                body_text: bodyText,
+                body_html: null,
+                // Metadata
+                model: 'gpt-5.2-2025-12-11',
+                recommended_action: recommendedAction
             };
         } catch (error) {
             console.error('Error generating fee response:', error);

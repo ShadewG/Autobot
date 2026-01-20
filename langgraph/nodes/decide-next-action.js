@@ -8,8 +8,9 @@
 const db = require('../../services/database');
 const logger = require('../../services/logger');
 
-// Fee threshold from env
+// Fee thresholds from env
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX) || 100;
+const FEE_NEGOTIATE_THRESHOLD = parseFloat(process.env.FEE_NEGOTIATE_THRESHOLD) || 500;
 const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS) || 2;
 
 /**
@@ -51,11 +52,26 @@ async function decideNextActionNode(state) {
     if (humanDecision) {
       logs.push(`Processing human decision: ${humanDecision.action}`);
 
+      // CRITICAL: Hydrate proposalActionType from DB if missing in state
+      // This prevents null action_type errors on resume
+      let proposalActionType = state.proposalActionType;
+      if (!proposalActionType) {
+        const pendingProposal = await db.getLatestPendingProposal(caseId);
+        if (pendingProposal?.action_type) {
+          proposalActionType = pendingProposal.action_type;
+          logs.push(`Recovered proposalActionType from DB: ${proposalActionType}`);
+        } else {
+          // Last resort fallback - should not happen
+          proposalActionType = 'UNKNOWN';
+          logs.push(`WARNING: No proposalActionType in state or DB, using UNKNOWN`);
+        }
+      }
+
       switch (humanDecision.action) {
         case 'APPROVE':
           reasoning.push('Human approved the proposal');
           return {
-            proposalActionType: state.proposalActionType,  // Keep existing
+            proposalActionType,  // Use hydrated value
             canAutoExecute: true,  // Now approved for execution
             requiresHuman: false,
             logs,
@@ -66,7 +82,7 @@ async function decideNextActionNode(state) {
         case 'ADJUST':
           reasoning.push(`Human requested adjustment: ${humanDecision.instruction}`);
           return {
-            proposalActionType: state.proposalActionType,  // PRESERVE action type
+            proposalActionType,  // Use hydrated value
             adjustmentInstruction: humanDecision.instruction,  // Pass instruction to draft node
             proposalReasoning: reasoning,
             logs: [...logs, 'Re-drafting with adjustment instruction'],
@@ -105,26 +121,44 @@ async function decideNextActionNode(state) {
     if (classification === 'FEE_QUOTE' && extractedFeeAmount) {
       reasoning.push(`Fee quote received: $${extractedFeeAmount}`);
 
+      // Determine fee action based on thresholds
+      // Under FEE_AUTO_APPROVE_MAX: Accept (auto in AUTO mode)
+      // FEE_AUTO_APPROVE_MAX to FEE_NEGOTIATE_THRESHOLD: Accept with review
+      // Over FEE_NEGOTIATE_THRESHOLD: Negotiate
+
       if (extractedFeeAmount <= FEE_AUTO_APPROVE_MAX && autopilotMode === 'AUTO') {
         reasoning.push(`Fee under threshold ($${FEE_AUTO_APPROVE_MAX}), auto-approving`);
         return {
-          proposalActionType: 'APPROVE_FEE',
+          proposalActionType: 'ACCEPT_FEE',
           canAutoExecute: true,
           requiresHuman: false,
           pauseReason: null,
           proposalReasoning: reasoning,
-          logs: [...logs, `Auto-approving fee: $${extractedFeeAmount}`],
+          logs: [...logs, `Auto-accepting fee: $${extractedFeeAmount}`],
           nextNode: 'draft_response'
         };
-      } else {
-        reasoning.push(`Fee exceeds threshold or requires supervision, gating for human approval`);
+      } else if (extractedFeeAmount <= FEE_NEGOTIATE_THRESHOLD) {
+        // Medium fee - accept but gate for human review
+        reasoning.push(`Fee within acceptable range, gating for human review`);
         return {
-          proposalActionType: 'APPROVE_FEE',
+          proposalActionType: 'ACCEPT_FEE',
           canAutoExecute: false,
           requiresHuman: true,
           pauseReason: 'FEE_QUOTE',
           proposalReasoning: reasoning,
-          logs: [...logs, `Gating fee approval: $${extractedFeeAmount}`],
+          logs: [...logs, `Gating fee acceptance: $${extractedFeeAmount}`],
+          nextNode: 'draft_response'
+        };
+      } else {
+        // High fee - recommend negotiation
+        reasoning.push(`Fee exceeds negotiate threshold ($${FEE_NEGOTIATE_THRESHOLD}), recommending negotiation`);
+        return {
+          proposalActionType: 'NEGOTIATE_FEE',
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: 'FEE_QUOTE',
+          proposalReasoning: reasoning,
+          logs: [...logs, `High fee - recommending negotiation: $${extractedFeeAmount}`],
           nextNode: 'draft_response'
         };
       }

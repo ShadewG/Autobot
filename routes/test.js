@@ -3333,25 +3333,19 @@ router.post('/langgraph/node/:nodeName', async (req, res) => {
 
         console.log(`[LangGraph Test] Testing node: ${graphNodeName} (mode: ${mode})`);
 
-        // === UNIT MODE: Direct call, bypasses graph runtime ===
+        // === UNIT MODE: DEPRECATED - returns error directing to use graph mode or E2E runner ===
         if (mode === 'unit') {
-            console.log(`[LangGraph Test] Unit mode - direct call`);
-            console.log(`[LangGraph Test] Input state:`, JSON.stringify(state, null, 2));
+            console.log(`[LangGraph Test] Unit mode DEPRECATED - rejecting request`);
 
-            const startTime = Date.now();
-            const result = await node(state);
-            const duration = Date.now() - startTime;
-
-            console.log(`[LangGraph Test] Node result:`, JSON.stringify(result, null, 2));
-
-            return res.json({
-                success: true,
-                mode: 'unit',
-                node: graphNodeName,
-                duration_ms: duration,
-                warning: 'Unit mode bypasses graph runtime (no checkpointing, reducers, or routing)',
-                input_state: state,
-                output: result
+            return res.status(400).json({
+                success: false,
+                error: 'Unit mode is deprecated',
+                reason: 'Direct node calls bypass graph runtime (reducers, checkpointing, edges, interrupts). Results are not representative of production behavior.',
+                recommendation: 'Use mode="graph" for realistic node testing, or use the E2E Scenario Runner at /test-e2e.html for full workflow testing.',
+                alternatives: [
+                    { mode: 'graph', description: 'Runs node within graph context with checkpointing' },
+                    { url: '/test-e2e.html', description: 'E2E Scenario Runner for full workflow testing' }
+                ]
             });
         }
 

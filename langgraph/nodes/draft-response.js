@@ -14,8 +14,8 @@ const logger = require('../../services/logger');
  */
 async function draftResponseNode(state) {
   const {
-    caseId, proposalActionType, humanDecision, constraints, scopeItems,
-    extractedFeeAmount
+    caseId, proposalActionType, constraints, scopeItems,
+    extractedFeeAmount, adjustmentInstruction: stateAdjustmentInstruction
   } = state;
 
   const logs = [];
@@ -29,9 +29,9 @@ async function draftResponseNode(state) {
 
     let draft = { subject: null, body_text: null, body_html: null };
 
-    // Check for adjustment instruction
-    const adjustmentInstruction = humanDecision?.action === 'ADJUST' ?
-      humanDecision.instruction : null;
+    // Read adjustment instruction from state (set by decideNextActionNode on ADJUST)
+    // This is the single source of truth - don't read from humanDecision
+    const adjustmentInstruction = stateAdjustmentInstruction || null;
 
     if (adjustmentInstruction) {
       logs.push(`Applying adjustment: ${adjustmentInstruction}`);
@@ -96,25 +96,49 @@ async function draftResponseNode(state) {
         break;
       }
 
-      case 'APPROVE_FEE': {
+      case 'APPROVE_FEE':
+      case 'ACCEPT_FEE': {
         logs.push(`Drafting fee acceptance for $${extractedFeeAmount}`);
 
-        // Check if generateFeeAcceptance exists
-        if (typeof aiService.generateFeeAcceptance === 'function') {
-          draft = await aiService.generateFeeAcceptance(
-            caseData,
-            extractedFeeAmount,
-            { adjustmentInstruction }
-          );
-        } else {
-          // Fallback: create a simple fee acceptance
-          const subjectName = caseData.subject_name || 'the subject';
-          draft = {
-            subject: `RE: Fee Acceptance - Public Records Request - ${subjectName}`,
-            body_text: `Thank you for your response regarding my public records request.\n\nI am writing to confirm my acceptance of the quoted fee of $${extractedFeeAmount}. Please let me know the preferred method of payment and where to submit it.\n\nThank you for your assistance.\n\nSincerely,\n${process.env.REQUESTER_NAME || 'Requester'}`,
-            body_html: null
-          };
-        }
+        // Use generateFeeResponse with 'accept' action
+        draft = await aiService.generateFeeResponse(
+          caseData,
+          {
+            feeAmount: extractedFeeAmount,
+            recommendedAction: 'accept',
+            instructions: adjustmentInstruction
+          }
+        );
+        break;
+      }
+
+      case 'NEGOTIATE_FEE': {
+        logs.push(`Drafting fee negotiation for $${extractedFeeAmount}`);
+
+        // Use generateFeeResponse with 'negotiate' action
+        draft = await aiService.generateFeeResponse(
+          caseData,
+          {
+            feeAmount: extractedFeeAmount,
+            recommendedAction: 'negotiate',
+            instructions: adjustmentInstruction
+          }
+        );
+        break;
+      }
+
+      case 'DECLINE_FEE': {
+        logs.push(`Drafting fee decline for $${extractedFeeAmount}`);
+
+        // Use generateFeeResponse with 'decline' action
+        draft = await aiService.generateFeeResponse(
+          caseData,
+          {
+            feeAmount: extractedFeeAmount,
+            recommendedAction: 'decline',
+            instructions: adjustmentInstruction
+          }
+        );
         break;
       }
 
