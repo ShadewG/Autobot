@@ -4712,26 +4712,28 @@ async function ensureEmailThread(caseId) {
 async function createInboundMessage(caseId, threadId, config) {
     const messageId = `inbound-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`;
 
-    const result = await db.query(`
-        INSERT INTO email_messages (
-            thread_id, message_id, direction, from_address, to_address,
-            subject, body_text, body_html, received_at, processed
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING *
-    `, [
-        threadId,
-        messageId,
-        'inbound',
-        'records@agency.gov',
-        'user@example.com',
-        config.subject,
-        config.body,
-        `<p>${config.body}</p>`,
-        new Date(),
-        false
-    ]);
-
-    const message = result.rows[0];
+    // Use db.createMessage which inserts into the correct 'messages' table
+    const message = await db.createMessage({
+        thread_id: threadId,
+        case_id: caseId,
+        message_id: messageId,
+        sendgrid_message_id: null,
+        direction: 'inbound',
+        from_email: 'records@agency.gov',
+        to_email: 'user@example.com',
+        cc_emails: null,
+        subject: config.subject,
+        body_text: config.body,
+        body_html: `<p>${config.body}</p>`,
+        has_attachments: false,
+        attachment_count: 0,
+        message_type: config.channel === 'PORTAL' ? 'portal_notification' : 'email',
+        portal_notification: config.channel === 'PORTAL',
+        portal_notification_type: config.channel === 'PORTAL' ? 'status_update' : null,
+        portal_notification_provider: null,
+        sent_at: null,
+        received_at: new Date()
+    });
 
     // Update case with latest inbound
     await db.updateCase(caseId, {
