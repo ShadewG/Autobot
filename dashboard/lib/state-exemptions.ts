@@ -114,7 +114,7 @@ export const STATE_EXEMPTIONS: Record<string, ExemptionInfo[]> = {
   ],
   TX: [
     {
-      statute: 'Tex. Gov't Code § 552.108',
+      statute: "Tex. Gov't Code § 552.108",
       title: 'Law Enforcement Information',
       exceptions: [
         'After investigation closed',
@@ -123,7 +123,7 @@ export const STATE_EXEMPTIONS: Record<string, ExemptionInfo[]> = {
       ]
     },
     {
-      statute: 'Tex. Gov't Code § 552.101',
+      statute: "Tex. Gov't Code § 552.101",
       title: 'Privacy Exemption',
       exceptions: [
         'Public officials in official capacity',
