@@ -6,18 +6,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import type { PauseReason, FeeQuote, AgencyRules } from "@/lib/types";
 import { formatCurrency, PAUSE_REASON_LABELS } from "@/lib/utils";
 import {
   AlertTriangle,
   DollarSign,
-  FileText,
   Scale,
   Ban,
   UserCheck,
   CheckCircle,
-  XCircle,
-  ArrowRight,
+  ChevronDown,
+  ChevronRight,
   Info,
 } from "lucide-react";
 
@@ -29,60 +33,49 @@ interface DecisionPanelProps {
   isLoading?: boolean;
 }
 
-const DECISION_CONFIG: Record<PauseReason, {
-  icon: React.ComponentType<{ className?: string }>;
-  options: { id: string; label: string; recommended?: boolean; variant?: "default" | "outline" | "destructive" }[];
-}> = {
-  FEE_QUOTE: {
-    icon: DollarSign,
-    options: [
-      { id: "request_itemization", label: "Request itemized estimate", recommended: true },
-      { id: "approve_deposit", label: "Proceed with deposit" },
-      { id: "narrow_scope", label: "Narrow scope", variant: "outline" },
-      { id: "withdraw", label: "Withdraw", variant: "destructive" },
-    ],
-  },
-  SCOPE: {
-    icon: Scale,
-    options: [
-      { id: "accept", label: "Accept narrowed scope", recommended: true },
-      { id: "counter", label: "Counter-propose" },
-      { id: "clarify", label: "Request clarification", variant: "outline" },
-      { id: "withdraw", label: "Withdraw", variant: "destructive" },
-    ],
-  },
-  DENIAL: {
-    icon: Ban,
-    options: [
-      { id: "appeal", label: "File appeal", recommended: true },
-      { id: "revise", label: "Revise & resubmit" },
-      { id: "escalate", label: "Escalate", variant: "outline" },
-      { id: "accept", label: "Accept denial", variant: "destructive" },
-    ],
-  },
-  ID_REQUIRED: {
-    icon: UserCheck,
-    options: [
-      { id: "provide_id", label: "Provide ID", recommended: true },
-      { id: "request_waiver", label: "Request waiver" },
-      { id: "withdraw", label: "Withdraw", variant: "destructive" },
-    ],
-  },
-  SENSITIVE: {
-    icon: AlertTriangle,
-    options: [
-      { id: "proceed", label: "Proceed with caution" },
-      { id: "modify", label: "Modify request", recommended: true },
-      { id: "escalate", label: "Escalate for review", variant: "outline" },
-    ],
-  },
-  CLOSE_ACTION: {
-    icon: CheckCircle,
-    options: [
-      { id: "complete", label: "Mark complete", recommended: true },
-      { id: "continue", label: "Continue pursuing" },
-    ],
-  },
+// Single recommended action per gate type
+const RECOMMENDATIONS: Record<PauseReason, { id: string; label: string }> = {
+  FEE_QUOTE: { id: "approve_deposit", label: "Proceed with deposit" },
+  SCOPE: { id: "accept", label: "Accept narrowed scope" },
+  DENIAL: { id: "appeal", label: "File appeal" },
+  ID_REQUIRED: { id: "provide_id", label: "Provide ID" },
+  SENSITIVE: { id: "modify", label: "Modify request" },
+  CLOSE_ACTION: { id: "complete", label: "Mark complete" },
+};
+
+// Alternative options (shown when expanded)
+const ALTERNATIVES: Record<PauseReason, { id: string; label: string }[]> = {
+  FEE_QUOTE: [
+    { id: "request_itemization", label: "Request itemized estimate" },
+    { id: "narrow_scope", label: "Narrow scope to reduce cost" },
+  ],
+  SCOPE: [
+    { id: "counter", label: "Counter-propose" },
+    { id: "clarify", label: "Request clarification" },
+  ],
+  DENIAL: [
+    { id: "revise", label: "Revise & resubmit" },
+    { id: "escalate", label: "Escalate" },
+  ],
+  ID_REQUIRED: [
+    { id: "request_waiver", label: "Request waiver" },
+  ],
+  SENSITIVE: [
+    { id: "proceed", label: "Proceed with caution" },
+    { id: "escalate", label: "Escalate for review" },
+  ],
+  CLOSE_ACTION: [
+    { id: "continue", label: "Continue pursuing" },
+  ],
+};
+
+const GATE_ICONS: Record<PauseReason, React.ComponentType<{ className?: string }>> = {
+  FEE_QUOTE: DollarSign,
+  SCOPE: Scale,
+  DENIAL: Ban,
+  ID_REQUIRED: UserCheck,
+  SENSITIVE: AlertTriangle,
+  CLOSE_ACTION: CheckCircle,
 };
 
 export function DecisionPanel({
@@ -92,112 +85,108 @@ export function DecisionPanel({
   onDecision,
   isLoading,
 }: DecisionPanelProps) {
+  const [showAlternatives, setShowAlternatives] = useState(false);
+  const [showCostCap, setShowCostCap] = useState(false);
   const [costCap, setCostCap] = useState<string>("");
 
-  const config = DECISION_CONFIG[pauseReason];
-  const Icon = config.icon;
+  const Icon = GATE_ICONS[pauseReason];
+  const recommendation = RECOMMENDATIONS[pauseReason];
+  const alternatives = ALTERNATIVES[pauseReason];
 
   const showFeeDetails = pauseReason === "FEE_QUOTE" && feeQuote;
-  const showCostCapInput = pauseReason === "FEE_QUOTE";
 
   return (
     <Card className="border-yellow-200 bg-yellow-50/50 dark:bg-yellow-950/20 dark:border-yellow-800">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2">
           <Icon className="h-4 w-4 text-yellow-600" />
-          Decision Required: {PAUSE_REASON_LABELS[pauseReason]}
+          {PAUSE_REASON_LABELS[pauseReason]}
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Fee details */}
+      <CardContent className="space-y-3">
+        {/* Fee details - compact */}
         {showFeeDetails && (
-          <div className="bg-white dark:bg-gray-900 rounded-lg p-3 space-y-2">
+          <div className="bg-white dark:bg-gray-900 rounded-lg p-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-muted-foreground">Total quoted</span>
+              <span className="text-sm text-muted-foreground">Fee</span>
               <span className="font-bold text-lg">{formatCurrency(feeQuote.amount)}</span>
             </div>
             {feeQuote.deposit_amount && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Deposit required</span>
-                <span className="font-medium">{formatCurrency(feeQuote.deposit_amount)}</span>
-              </div>
-            )}
-            {feeQuote.breakdown && feeQuote.breakdown.length > 0 && (
-              <div className="pt-2 border-t">
-                <p className="text-xs text-muted-foreground mb-1">Itemization:</p>
-                {feeQuote.breakdown.map((item, i) => (
-                  <div key={i} className="flex justify-between text-xs">
-                    <span>{item.item}</span>
-                    <span>{formatCurrency(item.amount)}</span>
-                  </div>
-                ))}
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Deposit</span>
+                <span>{formatCurrency(feeQuote.deposit_amount)}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Why paused explanation */}
-        {agencyRules && (
-          <div className="flex items-start gap-2 text-xs text-muted-foreground bg-white dark:bg-gray-900 rounded p-2">
-            <Info className="h-3 w-3 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="font-medium">Why this requires approval:</p>
-              {pauseReason === "FEE_QUOTE" && agencyRules.fee_auto_approve_threshold !== null && (
-                <p>Fee ({formatCurrency(feeQuote?.amount || 0)}) exceeds auto-approve threshold ({formatCurrency(agencyRules.fee_auto_approve_threshold)})</p>
-              )}
-              {agencyRules.always_human_gates.includes(pauseReason) && (
-                <p>This gate type always requires human review for this agency</p>
-              )}
-            </div>
+        {/* Single recommendation line */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary" className="text-[10px]">Recommended</Badge>
+            <span className="text-sm font-medium">{recommendation.label}</span>
           </div>
-        )}
-
-        {/* Cost cap input for fee quotes */}
-        {showCostCapInput && (
-          <div className="space-y-2">
-            <Label htmlFor="cost-cap" className="text-xs">Set cost cap (optional)</Label>
-            <div className="flex gap-2">
-              <Input
-                id="cost-cap"
-                type="number"
-                placeholder="Max $"
-                value={costCap}
-                onChange={(e) => setCostCap(e.target.value)}
-                className="w-24 h-8 text-sm"
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => onDecision("set_cap", { cap: parseFloat(costCap) })}
-                disabled={!costCap || isLoading}
-              >
-                Apply cap
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Decision buttons */}
-        <div className="space-y-2">
-          {config.options.map((option) => (
-            <Button
-              key={option.id}
-              variant={option.variant || "default"}
-              size="sm"
-              className="w-full justify-start"
-              onClick={() => onDecision(option.id)}
-              disabled={isLoading}
-            >
-              {option.recommended && (
-                <Badge variant="secondary" className="mr-2 text-[10px] px-1">
-                  Recommended
-                </Badge>
-              )}
-              {option.label}
-              <ArrowRight className="h-3 w-3 ml-auto" />
-            </Button>
-          ))}
+          <button
+            onClick={() => setShowAlternatives(!showAlternatives)}
+            className="text-xs text-primary hover:underline"
+          >
+            {showAlternatives ? "Hide options" : "Change..."}
+          </button>
         </div>
+
+        {/* Alternatives (collapsed by default) */}
+        {showAlternatives && (
+          <div className="space-y-1 pl-2 border-l-2 border-muted">
+            {alternatives.map((alt) => (
+              <button
+                key={alt.id}
+                onClick={() => onDecision(alt.id)}
+                disabled={isLoading}
+                className="block text-sm text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
+              >
+                {alt.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Cost cap - collapsed */}
+        {pauseReason === "FEE_QUOTE" && (
+          <Collapsible open={showCostCap} onOpenChange={setShowCostCap}>
+            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+              {showCostCap ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Optional: set max cost...
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <div className="flex gap-2">
+                <Input
+                  type="number"
+                  placeholder="$"
+                  value={costCap}
+                  onChange={(e) => setCostCap(e.target.value)}
+                  className="w-20 h-7 text-sm"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => onDecision("set_cap", { cap: parseFloat(costCap) })}
+                  disabled={!costCap || isLoading}
+                >
+                  Apply
+                </Button>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* Why paused - subtle */}
+        {agencyRules && agencyRules.fee_auto_approve_threshold !== null && pauseReason === "FEE_QUOTE" && (
+          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <Info className="h-2.5 w-2.5" />
+            Fee exceeds ${agencyRules.fee_auto_approve_threshold} auto-approve threshold
+          </p>
+        )}
       </CardContent>
     </Card>
   );

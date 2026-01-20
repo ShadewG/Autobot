@@ -1,32 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DecisionPanel } from "./decision-panel";
 import { ConstraintsDisplay } from "./constraints-display";
 import { ScopeBreakdown } from "./scope-breakdown";
-import { AdjustModal } from "./adjust-modal";
 import type {
   NextAction,
   RequestDetail,
   AgencySummary,
-  PauseReason,
 } from "@/lib/types";
-import { formatCurrency, formatDate, PAUSE_REASON_LABELS } from "@/lib/utils";
+import { formatCurrency, formatDate } from "@/lib/utils";
 import {
-  CheckCircle,
-  Edit,
-  XCircle,
   AlertTriangle,
   DollarSign,
-  Loader2,
   ExternalLink,
-  Eye,
   Info,
 } from "lucide-react";
 
@@ -34,9 +25,6 @@ interface CopilotPanelProps {
   request: RequestDetail;
   nextAction: NextAction | null;
   agency: AgencySummary;
-  onApprove: () => Promise<void>;
-  onRevise: (instruction: string) => Promise<void>;
-  onDismiss: () => Promise<void>;
   onDecision?: (decision: string, params?: Record<string, unknown>) => Promise<void>;
 }
 
@@ -44,41 +32,9 @@ export function CopilotPanel({
   request,
   nextAction,
   agency,
-  onApprove,
-  onRevise,
-  onDismiss,
   onDecision,
 }: CopilotPanelProps) {
-  const [adjustModalOpen, setAdjustModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-
-  const handleApprove = async () => {
-    setIsLoading(true);
-    try {
-      await onApprove();
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleRevise = async (instruction: string) => {
-    setIsLoading(true);
-    try {
-      await onRevise(instruction);
-      setAdjustModalOpen(false);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleDismiss = async () => {
-    setIsLoading(true);
-    try {
-      await onDismiss();
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   const handleDecision = async (decision: string, params?: Record<string, unknown>) => {
     if (onDecision) {
@@ -89,13 +45,6 @@ export function CopilotPanel({
         setIsLoading(false);
       }
     }
-  };
-
-  // Determine button text based on action type
-  const getApproveButtonText = () => {
-    if (!nextAction) return "Approve & Send";
-    const actionLabel = nextAction.proposal_short || nextAction.proposal.split('.')[0];
-    return `Approve & Send: ${actionLabel}`;
   };
 
   return (
@@ -185,69 +134,19 @@ export function CopilotPanel({
               {/* Draft preview */}
               {nextAction.draft_content && (
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-muted-foreground">Draft Preview</span>
-                    <Button variant="ghost" size="sm" className="h-6 text-xs">
-                      <Eye className="h-3 w-3 mr-1" />
-                      View Full
-                    </Button>
-                  </div>
-                  <div className="bg-muted rounded p-2 text-xs max-h-24 overflow-auto">
-                    {nextAction.draft_preview || nextAction.draft_content.substring(0, 200)}...
+                  <span className="text-xs font-medium text-muted-foreground">Draft Preview</span>
+                  <div className="bg-muted rounded p-2 text-xs max-h-32 overflow-auto whitespace-pre-wrap">
+                    {nextAction.draft_preview || nextAction.draft_content.substring(0, 300)}...
                   </div>
                 </div>
               )}
 
-              {/* Action buttons */}
-              <div className="flex gap-2 flex-wrap">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="sm"
-                      onClick={handleApprove}
-                      disabled={isLoading}
-                      className="flex-1"
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                      ) : (
-                        <CheckCircle className="h-3 w-3 mr-1" />
-                      )}
-                      {getApproveButtonText()}
-                    </Button>
-                  </TooltipTrigger>
-                  {nextAction.draft_preview && (
-                    <TooltipContent className="max-w-sm">
-                      <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setAdjustModalOpen(true)}
-                  disabled={isLoading}
-                >
-                  <Edit className="h-3 w-3 mr-1" />
-                  Adjust
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={handleDismiss}
-                  disabled={isLoading}
-                >
-                  <XCircle className="h-3 w-3 mr-1" />
-                  Dismiss
-                </Button>
-              </div>
-
-              {/* Why blocked */}
+              {/* Why blocked - subtle note */}
               {nextAction.blocked_reason && (
-                <div className="flex items-start gap-2 text-xs text-muted-foreground bg-muted rounded p-2">
-                  <Info className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                  <span>Requires approval: {nextAction.blocked_reason}</span>
-                </div>
+                <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Info className="h-2.5 w-2.5" />
+                  {nextAction.blocked_reason}
+                </p>
               )}
             </CardContent>
           </Card>
@@ -361,15 +260,6 @@ export function CopilotPanel({
           </CardContent>
         </Card>
       </div>
-
-      {/* Adjust Modal */}
-      <AdjustModal
-        open={adjustModalOpen}
-        onOpenChange={setAdjustModalOpen}
-        onSubmit={handleRevise}
-        constraints={request.constraints}
-        isLoading={isLoading}
-      />
     </ScrollArea>
   );
 }

@@ -10,12 +10,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { GateStatusChips } from "@/components/gate-status-chips";
 import { DueDisplay } from "@/components/due-display";
 import { Timeline } from "@/components/timeline";
 import { Thread } from "@/components/thread";
 import { Composer } from "@/components/composer";
 import { CopilotPanel } from "@/components/copilot-panel";
+import { AdjustModal } from "@/components/adjust-modal";
 import { requestsAPI, fetcher } from "@/lib/api";
 import type { RequestWorkspaceResponse, NextAction } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
@@ -27,6 +35,9 @@ import {
   Loader2,
   Calendar,
   Clock,
+  MoreHorizontal,
+  Trash2,
+  Ban,
 } from "lucide-react";
 
 function RequestDetailContent() {
@@ -35,6 +46,7 @@ function RequestDetailContent() {
   const id = searchParams.get("id");
 
   const [nextAction, setNextAction] = useState<NextAction | null>(null);
+  const [adjustModalOpen, setAdjustModalOpen] = useState(false);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
@@ -60,6 +72,7 @@ function RequestDetailContent() {
     if (result.next_action_proposal) {
       setNextAction(result.next_action_proposal);
     }
+    setAdjustModalOpen(false);
   };
 
   const handleDismiss = async () => {
@@ -159,37 +172,60 @@ function RequestDetailContent() {
           />
         </div>
 
-        {/* Action buttons row */}
+        {/* Action buttons row - Primary + Secondary + Overflow */}
         <div className="flex items-center gap-2 mt-3">
+          {/* Primary: Approve & Send */}
           {nextAction && (
-            <>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button size="sm" onClick={handleApprove}>
-                    <CheckCircle className="h-4 w-4 mr-1" />
-                    Approve & Send: {nextAction.proposal_short || nextAction.proposal.split('.')[0]}
-                  </Button>
-                </TooltipTrigger>
-                {nextAction.draft_preview && (
-                  <TooltipContent className="max-w-sm">
-                    <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
-                  </TooltipContent>
-                )}
-              </Tooltip>
-              <Button size="sm" variant="outline">
-                <Edit className="h-4 w-4 mr-1" />
-                Adjust
-              </Button>
-            </>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" onClick={handleApprove}>
+                  <CheckCircle className="h-4 w-4 mr-1" />
+                  Approve & Send: {nextAction.proposal_short || nextAction.proposal.split('.')[0]}
+                </Button>
+              </TooltipTrigger>
+              {nextAction.draft_preview && (
+                <TooltipContent className="max-w-sm">
+                  <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
+                </TooltipContent>
+              )}
+            </Tooltip>
           )}
-          <Button size="sm" variant="outline">
-            <XCircle className="h-4 w-4 mr-1" />
-            Withdraw
-          </Button>
-          <Button size="sm" variant="outline">
-            <CheckCircle className="h-4 w-4 mr-1" />
-            Complete
-          </Button>
+
+          {/* Secondary: Adjust */}
+          {nextAction && (
+            <Button size="sm" variant="outline" onClick={() => setAdjustModalOpen(true)}>
+              <Edit className="h-4 w-4 mr-1" />
+              Adjust
+            </Button>
+          )}
+
+          {/* Overflow menu */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {nextAction && (
+                <>
+                  <DropdownMenuItem onClick={handleDismiss}>
+                    <Ban className="h-4 w-4 mr-2" />
+                    Dismiss proposal
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+              <DropdownMenuItem>
+                <XCircle className="h-4 w-4 mr-2" />
+                Withdraw request
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Mark complete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -235,9 +271,6 @@ function RequestDetailContent() {
                   request={request}
                   nextAction={nextAction}
                   agency={agency_summary}
-                  onApprove={handleApprove}
-                  onRevise={handleRevise}
-                  onDismiss={handleDismiss}
                 />
               </CardContent>
             </Card>
@@ -341,6 +374,15 @@ function RequestDetailContent() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Adjust Modal - controlled from header */}
+      <AdjustModal
+        open={adjustModalOpen}
+        onOpenChange={setAdjustModalOpen}
+        onSubmit={handleRevise}
+        constraints={request.constraints}
+        isLoading={false}
+      />
     </div>
   );
 }
