@@ -93,6 +93,9 @@ class CronService {
                 if (result.errors.length > 0) {
                     console.warn(`Agency sync had ${result.errors.length} errors`);
                 }
+
+                // Link any new cases to agencies
+                await this.linkCasesToAgencies();
             } catch (error) {
                 console.error('Error in agency sync cron:', error);
             }
@@ -104,6 +107,9 @@ class CronService {
                 console.log('Running initial agency sync from Notion...');
                 const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 2000 });
                 console.log(`Initial agency sync completed: ${result.created} created, ${result.updated} updated`);
+
+                // Link any unlinked cases to agencies
+                await this.linkCasesToAgencies();
             } catch (error) {
                 console.error('Error in initial agency sync:', error);
             }
@@ -115,6 +121,50 @@ class CronService {
         console.log('✓ Health check: Every 5 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
         console.log('✓ Agency sync: Every hour + on startup');
+    }
+
+    /**
+     * Link cases to agencies by matching names (with fuzzy matching)
+     */
+    async linkCasesToAgencies() {
+        try {
+            // First, exact match on name + state
+            const exactResult = await db.query(`
+                UPDATE cases c
+                SET agency_id = a.id
+                FROM agencies a
+                WHERE c.agency_name = a.name
+                  AND (c.state = a.state OR (c.state IS NULL AND a.state IS NULL))
+                  AND c.agency_id IS NULL
+            `);
+
+            // Then, fuzzy match: normalize names by removing common suffixes
+            // and match on the core name
+            const fuzzyResult = await db.query(`
+                UPDATE cases c
+                SET agency_id = a.id
+                FROM agencies a
+                WHERE c.agency_id IS NULL
+                  AND c.agency_name IS NOT NULL
+                  AND (c.state = a.state OR c.state IS NULL OR a.state IS NULL)
+                  AND (
+                    -- Normalize both names: lowercase, remove common suffixes
+                    LOWER(REGEXP_REPLACE(c.agency_name, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
+                    =
+                    LOWER(REGEXP_REPLACE(a.name, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
+                  )
+            `);
+
+            const totalLinked = (exactResult.rowCount || 0) + (fuzzyResult.rowCount || 0);
+            if (totalLinked > 0) {
+                console.log(`Linked ${totalLinked} cases to agencies (${exactResult.rowCount || 0} exact, ${fuzzyResult.rowCount || 0} fuzzy)`);
+            }
+
+            return { exact: exactResult.rowCount || 0, fuzzy: fuzzyResult.rowCount || 0 };
+        } catch (error) {
+            console.error('Error linking cases to agencies:', error);
+            return { exact: 0, fuzzy: 0, error: error.message };
+        }
     }
 
     /**

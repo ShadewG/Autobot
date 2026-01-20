@@ -45,12 +45,25 @@ class DatabaseService {
 
     // Cases
     async createCase(caseData) {
+        // Try to find matching agency first
+        let agencyId = caseData.agency_id || null;
+        if (!agencyId && caseData.agency_name) {
+            const agency = await this.findAgencyByName(caseData.agency_name, caseData.state);
+            if (agency) {
+                agencyId = agency.id;
+                // Also use agency's email if case doesn't have one
+                if (!caseData.agency_email && agency.email_main) {
+                    caseData.agency_email = agency.email_main;
+                }
+            }
+        }
+
         const query = `
             INSERT INTO cases (
                 notion_page_id, case_name, subject_name, agency_name, agency_email,
                 state, incident_date, incident_location, requested_records,
-                additional_details, status, deadline_date
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                additional_details, status, deadline_date, agency_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             RETURNING *
         `;
         const values = [
@@ -65,7 +78,8 @@ class DatabaseService {
             caseData.requested_records,
             caseData.additional_details,
             caseData.status || 'ready_to_send',
-            caseData.deadline_date
+            caseData.deadline_date,
+            agencyId
         ];
         const result = await this.query(query, values);
         return result.rows[0];
@@ -970,6 +984,23 @@ class DatabaseService {
      * P0 FIX #2: Safe to re-run after interrupt resume.
      */
     async upsertProposal(proposalData) {
+        // CRITICAL: Ensure action_type is never null on insert
+        if (!proposalData.actionType) {
+            // Try to extract from proposal_key if available
+            if (proposalData.proposalKey) {
+                const parts = proposalData.proposalKey.split(':');
+                if (parts.length >= 3 && parts[2]) {
+                    proposalData.actionType = parts[2];
+                    console.warn(`[DB] Recovered actionType from proposal_key: ${proposalData.actionType}`);
+                }
+            }
+            // Final fallback - should never happen but prevents DB error
+            if (!proposalData.actionType) {
+                proposalData.actionType = 'UNKNOWN';
+                console.error(`[DB] WARNING: No actionType provided for proposal, using UNKNOWN`);
+            }
+        }
+
         const query = `
             INSERT INTO proposals (
                 proposal_key, case_id, trigger_message_id, action_type,
@@ -1388,6 +1419,89 @@ class DatabaseService {
 
     async close() {
         await this.pool.end();
+    }
+
+    // =========================================================================
+    // AGENCY LOOKUP (Fuzzy matching for case linking)
+    // =========================================================================
+
+    /**
+     * Find agency by name with fuzzy matching
+     * @param {string} agencyName - The agency name to search for
+     * @param {string} state - Optional state to narrow search
+     * @returns {Object|null} - Matched agency or null
+     */
+    async findAgencyByName(agencyName, state = null) {
+        if (!agencyName) return null;
+
+        try {
+            // First try exact match
+            let result = await this.query(`
+                SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+                FROM agencies
+                WHERE name = $1
+                  AND ($2::text IS NULL OR state = $2)
+                LIMIT 1
+            `, [agencyName, state]);
+
+            if (result.rows.length > 0) {
+                return result.rows[0];
+            }
+
+            // Try normalized match (remove common suffixes)
+            result = await this.query(`
+                SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+                FROM agencies
+                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
+                  AND LOWER(REGEXP_REPLACE(name, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
+                    = LOWER(REGEXP_REPLACE($1, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
+                LIMIT 1
+            `, [agencyName, state]);
+
+            if (result.rows.length > 0) {
+                return result.rows[0];
+            }
+
+            // Try case-insensitive contains match as last resort
+            result = await this.query(`
+                SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+                FROM agencies
+                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
+                  AND (
+                    LOWER(name) LIKE LOWER('%' || $1 || '%')
+                    OR LOWER($1) LIKE LOWER('%' || name || '%')
+                  )
+                ORDER BY LENGTH(name) ASC
+                LIMIT 1
+            `, [agencyName, state]);
+
+            return result.rows[0] || null;
+
+        } catch (error) {
+            console.error('Error finding agency by name:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Link a case to its matching agency
+     * @param {number} caseId - Case ID
+     * @param {string} agencyName - Agency name from the case
+     * @param {string} state - State from the case
+     * @returns {Object|null} - Linked agency or null
+     */
+    async linkCaseToAgency(caseId, agencyName, state = null) {
+        const agency = await this.findAgencyByName(agencyName, state);
+
+        if (agency) {
+            await this.query(
+                'UPDATE cases SET agency_id = $1 WHERE id = $2 AND agency_id IS NULL',
+                [agency.id, caseId]
+            );
+            return agency;
+        }
+
+        return null;
     }
 }
 

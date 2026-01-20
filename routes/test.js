@@ -4133,4 +4133,1033 @@ router.get('/langgraph/assertions/:caseId', async (req, res) => {
     }
 });
 
+// =========================================================================
+// E2E SCENARIO RUNNER
+// =========================================================================
+
+/**
+ * E2E Scenario Templates
+ * Each scenario includes:
+ * - Inbound message configurations
+ * - Expected classifications/outcomes
+ * - Stubbed LLM responses for determinism
+ */
+const E2E_SCENARIOS = {
+    fee_low_auto: {
+        name: 'Fee Quote (Low) - Auto Approve',
+        description: 'Low fee under threshold, should auto-approve in AUTO mode',
+        phases: ['setup', 'inject_inbound', 'process', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - Fee Quote',
+            body: 'The estimated cost for your request is $15.00. Please confirm if you wish to proceed with payment.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        expected: {
+            classification: 'FEE_QUOTE',
+            fee_amount: 15,
+            action_type: 'APPROVE_FEE',
+            auto_execute: true,
+            requires_human: false
+        },
+        llm_stubs: {
+            classify: { classification: 'FEE_QUOTE', confidence: 0.95, sentiment: 'neutral', fee_amount: 15 },
+            draft: { subject: 'Re: Fee Approval', body: 'I agree to pay the $15.00 fee. Please proceed with processing my request.' }
+        }
+    },
+    fee_high_gate: {
+        name: 'Fee Quote (High) - Human Gate',
+        description: 'High fee requires human approval',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - Fee Quote',
+            body: 'The estimated cost for your request is $350.00 with a required $75 deposit. Note: Body-worn camera footage is exempt from disclosure under state law.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'SUPERVISED' },
+        expected: {
+            classification: 'FEE_QUOTE',
+            fee_amount: 350,
+            action_type: 'APPROVE_FEE',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'FEE_QUOTE'
+        },
+        llm_stubs: {
+            classify: { classification: 'FEE_QUOTE', confidence: 0.92, sentiment: 'neutral', fee_amount: 350, key_points: ['BWC exempt'] },
+            draft: { subject: 'Re: Fee Approval', body: 'I agree to pay the $350.00 fee and the $75 deposit. Please proceed.' }
+        }
+    },
+    denial_weak: {
+        name: 'Denial (Weak) - Auto Rebuttal',
+        description: 'Weak denial without strong exemption, auto-rebuttable',
+        phases: ['setup', 'inject_inbound', 'process', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - Denied',
+            body: 'Your request has been denied. We do not have records matching your description.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        expected: {
+            classification: 'DENIAL',
+            action_type: 'SEND_REBUTTAL',
+            auto_execute: true
+        },
+        llm_stubs: {
+            classify: { classification: 'DENIAL', confidence: 0.88, sentiment: 'neutral', key_points: ['no records found'] },
+            draft: { subject: 'Re: Appeal of Denial', body: 'I am appealing this denial. Please conduct a more thorough search...' }
+        }
+    },
+    denial_strong: {
+        name: 'Denial (Strong) - Human Gate',
+        description: 'Strong denial with exemption requires human review',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - DENIED',
+            body: 'Your request is DENIED pursuant to Exemption 7(A) - records compiled for law enforcement purposes, disclosure would interfere with ongoing investigation. This matter involves sealed court proceedings.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        expected: {
+            classification: 'DENIAL',
+            action_type: 'SEND_REBUTTAL',
+            auto_execute: false,
+            requires_human: true,
+            pause_reason: 'DENIAL'
+        },
+        llm_stubs: {
+            classify: { classification: 'DENIAL', confidence: 0.95, sentiment: 'negative', key_points: ['exemption 7(A)', 'ongoing investigation', 'sealed'] },
+            draft: { subject: 'Re: Appeal', body: 'I respectfully appeal this denial...' }
+        }
+    },
+    clarification: {
+        name: 'Clarification Request',
+        description: 'Agency needs more information',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Re: Records Request - Additional Information Needed',
+            body: 'We need additional information to process your request. Please provide the specific date range and incident report number if available.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'SUPERVISED' },
+        expected: {
+            classification: 'CLARIFICATION_REQUEST',
+            action_type: 'SEND_CLARIFICATION',
+            requires_human: true,
+            pause_reason: 'SCOPE'
+        },
+        llm_stubs: {
+            classify: { classification: 'CLARIFICATION_REQUEST', confidence: 0.90, sentiment: 'neutral' },
+            draft: { subject: 'Re: Additional Information', body: 'The incident occurred on...' }
+        }
+    },
+    hostile: {
+        name: 'Hostile Response',
+        description: 'Hostile sentiment triggers escalation',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'verify'],
+        inbound: {
+            subject: 'FINAL WARNING - DO NOT CONTACT AGAIN',
+            body: 'This is your FINAL notice. Your frivolous and harassing requests are DENIED. Any further contact will be reported to law enforcement. DO NOT CONTACT THIS OFFICE AGAIN.',
+            channel: 'EMAIL'
+        },
+        case_setup: { autopilot_mode: 'AUTO' },
+        expected: {
+            classification: 'DENIAL',
+            sentiment: 'hostile',
+            action_type: 'ESCALATE',
+            requires_human: true,
+            pause_reason: 'SENSITIVE'
+        },
+        llm_stubs: {
+            classify: { classification: 'DENIAL', confidence: 0.85, sentiment: 'hostile', key_points: ['final notice', 'harassment allegation'] }
+        }
+    },
+    portal_case: {
+        name: 'Portal Case - No Email',
+        description: 'Portal case should never send email',
+        phases: ['setup', 'inject_inbound', 'process', 'human_gate', 'execute', 'verify'],
+        inbound: {
+            subject: 'Portal Update',
+            body: 'Your request status has been updated. Fee: $50.00',
+            channel: 'PORTAL'
+        },
+        case_setup: {
+            autopilot_mode: 'SUPERVISED',
+            portal_url: 'https://test-portal.gov/request/123',
+            portal_provider: 'TestPortal'
+        },
+        expected: {
+            classification: 'FEE_QUOTE',
+            action_type: 'APPROVE_FEE',
+            email_blocked: true  // Special assertion
+        },
+        llm_stubs: {
+            classify: { classification: 'FEE_QUOTE', confidence: 0.90, sentiment: 'neutral', fee_amount: 50 }
+        }
+    },
+    followup_no_response: {
+        name: 'No Response - Follow-up',
+        description: 'Time-based trigger for follow-up',
+        phases: ['setup', 'trigger_followup', 'process', 'verify'],
+        inbound: null,  // No inbound, time-triggered
+        case_setup: { autopilot_mode: 'AUTO', status: 'awaiting_response' },
+        expected: {
+            classification: 'NO_RESPONSE',
+            action_type: 'SEND_FOLLOWUP',
+            auto_execute: true
+        },
+        llm_stubs: {
+            draft: { subject: 'Follow-up: Records Request', body: 'I am following up on my records request submitted on...' }
+        }
+    }
+};
+
+/**
+ * Active E2E runs storage (in-memory for dev, would be Redis in prod)
+ */
+const activeE2ERuns = new Map();
+
+/**
+ * Create a new E2E run
+ */
+function createE2ERun(caseId, scenarioKey, options = {}) {
+    const runId = `e2e_${caseId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const scenario = E2E_SCENARIOS[scenarioKey];
+
+    if (!scenario) {
+        throw new Error(`Unknown scenario: ${scenarioKey}`);
+    }
+
+    const run = {
+        id: runId,
+        case_id: caseId,
+        scenario_key: scenarioKey,
+        scenario_name: scenario.name,
+        phases: scenario.phases,
+        current_phase_index: 0,
+        current_phase: scenario.phases[0],
+        status: 'initialized',
+        use_worker: options.use_worker !== false,
+        dry_run: options.dry_run !== false,
+        deterministic: options.deterministic !== false,
+        created_at: new Date().toISOString(),
+        state_snapshots: [],
+        artifacts: {
+            inbound_message_id: null,
+            proposal_id: null,
+            proposal_key: null,
+            job_ids: [],
+            thread_id: null
+        },
+        logs: [`Run created for scenario: ${scenario.name}`],
+        assertions: [],
+        human_decision: null
+    };
+
+    activeE2ERuns.set(runId, run);
+    return run;
+}
+
+/**
+ * POST /api/test/e2e/runs
+ * Create a new E2E test run
+ */
+router.post('/e2e/runs', async (req, res) => {
+    try {
+        const { case_id, scenario, use_worker = true, dry_run = true, deterministic = true } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({ success: false, error: 'case_id is required' });
+        }
+
+        if (!scenario || !E2E_SCENARIOS[scenario]) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid scenario: ${scenario}`,
+                available: Object.keys(E2E_SCENARIOS).map(k => ({
+                    key: k,
+                    name: E2E_SCENARIOS[k].name,
+                    description: E2E_SCENARIOS[k].description
+                }))
+            });
+        }
+
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const run = createE2ERun(case_id, scenario, { use_worker, dry_run, deterministic });
+
+        // Store deterministic mode flag for LLM stubs
+        if (deterministic) {
+            global.__E2E_DETERMINISTIC_RUN__ = run.id;
+            global.__E2E_LLM_STUBS__ = E2E_SCENARIOS[scenario].llm_stubs;
+        }
+
+        res.json({
+            success: true,
+            run
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/test/e2e/runs/:runId
+ * Get E2E run status
+ */
+router.get('/e2e/runs/:runId', (req, res) => {
+    const run = activeE2ERuns.get(req.params.runId);
+    if (!run) {
+        return res.status(404).json({ success: false, error: 'Run not found' });
+    }
+    res.json({ success: true, run });
+});
+
+/**
+ * GET /api/test/e2e/scenarios
+ * List available scenarios
+ */
+router.get('/e2e/scenarios', (req, res) => {
+    const scenarios = Object.entries(E2E_SCENARIOS).map(([key, s]) => ({
+        key,
+        name: s.name,
+        description: s.description,
+        phases: s.phases,
+        expected: s.expected
+    }));
+    res.json({ success: true, scenarios });
+});
+
+/**
+ * POST /api/test/e2e/runs/:runId/reset
+ * Reset a run to start fresh
+ */
+router.post('/e2e/runs/:runId/reset', async (req, res) => {
+    try {
+        const run = activeE2ERuns.get(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        // Reset the case state
+        await db.updateCase(run.case_id, {
+            status: 'ready_to_send',
+            requires_human: false,
+            pause_reason: null,
+            langgraph_thread_id: null
+        });
+
+        // Clear proposals for this case
+        await db.query('DELETE FROM proposals WHERE case_id = $1', [run.case_id]);
+
+        // Reset run state
+        run.current_phase_index = 0;
+        run.current_phase = run.phases[0];
+        run.status = 'initialized';
+        run.state_snapshots = [];
+        run.artifacts = {
+            inbound_message_id: null,
+            proposal_id: null,
+            proposal_key: null,
+            job_ids: [],
+            thread_id: null
+        };
+        run.logs = [...run.logs, `Run reset at ${new Date().toISOString()}`];
+        run.assertions = [];
+        run.human_decision = null;
+
+        res.json({ success: true, run });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Capture state snapshot for a run
+ */
+async function captureStateSnapshot(run, label) {
+    const caseData = await db.getCaseById(run.case_id);
+    const proposals = await db.query(
+        'SELECT * FROM proposals WHERE case_id = $1 ORDER BY created_at DESC LIMIT 5',
+        [run.case_id]
+    );
+
+    const snapshot = {
+        label,
+        timestamp: new Date().toISOString(),
+        case: {
+            status: caseData?.status,
+            requires_human: caseData?.requires_human,
+            pause_reason: caseData?.pause_reason,
+            langgraph_thread_id: caseData?.langgraph_thread_id,
+            autopilot_mode: caseData?.autopilot_mode
+        },
+        proposals: proposals.rows.map(p => ({
+            id: p.id,
+            proposal_key: p.proposal_key,
+            action_type: p.action_type,
+            status: p.status,
+            execution_key: p.execution_key,
+            human_decision: p.human_decision
+        })),
+        artifacts: { ...run.artifacts }
+    };
+
+    run.state_snapshots.push(snapshot);
+    return snapshot;
+}
+
+/**
+ * Execute a single phase of an E2E run
+ */
+async function executePhase(run) {
+    const scenario = E2E_SCENARIOS[run.scenario_key];
+    const phase = run.current_phase;
+
+    run.logs.push(`Executing phase: ${phase}`);
+
+    try {
+        switch (phase) {
+            case 'setup': {
+                // Apply case setup
+                if (scenario.case_setup) {
+                    await db.updateCase(run.case_id, scenario.case_setup);
+                    run.logs.push(`Applied case setup: ${JSON.stringify(scenario.case_setup)}`);
+                }
+
+                // Generate thread_id
+                run.artifacts.thread_id = `case:${run.case_id}`;
+                await captureStateSnapshot(run, 'after_setup');
+                break;
+            }
+
+            case 'inject_inbound': {
+                if (!scenario.inbound) {
+                    run.logs.push('No inbound to inject (time-triggered scenario)');
+                    break;
+                }
+
+                // Create inbound message
+                const thread = await ensureEmailThread(run.case_id);
+                const message = await createInboundMessage(run.case_id, thread.id, {
+                    subject: scenario.inbound.subject,
+                    body: scenario.inbound.body,
+                    channel: scenario.inbound.channel || 'EMAIL'
+                });
+
+                run.artifacts.inbound_message_id = message.id;
+                run.logs.push(`Injected inbound message: ${message.id}`);
+                await captureStateSnapshot(run, 'after_inject');
+                break;
+            }
+
+            case 'trigger_followup': {
+                // For no-response scenarios, just update case to trigger followup
+                await db.updateCase(run.case_id, { status: 'awaiting_response' });
+                run.logs.push('Triggered followup scenario');
+                await captureStateSnapshot(run, 'after_trigger');
+                break;
+            }
+
+            case 'process': {
+                // Invoke the graph (via worker or direct)
+                const triggerType = scenario.inbound ? 'agency_reply' : 'time_based_followup';
+
+                if (run.use_worker) {
+                    const job = await enqueueAgentJob(run.case_id, triggerType, {
+                        e2e_run_id: run.id,
+                        deterministic: run.deterministic
+                    });
+                    run.artifacts.job_ids.push(job.id);
+                    run.logs.push(`Enqueued agent job: ${job.id}`);
+
+                    // Wait for job completion (with timeout)
+                    const result = await waitForJob(job, 30000);
+                    run.logs.push(`Job completed: ${result.status}`);
+                } else {
+                    const result = await langgraph.invokeFOIACaseGraph(
+                        run.case_id,
+                        triggerType,
+                        { e2e_run_id: run.id }
+                    );
+                    run.logs.push(`Direct invoke result: ${result.status}`);
+
+                    if (result.status === 'interrupted') {
+                        run.status = 'awaiting_human';
+                    }
+                }
+
+                await captureStateSnapshot(run, 'after_process');
+
+                // Check if we hit an interrupt
+                const caseAfter = await db.getCaseById(run.case_id);
+                if (caseAfter.requires_human) {
+                    run.status = 'awaiting_human';
+                    run.logs.push('Hit human gate - awaiting decision');
+                }
+                break;
+            }
+
+            case 'human_gate': {
+                // This phase waits for human input
+                if (!run.human_decision) {
+                    run.status = 'awaiting_human';
+                    run.logs.push('Waiting for human decision');
+                    return { needs_human: true };
+                }
+
+                // Process the human decision
+                const decision = run.human_decision;
+                run.logs.push(`Processing human decision: ${decision.action}`);
+
+                if (run.use_worker) {
+                    const job = await enqueueResumeJob(run.case_id, decision);
+                    run.artifacts.job_ids.push(job.id);
+                    run.logs.push(`Enqueued resume job: ${job.id}`);
+
+                    const result = await waitForJob(job, 30000);
+                    run.logs.push(`Resume job completed: ${result.status}`);
+                } else {
+                    const result = await langgraph.resumeFOIACaseGraph(run.case_id, decision);
+                    run.logs.push(`Direct resume result: ${result.status}`);
+                }
+
+                run.human_decision = null;
+                await captureStateSnapshot(run, 'after_human_gate');
+                break;
+            }
+
+            case 'execute': {
+                // Execution happens as part of process/human_gate
+                // This phase just verifies execution occurred
+                await captureStateSnapshot(run, 'after_execute');
+                break;
+            }
+
+            case 'verify': {
+                // Run assertions
+                run.assertions = await runE2EAssertions(run);
+                await captureStateSnapshot(run, 'final');
+                run.status = 'completed';
+                run.logs.push('Verification complete');
+                break;
+            }
+
+            default:
+                run.logs.push(`Unknown phase: ${phase}`);
+        }
+
+        return { success: true };
+    } catch (error) {
+        run.logs.push(`Phase error: ${error.message}`);
+        run.status = 'error';
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Wait for a BullMQ job to complete
+ */
+async function waitForJob(job, timeoutMs = 30000) {
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+        const state = await job.getState();
+        if (state === 'completed') {
+            return { status: 'completed', result: await job.returnvalue };
+        }
+        if (state === 'failed') {
+            return { status: 'failed', error: job.failedReason };
+        }
+        await new Promise(r => setTimeout(r, 500));
+    }
+
+    return { status: 'timeout' };
+}
+
+/**
+ * Ensure email thread exists for case
+ */
+async function ensureEmailThread(caseId) {
+    const caseData = await db.getCaseById(caseId);
+    let thread = await db.getEmailThreadByCaseId(caseId);
+
+    if (!thread) {
+        thread = await db.createEmailThread({
+            case_id: caseId,
+            thread_id: `e2e-thread-${caseId}-${Date.now()}`,
+            subject: `Records Request - Case ${caseId}`,
+            agency_email: caseData.agency_email || 'test@agency.gov',
+            initial_message_id: `initial-${Date.now()}@test.local`,
+            status: 'active'
+        });
+    }
+
+    return thread;
+}
+
+/**
+ * Create an inbound message for testing
+ */
+async function createInboundMessage(caseId, threadId, config) {
+    const messageId = `inbound-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`;
+
+    const result = await db.query(`
+        INSERT INTO email_messages (
+            thread_id, message_id, direction, from_address, to_address,
+            subject, body_text, body_html, received_at, processed
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+    `, [
+        threadId,
+        messageId,
+        'inbound',
+        'records@agency.gov',
+        'user@example.com',
+        config.subject,
+        config.body,
+        `<p>${config.body}</p>`,
+        new Date(),
+        false
+    ]);
+
+    const message = result.rows[0];
+
+    // Update case with latest inbound
+    await db.updateCase(caseId, {
+        latest_inbound_message_id: message.id,
+        status: 'needs_review'
+    });
+
+    return message;
+}
+
+/**
+ * Run E2E assertions for a run
+ */
+async function runE2EAssertions(run) {
+    const scenario = E2E_SCENARIOS[run.scenario_key];
+    const expected = scenario.expected;
+    const assertions = [];
+
+    const caseData = await db.getCaseById(run.case_id);
+    const proposals = await db.query(
+        'SELECT * FROM proposals WHERE case_id = $1 ORDER BY created_at DESC',
+        [run.case_id]
+    );
+    const latestProposal = proposals.rows[0];
+
+    // A1: Action type matches expected
+    if (expected.action_type) {
+        assertions.push({
+            name: 'action_type_matches',
+            passed: latestProposal?.action_type === expected.action_type,
+            expected: expected.action_type,
+            actual: latestProposal?.action_type
+        });
+    }
+
+    // A2: Proposal has non-null action_type
+    assertions.push({
+        name: 'action_type_not_null',
+        passed: latestProposal?.action_type != null,
+        expected: 'non-null',
+        actual: latestProposal?.action_type
+    });
+
+    // A3: Proposal key is stable (unique)
+    const keyCount = proposals.rows.filter(p => p.proposal_key === latestProposal?.proposal_key).length;
+    assertions.push({
+        name: 'proposal_key_stable',
+        passed: keyCount === 1,
+        expected: '1 proposal per key',
+        actual: `${keyCount} proposals with key`
+    });
+
+    // A4: requires_human matches expected
+    if (expected.requires_human !== undefined) {
+        assertions.push({
+            name: 'requires_human_matches',
+            passed: caseData.requires_human === expected.requires_human,
+            expected: expected.requires_human,
+            actual: caseData.requires_human
+        });
+    }
+
+    // A5: pause_reason matches expected
+    if (expected.pause_reason) {
+        assertions.push({
+            name: 'pause_reason_matches',
+            passed: caseData.pause_reason === expected.pause_reason,
+            expected: expected.pause_reason,
+            actual: caseData.pause_reason
+        });
+    }
+
+    // A6: If requires_human, must have pause_reason
+    if (caseData.requires_human) {
+        assertions.push({
+            name: 'requires_human_has_reason',
+            passed: caseData.pause_reason != null,
+            expected: 'pause_reason when requires_human',
+            actual: caseData.pause_reason
+        });
+    }
+
+    // A7: Exactly-once execution check
+    const executedProposals = proposals.rows.filter(p => p.status === 'EXECUTED');
+    const executionKeys = executedProposals.map(p => p.execution_key).filter(Boolean);
+    const uniqueExecutionKeys = new Set(executionKeys);
+    assertions.push({
+        name: 'exactly_once_execution',
+        passed: executionKeys.length === uniqueExecutionKeys.size,
+        expected: 'unique execution keys',
+        actual: `${executionKeys.length} executions, ${uniqueExecutionKeys.size} unique keys`
+    });
+
+    // A8: Portal case should not send email
+    if (expected.email_blocked && caseData.portal_url) {
+        const emailSends = executedProposals.filter(p =>
+            p.action_type?.startsWith('SEND_') && !p.execution_result?.dry_run
+        );
+        assertions.push({
+            name: 'portal_no_email_send',
+            passed: emailSends.length === 0,
+            expected: 'no email sends for portal case',
+            actual: `${emailSends.length} email sends`
+        });
+    }
+
+    return assertions;
+}
+
+/**
+ * POST /api/test/e2e/runs/:runId/step
+ * Execute one phase of the E2E run
+ */
+router.post('/e2e/runs/:runId/step', async (req, res) => {
+    try {
+        const run = activeE2ERuns.get(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        if (run.status === 'completed') {
+            return res.json({ success: true, message: 'Run already completed', run });
+        }
+
+        if (run.status === 'error') {
+            return res.json({ success: false, message: 'Run in error state', run });
+        }
+
+        const result = await executePhase(run);
+
+        if (result.needs_human) {
+            return res.json({
+                success: true,
+                needs_human: true,
+                phase: run.current_phase,
+                run
+            });
+        }
+
+        // Advance to next phase if not waiting for human
+        if (run.status !== 'awaiting_human' && run.status !== 'error' && run.status !== 'completed') {
+            run.current_phase_index++;
+            if (run.current_phase_index < run.phases.length) {
+                run.current_phase = run.phases[run.current_phase_index];
+                run.status = 'running';
+            } else {
+                run.status = 'completed';
+            }
+        }
+
+        res.json({ success: true, result, run });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/test/e2e/runs/:runId/run-until-interrupt
+ * Run phases until hitting a human gate or completion
+ */
+router.post('/e2e/runs/:runId/run-until-interrupt', async (req, res) => {
+    try {
+        const run = activeE2ERuns.get(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        const maxIterations = 20;
+        let iterations = 0;
+
+        while (iterations < maxIterations) {
+            iterations++;
+
+            if (run.status === 'completed' || run.status === 'error') {
+                break;
+            }
+
+            if (run.status === 'awaiting_human') {
+                break;
+            }
+
+            const result = await executePhase(run);
+
+            if (result.needs_human) {
+                break;
+            }
+
+            // Advance to next phase
+            if (run.status !== 'awaiting_human' && run.status !== 'error') {
+                run.current_phase_index++;
+                if (run.current_phase_index < run.phases.length) {
+                    run.current_phase = run.phases[run.current_phase_index];
+                    run.status = 'running';
+                } else {
+                    run.status = 'completed';
+                    break;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            iterations,
+            run
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/test/e2e/runs/:runId/run-to-completion
+ * Run all phases, auto-approving at human gates
+ */
+router.post('/e2e/runs/:runId/run-to-completion', async (req, res) => {
+    try {
+        const run = activeE2ERuns.get(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        const { auto_decision = 'APPROVE' } = req.body;
+        const maxIterations = 30;
+        let iterations = 0;
+
+        while (iterations < maxIterations && run.status !== 'completed' && run.status !== 'error') {
+            iterations++;
+
+            if (run.status === 'awaiting_human') {
+                run.human_decision = { action: auto_decision };
+                run.logs.push(`Auto-decision: ${auto_decision}`);
+                run.status = 'running';
+            }
+
+            const result = await executePhase(run);
+
+            // Advance to next phase
+            if (run.status !== 'awaiting_human' && run.status !== 'error') {
+                run.current_phase_index++;
+                if (run.current_phase_index < run.phases.length) {
+                    run.current_phase = run.phases[run.current_phase_index];
+                } else {
+                    run.status = 'completed';
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            iterations,
+            run
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/test/e2e/runs/:runId/human-decision
+ * Submit a human decision for an interrupted run
+ */
+router.post('/e2e/runs/:runId/human-decision', async (req, res) => {
+    try {
+        const run = activeE2ERuns.get(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        const { action, instruction } = req.body;
+
+        if (!['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'].includes(action)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid action',
+                valid: ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW']
+            });
+        }
+
+        run.human_decision = { action, instruction };
+        run.status = 'running';
+        run.logs.push(`Human decision received: ${action}${instruction ? ` (${instruction})` : ''}`);
+
+        res.json({ success: true, run });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/test/e2e/inject-inbound
+ * Inject an inbound message (standalone endpoint)
+ */
+router.post('/e2e/inject-inbound', async (req, res) => {
+    try {
+        const { case_id, subject, body, channel = 'EMAIL' } = req.body;
+
+        if (!case_id || !subject || !body) {
+            return res.status(400).json({
+                success: false,
+                error: 'case_id, subject, and body are required'
+            });
+        }
+
+        const thread = await ensureEmailThread(case_id);
+        const message = await createInboundMessage(case_id, thread.id, { subject, body, channel });
+
+        res.json({
+            success: true,
+            message_id: message.id,
+            thread_id: thread.id,
+            message
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/test/e2e/inbound-presets
+ * Get inbound message presets
+ */
+router.get('/e2e/inbound-presets', (req, res) => {
+    const presets = {
+        ack: {
+            name: 'Acknowledgment',
+            subject: 'Re: Records Request Received',
+            body: 'Your records request has been received and assigned tracking number RR-2024-1234. We will respond within 10 business days.'
+        },
+        fee_low: {
+            name: 'Fee Quote (Low)',
+            subject: 'Re: Records Request - Fee Estimate',
+            body: 'The estimated cost for your request is $15.00. Please confirm if you wish to proceed with payment.'
+        },
+        fee_high: {
+            name: 'Fee Quote (High)',
+            subject: 'Re: Records Request - Fee Estimate',
+            body: 'The estimated cost for your request is $350.00 with a required $75.00 deposit. Note: Body-worn camera footage is exempt from disclosure under state law due to ongoing investigation.'
+        },
+        denial_exemption: {
+            name: 'Denial with Exemption',
+            subject: 'Re: Records Request - DENIED',
+            body: 'Your request is DENIED pursuant to Exemption 7(A) - records compiled for law enforcement purposes. Disclosure would interfere with an ongoing criminal investigation.'
+        },
+        clarification: {
+            name: 'Clarification Needed',
+            subject: 'Re: Records Request - Additional Information Needed',
+            body: 'We need additional information to process your request. Please provide: 1) Specific date range of incident 2) Incident report number if known 3) Names of officers involved'
+        },
+        portal_update: {
+            name: 'Portal Instructions',
+            subject: 'Portal Access Information',
+            body: 'Your request has been transferred to our online portal. Please visit https://records.agency.gov/request/12345 to view status and download documents when available.'
+        },
+        hostile: {
+            name: 'Hostile Response',
+            subject: 'FINAL WARNING - CEASE AND DESIST',
+            body: 'This is your FINAL notice regarding your frivolous and harassing records requests. Your request is DENIED. Any further communication will be forwarded to our legal department and reported as harassment. DO NOT CONTACT THIS OFFICE AGAIN.'
+        },
+        partial: {
+            name: 'Partial Production',
+            subject: 'Re: Records Request - Partial Response',
+            body: 'We are providing a partial response to your request. Attached are the incident reports (15 pages). Note: Video footage is exempt from disclosure. Audio recordings are still being reviewed.'
+        }
+    };
+
+    res.json({ success: true, presets });
+});
+
+/**
+ * GET /api/test/e2e/runs/:runId/proposal
+ * Get the current proposal for human gate display
+ */
+router.get('/e2e/runs/:runId/proposal', async (req, res) => {
+    try {
+        const run = activeE2ERuns.get(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ success: false, error: 'Run not found' });
+        }
+
+        const proposals = await db.query(
+            `SELECT * FROM proposals WHERE case_id = $1 AND status = 'PENDING_APPROVAL' ORDER BY created_at DESC LIMIT 1`,
+            [run.case_id]
+        );
+
+        const proposal = proposals.rows[0];
+        if (!proposal) {
+            return res.json({ success: true, proposal: null, message: 'No pending proposal' });
+        }
+
+        res.json({
+            success: true,
+            proposal: {
+                id: proposal.id,
+                proposal_key: proposal.proposal_key,
+                action_type: proposal.action_type,
+                status: proposal.status,
+                draft_subject: proposal.draft_subject,
+                draft_body_text: proposal.draft_body_text,
+                reasoning: proposal.reasoning,
+                risk_flags: proposal.risk_flags,
+                warnings: proposal.warnings,
+                created_at: proposal.created_at
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * DELETE /api/test/e2e/runs/:runId
+ * Delete an E2E run
+ */
+router.delete('/e2e/runs/:runId', (req, res) => {
+    const deleted = activeE2ERuns.delete(req.params.runId);
+    res.json({ success: true, deleted });
+});
+
+/**
+ * GET /api/test/e2e/runs
+ * List all active E2E runs
+ */
+router.get('/e2e/runs', (req, res) => {
+    const runs = Array.from(activeE2ERuns.values()).map(r => ({
+        id: r.id,
+        case_id: r.case_id,
+        scenario_key: r.scenario_key,
+        scenario_name: r.scenario_name,
+        status: r.status,
+        current_phase: r.current_phase,
+        created_at: r.created_at
+    }));
+    res.json({ success: true, runs });
+});
+
 module.exports = router;
