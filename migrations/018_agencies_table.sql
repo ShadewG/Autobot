@@ -89,12 +89,18 @@ CREATE INDEX IF NOT EXISTS idx_agencies_sync_status ON agencies(sync_status);
 CREATE INDEX IF NOT EXISTS idx_agencies_portal_url ON agencies(portal_url) WHERE portal_url IS NOT NULL;
 
 -- Full-text search on agency name (requires pg_trgm extension)
--- Wrapped in DO block to skip if pg_trgm isn't available
+-- Use dynamic SQL to defer parsing until runtime, allowing graceful failure
 DO $$
 BEGIN
-    CREATE INDEX IF NOT EXISTS idx_agencies_name_trgm ON agencies USING gin (name gin_trgm_ops);
+    -- Only create index if pg_trgm extension exists
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_agencies_name_trgm ON agencies USING gin (name gin_trgm_ops)';
+        RAISE NOTICE 'Created trigram index for fuzzy search';
+    ELSE
+        RAISE NOTICE 'Skipping trigram index: pg_trgm extension not available';
+    END IF;
 EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'Skipping trigram index: pg_trgm extension not available';
+    RAISE NOTICE 'Skipping trigram index: %', SQLERRM;
 END;
 $$;
 
