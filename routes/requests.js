@@ -763,6 +763,16 @@ router.post('/:id/withdraw', async (req, res) => {
             [requestId]
         );
 
+        // Sync status to Notion
+        try {
+            const notionService = require('../services/notion-service');
+            await notionService.syncStatusToNotion(requestId);
+            log.info('Notion status synced to Completed');
+        } catch (notionError) {
+            log.warn(`Failed to sync to Notion: ${notionError.message}`);
+            // Don't fail the request if Notion sync fails
+        }
+
         log.info('Request withdrawn successfully');
 
         res.json({
