@@ -3544,9 +3544,14 @@ router.post('/langgraph/create-message/:caseId', async (req, res) => {
         // Get or create thread
         let thread = await db.getThreadByCaseId(caseId);
         if (!thread) {
-            thread = await db.createThread({
-                caseId,
-                agency_email: caseData.agency_email || 'test@agency.gov'
+            const { v4: uuidv4 } = require('uuid');
+            thread = await db.createEmailThread({
+                case_id: caseId,
+                thread_id: `test-thread-${uuidv4()}`,
+                subject: subject || `Test thread for case ${caseId}`,
+                agency_email: caseData.agency_email || 'test@agency.gov',
+                initial_message_id: `initial-${Date.now()}@test.local`,
+                status: 'active'
             });
         }
 
