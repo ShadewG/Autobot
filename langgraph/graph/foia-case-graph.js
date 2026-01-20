@@ -311,6 +311,20 @@ async function resumeFOIACaseGraph(caseId, humanDecision) {
 
     logger.info('Resuming FOIA case graph', { caseId, decision: humanDecision?.action });
 
+    // First, try to get the current state to verify checkpoint exists
+    let currentState = null;
+    try {
+      currentState = await graph.getState(config);
+      logger.info('Current checkpoint state', {
+        caseId,
+        hasCheckpoint: !!currentState,
+        checkpointId: currentState?.config?.configurable?.checkpoint_id,
+        stateCaseId: currentState?.values?.caseId
+      });
+    } catch (stateError) {
+      logger.warn('Could not get current state', { caseId, error: stateError.message });
+    }
+
     // Resume with the human decision
     const { Command } = require("@langchain/langgraph");
     const result = await graph.invoke(

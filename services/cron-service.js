@@ -4,6 +4,7 @@ const followUpService = require('./follow-up-service');
 const { generateQueue } = require('../queues/email-queue');
 const db = require('./database');
 const stuckResponseDetector = require('./stuck-response-detector');
+const agencyNotionSync = require('./agency-notion-sync');
 
 class CronService {
     constructor() {
@@ -83,11 +84,37 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Sync agencies from Notion every hour
+        this.jobs.agencySync = new CronJob('0 * * * *', async () => {
+            try {
+                console.log('Running agency sync from Notion...');
+                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 100 });
+                console.log(`Agency sync completed: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`);
+                if (result.errors.length > 0) {
+                    console.warn(`Agency sync had ${result.errors.length} errors`);
+                }
+            } catch (error) {
+                console.error('Error in agency sync cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
+        // Run initial agency sync on startup (delayed by 30 seconds to let DB connect)
+        setTimeout(async () => {
+            try {
+                console.log('Running initial agency sync from Notion...');
+                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 200 });
+                console.log(`Initial agency sync completed: ${result.created} created, ${result.updated} updated`);
+            } catch (error) {
+                console.error('Error in initial agency sync:', error);
+            }
+        }, 30000);
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Follow-ups: Daily at 9 AM');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
+        console.log('✓ Agency sync: Every hour + on startup');
     }
 
     /**
