@@ -88,7 +88,7 @@ class CronService {
         this.jobs.agencySync = new CronJob('0 * * * *', async () => {
             try {
                 console.log('Running agency sync from Notion...');
-                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 100 });
+                const result = await agencyNotionSync.syncFromNotion({ fullSync: false, limit: 1000 });
                 console.log(`Agency sync completed: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped`);
                 if (result.errors.length > 0) {
                     console.warn(`Agency sync had ${result.errors.length} errors`);

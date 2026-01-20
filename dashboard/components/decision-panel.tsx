@@ -55,16 +55,86 @@ interface DecisionPanelProps {
 type NormalizedPauseReason = PauseReason | "UNKNOWN";
 
 // Normalize pause reason strings to expected enum values
-function normalizePauseReason(raw: string | null | undefined): NormalizedPauseReason {
-  if (!raw) return "UNKNOWN";
-  const v = raw.toUpperCase();
+// Also tries to infer from request fields and message content when pause_reason is null
+function normalizePauseReason(
+  raw: string | null | undefined,
+  request?: RequestDetail,
+  lastMsg?: ThreadMessage | null
+): NormalizedPauseReason {
+  // First try the raw pause_reason value
+  if (raw) {
+    const v = raw.toUpperCase();
 
-  if (v.includes("FEE") || v.includes("QUOTE") || v.includes("COST") || v.includes("PAYMENT")) return "FEE_QUOTE";
-  if (v.includes("DENIAL") || v.includes("DENIED") || v.includes("REJECT")) return "DENIAL";
-  if (v.includes("SCOPE") || v.includes("CLARIF") || v.includes("BROAD")) return "SCOPE";
-  if (v.includes("ID") || v.includes("IDENTITY") || v.includes("VERIF")) return "ID_REQUIRED";
-  if (v.includes("SENSITIVE") || v.includes("REVIEW")) return "SENSITIVE";
-  if (v.includes("CLOSE") || v.includes("COMPLETE") || v.includes("DONE")) return "CLOSE_ACTION";
+    if (v.includes("FEE") || v.includes("QUOTE") || v.includes("COST") || v.includes("PAYMENT")) return "FEE_QUOTE";
+    if (v.includes("DENIAL") || v.includes("DENIED") || v.includes("REJECT")) return "DENIAL";
+    if (v.includes("SCOPE") || v.includes("CLARIF") || v.includes("BROAD")) return "SCOPE";
+    if (v.includes("ID") || v.includes("IDENTITY") || v.includes("VERIF")) return "ID_REQUIRED";
+    if (v.includes("SENSITIVE")) return "SENSITIVE";
+    if (v.includes("CLOSE") || v.includes("COMPLETE") || v.includes("DONE")) return "CLOSE_ACTION";
+
+    // Don't return SENSITIVE just for "REVIEW" - that's too generic
+    if (!v.includes("REVIEW")) {
+      // If we got here with a non-empty string that didn't match, fall through to inference
+    }
+  }
+
+  // Try to infer from request fields
+  if (request) {
+    // If there's a cost amount or fee quote, it's likely a fee quote
+    if (request.cost_amount && request.cost_amount > 0) return "FEE_QUOTE";
+    if (request.fee_quote?.deposit_amount) return "FEE_QUOTE";
+    if (request.cost_status && request.cost_status !== "NONE") return "FEE_QUOTE";
+  }
+
+  // Try to infer from last inbound message content
+  if (lastMsg?.body) {
+    const body = lastMsg.body.toLowerCase();
+
+    // Fee indicators
+    if (
+      body.includes("fee") ||
+      body.includes("cost") ||
+      body.includes("deposit") ||
+      body.includes("payment") ||
+      body.includes("$") ||
+      body.includes("estimate") ||
+      body.includes("invoice")
+    ) {
+      return "FEE_QUOTE";
+    }
+
+    // Denial indicators
+    if (
+      body.includes("denied") ||
+      body.includes("denial") ||
+      body.includes("rejected") ||
+      body.includes("cannot fulfill") ||
+      body.includes("unable to provide")
+    ) {
+      return "DENIAL";
+    }
+
+    // Scope indicators
+    if (
+      body.includes("too broad") ||
+      body.includes("overly broad") ||
+      body.includes("clarify") ||
+      body.includes("clarification") ||
+      body.includes("narrow") ||
+      body.includes("specify")
+    ) {
+      return "SCOPE";
+    }
+
+    // ID indicators
+    if (
+      body.includes("identification") ||
+      body.includes("verify your identity") ||
+      body.includes("proof of")
+    ) {
+      return "ID_REQUIRED";
+    }
+  }
 
   return "UNKNOWN";
 }
@@ -365,7 +435,7 @@ export function DecisionPanel({
   }
 
   // Normalize the pause reason
-  const normalized = normalizePauseReason(pauseReasonRaw);
+  const normalized = normalizePauseReason(pauseReasonRaw, request, lastInboundMessage);
 
   // Get config - NEVER return null, use UNKNOWN fallback
   const config = normalized === "UNKNOWN"
