@@ -10,6 +10,9 @@ interface ApprovalDiffProps {
   feeQuote?: FeeQuote | null;
   scopeItems?: ScopeItem[];
   costCap?: number | null;
+  recipientEmail?: string;
+  channel?: 'EMAIL' | 'PORTAL' | 'MAIL';
+  portalProvider?: string;
 }
 
 /**
@@ -21,6 +24,9 @@ export function ApprovalDiff({
   feeQuote,
   scopeItems,
   costCap,
+  recipientEmail,
+  channel,
+  portalProvider,
 }: ApprovalDiffProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -28,16 +34,28 @@ export function ApprovalDiff({
   const willNotDo: string[] = [];
 
   // Build "will do" items based on action type and context
+
+  // Show where the message is going (critical for trust)
+  const actualChannel = channel || nextAction.channel;
+  const actualRecipient = recipientEmail || nextAction.recipient_email;
+  const actualPortal = portalProvider || nextAction.portal_provider;
+
+  if (actualChannel === "EMAIL" && actualRecipient) {
+    willDo.push(`Send email to ${actualRecipient}`);
+  } else if (actualChannel === "PORTAL") {
+    willDo.push(`Submit via ${actualPortal || "portal"}`);
+  } else if (actualChannel === "MAIL") {
+    willDo.push("Send physical mail");
+  } else if (nextAction.action_type === "SEND_EMAIL" || nextAction.action_type === "SEND_PORTAL") {
+    willDo.push("Send message to agency");
+  }
+
   if (nextAction.action_type === "FEE_NEGOTIATION" || nextAction.action_type === "ACCEPTANCE") {
     if (feeQuote?.deposit_amount) {
       willDo.push(`Accept ${formatCurrency(feeQuote.deposit_amount)} deposit`);
     } else if (feeQuote?.amount) {
       willDo.push(`Accept ${formatCurrency(feeQuote.amount)} fee`);
     }
-  }
-
-  if (nextAction.action_type === "SEND_EMAIL" || nextAction.action_type === "SEND_PORTAL") {
-    willDo.push("Send message to agency");
   }
 
   if (nextAction.action_type === "FOLLOW_UP") {

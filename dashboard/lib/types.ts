@@ -74,6 +74,8 @@ export interface RequestDetail extends RequestListItem {
   submitted_at: string | null;
   statutory_due_at: string | null;
   attachments: Attachment[];
+  // Recipient info
+  agency_email: string | null;
 }
 
 // Timeline Event for the timeline column
@@ -152,6 +154,13 @@ export interface NextAction {
   draft_content?: string;
   draft_preview?: string; // First 2-3 lines for button hover
   constraints_applied?: string[]; // Which constraints were considered
+  // Recipient info for trust
+  channel: 'EMAIL' | 'PORTAL' | 'MAIL';
+  recipient_email?: string; // e.g., "rclerk@normanok.gov"
+  portal_provider?: string; // e.g., "GovQA", "NextRequest"
+  // Scheduling info
+  scheduled_send_at?: string; // ISO timestamp when it will be sent
+  status?: 'PENDING' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'BLOCKED';
 }
 
 // Agency automation rules
@@ -169,6 +178,7 @@ export interface AgencySummary {
   state: string;
   submission_method: 'EMAIL' | 'PORTAL' | 'MAIL';
   portal_url?: string;
+  portal_provider?: string; // e.g., "GovQA", "NextRequest"
   default_autopilot_mode: string;
   notes?: string;
   rules?: AgencyRules;

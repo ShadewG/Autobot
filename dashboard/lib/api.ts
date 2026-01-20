@@ -72,10 +72,17 @@ export const requestsAPI = {
   },
 
   // Approve a pending action
-  approve: (id: string, actionId?: string) => {
+  approve: (
+    id: string,
+    actionId?: string,
+    costCap?: number
+  ): Promise<{ success: boolean; scheduled_send_at?: string }> => {
     return fetchAPI(`/requests/${id}/actions/approve`, {
       method: 'POST',
-      body: JSON.stringify({ action_id: actionId }),
+      body: JSON.stringify({
+        action_id: actionId,
+        cost_cap: costCap,
+      }),
     });
   },
 

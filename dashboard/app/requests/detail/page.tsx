@@ -38,11 +38,18 @@ import {
   MoreHorizontal,
   Ban,
   AlarmClock,
+  Globe,
+  Mail,
+  FileText,
+  ExternalLink,
+  DollarSign,
 } from "lucide-react";
 import { PauseReasonBar } from "@/components/pause-reason-bar";
 import { ApprovalDiff } from "@/components/approval-diff";
-import { ProposalStatusBadge, type ProposalState } from "@/components/proposal-status";
+import { ProposalStatus, ProposalStatusBadge, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
+import { RecipientDisplay } from "@/components/recipient-display";
+import { Input } from "@/components/ui/input";
 
 function RequestDetailContent() {
   const router = useRouter();
@@ -54,6 +61,9 @@ function RequestDetailContent() {
   const [snoozeModalOpen, setSnoozeModalOpen] = useState(false);
   const [proposalState, setProposalState] = useState<ProposalState>("PENDING");
   const [isApproving, setIsApproving] = useState(false);
+  const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
+  const [costCap, setCostCap] = useState<string>("");
+  const [showCostCapInput, setShowCostCapInput] = useState(false);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
@@ -71,8 +81,14 @@ function RequestDetailContent() {
     if (!id) return;
     setIsApproving(true);
     try {
-      await requestsAPI.approve(id, nextAction?.id);
+      const result = await requestsAPI.approve(id, nextAction?.id, costCap ? parseFloat(costCap) : undefined);
       setProposalState("QUEUED");
+      // Calculate estimated send time (2-10 hours from now)
+      const minDelay = 2 * 60 * 60 * 1000; // 2 hours
+      const maxDelay = 10 * 60 * 60 * 1000; // 10 hours
+      const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
+      const estimated = new Date(Date.now() + randomDelay);
+      setScheduledSendAt(result?.scheduled_send_at || estimated.toISOString());
       mutate();
     } finally {
       setIsApproving(false);
@@ -203,80 +219,167 @@ function RequestDetailContent() {
           />
         </div>
 
-        {/* Action buttons row - Primary + Secondary + Overflow */}
-        <div className="flex items-center gap-2 mt-3">
-          {/* Show status badge if proposal is queued/sent */}
-          {proposalState !== "PENDING" && (
-            <ProposalStatusBadge state={proposalState} />
+        {/* Quick links row - Last inbound + Draft */}
+        <div className="flex items-center gap-3 mt-3 text-xs">
+          {thread_messages.filter(m => m.direction === 'INBOUND').length > 0 && (
+            <button
+              onClick={() => {
+                const lastInbound = thread_messages.filter(m => m.direction === 'INBOUND').pop();
+                if (lastInbound) {
+                  document.getElementById(`msg-${lastInbound.id}`)?.scrollIntoView({ behavior: 'smooth' });
+                }
+              }}
+              className="flex items-center gap-1 text-primary hover:underline"
+            >
+              <Mail className="h-3 w-3" />
+              Last inbound
+            </button>
           )}
+          {nextAction?.draft_content && (
+            <button
+              onClick={() => {
+                // Scroll to draft preview in copilot panel
+                document.querySelector('[data-draft-preview]')?.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="flex items-center gap-1 text-primary hover:underline"
+            >
+              <FileText className="h-3 w-3" />
+              View draft
+            </button>
+          )}
+        </div>
 
-          {/* Primary: Approve & Queue */}
-          {nextAction && proposalState === "PENDING" && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex flex-col items-start">
+        {/* Status display after approval */}
+        {proposalState !== "PENDING" && (
+          <div className="mt-3">
+            <ProposalStatus
+              state={proposalState}
+              scheduledFor={scheduledSendAt}
+            />
+          </div>
+        )}
+
+        {/* Action buttons row - Primary + Secondary + Overflow */}
+        {proposalState === "PENDING" && (
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
+            {/* Recipient display - critical for trust */}
+            {nextAction && (
+              <RecipientDisplay
+                channel={nextAction.channel || agency_summary.submission_method}
+                recipientEmail={nextAction.recipient_email || request.agency_email || undefined}
+                portalProvider={nextAction.portal_provider || agency_summary.portal_provider}
+              />
+            )}
+
+            {/* Primary: Approve & Queue (or Queue Portal Run for portal) */}
+            {nextAction && (
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button size="sm" onClick={handleApprove} disabled={isApproving}>
                     {isApproving ? (
                       <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (nextAction.channel || agency_summary.submission_method) === 'PORTAL' ? (
+                      <Globe className="h-4 w-4 mr-1" />
                     ) : (
                       <CheckCircle className="h-4 w-4 mr-1" />
                     )}
-                    Approve & Queue: {nextAction.proposal_short || nextAction.proposal.split('.')[0]}
+                    {(nextAction.channel || agency_summary.submission_method) === 'PORTAL'
+                      ? `Queue Portal Run: ${nextAction.proposal_short || 'Submit'}`
+                      : `Approve & Queue: ${nextAction.proposal_short || nextAction.proposal.split('.')[0]}`
+                    }
                   </Button>
-                  <span className="text-[10px] text-muted-foreground ml-1 mt-0.5">
-                    Will send in ~2-10 hours
-                  </span>
-                </div>
-              </TooltipTrigger>
-              {nextAction.draft_preview && (
-                <TooltipContent className="max-w-sm">
-                  <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
-                </TooltipContent>
-              )}
-            </Tooltip>
-          )}
+                </TooltipTrigger>
+                {nextAction.draft_preview && (
+                  <TooltipContent className="max-w-sm">
+                    <p className="text-xs whitespace-pre-wrap">{nextAction.draft_preview}</p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            )}
 
-          {/* Secondary: Adjust */}
-          {nextAction && proposalState === "PENDING" && (
-            <Button size="sm" variant="outline" onClick={() => setAdjustModalOpen(true)}>
-              <Edit className="h-4 w-4 mr-1" />
-              Adjust
-            </Button>
-          )}
+            {/* Cost cap pill - inline */}
+            {nextAction && request.pause_reason === 'FEE_QUOTE' && (
+              <>
+                {showCostCapInput ? (
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-muted-foreground">Cap:</span>
+                    <Input
+                      type="number"
+                      placeholder="$"
+                      value={costCap}
+                      onChange={(e) => setCostCap(e.target.value)}
+                      className="w-20 h-7 text-xs"
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      onClick={() => setShowCostCapInput(false)}
+                    >
+                      <XCircle className="h-3 w-3" />
+                    </Button>
+                  </div>
+                ) : costCap ? (
+                  <Badge variant="outline" className="gap-1 text-xs cursor-pointer" onClick={() => setShowCostCapInput(true)}>
+                    <DollarSign className="h-3 w-3" />
+                    Cap: ${costCap}
+                  </Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-muted-foreground"
+                    onClick={() => setShowCostCapInput(true)}
+                  >
+                    <DollarSign className="h-3 w-3 mr-1" />
+                    Set cap
+                  </Button>
+                )}
+              </>
+            )}
 
-          {/* Overflow menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost">
-                <MoreHorizontal className="h-4 w-4" />
+            {/* Secondary: Adjust */}
+            {nextAction && (
+              <Button size="sm" variant="outline" onClick={() => setAdjustModalOpen(true)}>
+                <Edit className="h-4 w-4 mr-1" />
+                Adjust
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {nextAction && proposalState === "PENDING" && (
-                <>
-                  <DropdownMenuItem onClick={handleDismiss}>
-                    <Ban className="h-4 w-4 mr-2" />
-                    Dismiss proposal
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                </>
-              )}
-              <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}>
-                <AlarmClock className="h-4 w-4 mr-2" />
-                Snooze / Remind me
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem>
-                <XCircle className="h-4 w-4 mr-2" />
-                Withdraw request
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <CheckCircle className="h-4 w-4 mr-2" />
-                Mark complete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+            )}
+
+            {/* Overflow menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {nextAction && (
+                  <>
+                    <DropdownMenuItem onClick={handleDismiss}>
+                      <Ban className="h-4 w-4 mr-2" />
+                      Dismiss proposal
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}>
+                  <AlarmClock className="h-4 w-4 mr-2" />
+                  Snooze / Remind me
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem>
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Withdraw request
+                </DropdownMenuItem>
+                <DropdownMenuItem>
+                  <CheckCircle className="h-4 w-4 mr-2" />
+                  Mark complete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
 
         {/* What changes if I approve - micro-diff */}
         {nextAction && proposalState === "PENDING" && (
@@ -285,6 +388,10 @@ function RequestDetailContent() {
               nextAction={nextAction}
               feeQuote={request.fee_quote}
               scopeItems={request.scope_items}
+              costCap={costCap ? parseFloat(costCap) : undefined}
+              channel={nextAction.channel || agency_summary.submission_method}
+              recipientEmail={nextAction.recipient_email || request.agency_email || undefined}
+              portalProvider={nextAction.portal_provider || agency_summary.portal_provider}
             />
           </div>
         )}
