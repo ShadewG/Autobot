@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const db = require('../services/database');
 const actionValidator = require('../services/action-validator');
 const logger = require('../services/logger');
+const { cleanEmailBody } = require('../lib/email-cleaner');
 
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
@@ -198,8 +199,12 @@ function toRequestDetail(caseData) {
 
 /**
  * Transform message to ThreadMessage format
+ * Includes cleaned body (boilerplate removed) and raw_body (original)
  */
 function toThreadMessage(message) {
+    const rawBody = message.body_text || message.body_html || '';
+    const cleanedBody = cleanEmailBody(rawBody);
+
     return {
         id: String(message.id),
         direction: message.direction === 'outbound' ? 'OUTBOUND' : 'INBOUND',
@@ -207,7 +212,8 @@ function toThreadMessage(message) {
         from_email: message.from_email || '—',
         to_email: message.to_email || '—',
         subject: message.subject || '(No subject)',
-        body: message.body_text || message.body_html || '',
+        body: cleanedBody,
+        raw_body: rawBody !== cleanedBody ? rawBody : undefined,
         sent_at: message.sent_at || message.received_at || message.created_at,
         attachments: []
     };
@@ -291,6 +297,84 @@ function toTimelineEvent(activity, analysisMap = {}) {
     }
 
     return event;
+}
+
+/**
+ * Calculate business days between two dates
+ */
+function businessDaysDiff(startDate, endDate) {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    let count = 0;
+    const current = new Date(start);
+
+    while (current < end) {
+        const dayOfWeek = current.getDay();
+        if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+            count++;
+        }
+        current.setDate(current.getDate() + 1);
+    }
+
+    return count;
+}
+
+/**
+ * Build deadline milestones for the timeline
+ */
+function buildDeadlineMilestones(caseData, timelineEvents, stateDeadline) {
+    const milestones = [];
+
+    // Submitted milestone
+    if (caseData.send_date) {
+        milestones.push({
+            date: caseData.send_date,
+            type: 'SUBMITTED',
+            label: 'Submitted'
+        });
+    }
+
+    // Acknowledgment milestone (from timeline events)
+    const ackEvent = timelineEvents.find(e =>
+        e.classification?.type === 'ACKNOWLEDGMENT' ||
+        e.type === 'RECEIVED' && e.summary?.toLowerCase().includes('acknowledg')
+    );
+    if (ackEvent && caseData.send_date) {
+        const days = businessDaysDiff(caseData.send_date, ackEvent.timestamp);
+        milestones.push({
+            date: ackEvent.timestamp,
+            type: 'ACKNOWLEDGED',
+            label: 'Acknowledged',
+            days_from_prior: days,
+            is_met: days <= 3, // Typical acknowledgment deadline
+            statutory_limit: 3
+        });
+    }
+
+    // Fee quote milestone
+    if (caseData.fee_quote_jsonb?.quoted_at) {
+        const priorDate = ackEvent?.timestamp || caseData.send_date;
+        const days = priorDate ? businessDaysDiff(priorDate, caseData.fee_quote_jsonb.quoted_at) : null;
+        milestones.push({
+            date: caseData.fee_quote_jsonb.quoted_at,
+            type: 'FEE_QUOTED',
+            label: 'Fee Quote Received',
+            days_from_prior: days
+        });
+    }
+
+    // Statutory due date
+    if (caseData.deadline_date) {
+        milestones.push({
+            date: caseData.deadline_date,
+            type: 'STATUTORY_DUE',
+            label: `Statutory Due (${stateDeadline?.response_days || '?'} days)`,
+            citation: stateDeadline?.statute_citation,
+            statutory_limit: stateDeadline?.response_days
+        });
+    }
+
+    return milestones;
 }
 
 /**
@@ -500,16 +584,136 @@ router.get('/:id/workspace', async (req, res) => {
             }
         };
 
+        // Build state deadline info (static data - would come from state_deadlines table)
+        const STATE_DEADLINES = {
+            SC: { state_code: 'SC', response_days: 10, statute_citation: 'SC Code § 30-4-30(c): 10 business days' },
+            NC: { state_code: 'NC', response_days: 10, statute_citation: 'NC G.S. § 132-6(a): 10 working days' },
+            GA: { state_code: 'GA', response_days: 3, statute_citation: 'O.C.G.A. § 50-18-71(b)(1)(A): 3 business days' },
+            FL: { state_code: 'FL', response_days: 5, statute_citation: 'Fla. Stat. § 119.07(1)(c): Prompt response' },
+            TX: { state_code: 'TX', response_days: 10, statute_citation: 'Tex. Gov\'t Code § 552.221(a): 10 business days' },
+            VA: { state_code: 'VA', response_days: 5, statute_citation: 'Va. Code § 2.2-3704(B): 5 working days' },
+            OK: { state_code: 'OK', response_days: 3, statute_citation: '51 O.S. § 24A.5(5): Prompt response' },
+            TN: { state_code: 'TN', response_days: 7, statute_citation: 'Tenn. Code § 10-7-503(a)(2)(B): 7 business days' },
+            AL: { state_code: 'AL', response_days: 5, statute_citation: 'No statutory deadline - reasonable time' },
+            MS: { state_code: 'MS', response_days: 7, statute_citation: 'Miss. Code § 25-61-5: 7 working days' },
+        };
+
+        const stateDeadline = STATE_DEADLINES[caseData.state?.toUpperCase()] || null;
+        const deadlineMilestones = buildDeadlineMilestones(caseData, timelineEvents, stateDeadline);
+
         res.json({
             success: true,
             request: toRequestDetail(caseData),
             timeline_events: timelineEvents,
             thread_messages: threadMessages,
             next_action_proposal: nextActionProposal,
-            agency_summary: agencySummary
+            agency_summary: agencySummary,
+            deadline_milestones: deadlineMilestones,
+            state_deadline: stateDeadline
         });
     } catch (error) {
         console.error('Error fetching request workspace:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/research-exemption
+ * Research counterarguments for an exemption claim
+ */
+router.post('/:id/research-exemption', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+        const { constraint_index } = req.body;
+
+        if (constraint_index === undefined) {
+            return res.status(400).json({
+                success: false,
+                error: 'constraint_index is required'
+            });
+        }
+
+        // Fetch case data
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        // Get constraints
+        const constraints = parseConstraints(caseData);
+        const constraint = constraints[constraint_index];
+
+        if (!constraint) {
+            return res.status(404).json({
+                success: false,
+                error: 'Constraint not found at specified index'
+            });
+        }
+
+        // Build research prompt
+        const prompt = `Research counterarguments to this FOIA exemption claim:
+
+State: ${caseData.state}
+Agency Claim: "${constraint.description}"
+Legal Basis: ${constraint.source || 'Not specified'}
+Records Affected: ${constraint.affected_items?.join(', ') || 'Not specified'}
+
+Please research and provide:
+1. Known exceptions to this exemption
+2. Recent court cases that limited or overturned similar exemptions
+3. Procedural failures the agency might have made
+4. Alternative arguments for record disclosure
+5. Questions to ask the agency for clarification
+
+Be specific to ${caseData.state} law where possible.`;
+
+        // Call OpenAI for research
+        const OpenAI = require('openai');
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+        const completion = await openai.chat.completions.create({
+            model: process.env.OPENAI_MODEL || 'gpt-4o',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a legal research assistant specializing in FOIA/public records law. Provide specific, actionable research to help challenge exemption claims. Cite specific statutes and cases where possible.'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ],
+            max_tokens: 2000
+        });
+
+        const researchContent = completion.choices[0].message.content;
+
+        // Store research results in constraint (optional - could update constraints_jsonb)
+        const researchResults = {
+            searched_at: new Date().toISOString(),
+            content: researchContent,
+            constraint_description: constraint.description
+        };
+
+        // Log activity
+        await db.logActivity('exemption_researched', `Researched exemption claim: "${constraint.description}"`, {
+            case_id: requestId,
+            constraint_index: constraint_index,
+            state: caseData.state
+        });
+
+        res.json({
+            success: true,
+            research: researchResults
+        });
+    } catch (error) {
+        console.error('Error researching exemption:', error);
         res.status(500).json({
             success: false,
             error: error.message

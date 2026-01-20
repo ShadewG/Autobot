@@ -5,7 +5,9 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ConstraintsDisplay } from "./constraints-display";
-import { ScopeBreakdown } from "./scope-breakdown";
+import { ScopeTable, ScopeSummary } from "./scope-table";
+import { FeeBreakdown } from "./fee-breakdown";
+import { ExemptionClaimsList } from "./exemption-claim-card";
 import type {
   NextAction,
   RequestDetail,
@@ -23,12 +25,14 @@ interface CopilotPanelProps {
   request: RequestDetail;
   nextAction: NextAction | null;
   agency: AgencySummary;
+  onChallenge?: (instruction: string) => void;
 }
 
 export function CopilotPanel({
   request,
   nextAction,
   agency,
+  onChallenge,
 }: CopilotPanelProps) {
   // Hide "Proposed Action" when decision is required (shown in DecisionPanel instead)
   const isDecisionRequired =
@@ -137,27 +141,41 @@ export function CopilotPanel({
 
         <Separator />
 
-        {/* Request Details with Scope Breakdown */}
+        {/* Exemption Claims - prominent when present */}
+        {request.constraints && request.constraints.length > 0 && (
+          <ExemptionClaimsList
+            constraints={request.constraints}
+            state={request.state}
+            requestId={request.id}
+            onChallenge={onChallenge}
+          />
+        )}
+
+        {/* Fee Breakdown - shown when there's a fee quote */}
+        {request.fee_quote && request.fee_quote.amount > 0 && (
+          <FeeBreakdown
+            feeQuote={request.fee_quote}
+            scopeItems={request.scope_items}
+          />
+        )}
+
+        {/* Request Scope with Table */}
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Request Scope</CardTitle>
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span>Request Scope</span>
+              {request.scope_items && request.scope_items.length > 0 && (
+                <ScopeSummary items={request.scope_items} />
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {request.scope_items && request.scope_items.length > 0 ? (
-              <ScopeBreakdown items={request.scope_items} />
+              <ScopeTable items={request.scope_items} />
             ) : (
               <div>
                 <span className="text-muted-foreground">Scope:</span>
                 <p className="font-medium">{request.scope_summary || "—"}</p>
-              </div>
-            )}
-
-            {request.cost_amount && (
-              <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-                <span>
-                  {formatCurrency(request.cost_amount)} ({request.cost_status})
-                </span>
               </div>
             )}
 

@@ -45,6 +45,17 @@ export interface Constraint {
   affected_items: string[];
 }
 
+// Enhanced fee breakdown item with category and unit details
+export interface FeeBreakdownItem {
+  item: string;
+  description?: string;
+  unit_type?: 'HOUR' | 'PAGE' | 'DISK' | 'FLAT';
+  quantity?: number;
+  unit_rate?: number;
+  subtotal: number;
+  category?: 'SEARCH' | 'REVIEW' | 'DUPLICATION' | 'MEDIA' | 'OTHER';
+}
+
 // Fee quote details
 export interface FeeQuote {
   amount: number;
@@ -52,10 +63,12 @@ export interface FeeQuote {
   quoted_at: string | null;
   status: 'NONE' | 'QUOTED' | 'INVOICED' | 'APPROVED' | 'PAID';
   deposit_amount?: number | null;
-  breakdown?: { item: string; amount: number }[];
+  breakdown?: FeeBreakdownItem[];
   waiver_possible?: boolean;
   notes?: string;
   valid_until?: string;
+  hourly_rate?: number;
+  estimated_hours?: number;
 }
 
 // Request Detail - Extended info for detail page
@@ -122,7 +135,8 @@ export interface ThreadMessage {
   from_email: string;
   to_email: string;
   subject: string;
-  body: string;
+  body: string;        // Cleaned version (boilerplate removed)
+  raw_body?: string;   // Original unprocessed version
   sent_at: string;
   attachments: Attachment[];
 }
@@ -286,6 +300,31 @@ export interface AgencyDetail extends AgencyListItem {
   };
 }
 
+// Deadline milestone for timeline tracking
+export interface DeadlineMilestone {
+  date: string;
+  type: 'SUBMITTED' | 'ACKNOWLEDGED' | 'FEE_QUOTED' | 'STATUTORY_DUE';
+  label: string;
+  is_met?: boolean;
+  days_from_prior?: number;
+  statutory_limit?: number;
+  citation?: string;
+}
+
+// State deadline info
+export interface StateDeadline {
+  state_code: string;
+  response_days: number;
+  statute_citation: string;
+}
+
+// State exemption info for challengeable claims
+export interface ExemptionInfo {
+  statute: string;
+  title: string;
+  exceptions: string[];
+}
+
 // API Response types
 export interface RequestsListResponse {
   success: boolean;
@@ -302,6 +341,8 @@ export interface RequestWorkspaceResponse {
   thread_messages: ThreadMessage[];
   next_action_proposal: NextAction | null;
   agency_summary: AgencySummary;
+  deadline_milestones?: DeadlineMilestone[];
+  state_deadline?: StateDeadline;
 }
 
 export interface AgenciesListResponse {

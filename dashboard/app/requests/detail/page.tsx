@@ -23,6 +23,7 @@ import { Composer } from "@/components/composer";
 import { CopilotPanel } from "@/components/copilot-panel";
 import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
+import { DeadlineCalculator } from "@/components/deadline-calculator";
 import { requestsAPI, fetcher } from "@/lib/api";
 import type { RequestWorkspaceResponse, NextAction, PauseReason } from "@/lib/types";
 import { formatDate, cn } from "@/lib/utils";
@@ -149,6 +150,12 @@ function RequestDetailContent() {
     setAdjustModalOpen(true);
   };
 
+  const handleChallenge = (instruction: string) => {
+    // Pre-fill the adjust modal with the challenge instruction
+    setAdjustModalOpen(true);
+    // TODO: Could pre-fill the modal with the instruction
+  };
+
   const handleSnooze = async (snoozeUntil: string) => {
     if (!id) return;
     console.log("Snooze until:", snoozeUntil);
@@ -202,7 +209,14 @@ function RequestDetailContent() {
     );
   }
 
-  const { request, timeline_events, thread_messages, agency_summary } = data;
+  const {
+    request,
+    timeline_events,
+    thread_messages,
+    agency_summary,
+    deadline_milestones,
+    state_deadline,
+  } = data;
 
   // Robust detection of whether request is paused (same pattern as DecisionPanel)
   const isPaused =
@@ -361,7 +375,14 @@ function RequestDetailContent() {
               </div>
 
               {/* Timeline - middle */}
-              <div className="lg:col-span-3 min-w-0">
+              <div className="lg:col-span-3 min-w-0 space-y-4">
+                {/* Deadline Calculator */}
+                {deadline_milestones && deadline_milestones.length > 0 && (
+                  <DeadlineCalculator
+                    milestones={deadline_milestones}
+                    stateDeadline={state_deadline}
+                  />
+                )}
                 <Card className="h-full">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">Timeline</CardTitle>
@@ -393,6 +414,7 @@ function RequestDetailContent() {
                     request={request}
                     nextAction={nextAction}
                     agency={agency_summary}
+                    onChallenge={handleChallenge}
                   />
                 </div>
               </div>
@@ -400,14 +422,23 @@ function RequestDetailContent() {
           ) : (
             /* Not Paused Layout: Timeline | Conversation | Copilot */
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
-              <Card className="h-full min-w-0">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Timeline</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <Timeline events={timeline_events} />
-                </CardContent>
-              </Card>
+              <div className="space-y-4 min-w-0">
+                {/* Deadline Calculator */}
+                {deadline_milestones && deadline_milestones.length > 0 && (
+                  <DeadlineCalculator
+                    milestones={deadline_milestones}
+                    stateDeadline={state_deadline}
+                  />
+                )}
+                <Card className="h-full">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Timeline</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Timeline events={timeline_events} />
+                  </CardContent>
+                </Card>
+              </div>
 
               <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
@@ -429,6 +460,7 @@ function RequestDetailContent() {
                     request={request}
                     nextAction={nextAction}
                     agency={agency_summary}
+                    onChallenge={handleChallenge}
                   />
                 </CardContent>
               </Card>
