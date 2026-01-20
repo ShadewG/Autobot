@@ -11,7 +11,7 @@
 
 const { StateGraph, START, END } = require("@langchain/langgraph");
 const { RedisSaver } = require("@langchain/langgraph-checkpoint-redis");
-const Redis = require("ioredis");
+const { createClient } = require("redis");
 
 const { FOIACaseStateAnnotation, createInitialState } = require("../state/case-state");
 const { loadContextNode } = require("../nodes/load-context");
@@ -161,8 +161,14 @@ async function createCheckpointer() {
 
   if (checkpointerType === 'redis') {
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    const redis = new Redis(redisUrl);
-    return new RedisSaver({ client: redis });
+
+    // node-redis v4+ requires explicit connect
+    const client = createClient({ url: redisUrl });
+    client.on('error', (err) => logger.error('Redis checkpointer error', { error: err.message }));
+    await client.connect();
+
+    logger.info('Redis checkpointer connected');
+    return new RedisSaver({ client });
   }
 
   // Fallback to memory (not recommended for production)

@@ -10,9 +10,11 @@ import {
 import { RequestRow } from "./request-row";
 import type { RequestListItem } from "@/lib/types";
 
+export type TableVariant = "paused" | "waiting" | "scheduled";
+
 interface RequestTableProps {
   requests: RequestListItem[];
-  showQuickActions?: boolean;
+  variant?: TableVariant;
   onApprove?: (id: string) => void;
   onAdjust?: (id: string) => void;
   onSnooze?: (id: string) => void;
@@ -20,7 +22,7 @@ interface RequestTableProps {
 
 export function RequestTable({
   requests,
-  showQuickActions = false,
+  variant = "waiting",
   onApprove,
   onAdjust,
   onSnooze,
@@ -33,23 +35,20 @@ export function RequestTable({
     );
   }
 
+  const isPaused = variant === "paused";
+
   return (
     <Table>
       <TableHeader>
         <TableRow>
-          <TableHead className="w-[80px]">ID</TableHead>
-          <TableHead>Subject / Agency</TableHead>
-          <TableHead className="w-[140px]">Status</TableHead>
-          <TableHead className="w-[100px]">Inbound</TableHead>
-          <TableHead className="w-[80px]">Due</TableHead>
+          <TableHead className="w-[70px]">ID</TableHead>
+          <TableHead className="min-w-[200px]">Subject / Agency</TableHead>
+          {isPaused && <TableHead className="w-[130px]">Gate</TableHead>}
+          <TableHead className="w-[110px]">Stage</TableHead>
+          <TableHead className="w-[90px]">Inbound</TableHead>
+          <TableHead className="w-[120px]">Due</TableHead>
           <TableHead className="w-[80px]">Cost</TableHead>
-          <TableHead className="w-[120px]">Autopilot</TableHead>
-          {showQuickActions && (
-            <>
-              <TableHead className="w-[120px]">Pause Reason</TableHead>
-              <TableHead className="w-[120px]">Actions</TableHead>
-            </>
-          )}
+          <TableHead className="w-[100px] text-right">Action</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -57,7 +56,7 @@ export function RequestTable({
           <RequestRow
             key={request.id}
             request={request}
-            showQuickActions={showQuickActions}
+            variant={variant}
             onApprove={onApprove}
             onAdjust={onAdjust}
             onSnooze={onSnooze}
