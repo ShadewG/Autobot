@@ -532,6 +532,13 @@
                         <p style="color: #64748b; text-align: center; padding: 10px; font-size: 11px;">Run scenario to see assertions</p>
                     </div>
                 </div>
+
+                <div class="panel">
+                    <h2>Decision Trace</h2>
+                    <div id="decision-trace" style="font-size: 10px;">
+                        <p style="color: #64748b; text-align: center; padding: 10px;">Run process phase to see decision trace</p>
+                    </div>
+                </div>
             </div>
 
             <!-- RIGHT COLUMN - State & Snapshots -->
@@ -797,6 +804,7 @@
                     renderPhaseTracker();
                     renderSnapshots();
                     renderAssertions();
+                    renderDecisionTrace();
                 } else {
                     log(`Step failed: ${data.error || data.message}`, 'error');
                 }
@@ -834,6 +842,7 @@
                     renderPhaseTracker();
                     renderSnapshots();
                     renderAssertions();
+                    renderDecisionTrace();
                 }
             } catch (error) {
                 log(`Error: ${error.message}`, 'error');
@@ -863,6 +872,7 @@
                     renderPhaseTracker();
                     renderSnapshots();
                     renderAssertions();
+                    renderDecisionTrace();
                 }
             } catch (error) {
                 log(`Error: ${error.message}`, 'error');
@@ -1086,6 +1096,53 @@
                 ? JSON.stringify(before.case, null, 2)
                 : '(initial)';
             document.getElementById('diff-after').textContent = JSON.stringify(after.case, null, 2);
+        }
+
+        // Render decision trace
+        function renderDecisionTrace() {
+            const container = document.getElementById('decision-trace');
+            if (!currentRun || !currentRun.decision_trace || !currentRun.decision_trace.classification) {
+                container.innerHTML = '<p style="color: #64748b; text-align: center; padding: 10px;">Run process phase to see decision trace</p>';
+                return;
+            }
+
+            const trace = currentRun.decision_trace;
+            container.innerHTML = `
+                <div style="margin-bottom: 8px;">
+                    <strong style="color: #60a5fa;">Classification</strong>
+                    <div style="background: #1e293b; padding: 6px; border-radius: 4px; margin-top: 4px;">
+                        <div>Intent: <span class="badge badge-blue">${trace.classification?.intent || 'N/A'}</span></div>
+                        <div>Confidence: ${(trace.classification?.confidence * 100).toFixed(0)}%</div>
+                        <div>Sentiment: ${trace.classification?.sentiment || 'N/A'}</div>
+                        ${trace.classification?.fee_amount ? `<div>Fee: $${trace.classification.fee_amount}</div>` : ''}
+                    </div>
+                </div>
+                <div style="margin-bottom: 8px;">
+                    <strong style="color: #60a5fa;">Router Output</strong>
+                    <div style="background: #1e293b; padding: 6px; border-radius: 4px; margin-top: 4px;">
+                        <div>Action: <span class="badge badge-yellow">${trace.router_output?.action_type || 'N/A'}</span></div>
+                        <div>Auto-exec: ${trace.router_output?.can_auto_execute ? '✓' : '✗'}</div>
+                        <div>Status: ${trace.router_output?.status || 'N/A'}</div>
+                    </div>
+                </div>
+                <div style="margin-bottom: 8px;">
+                    <strong style="color: #60a5fa;">Gate Decision</strong>
+                    <div style="background: #1e293b; padding: 6px; border-radius: 4px; margin-top: 4px;">
+                        ${trace.gate_decision?.gated
+                            ? `<div>Gated: <span class="badge badge-red">YES</span></div>
+                               <div>Reason: ${trace.gate_decision?.pause_reason || 'N/A'}</div>`
+                            : `<div>Gated: <span class="badge badge-green">NO</span></div>
+                               <div>Auto-executed: ${trace.gate_decision?.auto_executed ? '✓' : '✗'}</div>`
+                        }
+                    </div>
+                </div>
+                <div>
+                    <strong style="color: #60a5fa;">Node Trace</strong>
+                    <div style="background: #1e293b; padding: 6px; border-radius: 4px; margin-top: 4px; font-size: 9px;">
+                        ${trace.node_trace?.join(' → ') || 'N/A'}
+                    </div>
+                </div>
+            `;
         }
 
         // Render assertions

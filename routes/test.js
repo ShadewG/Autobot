@@ -4315,19 +4315,40 @@ const activeE2ERuns = new Map();
 
 /**
  * Create a new E2E run
+ *
+ * IMPORTANT: Scenario config and expectations are persisted at creation time.
+ * All execution reads from run.scenario, never from E2E_SCENARIOS.
  */
 function createE2ERun(caseId, scenarioKey, options = {}) {
     const runId = `e2e_${caseId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const scenario = E2E_SCENARIOS[scenarioKey];
+    const scenarioTemplate = E2E_SCENARIOS[scenarioKey];
 
-    if (!scenario) {
+    if (!scenarioTemplate) {
         throw new Error(`Unknown scenario: ${scenarioKey}`);
     }
+
+    // Generate per-run thread_id to isolate test runs
+    const threadId = `case:${caseId}:e2e:${runId}`;
+
+    // Deep-copy scenario config to persist in run (immutable snapshot)
+    const scenario = JSON.parse(JSON.stringify({
+        key: scenarioKey,
+        name: scenarioTemplate.name,
+        description: scenarioTemplate.description,
+        phases: scenarioTemplate.phases,
+        inbound: scenarioTemplate.inbound,
+        case_setup: scenarioTemplate.case_setup,
+        expected: scenarioTemplate.expected,
+        llm_stubs: scenarioTemplate.llm_stubs
+    }));
 
     const run = {
         id: runId,
         case_id: caseId,
-        scenario_key: scenarioKey,
+        // Store full scenario config - execution reads from here, not E2E_SCENARIOS
+        scenario,
+        // Convenience aliases (read from scenario)
+        scenario_key: scenario.key,
         scenario_name: scenario.name,
         phases: scenario.phases,
         current_phase_index: 0,
@@ -4343,9 +4364,16 @@ function createE2ERun(caseId, scenarioKey, options = {}) {
             proposal_id: null,
             proposal_key: null,
             job_ids: [],
-            thread_id: null
+            thread_id: threadId  // Per-run thread_id for isolation
         },
-        logs: [`Run created for scenario: ${scenario.name}`],
+        // Decision trace - populated during execution
+        decision_trace: {
+            classification: null,
+            router_output: null,
+            node_trace: [],
+            gate_decision: null
+        },
+        logs: [`Run created for scenario: ${scenario.name}`, `Thread ID: ${threadId}`],
         assertions: [],
         human_decision: null
     };
@@ -4385,10 +4413,10 @@ router.post('/e2e/runs', async (req, res) => {
 
         const run = createE2ERun(case_id, scenario, { use_worker, dry_run, deterministic });
 
-        // Store deterministic mode flag for LLM stubs
+        // Store deterministic mode flag for LLM stubs (read from persisted scenario)
         if (deterministic) {
             global.__E2E_DETERMINISTIC_RUN__ = run.id;
-            global.__E2E_LLM_STUBS__ = E2E_SCENARIOS[scenario].llm_stubs;
+            global.__E2E_LLM_STUBS__ = run.scenario.llm_stubs;  // Read from run, not E2E_SCENARIOS
         }
 
         res.json({
@@ -4429,7 +4457,11 @@ router.get('/e2e/scenarios', (req, res) => {
 
 /**
  * POST /api/test/e2e/runs/:runId/reset
- * Reset a run to start fresh (optionally with a new scenario)
+ * Reset a run to start fresh
+ *
+ * IMPORTANT: Reset does NOT allow changing scenarios.
+ * To run a different scenario, create a new run.
+ * This ensures scenario config integrity.
  */
 router.post('/e2e/runs/:runId/reset', async (req, res) => {
     try {
@@ -4438,22 +4470,36 @@ router.post('/e2e/runs/:runId/reset', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Run not found' });
         }
 
-        // Check if a new scenario was specified
-        const { scenario: newScenarioKey } = req.body;
-        if (newScenarioKey && newScenarioKey !== run.scenario_key) {
-            const newScenario = E2E_SCENARIOS[newScenarioKey];
-            if (!newScenario) {
-                return res.status(400).json({
-                    success: false,
-                    error: `Invalid scenario: ${newScenarioKey}`,
-                    available: Object.keys(E2E_SCENARIOS)
-                });
+        // Don't allow changing scenario on reset - create new run instead
+        const { scenario: requestedScenario } = req.body;
+        if (requestedScenario && requestedScenario !== run.scenario_key) {
+            return res.status(400).json({
+                success: false,
+                error: 'Cannot change scenario on reset. Create a new run for a different scenario.',
+                current_scenario: run.scenario_key,
+                requested_scenario: requestedScenario
+            });
+        }
+
+        // Cancel any queued/active jobs for this run
+        const { agentQueue } = require('../queues/agent-queue');
+        const cancelledJobs = [];
+        for (const jobId of run.artifacts.job_ids) {
+            try {
+                const job = await agentQueue.getJob(jobId);
+                if (job) {
+                    const state = await job.getState();
+                    if (state === 'waiting' || state === 'delayed') {
+                        await job.remove();
+                        cancelledJobs.push(jobId);
+                    }
+                }
+            } catch (e) {
+                // Job may already be completed or removed
             }
-            // Update to new scenario
-            run.scenario_key = newScenarioKey;
-            run.scenario_name = newScenario.name;
-            run.phases = newScenario.phases;
-            run.logs.push(`Scenario changed to: ${newScenario.name}`);
+        }
+        if (cancelledJobs.length > 0) {
+            run.logs.push(`Cancelled ${cancelledJobs.length} queued jobs`);
         }
 
         // Reset the case state
@@ -4464,12 +4510,22 @@ router.post('/e2e/runs/:runId/reset', async (req, res) => {
             langgraph_thread_id: null
         });
 
-        // Clear proposals for this case
+        // Clear proposals tagged with this run's thread_id
+        const threadId = run.artifacts.thread_id;
+        if (threadId) {
+            await db.query('DELETE FROM proposals WHERE langgraph_thread_id = $1', [threadId]);
+        }
+        // Also clear all proposals for this case as fallback
         await db.query('DELETE FROM proposals WHERE case_id = $1', [run.case_id]);
 
-        // Reset run state
+        // Clear test messages created by this run
+        if (run.artifacts.inbound_message_id) {
+            await db.query('DELETE FROM messages WHERE id = $1', [run.artifacts.inbound_message_id]);
+        }
+
+        // Reset run state but preserve thread_id for isolation
         run.current_phase_index = 0;
-        run.current_phase = run.phases[0];
+        run.current_phase = run.scenario.phases[0];
         run.status = 'initialized';
         run.state_snapshots = [];
         run.artifacts = {
@@ -4477,7 +4533,14 @@ router.post('/e2e/runs/:runId/reset', async (req, res) => {
             proposal_id: null,
             proposal_key: null,
             job_ids: [],
-            thread_id: null
+            thread_id: threadId  // Keep the per-run thread_id
+        };
+        // Reset decision trace
+        run.decision_trace = {
+            classification: null,
+            router_output: null,
+            node_trace: [],
+            gate_decision: null
         };
         run.logs = [...run.logs, `Run reset at ${new Date().toISOString()}`];
         run.assertions = [];
@@ -4525,10 +4588,75 @@ async function captureStateSnapshot(run, label) {
 }
 
 /**
+ * Capture decision trace from latest analysis and proposal
+ * Shows: classification → router decision → action type → gate decision
+ */
+async function captureDecisionTrace(run) {
+    try {
+        // Get latest response analysis for this run's inbound message
+        let analysis = null;
+        if (run.artifacts.inbound_message_id) {
+            analysis = await db.getAnalysisByMessageId(run.artifacts.inbound_message_id);
+        }
+
+        // Get latest proposal for this case
+        const proposalResult = await db.query(
+            `SELECT * FROM proposals WHERE case_id = $1 ORDER BY created_at DESC LIMIT 1`,
+            [run.case_id]
+        );
+        const proposal = proposalResult.rows[0];
+
+        // Get case state
+        const caseData = await db.getCaseById(run.case_id);
+
+        // Build decision trace
+        run.decision_trace = {
+            classification: analysis ? {
+                intent: analysis.intent,
+                confidence: analysis.confidence_score,
+                sentiment: analysis.sentiment,
+                fee_amount: analysis.extracted_fee_amount,
+                key_points: analysis.key_points
+            } : null,
+            router_output: proposal ? {
+                action_type: proposal.action_type,
+                can_auto_execute: proposal.can_auto_execute,
+                status: proposal.status
+            } : null,
+            node_trace: [
+                'load_context',
+                'classify_inbound',
+                'update_constraints',
+                'decide_next_action',
+                ...(proposal ? ['draft_response', 'safety_check', 'gate_or_execute'] : []),
+                ...(proposal?.status === 'EXECUTED' ? ['execute_action', 'commit_state'] : [])
+            ],
+            gate_decision: caseData?.requires_human ? {
+                gated: true,
+                pause_reason: caseData.pause_reason,
+                proposal_id: proposal?.id,
+                proposal_status: proposal?.status
+            } : {
+                gated: false,
+                auto_executed: proposal?.status === 'EXECUTED'
+            }
+        };
+
+        run.logs.push(`Decision trace captured: ${run.decision_trace.router_output?.action_type || 'N/A'}`);
+    } catch (error) {
+        run.logs.push(`Failed to capture decision trace: ${error.message}`);
+    }
+}
+
+/**
  * Execute a single phase of an E2E run
+ *
+ * IMPORTANT: All config is read from run.scenario (persisted at creation),
+ * NEVER from E2E_SCENARIOS. This ensures test isolation and reproducibility.
  */
 async function executePhase(run) {
-    const scenario = E2E_SCENARIOS[run.scenario_key];
+    // Read scenario from persisted run config, NOT from E2E_SCENARIOS
+    const scenario = run.scenario;
     const phase = run.current_phase;
 
     run.logs.push(`Executing phase: ${phase}`);
@@ -4536,9 +4664,8 @@ async function executePhase(run) {
     try {
         switch (phase) {
             case 'setup': {
-                // Generate thread_id for LangGraph
-                const langgraphThreadId = `case:${run.case_id}`;
-                run.artifacts.thread_id = langgraphThreadId;
+                // Use per-run thread_id for isolation (already set at creation)
+                const langgraphThreadId = run.artifacts.thread_id;
 
                 // Apply case setup AND set langgraph_thread_id in the same update
                 const caseUpdate = {
@@ -4558,7 +4685,7 @@ async function executePhase(run) {
                     break;
                 }
 
-                // Create inbound message
+                // Create inbound message tagged with run_id
                 const thread = await ensureEmailThread(run.case_id);
                 const message = await createInboundMessage(run.case_id, thread.id, {
                     subject: scenario.inbound.subject,
@@ -4584,11 +4711,12 @@ async function executePhase(run) {
                 // Invoke the graph (via worker or direct)
                 const triggerType = scenario.inbound ? 'agency_reply' : 'time_based_followup';
 
-                // Pass llm_stubs for deterministic mode AND messageId for the graph
+                // Pass llm_stubs from persisted scenario config, thread_id for isolation
                 const invokeOptions = {
                     e2e_run_id: run.id,
-                    messageId: run.artifacts.inbound_message_id,  // Pass the injected message ID
-                    llmStubs: run.deterministic ? scenario.llm_stubs : null
+                    messageId: run.artifacts.inbound_message_id,
+                    llmStubs: run.deterministic ? scenario.llm_stubs : null,
+                    threadId: run.artifacts.thread_id  // Per-run thread for isolation
                 };
 
                 if (run.use_worker) {
@@ -4596,7 +4724,8 @@ async function executePhase(run) {
                         e2e_run_id: run.id,
                         message_id: run.artifacts.inbound_message_id,
                         deterministic: run.deterministic,
-                        llm_stubs: run.deterministic ? scenario.llm_stubs : null
+                        llm_stubs: run.deterministic ? scenario.llm_stubs : null,
+                        thread_id: run.artifacts.thread_id  // Per-run thread for isolation
                     });
                     run.artifacts.job_ids.push(job.id);
                     run.logs.push(`Enqueued agent job: ${job.id}`);
@@ -4616,6 +4745,9 @@ async function executePhase(run) {
                         run.status = 'awaiting_human';
                     }
                 }
+
+                // Capture decision trace from latest analysis
+                await captureDecisionTrace(run);
 
                 await captureStateSnapshot(run, 'after_process');
 
@@ -4779,11 +4911,25 @@ async function createInboundMessage(caseId, threadId, config) {
 
 /**
  * Run E2E assertions for a run
+ *
+ * IMPORTANT: Expectations are read from run.scenario.expected (persisted at creation),
+ * NEVER from E2E_SCENARIOS. This ensures test reproducibility.
  */
 async function runE2EAssertions(run) {
-    const scenario = E2E_SCENARIOS[run.scenario_key];
-    const expected = scenario.expected;
+    // Read expected values from persisted scenario config, NOT from E2E_SCENARIOS
+    const expected = run.scenario.expected;
     const assertions = [];
+
+    // Verify scenario is properly loaded (hard fail on mismatch)
+    if (!expected) {
+        assertions.push({
+            name: 'scenario_loaded',
+            passed: false,
+            expected: 'run.scenario.expected to exist',
+            actual: 'undefined'
+        });
+        return assertions;
+    }
 
     const caseData = await db.getCaseById(run.case_id);
     const proposals = await db.query(
@@ -4791,6 +4937,7 @@ async function runE2EAssertions(run) {
         [run.case_id]
     );
     const latestProposal = proposals.rows[0];
+    const pendingProposals = proposals.rows.filter(p => p.status === 'PENDING_APPROVAL');
 
     // A1: Action type matches expected
     if (expected.action_type) {
@@ -4839,13 +4986,46 @@ async function runE2EAssertions(run) {
         });
     }
 
-    // A6: If requires_human, must have pause_reason
+    // === INVARIANT ASSERTIONS (always checked) ===
+
+    // INV1: requires_human ⇒ pause_reason must exist
     if (caseData.requires_human) {
         assertions.push({
-            name: 'requires_human_has_reason',
+            name: 'invariant_requires_human_has_reason',
             passed: caseData.pause_reason != null,
-            expected: 'pause_reason when requires_human',
-            actual: caseData.pause_reason
+            expected: 'pause_reason when requires_human=true',
+            actual: caseData.pause_reason || 'null'
+        });
+    }
+
+    // INV2: requires_human ⇒ exactly 1 pending proposal
+    if (caseData.requires_human) {
+        assertions.push({
+            name: 'invariant_requires_human_one_pending',
+            passed: pendingProposals.length === 1,
+            expected: 'exactly 1 pending proposal when requires_human=true',
+            actual: `${pendingProposals.length} pending proposals`
+        });
+    }
+
+    // INV3: pending approval ⇒ execution_key must be null
+    for (const pending of pendingProposals) {
+        if (pending.execution_key != null) {
+            assertions.push({
+                name: 'invariant_pending_no_execution_key',
+                passed: false,
+                expected: 'execution_key=null for PENDING_APPROVAL',
+                actual: `proposal ${pending.id} has execution_key=${pending.execution_key}`
+            });
+        }
+    }
+    // If all pending proposals are valid, add a pass
+    if (pendingProposals.length > 0 && pendingProposals.every(p => p.execution_key == null)) {
+        assertions.push({
+            name: 'invariant_pending_no_execution_key',
+            passed: true,
+            expected: 'execution_key=null for PENDING_APPROVAL',
+            actual: 'all pending proposals valid'
         });
     }
 
