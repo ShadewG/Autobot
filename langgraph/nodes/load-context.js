@@ -43,11 +43,11 @@ async function loadContextNode(state) {
     // Fetch existing pending proposal
     const existingProposal = await db.getLatestPendingProposal(caseId);
 
-    // Extract constraints and scope from case data
-    const constraints = caseData.constraints || [];
-    const scopeItems = caseData.scope_items || caseData.requested_records?.map(r => ({
-      item: r,
-      status: 'PENDING'
+    // Extract constraints and scope from case data (use JSONB columns with fallbacks)
+    const constraints = caseData.constraints_jsonb || caseData.constraints || [];
+    const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || caseData.requested_records?.map(r => ({
+      name: r,
+      status: 'REQUESTED'
     })) || [];
 
     return {

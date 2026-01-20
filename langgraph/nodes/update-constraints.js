@@ -72,10 +72,10 @@ async function updateConstraintsNode(state) {
       ? JSON.parse(analysis.full_analysis_json)
       : analysis.full_analysis_json;
 
-    // Get current constraints
+    // Get current constraints (use JSONB columns)
     const caseData = await db.getCaseById(caseId);
-    const currentConstraints = caseData.constraints || constraints || [];
-    const currentScopeItems = caseData.scope_items || scopeItems || [];
+    const currentConstraints = caseData.constraints_jsonb || caseData.constraints || constraints || [];
+    const currentScopeItems = caseData.scope_items_jsonb || caseData.scope_items || scopeItems || [];
 
     const newConstraints = [...currentConstraints];
     const logs = [];
@@ -143,16 +143,38 @@ async function updateConstraintsNode(state) {
       ? mergeScopeUpdates(currentScopeItems, parsed.scope_updates)
       : currentScopeItems;
 
+    // Build fee quote update if fee breakdown available
+    let feeQuoteUpdate = null;
+    if (parsed.fee_breakdown || extractedFeeAmount) {
+      const currentFeeQuote = caseData.fee_quote_jsonb || {};
+      feeQuoteUpdate = {
+        ...currentFeeQuote,
+        amount: extractedFeeAmount || currentFeeQuote.amount,
+        quoted_at: new Date().toISOString(),
+        status: 'QUOTED'
+      };
+
+      if (parsed.fee_breakdown) {
+        feeQuoteUpdate.hourly_rate = parsed.fee_breakdown.hourly_rate || currentFeeQuote.hourly_rate;
+        feeQuoteUpdate.estimated_hours = parsed.fee_breakdown.estimated_hours || currentFeeQuote.estimated_hours;
+        feeQuoteUpdate.breakdown = parsed.fee_breakdown.items || currentFeeQuote.breakdown;
+        feeQuoteUpdate.deposit_required = parsed.fee_breakdown.deposit_required || currentFeeQuote.deposit_required;
+      }
+      logs.push(`Updated fee quote: $${feeQuoteUpdate.amount}`);
+    }
+
     // Persist updated constraints to DB if changed
     const constraintsChanged = JSON.stringify(newConstraints.sort()) !== JSON.stringify(currentConstraints.sort());
     const scopeChanged = JSON.stringify(updatedScopeItems) !== JSON.stringify(currentScopeItems);
 
-    if (constraintsChanged || scopeChanged) {
-      await db.updateCase(caseId, {
-        constraints: newConstraints,
-        scope_items: updatedScopeItems
-      });
-      logs.push('Persisted constraint/scope updates to database');
+    const updatePayload = {};
+    if (constraintsChanged) updatePayload.constraints_jsonb = newConstraints;
+    if (scopeChanged) updatePayload.scope_items_jsonb = updatedScopeItems;
+    if (feeQuoteUpdate) updatePayload.fee_quote_jsonb = feeQuoteUpdate;
+
+    if (Object.keys(updatePayload).length > 0) {
+      await db.updateCase(caseId, updatePayload);
+      logs.push('Persisted constraint/scope/fee updates to database');
     }
 
     return {

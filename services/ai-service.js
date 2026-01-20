@@ -270,11 +270,23 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
         try {
             console.log(`Analyzing response for case: ${caseData.case_name}`);
 
+            // Build requested records list for scope analysis
+            const requestedRecords = Array.isArray(caseData.requested_records)
+                ? caseData.requested_records
+                : (caseData.requested_records ? [caseData.requested_records] : []);
+            const recordsList = requestedRecords.length > 0
+                ? requestedRecords.map((r, i) => `${i + 1}. ${r}`).join('\n')
+                : 'Not specified';
+
             const prompt = `Analyze this email response to a FOIA request and extract key information:
 
 **Original Request Context:**
 Subject: ${caseData.subject_name}
 Agency: ${caseData.agency_name}
+State: ${caseData.state || 'Unknown'}
+
+**Records We Requested:**
+${recordsList}
 
 **Response Email:**
 From: ${messageData.from_email}
@@ -293,6 +305,28 @@ Please analyze and provide a JSON response with:
 8. requires_action: boolean - does this require a response from us?
 9. suggested_action: what should we do next?
 10. summary: brief 1-2 sentence summary
+11. scope_updates: For EACH record we requested, analyze what the agency said about it. Return an array of objects with:
+    - name: the record item name (exactly as listed above)
+    - status: one of (CONFIRMED_AVAILABLE | NOT_DISCLOSABLE | NOT_HELD | PENDING | REQUESTED)
+      - CONFIRMED_AVAILABLE: Agency confirms they have it and will provide
+      - NOT_DISCLOSABLE: Agency claims exemption or refuses to provide
+      - NOT_HELD: Agency says they don't have this record
+      - PENDING: Agency is still searching/processing
+      - REQUESTED: No mention of this item in the response
+    - reason: brief explanation of what agency said about this item (or null if no mention)
+    - confidence: 0.0 to 1.0 how confident you are in this status
+12. constraints_to_add: array of constraint codes to add based on the response. Use these codes:
+    - BWC_EXEMPT: Body camera footage claimed exempt
+    - FEE_REQUIRED: Payment required before records released
+    - ID_REQUIRED: Identity verification requested
+    - INVESTIGATION_ACTIVE: Ongoing investigation cited
+    - RECORDS_NOT_HELD: No responsive records exist
+    - PARTIAL_DENIAL: Some items denied, others available
+13. fee_breakdown: if fee_request intent, extract breakdown with:
+    - hourly_rate: number or null
+    - estimated_hours: number or null
+    - items: array of { description, amount }
+    - deposit_required: number or null
 
 Return ONLY valid JSON, no other text.`;
 
