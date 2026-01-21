@@ -217,7 +217,11 @@ async function startServer() {
         // Start LangGraph agent worker
         console.log('\nStarting LangGraph agent worker...');
         agentWorker = createAgentWorker();
-        console.log('   ✓ LangGraph agent worker started');
+        if (agentWorker) {
+            console.log('   ✓ LangGraph agent worker started');
+        } else {
+            console.log('   ⚠️ LangGraph agent worker not started (no Redis)');
+        }
 
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`\n🤖 Autobot MVP Server Running`);

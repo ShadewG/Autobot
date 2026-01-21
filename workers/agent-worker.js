@@ -744,6 +744,13 @@ async function processResumeRunJob(job) {
 function createAgentWorker() {
   const connection = getConnection();
 
+  // Handle missing Redis connection gracefully
+  if (!connection) {
+    logger.warn('Agent worker not started - no Redis connection available');
+    console.warn('⚠️ Agent worker not started - no Redis connection');
+    return null;
+  }
+
   const worker = new Worker('agent-queue', async (job) => {
     switch (job.name) {
       // Legacy job types (still supported)
