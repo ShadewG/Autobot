@@ -1143,20 +1143,10 @@ class DatabaseService {
 
         const entries = Object.entries(updates).map(([key, value]) => {
             const dbKey = fieldMap[key] || key;
-            // Serialize JSON objects for JSONB columns
-            if (dbKey === 'human_decision' && value && typeof value === 'object') {
-                return [dbKey, JSON.stringify(value)];
-            }
             return [dbKey, value];
         });
 
-        const setClauseParts = entries.map(([key], idx) => {
-            // Cast human_decision to JSONB
-            if (key === 'human_decision') {
-                return `${key} = $${idx + 2}::jsonb`;
-            }
-            return `${key} = $${idx + 2}`;
-        });
+        const setClauseParts = entries.map(([key], idx) => `${key} = $${idx + 2}`);
         setClauseParts.push('updated_at = CURRENT_TIMESTAMP');
 
         const values = [proposalId, ...entries.map(([, value]) => value)];
