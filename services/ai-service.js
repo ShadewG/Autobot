@@ -722,6 +722,31 @@ Return ONLY the email body text.`;
     }
 
     /**
+     * Get a short reference name for a case (for use in correspondence)
+     * Prefers: explicit subject_name > extracted person name > agency-based reference
+     */
+    getShortCaseReference(caseData) {
+        // If subject_name was explicitly set (different from case_name), use it
+        if (caseData.subject_name && caseData.subject_name !== caseData.case_name) {
+            // Truncate if still too long
+            const name = caseData.subject_name.split(' - ')[0].split(',')[0].trim();
+            return name.length > 50 ? name.substring(0, 50) + '...' : name;
+        }
+
+        // Try to extract a person name from additional_details
+        const details = caseData.additional_details || '';
+        // Look for common patterns: "Name, age," or "Name (age)"
+        const nameMatch = details.match(/([A-Z][a-z]+ [A-Z][a-z]+)(?:,? \d{1,2}[,\)]|\s+was|\s+is)/);
+        if (nameMatch) {
+            return nameMatch[1];
+        }
+
+        // Fall back to agency-based reference
+        const agency = (caseData.agency_name || 'Agency').replace(/,.*$/, '').trim();
+        return `our ${agency} request`;
+    }
+
+    /**
      * Generate a draft response to a fee estimate that requires human approval
      */
     async generateFeeResponse(caseData, options = {}) {
@@ -735,6 +760,9 @@ Return ONLY the email body text.`;
         if (!feeAmount) {
             throw new Error('feeAmount is required to generate a fee response');
         }
+
+        // Get short reference for correspondence
+        const shortReference = this.getShortCaseReference(caseData);
 
         const actionGuidance = {
             accept: 'Politely accept the cost, confirm willingness to pay, and request next steps for invoice/payment.',
@@ -750,7 +778,8 @@ Return ONLY the email body text.`;
 
         const prompt = `You are the FOIA Negotiator Assistant for a documentary records team.
 
-Case: ${caseData.case_name}
+Case reference: ${shortReference}
+Full case context: ${caseData.case_name}
 Agency: ${caseData.agency_name}
 Jurisdiction: ${caseData.state}
 Requested records: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
@@ -762,7 +791,7 @@ ${actionInstruction}
 ${customInstruction}
 
 Email requirements:
-1. Reference the original request (subject: ${caseData.subject_name})
+1. Reference the request using the SHORT case reference ("${shortReference}") - NOT the full case name
 2. Mention the quoted fee amount explicitly
 3. Ask for itemized breakdowns or statutory authority where relevant
 4. Keep tone professional, collaborative, and human-sounding
@@ -784,7 +813,7 @@ ${prompt}`
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
-                subject: `RE: Fee Response - Public Records Request - ${caseData.subject_name || 'Request'}`,
+                subject: `RE: Fee Response - ${shortReference}`,
                 body_text: bodyText,
                 body_html: null,
                 // Metadata
