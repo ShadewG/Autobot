@@ -1281,6 +1281,17 @@ class DatabaseService {
     }
 
     /**
+     * Get follow-up schedule by ID.
+     */
+    async getFollowUpScheduleById(followupId) {
+        const result = await this.query(
+            'SELECT * FROM follow_up_schedule WHERE id = $1',
+            [followupId]
+        );
+        return result.rows[0];
+    }
+
+    /**
      * Upsert follow-up schedule for a case.
      */
     async upsertFollowUpSchedule(caseId, scheduleData) {
@@ -1776,6 +1787,33 @@ class DatabaseService {
             RETURNING *
         `, [proposalId, runId, pauseReason]);
         return result.rows[0];
+    }
+
+    /**
+     * Get active (non-completed) agent run for a case
+     * Used by run-engine routes to prevent duplicate runs
+     */
+    async getActiveRunForCase(caseId) {
+        const result = await this.query(`
+            SELECT * FROM agent_runs
+            WHERE case_id = $1
+              AND status IN ('created', 'queued', 'running', 'paused')
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [caseId]);
+        return result.rows[0];
+    }
+
+    /**
+     * Get proposals created by a specific run
+     */
+    async getProposalsByRunId(runId) {
+        const result = await this.query(`
+            SELECT * FROM proposals
+            WHERE run_id = $1
+            ORDER BY created_at DESC
+        `, [runId]);
+        return result.rows;
     }
 }
 

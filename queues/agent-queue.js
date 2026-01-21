@@ -76,6 +76,133 @@ async function enqueueAgentJob(caseId, triggerType, options = {}) {
 }
 
 /**
+ * Add a job to generate initial FOIA request
+ *
+ * Phase 3: Run Engine job type for initial request generation.
+ *
+ * @param {number} runId - The agent_runs.id for auditability
+ * @param {number} caseId - The case ID
+ * @param {object} options - Options (autopilotMode, threadId, llmStubs)
+ */
+async function enqueueInitialRequestJob(runId, caseId, options = {}) {
+  const jobId = `initial:${caseId}:run-${runId}`;
+
+  const job = await agentQueue.add('run-initial-request', {
+    runId,
+    caseId,
+    autopilotMode: options.autopilotMode || 'SUPERVISED',
+    threadId: options.threadId,
+    llmStubs: options.llmStubs
+  }, {
+    jobId,
+    attempts: 1,
+    removeOnComplete: { count: 100, age: 86400 },
+    removeOnFail: { count: 200, age: 604800 }
+  });
+
+  logger.info('Initial request job enqueued', { jobId: job.id, runId, caseId });
+  return job;
+}
+
+/**
+ * Add a job to process inbound message
+ *
+ * Phase 3: Run Engine job type for inbound message processing.
+ *
+ * @param {number} runId - The agent_runs.id for auditability
+ * @param {number} caseId - The case ID
+ * @param {number} messageId - The message to process
+ * @param {object} options - Options (autopilotMode, threadId, llmStubs)
+ */
+async function enqueueInboundMessageJob(runId, caseId, messageId, options = {}) {
+  const jobId = `inbound:${caseId}:msg-${messageId}:run-${runId}`;
+
+  const job = await agentQueue.add('run-inbound-message', {
+    runId,
+    caseId,
+    messageId,
+    autopilotMode: options.autopilotMode || 'SUPERVISED',
+    threadId: options.threadId,
+    llmStubs: options.llmStubs
+  }, {
+    jobId,
+    attempts: 1,
+    removeOnComplete: { count: 100, age: 86400 },
+    removeOnFail: { count: 200, age: 604800 }
+  });
+
+  logger.info('Inbound message job enqueued', { jobId: job.id, runId, caseId, messageId });
+  return job;
+}
+
+/**
+ * Add a job to process scheduled followup trigger
+ *
+ * Phase 3: Run Engine job type for scheduled follow-up processing.
+ *
+ * @param {number} runId - The agent_runs.id for auditability
+ * @param {number} caseId - The case ID
+ * @param {number} followupScheduleId - The follow_up_schedules.id
+ * @param {object} options - Options (autopilotMode, threadId, llmStubs)
+ */
+async function enqueueFollowupTriggerJob(runId, caseId, followupScheduleId, options = {}) {
+  const jobId = `followup:${caseId}:schedule-${followupScheduleId}:run-${runId}`;
+
+  const job = await agentQueue.add('run-followup-trigger', {
+    runId,
+    caseId,
+    followupScheduleId,
+    autopilotMode: options.autopilotMode || 'SUPERVISED',
+    threadId: options.threadId,
+    llmStubs: options.llmStubs
+  }, {
+    jobId,
+    attempts: 1,
+    removeOnComplete: { count: 100, age: 86400 },
+    removeOnFail: { count: 200, age: 604800 }
+  });
+
+  logger.info('Followup trigger job enqueued', { jobId: job.id, runId, caseId, followupScheduleId });
+  return job;
+}
+
+/**
+ * Add a job to resume graph after human decision
+ *
+ * Phase 3: Run Engine job type for resuming interrupted graphs.
+ *
+ * @param {number} runId - The agent_runs.id for auditability
+ * @param {number} caseId - The case ID
+ * @param {object} humanDecision - { action, proposalId, instruction, reason }
+ * @param {object} options - Options (isInitialRequest, originalProposalId)
+ */
+async function enqueueResumeRunJob(runId, caseId, humanDecision, options = {}) {
+  const jobId = `resume:${caseId}:run-${runId}`;
+
+  const job = await agentQueue.add('resume-run', {
+    runId,
+    caseId,
+    humanDecision,
+    isInitialRequest: options.isInitialRequest || false,
+    originalProposalId: options.originalProposalId
+  }, {
+    jobId,
+    attempts: 1,
+    removeOnComplete: { count: 100, age: 86400 },
+    removeOnFail: { count: 200, age: 604800 }
+  });
+
+  logger.info('Resume run job enqueued', {
+    jobId: job.id,
+    runId,
+    caseId,
+    action: humanDecision.action,
+    isInitialRequest: options.isInitialRequest
+  });
+  return job;
+}
+
+/**
  * Add a job to resume an interrupted graph
  *
  * Reliability: Uses atomic execution claim to prevent duplicate resume
@@ -145,7 +272,13 @@ module.exports = {
   agentQueue,
   getAgentQueue,
   getConnection,
+  // Legacy functions (still used by existing code)
   enqueueAgentJob,
   enqueueResumeJob,
+  // Phase 3 Run Engine functions
+  enqueueInitialRequestJob,
+  enqueueInboundMessageJob,
+  enqueueFollowupTriggerJob,
+  enqueueResumeRunJob,
   getQueueStats
 };

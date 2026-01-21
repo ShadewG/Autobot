@@ -18,7 +18,12 @@
 const { Worker } = require('bullmq');
 const { getConnection } = require('../queues/agent-queue');
 const { moveToDeadLetterQueue } = require('../queues/queue-config');
-const { invokeFOIACaseGraph, resumeFOIACaseGraph } = require('../langgraph');
+const {
+  invokeFOIACaseGraph,
+  resumeFOIACaseGraph,
+  invokeInitialRequestGraph,
+  resumeInitialRequestGraph
+} = require('../langgraph');
 const db = require('../services/database');
 const caseLockService = require('../services/case-lock-service');
 const reaperService = require('../services/reaper-service');
@@ -321,6 +326,418 @@ async function processResumeJob(job) {
   return lockResult.result;
 }
 
+// =============================================================================
+// PHASE 3: RUN ENGINE JOB HANDLERS
+// =============================================================================
+
+/**
+ * Process run-initial-request job
+ *
+ * Phase 3: Invokes Initial Request Graph with run-based auditability.
+ * Loads run record, acquires lock, calls graph, updates status.
+ */
+async function processInitialRequestJob(job) {
+  const { runId, caseId, autopilotMode, threadId, llmStubs } = job.data;
+  const log = logger.forAgent ? logger.forAgent(caseId, 'initial_request') : logger;
+
+  log.info('Processing run-initial-request job', {
+    jobId: job.id,
+    runId,
+    caseId
+  });
+
+  // Update run status to running
+  await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
+
+  try {
+    // Invoke Initial Request Graph
+    const result = await invokeInitialRequestGraph(caseId, {
+      runId,
+      autopilotMode,
+      threadId,
+      llmStubs
+    });
+
+    // Update run based on result
+    if (result.status === 'interrupted') {
+      await db.updateAgentRun(runId, {
+        status: 'paused',
+        finished_at: new Date()
+      });
+
+      // Notify about pending approval
+      const caseData = await db.getCaseById(caseId);
+      await discordService.notifyCaseNeedsReview(caseData, {
+        proposalId: result.interruptData?.proposalId,
+        actionType: result.interruptData?.proposalActionType,
+        reason: result.interruptData?.pauseReason
+      });
+
+      log.info('Initial request paused for human review', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'interrupted',
+        proposalId: result.interruptData?.proposalId,
+        threadId: result.threadId
+      };
+    }
+
+    if (result.status === 'completed') {
+      await db.updateAgentRun(runId, {
+        status: 'completed',
+        finished_at: new Date()
+      });
+
+      await notionService.syncStatusToNotion(caseId);
+
+      log.info('Initial request completed', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'completed',
+        threadId: result.threadId
+      };
+    }
+
+    return { success: true, status: result.status };
+
+  } catch (error) {
+    log.error('Initial request job failed', { runId, caseId, error: error.message });
+
+    await db.updateAgentRun(runId, {
+      status: 'failed',
+      finished_at: new Date(),
+      error_message: error.message
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Process run-inbound-message job
+ *
+ * Phase 3: Invokes FOIA Case Graph (Inbound Response) with run-based auditability.
+ */
+async function processInboundMessageJob(job) {
+  const { runId, caseId, messageId, autopilotMode, threadId, llmStubs } = job.data;
+  const log = logger.forAgent ? logger.forAgent(caseId, 'inbound_message') : logger;
+
+  log.info('Processing run-inbound-message job', {
+    jobId: job.id,
+    runId,
+    caseId,
+    messageId
+  });
+
+  // Update run status to running
+  await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
+
+  try {
+    // Invoke FOIA Case Graph (Inbound Response)
+    const result = await invokeFOIACaseGraph(caseId, 'INBOUND_MESSAGE', {
+      runId,
+      messageId,
+      autopilotMode,
+      threadId,
+      llmStubs
+    });
+
+    // Mark message as processed
+    await db.markMessageProcessed(messageId, runId, null);
+
+    // Update run based on result
+    if (result.status === 'interrupted') {
+      await db.updateAgentRun(runId, {
+        status: 'paused',
+        finished_at: new Date()
+      });
+
+      const caseData = await db.getCaseById(caseId);
+      await discordService.notifyCaseNeedsReview(caseData, {
+        proposalId: result.interruptData?.proposalId,
+        actionType: result.interruptData?.proposalActionType,
+        reason: result.interruptData?.pauseReason
+      });
+
+      log.info('Inbound message processing paused for human review', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'interrupted',
+        proposalId: result.interruptData?.proposalId,
+        threadId: result.threadId
+      };
+    }
+
+    if (result.status === 'completed') {
+      await db.updateAgentRun(runId, {
+        status: 'completed',
+        finished_at: new Date()
+      });
+
+      await notionService.syncStatusToNotion(caseId);
+
+      log.info('Inbound message processing completed', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'completed',
+        threadId: result.threadId
+      };
+    }
+
+    return { success: true, status: result.status };
+
+  } catch (error) {
+    log.error('Inbound message job failed', { runId, caseId, error: error.message });
+
+    // Mark message processing as failed
+    await db.markMessageProcessed(messageId, runId, error.message);
+
+    await db.updateAgentRun(runId, {
+      status: 'failed',
+      finished_at: new Date(),
+      error_message: error.message
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Process run-followup-trigger job
+ *
+ * Phase 3: Invokes FOIA Case Graph for scheduled follow-up.
+ */
+async function processFollowupTriggerJob(job) {
+  const { runId, caseId, followupScheduleId, autopilotMode, threadId, llmStubs } = job.data;
+  const log = logger.forAgent ? logger.forAgent(caseId, 'followup_trigger') : logger;
+
+  log.info('Processing run-followup-trigger job', {
+    jobId: job.id,
+    runId,
+    caseId,
+    followupScheduleId
+  });
+
+  // Update run status to running
+  await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
+
+  try {
+    // Invoke FOIA Case Graph with followup trigger
+    const result = await invokeFOIACaseGraph(caseId, 'SCHEDULED_FOLLOWUP', {
+      runId,
+      scheduledFollowupId: followupScheduleId,
+      autopilotMode,
+      threadId,
+      llmStubs
+    });
+
+    // Update run based on result
+    if (result.status === 'interrupted') {
+      await db.updateAgentRun(runId, {
+        status: 'paused',
+        finished_at: new Date()
+      });
+
+      const caseData = await db.getCaseById(caseId);
+      await discordService.notifyCaseNeedsReview(caseData, {
+        proposalId: result.interruptData?.proposalId,
+        actionType: result.interruptData?.proposalActionType,
+        reason: result.interruptData?.pauseReason
+      });
+
+      log.info('Followup trigger paused for human review', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'interrupted',
+        proposalId: result.interruptData?.proposalId,
+        threadId: result.threadId
+      };
+    }
+
+    if (result.status === 'completed') {
+      await db.updateAgentRun(runId, {
+        status: 'completed',
+        finished_at: new Date()
+      });
+
+      await notionService.syncStatusToNotion(caseId);
+
+      log.info('Followup trigger completed', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'completed',
+        threadId: result.threadId
+      };
+    }
+
+    return { success: true, status: result.status };
+
+  } catch (error) {
+    log.error('Followup trigger job failed', { runId, caseId, error: error.message });
+
+    await db.updateAgentRun(runId, {
+      status: 'failed',
+      finished_at: new Date(),
+      error_message: error.message
+    });
+
+    throw error;
+  }
+}
+
+/**
+ * Process resume-run job
+ *
+ * Phase 3: Resumes graph after human decision with run-based auditability.
+ * Supports both Initial Request Graph and FOIA Case Graph.
+ */
+async function processResumeRunJob(job) {
+  const { runId, caseId, humanDecision, isInitialRequest, originalProposalId } = job.data;
+  const log = logger.forAgent ? logger.forAgent(caseId, 'resume') : logger;
+
+  log.info('Processing resume-run job', {
+    jobId: job.id,
+    runId,
+    caseId,
+    action: humanDecision?.action,
+    isInitialRequest
+  });
+
+  // GUARD: Check if proposal is already in terminal state (prevents infinite loops)
+  if (originalProposalId) {
+    const proposal = await db.getProposalById(originalProposalId);
+    const terminalStatuses = ['EXECUTED', 'APPROVED', 'DISMISSED', 'CANCELLED', 'FAILED'];
+
+    if (proposal && terminalStatuses.includes(proposal.status)) {
+      log.warn('Refusing to resume - proposal already in terminal state', {
+        proposalId: originalProposalId,
+        proposalStatus: proposal.status,
+        runId
+      });
+
+      await db.updateAgentRun(runId, {
+        status: 'skipped',
+        finished_at: new Date(),
+        error_message: `Proposal ${originalProposalId} already in terminal state: ${proposal.status}`
+      });
+
+      return {
+        success: false,
+        status: 'skipped',
+        reason: 'proposal_already_terminal',
+        proposalStatus: proposal.status
+      };
+    }
+
+    // GUARD: Check if proposal already has a successful execution record
+    const existingExecution = await db.query(`
+      SELECT id, status FROM executions
+      WHERE proposal_id = $1 AND status IN ('SENT', 'QUEUED', 'PENDING_HUMAN')
+      LIMIT 1
+    `, [originalProposalId]);
+
+    if (existingExecution.rows.length > 0) {
+      log.warn('Refusing to resume - proposal already has execution', {
+        proposalId: originalProposalId,
+        executionId: existingExecution.rows[0].id,
+        executionStatus: existingExecution.rows[0].status,
+        runId
+      });
+
+      await db.updateAgentRun(runId, {
+        status: 'skipped',
+        finished_at: new Date(),
+        error_message: `Proposal ${originalProposalId} already has execution: ${existingExecution.rows[0].id}`
+      });
+
+      return {
+        success: false,
+        status: 'skipped',
+        reason: 'execution_already_exists',
+        executionId: existingExecution.rows[0].id
+      };
+    }
+  }
+
+  // Update run status to running
+  await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
+
+  try {
+    // Choose correct resume function based on graph type
+    const resumeFn = isInitialRequest ? resumeInitialRequestGraph : resumeFOIACaseGraph;
+
+    const result = await resumeFn(caseId, humanDecision);
+
+    // Update run based on result
+    if (result.status === 'interrupted') {
+      await db.updateAgentRun(runId, {
+        status: 'paused',
+        finished_at: new Date()
+      });
+
+      const caseData = await db.getCaseById(caseId);
+      await discordService.notifyCaseNeedsReview(caseData, {
+        proposalId: result.interruptData?.proposalId,
+        actionType: result.interruptData?.proposalActionType,
+        reason: result.interruptData?.pauseReason
+      });
+
+      log.info('Resume hit another gate', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'interrupted',
+        proposalId: result.interruptData?.proposalId,
+        threadId: result.threadId
+      };
+    }
+
+    if (result.status === 'completed') {
+      await db.updateAgentRun(runId, {
+        status: 'completed',
+        finished_at: new Date()
+      });
+
+      // Update original proposal status if provided
+      if (originalProposalId) {
+        await db.updateProposal(originalProposalId, {
+          status: humanDecision.action === 'APPROVE' ? 'EXECUTED' : 'ADJUSTED',
+          executed_at: new Date()
+        });
+      }
+
+      await notionService.syncStatusToNotion(caseId);
+
+      log.info('Resume completed', { runId, caseId });
+
+      return {
+        success: true,
+        status: 'completed',
+        threadId: result.threadId
+      };
+    }
+
+    return { success: true, status: result.status };
+
+  } catch (error) {
+    log.error('Resume run job failed', { runId, caseId, error: error.message });
+
+    await db.updateAgentRun(runId, {
+      status: 'failed',
+      finished_at: new Date(),
+      error_message: error.message
+    });
+
+    throw error;
+  }
+}
+
 /**
  * Create and start the agent worker
  */
@@ -329,11 +746,25 @@ function createAgentWorker() {
 
   const worker = new Worker('agent-queue', async (job) => {
     switch (job.name) {
+      // Legacy job types (still supported)
       case 'invoke-graph':
         return processInvokeJob(job);
 
       case 'resume-graph':
         return processResumeJob(job);
+
+      // Phase 3 Run Engine job types
+      case 'run-initial-request':
+        return processInitialRequestJob(job);
+
+      case 'run-inbound-message':
+        return processInboundMessageJob(job);
+
+      case 'run-followup-trigger':
+        return processFollowupTriggerJob(job);
+
+      case 'resume-run':
+        return processResumeRunJob(job);
 
       default:
         logger.warn('Unknown agent job type', { jobName: job.name, jobId: job.id });
@@ -384,6 +815,12 @@ function createAgentWorker() {
 // Export for use in server startup
 module.exports = {
   createAgentWorker,
+  // Legacy handlers
   processInvokeJob,
-  processResumeJob
+  processResumeJob,
+  // Phase 3 Run Engine handlers
+  processInitialRequestJob,
+  processInboundMessageJob,
+  processFollowupTriggerJob,
+  processResumeRunJob
 };

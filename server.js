@@ -56,12 +56,20 @@ const apiRoutes = require('./routes/api');
 const testRoutes = require('./routes/test');
 const requestRoutes = require('./routes/requests');
 const agencyRoutes = require('./routes/agencies');
+const runEngineRoutes = require('./routes/run-engine');
+const portalTasksRoutes = require('./routes/portal-tasks');
+const shadowModeRoutes = require('./routes/shadow-mode');
+const casesRoutes = require('./routes/cases');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
 app.use('/api/test', testRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/agencies', agencyRoutes);
+app.use('/api', runEngineRoutes);  // Run Engine (Phase 3): /api/cases/:id/run-*, /api/proposals/:id/decision
+app.use('/api/portal-tasks', portalTasksRoutes);  // Portal Tasks (Phase 4): manual submission tracking
+app.use('/api/shadow', shadowModeRoutes);  // Shadow Mode (Phase 7.1): review tracking and metrics
+app.use('/api/cases', casesRoutes);  // Cases: /api/cases/import-notion
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
@@ -227,6 +235,17 @@ async function startServer() {
             console.log(`   ✓ LangGraph agent enabled`);
             console.log(`   ✓ Notion sync every 15 minutes`);
             console.log(`   ✓ Adaptive learning system active`);
+
+            // Log shadow mode status
+            const shadowMode = require('./services/shadow-mode');
+            if (shadowMode.isShadowMode()) {
+                console.log(`\n   ⚠️  SHADOW MODE ACTIVE`);
+                console.log(`   ⚠️  Execution: DRY (no actual sends)`);
+                console.log(`   ⚠️  Review metrics: http://localhost:${PORT}/api/shadow/metrics`);
+            } else {
+                console.log(`   ✓ Execution mode: LIVE`);
+            }
+
             console.log(`   ✓ Ready to receive requests!`);
             console.log(`\n   Test LangGraph: http://localhost:${PORT}/test-langgraph.html\n`);
         });

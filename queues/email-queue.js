@@ -29,6 +29,9 @@ function getAgentQueueModule() {
 // Feature flag for LangGraph migration - HARDCODED TO TRUE
 const USE_LANGGRAPH = true;
 
+// Feature flag for Run Engine (Phase 3) - new auditability layer
+const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
+
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100');
 
 const FORCE_INSTANT_EMAILS = (() => {
@@ -126,12 +129,15 @@ function pickBestEmail(caseData) {
 const emailWorker = new Worker('email-queue', async (job) => {
     console.log(`Processing email job: ${job.id}`, job.data);
 
-    const { type, caseId, toEmail, subject, content, originalMessageId, instantReply } = job.data;
+    const { type, caseId, toEmail, subject, content, originalMessageId, instantReply, messageType, executionKey } = job.data;
+
+    // Phase 4: Support both legacy 'type' and new 'messageType' formats
+    const jobType = type || messageType;
 
     try {
         let result;
 
-        switch (type) {
+        switch (jobType) {
             case 'initial_request':
                 result = await sendgridService.sendFOIARequest(caseId, content, subject, toEmail, instantReply || false);
 
@@ -196,8 +202,69 @@ const emailWorker = new Worker('email-queue', async (job) => {
                 await discordService.notifyAutoReplySent(caseDataAutoReply, 'Standard');
                 break;
 
+            // Phase 4: New send-email handler from executor-adapter
+            // Handles executor-generated emails with executionKey tracking
+            case 'send_initial_request':
+            case 'send_followup':
+            case 'send_rebuttal':
+            case 'send_clarification':
+            case 'approve_fee':
+            case 'negotiate_fee':
+            case 'followup':
+            case 'rebuttal':
+            case 'clarification':
+            case 'fee':
+            case 'reply': {
+                // Handle emails from executor adapter
+                const {
+                    executionKey: execKey, executionId, proposalId,
+                    to, bodyText, bodyHtml,
+                    originalMessageId: origMsgId, threadId, headers
+                } = job.data;
+
+                // Actually send the email
+                result = await sendgridService.sendEmail({
+                    to: to || toEmail,
+                    subject,
+                    text: bodyText || content,
+                    html: bodyHtml || content,
+                    inReplyTo: origMsgId || originalMessageId,
+                    references: headers?.References,
+                    caseId,
+                    messageType: jobType
+                });
+
+                // Update execution record via executor adapter
+                if (execKey || executionKey) {
+                    try {
+                        const { emailExecutor } = require('../services/executor-adapter');
+                        await emailExecutor.markSent(execKey || executionKey, result.messageId, {
+                            statusCode: result.statusCode,
+                            sendgridMessageId: result.sendgridMessageId,
+                            sentAt: new Date().toISOString()
+                        });
+                    } catch (execError) {
+                        console.warn('Failed to update execution record:', execError.message);
+                    }
+                }
+
+                // Update case status
+                const sendCaseData = await db.getCaseById(caseId);
+                if (sendCaseData) {
+                    await db.updateCaseStatus(caseId, 'awaiting_response');
+                    await notionService.syncStatusToNotion(caseId);
+                    await discordService.notifyRequestSent(sendCaseData, 'email');
+                }
+
+                await db.logActivity('email_sent', `Sent ${jobType} for case ${caseId}`, {
+                    case_id: caseId,
+                    execution_key: execKey || executionKey
+                });
+                break;
+            }
+
             default:
-                throw new Error(`Unknown email type: ${type}`);
+                throw new Error(`Unknown email type: ${jobType}`);
         }
 
         // Update proposal status if we have a proposalId
@@ -220,6 +287,16 @@ const emailWorker = new Worker('email-queue', async (job) => {
 
 // Handle email worker failures - move to DLQ after max attempts
 emailWorker.on('failed', async (job, error) => {
+    // Update execution record if this is a Phase 4 executor-adapter job
+    if (job?.data?.executionKey) {
+        try {
+            const { emailExecutor } = require('../services/executor-adapter');
+            await emailExecutor.markFailed(job.data.executionKey, error.message);
+        } catch (execError) {
+            console.warn('Failed to update execution record on failure:', execError.message);
+        }
+    }
+
     if (job.attemptsMade >= emailJobOptions.attempts) {
         await moveToDeadLetterQueue('email-queue', job, error);
     }
@@ -310,9 +387,62 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
         if (isComplexCase) {
             const agentLog = logger.forAgent(caseId, 'agency_reply');
 
-            // === LANGGRAPH PATH ===
-            if (USE_LANGGRAPH) {
-                agentLog.info('Queuing to LangGraph agent for complex case handling');
+            // === RUN ENGINE PATH (Phase 3) ===
+            // Creates agent_run record for auditability, then queues LangGraph job
+            if (USE_RUN_ENGINE && USE_LANGGRAPH) {
+                agentLog.info('Using Run Engine for inbound message processing');
+
+                try {
+                    const { enqueueInboundMessageJob } = getAgentQueueModule();
+
+                    // Determine autopilot mode from case or default
+                    const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
+
+                    // Create agent_run record and enqueue job
+                    const run = await db.createAgentRunFull({
+                        case_id: caseId,
+                        trigger_type: 'inbound_message',
+                        message_id: messageId,
+                        status: 'queued',
+                        autopilot_mode: autopilotMode,
+                        langgraph_thread_id: `case:${caseId}:msg-${messageId}`
+                    });
+
+                    const agentJob = await enqueueInboundMessageJob(run.id, caseId, messageId, {
+                        autopilotMode,
+                        threadId: run.langgraph_thread_id,
+                        analysisJobId: job.id
+                    });
+
+                    agentLog.info(`Run Engine job queued`, {
+                        runId: run.id,
+                        jobId: agentJob.id,
+                        autopilotMode
+                    });
+
+                    // Mark case as being handled by agent
+                    await db.query(
+                        'UPDATE cases SET agent_handled = true WHERE id = $1',
+                        [caseId]
+                    );
+
+                    // Mark message as processed to prevent duplicates
+                    await db.query(
+                        'UPDATE messages SET processed_at = NOW(), processed_run_id = $2 WHERE id = $1',
+                        [messageId, run.id]
+                    );
+
+                    // Don't run deterministic flow - LangGraph will handle everything
+                    return analysis;
+                } catch (agentError) {
+                    agentLog.error(`Failed to queue Run Engine job: ${agentError.message}`);
+                    // Fall through to legacy agent or deterministic flow
+                }
+            }
+
+            // === LEGACY LANGGRAPH PATH (fallback) ===
+            if (USE_LANGGRAPH && !USE_RUN_ENGINE) {
+                agentLog.info('Queuing to LangGraph agent (legacy path)');
 
                 try {
                     const { enqueueAgentJob } = getAgentQueueModule();

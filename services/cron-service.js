@@ -1,10 +1,13 @@
 const { CronJob } = require('cron');
 const notionService = require('./notion-service');
-const followUpService = require('./follow-up-service');
+const followupScheduler = require('./followup-scheduler');  // Phase 6: New Run Engine scheduler
 const { generateQueue } = require('../queues/email-queue');
 const db = require('./database');
 const stuckResponseDetector = require('./stuck-response-detector');
 const agencyNotionSync = require('./agency-notion-sync');
+
+// Feature flag: Use new Run Engine follow-up scheduler
+const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false';
 
 class CronService {
     constructor() {
@@ -41,8 +44,16 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        // Start follow-up service
-        followUpService.start();
+        // Start follow-up scheduler (Phase 6: Run Engine integration)
+        if (USE_RUN_ENGINE_FOLLOWUPS) {
+            followupScheduler.start();
+            console.log('✓ Follow-up scheduler (Run Engine): Every 15 minutes');
+        } else {
+            // Legacy mode: direct email sending
+            const followUpService = require('./follow-up-service');
+            followUpService.start();
+            console.log('✓ Follow-ups (legacy): Daily at 9 AM');
+        }
 
         // Clean up old activity logs every day at midnight
         this.jobs.cleanup = new CronJob('0 0 * * *', async () => {
@@ -116,7 +127,6 @@ class CronService {
         }, 30000);
 
         console.log('✓ Notion sync: Every 15 minutes');
-        console.log('✓ Follow-ups: Daily at 9 AM');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
@@ -173,7 +183,15 @@ class CronService {
     stop() {
         console.log('Stopping cron services...');
         Object.values(this.jobs).forEach(job => job.stop());
-        followUpService.stop();
+
+        // Stop follow-up scheduler
+        if (USE_RUN_ENGINE_FOLLOWUPS) {
+            followupScheduler.stop();
+        } else {
+            const followUpService = require('./follow-up-service');
+            followUpService.stop();
+        }
+
         console.log('All cron jobs stopped');
     }
 
@@ -181,9 +199,19 @@ class CronService {
      * Get status of all jobs
      */
     getStatus() {
+        // Get follow-up status based on which scheduler is active
+        let followUpStatus = false;
+        if (USE_RUN_ENGINE_FOLLOWUPS) {
+            followUpStatus = followupScheduler.cronJob?.running || false;
+        } else {
+            const followUpService = require('./follow-up-service');
+            followUpStatus = followUpService.cronJob?.running || false;
+        }
+
         return {
             notionSync: this.jobs.notionSync?.running || false,
-            followUp: followUpService.cronJob?.running || false,
+            followUp: followUpStatus,
+            followUpEngine: USE_RUN_ENGINE_FOLLOWUPS ? 'run_engine' : 'legacy',
             cleanup: this.jobs.cleanup?.running || false,
             healthCheck: this.jobs.healthCheck?.running || false,
             stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false

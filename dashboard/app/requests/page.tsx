@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { InboxSections } from "@/components/inbox-sections";
+import { NotionImport } from "@/components/notion-import";
 import { requestsAPI, fetcher } from "@/lib/api";
 import type { RequestsListResponse, RequestListItem, PauseReason } from "@/lib/types";
 import { Search, Loader2 } from "lucide-react";
@@ -165,14 +166,17 @@ export default function RequestsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Requests</h1>
-        <div className="relative w-64">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search requests..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-8"
-          />
+        <div className="flex items-center gap-3">
+          <div className="relative w-64">
+            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search requests..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8"
+            />
+          </div>
+          <NotionImport onImported={() => mutate()} />
         </div>
       </div>
 

@@ -29,6 +29,41 @@ async function fetchAPI<T>(
 }
 
 // Requests API
+// Cases API (for creating new cases from Notion)
+export const casesAPI = {
+  // Create a new case from a Notion page
+  createFromNotion: (
+    notionUrl: string
+  ): Promise<{
+    success: boolean;
+    case_id: number;
+    message: string;
+  }> => {
+    return fetchAPI('/cases/import-notion', {
+      method: 'POST',
+      body: JSON.stringify({ notion_url: notionUrl }),
+    });
+  },
+
+  // Trigger initial request generation for a case
+  runInitial: (
+    caseId: number,
+    options?: { autopilotMode?: 'AUTO' | 'SUPERVISED' }
+  ): Promise<{
+    success: boolean;
+    run: { id: number; status: string; thread_id: string };
+    job_id: string;
+    message: string;
+  }> => {
+    return fetchAPI(`/cases/${caseId}/run-initial`, {
+      method: 'POST',
+      body: JSON.stringify({
+        autopilotMode: options?.autopilotMode || 'SUPERVISED',
+      }),
+    });
+  },
+};
+
 export const requestsAPI = {
   // List all requests with optional filters
   list: (params?: {
@@ -185,6 +220,96 @@ export interface AgentRunDiff {
     state: Record<string, unknown>;
   }>;
 }
+
+// Proposals API (Approval Queue)
+export interface ProposalListItem {
+  id: number;
+  case_id: number;
+  proposal_key: string;
+  action_type: string;
+  draft_subject: string | null;
+  draft_body_text: string | null;
+  draft_body_html: string | null;
+  reasoning: string[] | null;
+  confidence: number | null;
+  risk_flags: string[] | null;
+  warnings: string[] | null;
+  can_auto_execute: boolean;
+  requires_human: boolean;
+  pause_reason: string | null;
+  status: string;
+  human_decision: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  case: {
+    name: string;
+    subject_name: string;
+    agency_name: string;
+    state: string;
+    status: string;
+    autopilot_mode: string;
+  };
+  analysis: {
+    classification: string | null;
+    sentiment: string | null;
+    extracted_fee_amount: number | null;
+  };
+}
+
+export interface ProposalsListResponse {
+  success: boolean;
+  count: number;
+  proposals: ProposalListItem[];
+}
+
+export const proposalsAPI = {
+  // List proposals (defaults to PENDING_APPROVAL)
+  list: (params?: {
+    status?: string;
+    case_id?: number;
+    limit?: number;
+  }): Promise<ProposalsListResponse> => {
+    const searchParams = new URLSearchParams();
+    if (params?.status) {
+      searchParams.set('status', params.status);
+    }
+    if (params?.case_id) {
+      searchParams.set('case_id', String(params.case_id));
+    }
+    if (params?.limit) {
+      searchParams.set('limit', String(params.limit));
+    }
+    const query = searchParams.toString();
+    return fetchAPI(`/proposals${query ? `?${query}` : ''}`);
+  },
+
+  // Get a single proposal
+  get: (id: number): Promise<{ success: boolean; proposal: ProposalListItem }> => {
+    return fetchAPI(`/proposals/${id}`);
+  },
+
+  // Submit decision on a proposal
+  decide: (
+    id: number,
+    decision: {
+      action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW';
+      instruction?: string;
+      reason?: string;
+    }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    run?: { id: number; status: string };
+    proposal_id: number;
+    action: string;
+    job_id?: string;
+  }> => {
+    return fetchAPI(`/proposals/${id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(decision),
+    });
+  },
+};
 
 // SWR fetcher
 export const fetcher = <T>(url: string): Promise<T> => fetchAPI(url);

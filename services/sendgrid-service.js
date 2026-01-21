@@ -1001,6 +1001,93 @@ class SendGridService {
     }
 
     /**
+     * Generic send email method for executor adapter
+     *
+     * Phase 4: Used by the email executor for all outbound emails.
+     *
+     * @param {Object} params
+     * @param {string} params.to - Recipient email
+     * @param {string} params.subject - Email subject
+     * @param {string} params.text - Plain text body
+     * @param {string} params.html - HTML body
+     * @param {string} params.inReplyTo - In-Reply-To header (for threading)
+     * @param {string} params.references - References header (for threading)
+     * @param {number} params.caseId - Case ID for tracking (optional)
+     * @param {string} params.messageType - Message type for customArgs (optional)
+     * @returns {Object} { success, messageId, statusCode }
+     */
+    async sendEmail(params) {
+        const {
+            to, subject, text, html,
+            inReplyTo, references,
+            caseId, messageType = 'reply'
+        } = params;
+
+        try {
+            const messageId = this.generateMessageId();
+
+            const msg = {
+                to,
+                from: {
+                    email: this.fromEmail,
+                    name: this.fromName
+                },
+                replyTo: this.fromEmail,
+                subject,
+                text,
+                html: html || this.formatEmailHtml(text),
+                headers: {
+                    'Message-ID': messageId,
+                    ...(inReplyTo && { 'In-Reply-To': inReplyTo }),
+                    ...(references && { 'References': references })
+                },
+                customArgs: {
+                    ...(caseId && { case_id: caseId.toString() }),
+                    message_type: messageType
+                },
+                trackingSettings: {
+                    clickTracking: { enable: false },
+                    openTracking: { enable: true }
+                }
+            };
+
+            const response = await sgMail.send(msg);
+            console.log('Email sent successfully:', response[0].statusCode);
+
+            // Log to database if we have a case ID
+            if (caseId) {
+                await this.logSentMessage({
+                    case_id: caseId,
+                    message_id: messageId,
+                    sendgrid_message_id: response[0].headers['x-message-id'],
+                    to_email: to,
+                    subject,
+                    body_text: text,
+                    body_html: html || this.formatEmailHtml(text),
+                    message_type: messageType,
+                    thread_id: inReplyTo
+                });
+            }
+
+            return {
+                success: true,
+                messageId,
+                sendgridMessageId: response[0].headers['x-message-id'],
+                statusCode: response[0].statusCode
+            };
+        } catch (error) {
+            console.error('Error sending email:', error);
+            if (caseId) {
+                await db.logActivity('email_send_failed', `Failed to send email for case ${caseId}`, {
+                    case_id: caseId,
+                    error: error.message
+                });
+            }
+            throw error;
+        }
+    }
+
+    /**
      * Verify SendGrid webhook signature
      */
     verifyWebhookSignature(payload, signature, timestamp) {

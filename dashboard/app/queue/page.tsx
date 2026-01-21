@@ -1,0 +1,412 @@
+"use client";
+
+import { useState } from "react";
+import useSWR from "swr";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { fetcher, proposalsAPI, type ProposalListItem, type ProposalsListResponse } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import {
+  CheckCircle,
+  XCircle,
+  Edit3,
+  LogOut,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  AlertTriangle,
+  DollarSign,
+  Ban,
+  FileQuestion,
+  Clock,
+  Send,
+  MessageSquare,
+  RefreshCw,
+} from "lucide-react";
+import Link from "next/link";
+
+// Action type labels and icons
+const ACTION_TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+  SEND_INITIAL_REQUEST: { label: "Initial Request", icon: <Send className="h-4 w-4" />, color: "bg-blue-100 text-blue-800" },
+  SEND_FOLLOWUP: { label: "Follow-up", icon: <Clock className="h-4 w-4" />, color: "bg-purple-100 text-purple-800" },
+  SEND_REBUTTAL: { label: "Rebuttal", icon: <MessageSquare className="h-4 w-4" />, color: "bg-red-100 text-red-800" },
+  SEND_CLARIFICATION: { label: "Clarification", icon: <FileQuestion className="h-4 w-4" />, color: "bg-orange-100 text-orange-800" },
+  ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-green-100 text-green-800" },
+  NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-amber-100 text-amber-800" },
+  DECLINE_FEE: { label: "Decline Fee", icon: <XCircle className="h-4 w-4" />, color: "bg-red-100 text-red-800" },
+  ESCALATE: { label: "Escalate", icon: <AlertTriangle className="h-4 w-4" />, color: "bg-yellow-100 text-yellow-800" },
+};
+
+// Pause reason labels
+const PAUSE_REASON_LABELS: Record<string, string> = {
+  FEE_QUOTE: "Fee Quote",
+  DENIAL: "Denial",
+  SCOPE: "Scope Issue",
+  ID_REQUIRED: "ID Required",
+  SENSITIVE: "Sensitive",
+  CLOSE_ACTION: "Close Action",
+};
+
+// Sentiment badges
+function SentimentBadge({ sentiment }: { sentiment: string | null }) {
+  if (!sentiment) return null;
+
+  const colors: Record<string, string> = {
+    positive: "bg-green-100 text-green-800",
+    neutral: "bg-gray-100 text-gray-800",
+    negative: "bg-red-100 text-red-800",
+    hostile: "bg-red-200 text-red-900",
+  };
+
+  return (
+    <Badge variant="outline" className={cn("text-xs", colors[sentiment] || colors.neutral)}>
+      {sentiment}
+    </Badge>
+  );
+}
+
+// Single proposal card
+function ProposalCard({
+  proposal,
+  onDecision,
+  isProcessing,
+}: {
+  proposal: ProposalListItem;
+  onDecision: (id: number, action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string) => Promise<void>;
+  isProcessing: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [showAdjust, setShowAdjust] = useState(false);
+  const [adjustInstruction, setAdjustInstruction] = useState("");
+  const [showWithdraw, setShowWithdraw] = useState(false);
+
+  const actionConfig = ACTION_TYPE_CONFIG[proposal.action_type] || {
+    label: proposal.action_type,
+    icon: <Send className="h-4 w-4" />,
+    color: "bg-gray-100 text-gray-800",
+  };
+
+  const handleApprove = () => onDecision(proposal.id, 'APPROVE');
+  const handleDismiss = () => onDecision(proposal.id, 'DISMISS');
+  const handleAdjust = () => {
+    if (adjustInstruction.trim()) {
+      onDecision(proposal.id, 'ADJUST', adjustInstruction);
+      setShowAdjust(false);
+      setAdjustInstruction("");
+    }
+  };
+  const handleWithdraw = () => {
+    onDecision(proposal.id, 'WITHDRAW');
+    setShowWithdraw(false);
+  };
+
+  return (
+    <Card className="mb-4">
+      <CardHeader className="pb-2">
+        <div className="flex items-start justify-between">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Badge className={cn("gap-1", actionConfig.color)}>
+                {actionConfig.icon}
+                {actionConfig.label}
+              </Badge>
+              {proposal.pause_reason && (
+                <Badge variant="outline" className="text-xs">
+                  {PAUSE_REASON_LABELS[proposal.pause_reason] || proposal.pause_reason}
+                </Badge>
+              )}
+              <SentimentBadge sentiment={proposal.analysis.sentiment} />
+            </div>
+            <CardTitle className="text-base">
+              <Link
+                href={`/requests/detail?id=${proposal.case_id}`}
+                className="hover:underline"
+              >
+                {proposal.case.name || proposal.case.subject_name}
+              </Link>
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {proposal.case.agency_name}, {proposal.case.state}
+            </p>
+          </div>
+
+          {/* Fee display */}
+          {proposal.analysis.extracted_fee_amount && (
+            <div className="text-right">
+              <p className="text-lg font-semibold text-amber-700">
+                ${proposal.analysis.extracted_fee_amount.toLocaleString()}
+              </p>
+              <p className="text-xs text-muted-foreground">Fee Amount</p>
+            </div>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-3">
+        {/* Classification & warnings */}
+        <div className="flex flex-wrap gap-2">
+          {proposal.analysis.classification && (
+            <Badge variant="secondary" className="text-xs">
+              {proposal.analysis.classification}
+            </Badge>
+          )}
+          {proposal.risk_flags?.map((flag, i) => (
+            <Badge key={i} variant="destructive" className="text-xs">
+              {flag}
+            </Badge>
+          ))}
+          {proposal.warnings?.map((warning, i) => (
+            <Badge key={i} variant="outline" className="text-xs text-amber-700 border-amber-300">
+              {warning}
+            </Badge>
+          ))}
+        </div>
+
+        {/* Draft preview */}
+        <Collapsible open={expanded} onOpenChange={setExpanded}>
+          <CollapsibleTrigger asChild>
+            <button className="flex items-center gap-1 text-sm text-primary hover:underline">
+              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              {expanded ? "Hide draft" : "Show draft preview"}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2">
+            <div className="bg-muted/50 rounded-md p-3 space-y-2">
+              {proposal.draft_subject && (
+                <p className="text-sm font-medium">
+                  Subject: {proposal.draft_subject}
+                </p>
+              )}
+              <pre className="text-xs whitespace-pre-wrap font-sans max-h-48 overflow-auto">
+                {proposal.draft_body_text || "No draft content"}
+              </pre>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Reasoning */}
+        {proposal.reasoning && proposal.reasoning.length > 0 && (
+          <div className="text-xs text-muted-foreground">
+            <span className="font-medium">Reasoning: </span>
+            {proposal.reasoning.slice(0, 2).join(" • ")}
+            {proposal.reasoning.length > 2 && ` (+${proposal.reasoning.length - 2} more)`}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex items-center gap-2 pt-2 border-t">
+          <Button
+            onClick={handleApprove}
+            disabled={isProcessing}
+            className="gap-1"
+            size="sm"
+          >
+            {isProcessing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle className="h-4 w-4" />
+            )}
+            Approve
+          </Button>
+
+          <Button
+            onClick={() => setShowAdjust(true)}
+            disabled={isProcessing}
+            variant="outline"
+            size="sm"
+            className="gap-1"
+          >
+            <Edit3 className="h-4 w-4" />
+            Adjust
+          </Button>
+
+          <Button
+            onClick={handleDismiss}
+            disabled={isProcessing}
+            variant="ghost"
+            size="sm"
+            className="gap-1"
+          >
+            <XCircle className="h-4 w-4" />
+            Dismiss
+          </Button>
+
+          <Button
+            onClick={() => setShowWithdraw(true)}
+            disabled={isProcessing}
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-destructive hover:text-destructive"
+          >
+            <LogOut className="h-4 w-4" />
+            Withdraw
+          </Button>
+
+          <div className="ml-auto text-xs text-muted-foreground">
+            {new Date(proposal.created_at).toLocaleString()}
+          </div>
+        </div>
+      </CardContent>
+
+      {/* Adjust Dialog */}
+      <Dialog open={showAdjust} onOpenChange={setShowAdjust}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adjust Proposal</DialogTitle>
+            <DialogDescription>
+              Provide instructions for how the draft should be modified.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={adjustInstruction}
+            onChange={(e) => setAdjustInstruction(e.target.value)}
+            placeholder="e.g., Make the tone more formal, add a reference to statute X, request itemized breakdown..."
+            className="min-h-24"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdjust(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAdjust} disabled={!adjustInstruction.trim() || isProcessing}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Submit Adjustment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Withdraw Confirmation Dialog */}
+      <Dialog open={showWithdraw} onOpenChange={setShowWithdraw}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Withdraw Request</DialogTitle>
+            <DialogDescription>
+              This will close the entire FOIA request, not just this proposal. Are you sure you want to withdraw?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowWithdraw(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleWithdraw} disabled={isProcessing}>
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : "Withdraw Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+export default function QueuePage() {
+  const [processingId, setProcessingId] = useState<number | null>(null);
+
+  const { data, error, isLoading, mutate } = useSWR<ProposalsListResponse>(
+    "/proposals",
+    fetcher,
+    { refreshInterval: 15000 } // Poll every 15s
+  );
+
+  const handleDecision = async (
+    proposalId: number,
+    action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW',
+    instruction?: string
+  ) => {
+    setProcessingId(proposalId);
+
+    try {
+      await proposalsAPI.decide(proposalId, {
+        action,
+        instruction,
+      });
+
+      // Refresh the list
+      mutate();
+    } catch (err) {
+      console.error("Decision failed:", err);
+      // Could add toast notification here
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-destructive">Failed to load approval queue</p>
+        <p className="text-sm text-muted-foreground">{error.message}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Approval Queue</h1>
+          <p className="text-sm text-muted-foreground">
+            Review and approve AI-generated proposals before they are sent
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => mutate()}
+          disabled={isLoading}
+          className="gap-1"
+        >
+          <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Content */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : !data?.proposals?.length ? (
+        <Card className="py-12">
+          <div className="text-center">
+            <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
+            <h2 className="text-lg font-semibold">All caught up!</h2>
+            <p className="text-muted-foreground">
+              No proposals pending approval right now.
+            </p>
+          </div>
+        </Card>
+      ) : (
+        <div>
+          <p className="text-sm text-muted-foreground mb-4">
+            {data.count} proposal{data.count !== 1 ? "s" : ""} pending approval
+          </p>
+
+          {data.proposals.map((proposal) => (
+            <ProposalCard
+              key={proposal.id}
+              proposal={proposal}
+              onDecision={handleDecision}
+              isProcessing={processingId === proposal.id}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

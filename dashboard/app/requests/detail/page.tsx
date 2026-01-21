@@ -24,7 +24,7 @@ import { CopilotPanel } from "@/components/copilot-panel";
 import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
-import { requestsAPI, fetcher } from "@/lib/api";
+import { requestsAPI, casesAPI, fetcher } from "@/lib/api";
 import type { RequestWorkspaceResponse, NextAction, PauseReason } from "@/lib/types";
 import { formatDate, cn } from "@/lib/utils";
 import {
@@ -46,6 +46,7 @@ import {
   ExternalLink,
   Play,
   Bot,
+  Send,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -176,6 +177,27 @@ function RequestDetailContent() {
 
   const [isRevising, setIsRevising] = useState(false);
   const [isInvokingAgent, setIsInvokingAgent] = useState(false);
+  const [isGeneratingInitial, setIsGeneratingInitial] = useState(false);
+
+  const handleGenerateInitialRequest = async () => {
+    if (!id) return;
+    setIsGeneratingInitial(true);
+    try {
+      const result = await casesAPI.runInitial(parseInt(id), {
+        autopilotMode: 'SUPERVISED',
+      });
+      if (result.success) {
+        mutate(); // Refresh data
+      } else {
+        alert("Failed to generate initial request");
+      }
+    } catch (error: any) {
+      console.error("Error generating initial request:", error);
+      alert(error.message || "Failed to generate initial request");
+    } finally {
+      setIsGeneratingInitial(false);
+    }
+  };
 
   const handleInvokeAgent = async () => {
     if (!id) return;
@@ -378,6 +400,34 @@ function RequestDetailContent() {
               Paused: {gateDisplay.label}
               {pauseContext && <span className="font-normal"> — {pauseContext}</span>}
             </span>
+          </div>
+        )}
+
+        {/* Draft Case CTA - prominent for cases not yet sent */}
+        {(request.status === 'DRAFT' || request.status === 'READY_TO_SEND') && !request.submitted_at && (
+          <div className="flex items-center gap-3 px-3 py-3 rounded-md border border-blue-300 bg-blue-50 mb-2">
+            <Send className="h-5 w-5 text-blue-700" />
+            <div className="flex-1">
+              <span className="font-semibold text-blue-800">Ready to Submit</span>
+              <p className="text-xs text-blue-600">Generate and review the initial FOIA request for this case</p>
+            </div>
+            <Button
+              onClick={handleGenerateInitialRequest}
+              disabled={isGeneratingInitial}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {isGeneratingInitial ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4 mr-2" />
+                  Generate Initial Request
+                </>
+              )}
+            </Button>
           </div>
         )}
 

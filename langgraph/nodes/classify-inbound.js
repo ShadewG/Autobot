@@ -15,12 +15,12 @@ const logger = require('../../services/logger');
 async function classifyInboundNode(state) {
   const { caseId, latestInboundMessageId, triggerType, llmStubs } = state;
 
-  // Skip classification for time-based triggers (no new message)
-  if (triggerType === 'time_based_followup') {
+  // Skip classification for time-based/scheduled triggers (no new message)
+  if (triggerType === 'time_based_followup' || triggerType === 'SCHEDULED_FOLLOWUP' || triggerType === 'followup_trigger') {
     return {
       classification: 'NO_RESPONSE',
       classificationConfidence: 1.0,
-      logs: ['Skipped classification: time-based trigger (no new message)']
+      logs: [`Skipped classification: ${triggerType} trigger (no new message)`]
     };
   }
 

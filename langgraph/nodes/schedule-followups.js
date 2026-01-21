@@ -88,12 +88,12 @@ async function scheduleFollowupsNode(state) {
 
     // Create or update follow-up schedule
     const schedule = await db.upsertFollowUpSchedule(caseId, {
-      thread_id: thread?.id || null,
-      next_followup_date: nextFollowupDate,
-      followup_count: 0,
-      auto_send: caseData.autopilot_mode === 'AUTO',
+      threadId: thread?.id || null,
+      nextFollowupDate: nextFollowupDate,
+      followupCount: 0,
+      autoSend: caseData.autopilot_mode === 'AUTO',
       status: 'scheduled',
-      last_followup_sent_at: null
+      lastFollowupSentAt: null
     });
 
     logs.push(`Follow-up scheduled for ${nextFollowupDate.toISOString().split('T')[0]}`);

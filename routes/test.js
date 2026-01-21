@@ -5612,4 +5612,198 @@ router.get('/e2e/runs', (req, res) => {
     res.json({ success: true, runs });
 });
 
+// =========================================================================
+// SIMULATE AGENCY RESPONSE (for testing)
+// =========================================================================
+
+/**
+ * POST /api/test/cases/:caseId/simulate-response
+ *
+ * Simulates an inbound agency response for testing the agent pipeline.
+ * Creates a message record and triggers the agent to process it.
+ *
+ * Body:
+ * - classification: FEE_QUOTE, ACKNOWLEDGMENT, DENIAL, CLARIFICATION_REQUEST, RECORDS_READY
+ * - body: The email body text
+ * - subject: (optional) Email subject
+ * - extracted_fee: (optional) Fee amount for FEE_QUOTE responses
+ * - from_email: (optional) Sender email, defaults to agency email
+ * - trigger_agent: (optional) Whether to trigger agent processing, default true
+ */
+router.post('/cases/:caseId/simulate-response', async (req, res) => {
+    const caseId = parseInt(req.params.caseId);
+    const {
+        classification = 'ACKNOWLEDGMENT',
+        body = 'This is a simulated agency response.',
+        subject,
+        extracted_fee,
+        from_email,
+        trigger_agent = true
+    } = req.body;
+
+    try {
+        // Get case details
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${caseId} not found`
+            });
+        }
+
+        // Create the inbound message
+        const message = await db.createMessage({
+            case_id: caseId,
+            direction: 'inbound',
+            from_email: from_email || caseData.agency_email || 'agency@test.example.com',
+            to_email: process.env.INBOUND_EMAIL || 'foia@autobot.test',
+            subject: subject || `RE: ${caseData.case_name || 'FOIA Request'}`,
+            body_text: body,
+            body_html: `<p>${body.replace(/\n/g, '</p><p>')}</p>`,
+            provider_message_id: `sim-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            status: 'received'
+        });
+
+        console.log(`[simulate-response] Created message ${message.id} for case ${caseId}`);
+
+        // Create response analysis record
+        await db.query(`
+            INSERT INTO response_analysis (case_id, message_id, classification, sentiment, extracted_fee)
+            VALUES ($1, $2, $3, $4, $5)
+        `, [caseId, message.id, classification, 'neutral', extracted_fee || null]);
+
+        console.log(`[simulate-response] Created analysis: ${classification}`);
+
+        // Trigger agent processing if requested
+        let run = null;
+        let jobId = null;
+
+        if (trigger_agent) {
+            try {
+                // Dynamic import to avoid circular dependencies
+                const { enqueueInboundMessageJob } = require('../queues/agent-queue');
+                const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
+
+                // Create agent run record
+                run = await db.createAgentRunFull({
+                    case_id: caseId,
+                    trigger_type: 'simulated_inbound',
+                    message_id: message.id,
+                    status: 'queued',
+                    autopilot_mode: autopilotMode,
+                    langgraph_thread_id: `case:${caseId}:sim-${message.id}`
+                });
+
+                // Enqueue the job
+                const job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+                    autopilotMode,
+                    threadId: run.langgraph_thread_id,
+                    simulated: true
+                });
+
+                jobId = job.id;
+                console.log(`[simulate-response] Enqueued agent job ${jobId} for run ${run.id}`);
+
+            } catch (agentError) {
+                console.error('[simulate-response] Failed to trigger agent:', agentError.message);
+                // Continue - message was still created
+            }
+        }
+
+        res.status(201).json({
+            success: true,
+            message: 'Simulated response created',
+            data: {
+                message_id: message.id,
+                classification,
+                extracted_fee: extracted_fee || null,
+                run_id: run?.id || null,
+                job_id: jobId,
+                trigger_agent
+            },
+            next_steps: trigger_agent ? [
+                `Check /api/runs/${run?.id} for agent status`,
+                'Check /queue for any proposals needing approval',
+                `Check /requests/detail?id=${caseId} for the timeline`
+            ] : [
+                'Agent was not triggered. Set trigger_agent: true to process this message.'
+            ]
+        });
+
+    } catch (error) {
+        console.error('[simulate-response] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/test/cases/:caseId/conversation
+ *
+ * Get the full conversation history for a case (messages + proposals).
+ * Useful for debugging and testing.
+ */
+router.get('/cases/:caseId/conversation', async (req, res) => {
+    const caseId = parseInt(req.params.caseId);
+
+    try {
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${caseId} not found`
+            });
+        }
+
+        // Get messages
+        const messages = await db.query(`
+            SELECT m.*, ra.classification, ra.sentiment, ra.extracted_fee
+            FROM messages m
+            LEFT JOIN response_analysis ra ON ra.message_id = m.id
+            WHERE m.case_id = $1
+            ORDER BY m.created_at ASC
+        `, [caseId]);
+
+        // Get proposals
+        const proposals = await db.query(`
+            SELECT id, action_type, status, draft_subject, draft_body_text,
+                   reasoning, created_at, updated_at, human_decision
+            FROM proposals
+            WHERE case_id = $1
+            ORDER BY created_at ASC
+        `, [caseId]);
+
+        // Get agent runs
+        const runs = await db.query(`
+            SELECT id, trigger_type, status, error_message, created_at, finished_at
+            FROM agent_runs
+            WHERE case_id = $1
+            ORDER BY created_at ASC
+        `, [caseId]);
+
+        res.json({
+            success: true,
+            case: {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                agency_name: caseData.agency_name,
+                status: caseData.status,
+                autopilot_mode: caseData.autopilot_mode
+            },
+            messages: messages.rows,
+            proposals: proposals.rows,
+            runs: runs.rows
+        });
+
+    } catch (error) {
+        console.error('[conversation] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 module.exports = router;

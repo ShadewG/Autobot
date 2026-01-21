@@ -79,14 +79,7 @@ export default function RunsPage() {
 
   // Fetch all recent runs across all cases
   const { data, error, isLoading, mutate } = useSWR<RunsResponse>(
-    "/requests/dlq", // Using DLQ endpoint which shows recent errors
-    fetcher,
-    { refreshInterval: 10000 }
-  );
-
-  // Also fetch from test endpoint for comprehensive runs list
-  const { data: allRuns } = useSWR<{ runs: Array<AgentRun & { case_name?: string }> }>(
-    "/test/langgraph/queue",
+    "/runs",
     fetcher,
     { refreshInterval: 10000 }
   );
@@ -115,23 +108,18 @@ export default function RunsPage() {
     }
   };
 
-  // Combine and dedupe runs from both sources
-  const allRunsList = [
-    ...(data?.runs || []),
-    ...(allRuns?.runs || []),
-  ].filter((run, index, self) =>
-    index === self.findIndex((r) => r.id === run.id)
-  );
+  // Get runs from response
+  const allRunsList = data?.runs || [];
 
   // Filter runs
   const filteredRuns = allRunsList.filter((run) => {
     if (!searchQuery) return true;
     const query = searchQuery.toLowerCase();
     return (
-      run.id.toLowerCase().includes(query) ||
-      run.case_id.toLowerCase().includes(query) ||
+      String(run.id).toLowerCase().includes(query) ||
+      String(run.case_id).toLowerCase().includes(query) ||
       run.case_name?.toLowerCase().includes(query) ||
-      run.status.toLowerCase().includes(query) ||
+      run.status?.toLowerCase().includes(query) ||
       run.trigger_type?.toLowerCase().includes(query)
     );
   });

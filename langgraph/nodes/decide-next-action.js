@@ -3,10 +3,22 @@
  *
  * Determines what action to take based on classification and constraints.
  * Uses DETERMINISTIC rules first, then can fall back to LLM for complex cases.
+ *
+ * IMPORTANT: All action types must be from constants/action-types.js
  */
 
 const db = require('../../services/database');
 const logger = require('../../services/logger');
+const {
+  SEND_FOLLOWUP,
+  SEND_REBUTTAL,
+  SEND_CLARIFICATION,
+  ACCEPT_FEE,
+  NEGOTIATE_FEE,
+  ESCALATE,
+  NONE,
+  validateActionType
+} = require('../../constants/action-types');
 
 // Fee thresholds from env
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX) || 100;
@@ -131,7 +143,7 @@ async function decideNextActionNode(state) {
       if (fee <= FEE_AUTO_APPROVE_MAX && autopilotMode === 'AUTO') {
         reasoning.push(`Fee under threshold ($${FEE_AUTO_APPROVE_MAX}), auto-approving`);
         return {
-          proposalActionType: 'ACCEPT_FEE',
+          proposalActionType: ACCEPT_FEE,
           canAutoExecute: true,
           requiresHuman: false,
           pauseReason: null,
@@ -143,7 +155,7 @@ async function decideNextActionNode(state) {
         // Medium fee - accept but gate for human review
         reasoning.push(`Fee within acceptable range, gating for human review`);
         return {
-          proposalActionType: 'ACCEPT_FEE',
+          proposalActionType: ACCEPT_FEE,
           canAutoExecute: false,
           requiresHuman: true,
           pauseReason: 'FEE_QUOTE',
@@ -155,7 +167,7 @@ async function decideNextActionNode(state) {
         // High fee - recommend negotiation
         reasoning.push(`Fee exceeds negotiate threshold ($${FEE_NEGOTIATE_THRESHOLD}), recommending negotiation`);
         return {
-          proposalActionType: 'NEGOTIATE_FEE',
+          proposalActionType: NEGOTIATE_FEE,
           canAutoExecute: false,
           requiresHuman: true,
           pauseReason: 'FEE_QUOTE',
@@ -178,7 +190,7 @@ async function decideNextActionNode(state) {
       if (denialStrength === 'weak' && autopilotMode === 'AUTO') {
         reasoning.push('Weak denial, preparing rebuttal');
         return {
-          proposalActionType: 'SEND_REBUTTAL',
+          proposalActionType: SEND_REBUTTAL,
           canAutoExecute: true,
           requiresHuman: false,
           proposalReasoning: reasoning,
@@ -188,7 +200,7 @@ async function decideNextActionNode(state) {
       } else {
         reasoning.push('Strong/medium denial or supervised mode, gating for human review');
         return {
-          proposalActionType: 'SEND_REBUTTAL',
+          proposalActionType: SEND_REBUTTAL,
           canAutoExecute: false,
           requiresHuman: true,
           pauseReason: 'DENIAL',
@@ -205,7 +217,7 @@ async function decideNextActionNode(state) {
 
       const canAuto = autopilotMode === 'AUTO' && sentiment !== 'hostile';
       return {
-        proposalActionType: 'SEND_CLARIFICATION',
+        proposalActionType: SEND_CLARIFICATION,
         canAutoExecute: canAuto,
         requiresHuman: !canAuto,
         pauseReason: canAuto ? null : 'SCOPE',
@@ -235,9 +247,13 @@ async function decideNextActionNode(state) {
       };
     }
 
-    // 5. NO_RESPONSE - time-based follow-up
-    if (classification === 'NO_RESPONSE' || triggerType === 'time_based_followup') {
-      reasoning.push('No response from agency, preparing follow-up');
+    // 5. NO_RESPONSE - time-based/scheduled follow-up
+    // Deterministically route SCHEDULED_FOLLOWUP triggers to SEND_FOLLOWUP
+    if (classification === 'NO_RESPONSE' ||
+        triggerType === 'time_based_followup' ||
+        triggerType === 'SCHEDULED_FOLLOWUP' ||
+        triggerType === 'followup_trigger') {
+      reasoning.push('No response from agency or scheduled follow-up trigger, preparing follow-up');
 
       const followupSchedule = await db.getFollowUpScheduleByCaseId(caseId);
       const followupCount = followupSchedule?.followup_count || 0;
@@ -245,7 +261,7 @@ async function decideNextActionNode(state) {
       if (followupCount >= MAX_FOLLOWUPS) {
         reasoning.push(`Max follow-ups reached (${followupCount}/${MAX_FOLLOWUPS}), escalating`);
         return {
-          proposalActionType: 'ESCALATE',
+          proposalActionType: ESCALATE,
           canAutoExecute: true,
           requiresHuman: true,
           pauseReason: 'CLOSE_ACTION',
@@ -257,7 +273,7 @@ async function decideNextActionNode(state) {
 
       const canAuto = autopilotMode === 'AUTO';
       return {
-        proposalActionType: 'SEND_FOLLOWUP',
+        proposalActionType: SEND_FOLLOWUP,
         canAutoExecute: canAuto,
         requiresHuman: !canAuto,
         proposalReasoning: reasoning,
@@ -270,7 +286,7 @@ async function decideNextActionNode(state) {
     if (classification === 'UNKNOWN' || sentiment === 'hostile') {
       reasoning.push('Uncertain classification or hostile sentiment, escalating to human');
       return {
-        proposalActionType: 'ESCALATE',
+        proposalActionType: ESCALATE,
         canAutoExecute: false,
         requiresHuman: true,
         pauseReason: 'SENSITIVE',
@@ -283,7 +299,7 @@ async function decideNextActionNode(state) {
     // Default: No action needed
     reasoning.push('No action required at this time');
     return {
-      proposalActionType: 'NONE',
+      proposalActionType: NONE,
       isComplete: true,
       proposalReasoning: reasoning,
       logs: [...logs, 'No action needed']
@@ -293,7 +309,7 @@ async function decideNextActionNode(state) {
     logger.error('decide_next_action_node error', { caseId, error: error.message });
     return {
       errors: [`Decision failed: ${error.message}`],
-      proposalActionType: 'ESCALATE',
+      proposalActionType: ESCALATE,
       requiresHuman: true,
       pauseReason: 'SENSITIVE'
     };
