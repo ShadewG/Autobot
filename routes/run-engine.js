@@ -816,7 +816,7 @@ router.get('/runs', async (req, res) => {
         ar.error AS error_message,
         ar.started_at,
         ar.ended_at AS completed_at,
-        ar.state_snapshot,
+        ar.metadata,
         c.case_name,
         c.subject_name,
         p.action_type AS final_action
@@ -858,7 +858,7 @@ router.get('/runs', async (req, res) => {
       final_action: row.final_action,
       case_name: row.case_name || row.subject_name,
       gated_reason: row.status === 'gated' ? 'Requires human approval' : null,
-      node_trace: row.state_snapshot?.nodeTrace || null
+      node_trace: row.metadata?.nodeTrace || null
     }));
 
     res.json({
