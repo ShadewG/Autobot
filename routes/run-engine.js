@@ -926,4 +926,41 @@ router.get('/cases/:id/runs', async (req, res) => {
   }
 });
 
+/**
+ * POST /runs/:id/cancel
+ *
+ * Cancel a stuck or running agent run.
+ * Marks the run as failed so new runs can be started.
+ */
+router.post('/runs/:id/cancel', async (req, res) => {
+  const runId = parseInt(req.params.id);
+  const { reason } = req.body || {};
+
+  try {
+    // Update the run status to failed
+    await db.query(`
+      UPDATE agent_runs
+      SET status = 'failed',
+          ended_at = NOW(),
+          error = $2
+      WHERE id = $1
+    `, [runId, reason || 'Cancelled by user']);
+
+    logger.info('Agent run cancelled', { runId, reason });
+
+    res.json({
+      success: true,
+      message: `Run ${runId} cancelled`,
+      run_id: runId
+    });
+
+  } catch (error) {
+    logger.error('Error cancelling run', { runId, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 module.exports = router;
