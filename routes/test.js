@@ -5668,7 +5668,7 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
 
         // Create response analysis record
         await db.query(`
-            INSERT INTO response_analysis (case_id, message_id, classification, sentiment, extracted_fee)
+            INSERT INTO response_analysis (case_id, message_id, intent, sentiment, extracted_fee_amount)
             VALUES ($1, $2, $3, $4, $5)
         `, [caseId, message.id, classification, 'neutral', extracted_fee || null]);
 
