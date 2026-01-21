@@ -21,7 +21,9 @@ function getRedisConnection() {
     if (!redisConnection) {
         if (!process.env.REDIS_URL) {
             console.error('❌ REDIS_URL environment variable is not set!');
-            throw new Error('REDIS_URL is required');
+            console.error('   Queue functionality will be disabled.');
+            // Return a mock connection that will fail gracefully
+            return null;
         }
 
         redisConnection = new Redis(process.env.REDIS_URL, {

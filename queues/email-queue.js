@@ -45,28 +45,34 @@ const FORCE_INSTANT_EMAILS = (() => {
 const connection = getRedisConnection();
 
 // Get standardized job options for each queue type
-const emailJobOptions = getJobOptions('email');
-const analysisJobOptions = getJobOptions('analysis');
-const generationJobOptions = getJobOptions('generation');
-const portalJobOptions = getJobOptions('portal');
+const emailJobOptions = connection ? getJobOptions('email') : {};
+const analysisJobOptions = connection ? getJobOptions('analysis') : {};
+const generationJobOptions = connection ? getJobOptions('generation') : {};
+const portalJobOptions = connection ? getJobOptions('portal') : {};
 
-// Create queues with standardized options
-const emailQueue = new Queue('email-queue', {
+// Create queues with standardized options (only if connection available)
+const emailQueue = connection ? new Queue('email-queue', {
     connection,
     defaultJobOptions: emailJobOptions
-});
-const analysisQueue = new Queue('analysis-queue', {
+}) : null;
+const analysisQueue = connection ? new Queue('analysis-queue', {
     connection,
     defaultJobOptions: analysisJobOptions
-});
-const generateQueue = new Queue('generate-queue', {
+}) : null;
+const generateQueue = connection ? new Queue('generate-queue', {
     connection,
     defaultJobOptions: generationJobOptions
-});
-const portalQueue = new Queue('portal-queue', {
+}) : null;
+const portalQueue = connection ? new Queue('portal-queue', {
     connection,
     defaultJobOptions: portalJobOptions
-});
+}) : null;
+
+if (connection) {
+    console.log('✅ Email queues initialized');
+} else {
+    console.warn('⚠️ Email queues not initialized - no Redis connection');
+}
 
 /**
  * Generate human-like delay for auto-replies (2-10 hours)
@@ -126,7 +132,7 @@ function pickBestEmail(caseData) {
 // Auto-replies use human-like delays
 
 // ===== EMAIL QUEUE WORKER =====
-const emailWorker = new Worker('email-queue', async (job) => {
+const emailWorker = connection ? new Worker('email-queue', async (job) => {
     console.log(`Processing email job: ${job.id}`, job.data);
 
     const { type, caseId, toEmail, subject, content, originalMessageId, instantReply, messageType, executionKey } = job.data;
@@ -283,10 +289,10 @@ const emailWorker = new Worker('email-queue', async (job) => {
         // If this is the final attempt, it will be moved to DLQ by the failed handler
         throw error;
     }
-}, { connection });
+}, { connection }) : null;
 
 // Handle email worker failures - move to DLQ after max attempts
-emailWorker.on('failed', async (job, error) => {
+emailWorker?.on('failed', async (job, error) => {
     // Update execution record if this is a Phase 4 executor-adapter job
     if (job?.data?.executionKey) {
         try {
@@ -303,7 +309,7 @@ emailWorker.on('failed', async (job, error) => {
 });
 
 // ===== ANALYSIS QUEUE WORKER =====
-const analysisWorker = new Worker('analysis-queue', async (job) => {
+const analysisWorker = connection ? new Worker('analysis-queue', async (job) => {
     console.log(`🔍 Processing analysis job: ${job.id}`);
     console.log(`   Message ID: ${job.data.messageId}, Case ID: ${job.data.caseId}`);
 
@@ -548,7 +554,7 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
                 const instantAutoReply = FORCE_INSTANT_EMAILS || isTestMode;
                 const naturalDelay = instantAutoReply ? 0 : getHumanLikeDelay();
 
-                await emailQueue.add('send-auto-reply', {
+                await emailQueue?.add('send-auto-reply', {
                     type: 'auto_reply',
                     caseId: caseId,
                     toEmail: messageData.from_email,
@@ -601,10 +607,10 @@ const analysisWorker = new Worker('analysis-queue', async (job) => {
     connection,
     lockDuration: 300000, // 5 minutes - legal research can take time
     lockRenewTime: 60000  // Renew lock every minute
-});
+}) : null;
 
 // ===== GENERATE QUEUE WORKER =====
-const generateWorker = new Worker('generate-queue', async (job) => {
+const generateWorker = connection ? new Worker('generate-queue', async (job) => {
     console.log(`Processing generation job: ${job.id}`);
 
     const { caseId, instantMode } = job.data;
@@ -767,7 +773,7 @@ const generateWorker = new Worker('generate-queue', async (job) => {
             const subject = `Public Records Request - ${simpleName}`;
 
             // Queue the email to be sent immediately (no delays)
-            await emailQueue.add('send-initial-request', {
+            await emailQueue?.add('send-initial-request', {
                 type: 'initial_request',
                 caseId: caseId,
                 toEmail: contactEmail,
@@ -790,7 +796,7 @@ const generateWorker = new Worker('generate-queue', async (job) => {
         console.error('Generation job failed:', error);
         throw error;
     }
-}, { connection });
+}, { connection }) : null;
 
 async function runPortalStatusJob({ job, caseId, portalUrl, provider, messageId, notificationType }) {
     console.log(`Processing portal status job: ${job.id}`, job.data);
@@ -969,7 +975,7 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
     }
 }
 
-const portalWorker = new Worker('portal-queue', async (job) => {
+const portalWorker = connection ? new Worker('portal-queue', async (job) => {
     if (job.name === 'portal-submit') {
         return runPortalSubmissionJob({
             job,
@@ -988,37 +994,37 @@ const portalWorker = new Worker('portal-queue', async (job) => {
         messageId: job.data.messageId,
         notificationType: job.data.notificationType
     });
-}, { connection, concurrency: 1 });
+}, { connection, concurrency: 1 }) : null;
 
-// Error handlers
-emailWorker.on('failed', (job, err) => {
+// Error handlers (only if workers exist)
+emailWorker?.on('failed', (job, err) => {
     console.error(`Email job ${job.id} failed:`, err);
 });
 
-analysisWorker.on('failed', (job, err) => {
+analysisWorker?.on('failed', (job, err) => {
     console.error(`Analysis job ${job.id} failed:`, err);
 });
 
-generateWorker.on('failed', (job, err) => {
+generateWorker?.on('failed', (job, err) => {
     console.error(`Generation job ${job.id} failed:`, err);
 });
-portalWorker.on('failed', (job, err) => {
+portalWorker?.on('failed', (job, err) => {
     console.error(`Portal job ${job.id} failed:`, err);
 });
 
 // Success handlers
-emailWorker.on('completed', (job) => {
+emailWorker?.on('completed', (job) => {
     console.log(`Email job ${job.id} completed successfully`);
 });
 
-analysisWorker.on('completed', (job) => {
+analysisWorker?.on('completed', (job) => {
     console.log(`Analysis job ${job.id} completed successfully`);
 });
 
-generateWorker.on('completed', (job) => {
+generateWorker?.on('completed', (job) => {
     console.log(`Generation job ${job.id} completed successfully`);
 });
-portalWorker.on('completed', (job) => {
+portalWorker?.on('completed', (job) => {
     console.log(`Portal job ${job.id} completed successfully`);
 });
 
