@@ -30,36 +30,134 @@ import {
   AlertTriangle,
   Filter,
   Layers,
+  CheckCircle,
+  Play,
+  Pause,
+  RotateCcw,
+  Mail,
+  UserCheck,
+  Shield,
+  Zap,
 } from "lucide-react";
 
-const eventIcons: Record<EventType, React.ReactNode> = {
+const eventIcons: Record<string, React.ReactNode> = {
+  // Case lifecycle
   CREATED: <FileText className="h-4 w-4" />,
   SENT: <Send className="h-4 w-4" />,
   RECEIVED: <Inbox className="h-4 w-4" />,
+  EMAIL_SENT: <Mail className="h-4 w-4" />,
+  EMAIL_RECEIVED: <Inbox className="h-4 w-4" />,
+
+  // Fee/Cost events
   FEE_QUOTE: <DollarSign className="h-4 w-4" />,
+  FEE_ACCEPTED: <CheckCircle className="h-4 w-4" />,
+  FEE_NEGOTIATED: <DollarSign className="h-4 w-4" />,
+
+  // Response classifications
   DENIAL: <XCircle className="h-4 w-4" />,
+  PARTIAL_DENIAL: <AlertTriangle className="h-4 w-4" />,
+  RECORDS_PROVIDED: <CheckCircle className="h-4 w-4" />,
+
+  // Follow-ups
   FOLLOW_UP: <Clock className="h-4 w-4" />,
+  FOLLOWUP_SCHEDULED: <Clock className="h-4 w-4" />,
+  FOLLOWUP_TRIGGERED: <RotateCcw className="h-4 w-4" />,
+
+  // Portal tasks
   PORTAL_TASK: <Globe className="h-4 w-4" />,
-  GATE_TRIGGERED: <AlertTriangle className="h-4 w-4" />,
+  PORTAL_TASK_CREATED: <Globe className="h-4 w-4" />,
+  PORTAL_TASK_COMPLETED: <CheckCircle className="h-4 w-4" />,
+
+  // Agent/Proposal events
+  GATE_TRIGGERED: <Pause className="h-4 w-4" />,
   PROPOSAL_QUEUED: <Bot className="h-4 w-4" />,
-  HUMAN_DECISION: <Activity className="h-4 w-4" />,
+  PROPOSAL_CREATED: <Bot className="h-4 w-4" />,
+  PROPOSAL_APPROVED: <CheckCircle className="h-4 w-4" />,
+  PROPOSAL_DISMISSED: <XCircle className="h-4 w-4" />,
+  PROPOSAL_ADJUSTED: <RotateCcw className="h-4 w-4" />,
+
+  // Agent runs
+  RUN_STARTED: <Play className="h-4 w-4" />,
+  RUN_COMPLETED: <CheckCircle className="h-4 w-4" />,
+  RUN_FAILED: <XCircle className="h-4 w-4" />,
+  RUN_GATED: <Pause className="h-4 w-4" />,
+
+  // Human decisions
+  HUMAN_DECISION: <UserCheck className="h-4 w-4" />,
+  HUMAN_APPROVAL: <CheckCircle className="h-4 w-4" />,
+
+  // Execution events
+  ACTION_EXECUTED: <Zap className="h-4 w-4" />,
+  ACTION_DRY_RUN: <Shield className="h-4 w-4" />,
+
+  // Constraint/scope events
   CONSTRAINT_DETECTED: <AlertTriangle className="h-4 w-4" />,
   SCOPE_UPDATED: <FileText className="h-4 w-4" />,
+
+  // Status changes
+  STATUS_CHANGED: <Activity className="h-4 w-4" />,
+  CASE_CLOSED: <CheckCircle className="h-4 w-4" />,
+  CASE_WITHDRAWN: <XCircle className="h-4 w-4" />,
 };
 
-const eventColors: Record<EventType, string> = {
+const eventColors: Record<string, string> = {
+  // Case lifecycle
   CREATED: "bg-blue-100 text-blue-800",
   SENT: "bg-green-100 text-green-800",
   RECEIVED: "bg-purple-100 text-purple-800",
-  FEE_QUOTE: "bg-yellow-100 text-yellow-800",
+  EMAIL_SENT: "bg-green-100 text-green-800",
+  EMAIL_RECEIVED: "bg-purple-100 text-purple-800",
+
+  // Fee/Cost events
+  FEE_QUOTE: "bg-amber-100 text-amber-800",
+  FEE_ACCEPTED: "bg-green-100 text-green-800",
+  FEE_NEGOTIATED: "bg-amber-100 text-amber-800",
+
+  // Response classifications
   DENIAL: "bg-red-100 text-red-800",
+  PARTIAL_DENIAL: "bg-orange-100 text-orange-800",
+  RECORDS_PROVIDED: "bg-green-100 text-green-800",
+
+  // Follow-ups
   FOLLOW_UP: "bg-orange-100 text-orange-800",
+  FOLLOWUP_SCHEDULED: "bg-orange-100 text-orange-800",
+  FOLLOWUP_TRIGGERED: "bg-orange-100 text-orange-800",
+
+  // Portal tasks
   PORTAL_TASK: "bg-cyan-100 text-cyan-800",
-  GATE_TRIGGERED: "bg-yellow-100 text-yellow-800",
+  PORTAL_TASK_CREATED: "bg-cyan-100 text-cyan-800",
+  PORTAL_TASK_COMPLETED: "bg-teal-100 text-teal-800",
+
+  // Agent/Proposal events
+  GATE_TRIGGERED: "bg-amber-100 text-amber-800",
   PROPOSAL_QUEUED: "bg-indigo-100 text-indigo-800",
+  PROPOSAL_CREATED: "bg-indigo-100 text-indigo-800",
+  PROPOSAL_APPROVED: "bg-green-100 text-green-800",
+  PROPOSAL_DISMISSED: "bg-gray-100 text-gray-800",
+  PROPOSAL_ADJUSTED: "bg-blue-100 text-blue-800",
+
+  // Agent runs
+  RUN_STARTED: "bg-blue-100 text-blue-800",
+  RUN_COMPLETED: "bg-green-100 text-green-800",
+  RUN_FAILED: "bg-red-100 text-red-800",
+  RUN_GATED: "bg-amber-100 text-amber-800",
+
+  // Human decisions
   HUMAN_DECISION: "bg-green-100 text-green-800",
+  HUMAN_APPROVAL: "bg-green-100 text-green-800",
+
+  // Execution events
+  ACTION_EXECUTED: "bg-green-100 text-green-800",
+  ACTION_DRY_RUN: "bg-blue-100 text-blue-800",
+
+  // Constraint/scope events
   CONSTRAINT_DETECTED: "bg-orange-100 text-orange-800",
   SCOPE_UPDATED: "bg-blue-100 text-blue-800",
+
+  // Status changes
+  STATUS_CHANGED: "bg-gray-100 text-gray-800",
+  CASE_CLOSED: "bg-green-100 text-green-800",
+  CASE_WITHDRAWN: "bg-red-100 text-red-800",
 };
 
 // Category filter configuration

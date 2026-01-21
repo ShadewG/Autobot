@@ -47,6 +47,31 @@ const LOCK_DURATION = parseInt(process.env.AGENT_LOCK_DURATION) || 300000; // 5 
 // Heartbeat interval for stuck detection
 const HEARTBEAT_INTERVAL = parseInt(process.env.HEARTBEAT_INTERVAL) || 30000; // 30 seconds
 
+// Hard timeout for graph execution (fail-safe against infinite loops/hangs)
+const GRAPH_EXECUTION_TIMEOUT = parseInt(process.env.GRAPH_EXECUTION_TIMEOUT) || 120000; // 2 minutes
+
+/**
+ * Wrap a promise with a timeout
+ * Returns the promise result or throws a timeout error
+ */
+async function withTimeout(promise, timeoutMs, errorMessage) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(errorMessage || `Operation timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutId);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
 /**
  * Process invoke-graph job
  *
@@ -350,13 +375,17 @@ async function processInitialRequestJob(job) {
   await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
 
   try {
-    // Invoke Initial Request Graph
-    const result = await invokeInitialRequestGraph(caseId, {
-      runId,
-      autopilotMode,
-      threadId,
-      llmStubs
-    });
+    // Invoke Initial Request Graph with timeout fail-safe
+    const result = await withTimeout(
+      invokeInitialRequestGraph(caseId, {
+        runId,
+        autopilotMode,
+        threadId,
+        llmStubs
+      }),
+      GRAPH_EXECUTION_TIMEOUT,
+      `Initial request graph timed out after ${GRAPH_EXECUTION_TIMEOUT}ms for case ${caseId}`
+    );
 
     // Update run based on result
     if (result.status === 'interrupted') {
@@ -435,55 +464,65 @@ async function processInboundMessageJob(job) {
   await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
 
   try {
-    // Invoke FOIA Case Graph (Inbound Response)
-    const result = await invokeFOIACaseGraph(caseId, 'INBOUND_MESSAGE', {
-      runId,
-      messageId,
-      autopilotMode,
-      threadId,
-      llmStubs
-    });
+    // Invoke FOIA Case Graph (Inbound Response) with timeout fail-safe
+    const result = await withTimeout(
+      invokeFOIACaseGraph(caseId, 'INBOUND_MESSAGE', {
+        runId,
+        messageId,
+        autopilotMode,
+        threadId,
+        llmStubs
+      }),
+      GRAPH_EXECUTION_TIMEOUT,
+      `Graph execution timed out after ${GRAPH_EXECUTION_TIMEOUT}ms for case ${caseId}`
+    );
 
     // Mark message as processed
     await db.markMessageProcessed(messageId, runId, null);
 
     // Update run based on result
     if (result.status === 'interrupted') {
+      const proposalId = result.interruptData?.proposalId;
       await db.updateAgentRun(runId, {
         status: 'paused',
-        ended_at: new Date()
+        ended_at: new Date(),
+        proposal_id: proposalId  // Link run to proposal
       });
 
       const caseData = await db.getCaseById(caseId);
       await discordService.notifyCaseNeedsReview(caseData, {
-        proposalId: result.interruptData?.proposalId,
+        proposalId,
         actionType: result.interruptData?.proposalActionType,
         reason: result.interruptData?.pauseReason
       });
 
-      log.info('Inbound message processing paused for human review', { runId, caseId });
+      log.info('Inbound message processing paused for human review', { runId, caseId, proposalId });
 
       return {
         success: true,
         status: 'interrupted',
-        proposalId: result.interruptData?.proposalId,
+        proposalId,
         threadId: result.threadId
       };
     }
 
     if (result.status === 'completed') {
+      // Get the proposal that was created during this run (if any)
+      const proposalId = result.result?.proposalId || null;
       await db.updateAgentRun(runId, {
         status: 'completed',
-        ended_at: new Date()
+        ended_at: new Date(),
+        proposal_id: proposalId  // Link run to proposal
       });
 
       await notionService.syncStatusToNotion(caseId);
 
-      log.info('Inbound message processing completed', { runId, caseId });
+      log.info('Inbound message processing completed', { runId, caseId, proposalId });
 
       return {
         success: true,
         status: 'completed',
+        proposalId,
         threadId: result.threadId
       };
     }
@@ -526,14 +565,18 @@ async function processFollowupTriggerJob(job) {
   await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
 
   try {
-    // Invoke FOIA Case Graph with followup trigger
-    const result = await invokeFOIACaseGraph(caseId, 'SCHEDULED_FOLLOWUP', {
-      runId,
-      scheduledFollowupId: followupScheduleId,
-      autopilotMode,
-      threadId,
-      llmStubs
-    });
+    // Invoke FOIA Case Graph with followup trigger (with timeout fail-safe)
+    const result = await withTimeout(
+      invokeFOIACaseGraph(caseId, 'SCHEDULED_FOLLOWUP', {
+        runId,
+        scheduledFollowupId: followupScheduleId,
+        autopilotMode,
+        threadId,
+        llmStubs
+      }),
+      GRAPH_EXECUTION_TIMEOUT,
+      `Followup graph timed out after ${GRAPH_EXECUTION_TIMEOUT}ms for case ${caseId}`
+    );
 
     // Update run based on result
     if (result.status === 'interrupted') {
@@ -672,7 +715,12 @@ async function processResumeRunJob(job) {
     // Choose correct resume function based on graph type
     const resumeFn = isInitialRequest ? resumeInitialRequestGraph : resumeFOIACaseGraph;
 
-    const result = await resumeFn(caseId, humanDecision);
+    // Resume with timeout fail-safe
+    const result = await withTimeout(
+      resumeFn(caseId, humanDecision),
+      GRAPH_EXECUTION_TIMEOUT,
+      `Resume graph timed out after ${GRAPH_EXECUTION_TIMEOUT}ms for case ${caseId}`
+    );
 
     // Update run based on result
     if (result.status === 'interrupted') {

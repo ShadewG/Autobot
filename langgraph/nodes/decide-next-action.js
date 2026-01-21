@@ -13,6 +13,7 @@ const {
   SEND_FOLLOWUP,
   SEND_REBUTTAL,
   SEND_CLARIFICATION,
+  RESPOND_PARTIAL_APPROVAL,
   ACCEPT_FEE,
   NEGOTIATE_FEE,
   ESCALATE,
@@ -211,7 +212,24 @@ async function decideNextActionNode(state) {
       }
     }
 
-    // 3. CLARIFICATION REQUEST handling
+    // 3. PARTIAL_APPROVAL handling (some records approved, some denied/withheld)
+    if (classification === 'PARTIAL_APPROVAL') {
+      reasoning.push('Partial approval received - some records released, some withheld');
+
+      // Partial approvals always need human review to decide strategy
+      // Response will: 1) accept fee for released items, 2) challenge withheld items
+      return {
+        proposalActionType: RESPOND_PARTIAL_APPROVAL,
+        canAutoExecute: false,
+        requiresHuman: true,
+        pauseReason: 'SCOPE',  // Scope decision needed for withheld items
+        proposalReasoning: reasoning,
+        logs: [...logs, 'Preparing partial approval response (accept released + challenge withheld)'],
+        nextNode: 'draft_response'
+      };
+    }
+
+    // 4. CLARIFICATION REQUEST handling
     if (classification === 'CLARIFICATION_REQUEST') {
       reasoning.push('Agency requested clarification/more info');
 
@@ -227,7 +245,7 @@ async function decideNextActionNode(state) {
       };
     }
 
-    // 4. RECORDS_READY / ACKNOWLEDGMENT - positive outcomes
+    // 5. RECORDS_READY / ACKNOWLEDGMENT - positive outcomes
     if (classification === 'RECORDS_READY') {
       reasoning.push('Records are ready for pickup/download');
       await db.updateCaseStatus(caseId, 'completed', { substatus: 'records_received' });
@@ -247,7 +265,7 @@ async function decideNextActionNode(state) {
       };
     }
 
-    // 5. NO_RESPONSE - time-based/scheduled follow-up
+    // 6. NO_RESPONSE - time-based/scheduled follow-up
     // Deterministically route SCHEDULED_FOLLOWUP triggers to SEND_FOLLOWUP
     if (classification === 'NO_RESPONSE' ||
         triggerType === 'time_based_followup' ||
@@ -282,7 +300,7 @@ async function decideNextActionNode(state) {
       };
     }
 
-    // 6. UNKNOWN or hostile sentiment - always gate
+    // 7. UNKNOWN or hostile sentiment - always gate
     if (classification === 'UNKNOWN' || sentiment === 'hostile') {
       reasoning.push('Uncertain classification or hostile sentiment, escalating to human');
       return {

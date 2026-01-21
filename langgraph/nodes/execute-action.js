@@ -12,7 +12,8 @@
  * - Uses execution_key to prevent duplicate executions
  *
  * Handles: SEND_INITIAL_REQUEST, SEND_FOLLOWUP, SEND_REBUTTAL, SEND_CLARIFICATION,
- *          APPROVE_FEE, ESCALATE, SUBMIT_PORTAL, NONE
+ *          RESPOND_PARTIAL_APPROVAL, ACCEPT_FEE, NEGOTIATE_FEE, DECLINE_FEE,
+ *          ESCALATE, SUBMIT_PORTAL, NONE
  */
 
 const db = require('../../services/database');
@@ -143,8 +144,11 @@ async function executeActionNode(state) {
     case 'SEND_FOLLOWUP':
     case 'SEND_REBUTTAL':
     case 'SEND_CLARIFICATION':
-    case 'APPROVE_FEE':
-    case 'NEGOTIATE_FEE': {
+    case 'RESPOND_PARTIAL_APPROVAL':
+    case 'ACCEPT_FEE':    // Canonical name
+    case 'APPROVE_FEE':   // Legacy name (for backwards compatibility)
+    case 'NEGOTIATE_FEE':
+    case 'DECLINE_FEE': {
       // Get thread for proper email threading
       const thread = await db.getThreadByCaseId(caseId);
       const latestInbound = await db.getLatestInboundMessage(caseId);
@@ -183,6 +187,24 @@ async function executeActionNode(state) {
       } else {
         logs.push(`Email queued (job ${emailResult.jobId}), scheduled in ${delayMinutes} minutes`);
       }
+
+      // Create execution record for audit trail
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: proposalActionType,
+        status: emailResult.dryRun ? 'DRY_RUN' : 'QUEUED',
+        provider: emailResult.dryRun ? 'dry_run' : 'email',
+        providerPayload: {
+          to: caseData.agency_email,
+          subject: draftSubject,
+          jobId: emailResult.jobId,
+          delayMinutes,
+          dryRun: emailResult.dryRun
+        }
+      });
 
       // Update proposal status
       await db.updateProposal(proposalId, {

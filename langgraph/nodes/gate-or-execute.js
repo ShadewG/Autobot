@@ -34,7 +34,7 @@ function generateProposalKey(state) {
  */
 async function gateOrExecuteNode(state) {
   const {
-    caseId, canAutoExecute, requiresHuman,
+    caseId, runId, canAutoExecute, requiresHuman,
     pauseReason, draftSubject, draftBodyText, draftBodyHtml,
     proposalReasoning, proposalConfidence, riskFlags, warnings,
     gateOptions, adjustmentCount
@@ -80,6 +80,7 @@ async function gateOrExecuteNode(state) {
   const proposal = await db.upsertProposal({
     proposalKey,  // Unique key for idempotency
     caseId,
+    runId,  // Link proposal to the agent run for auditability
     triggerMessageId: state.latestInboundMessageId,
     actionType: proposalActionType,
     draftSubject,

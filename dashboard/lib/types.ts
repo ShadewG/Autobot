@@ -129,7 +129,7 @@ export interface AIAudit {
 
 // Thread Message for conversation view
 export interface ThreadMessage {
-  id: string;
+  id: number;          // Numeric ID for API calls
   direction: 'INBOUND' | 'OUTBOUND';
   channel: 'EMAIL' | 'PORTAL' | 'MAIL' | 'CALL';
   from_email: string;
@@ -138,6 +138,8 @@ export interface ThreadMessage {
   body: string;        // Cleaned version (boilerplate removed)
   raw_body?: string;   // Original unprocessed version
   sent_at: string;
+  timestamp: string;   // Alias for sent_at for convenience
+  processed_at?: string; // When this message was processed by the agent
   attachments: Attachment[];
 }
 
@@ -169,6 +171,8 @@ export interface NextAction {
   blocked_reason?: string; // Why it can't auto-execute
   draft_content?: string;
   draft_preview?: string; // First 2-3 lines for button hover
+  draft_subject?: string; // Email subject line for editing
+  draft_body?: string; // Full email body for editing
   constraints_applied?: string[]; // Which constraints were considered
   // Recipient info for trust
   channel: 'EMAIL' | 'PORTAL' | 'MAIL';
@@ -240,18 +244,53 @@ export type AutopilotMode = 'AUTO' | 'SUPERVISED' | 'MANUAL';
 export type CostStatus = 'NONE' | 'QUOTED' | 'INVOICED' | 'APPROVED' | 'PAID';
 
 export type EventType =
+  // Case lifecycle
   | 'CREATED'
   | 'SENT'
   | 'RECEIVED'
+  | 'EMAIL_SENT'
+  | 'EMAIL_RECEIVED'
+  // Fee/Cost events
   | 'FEE_QUOTE'
+  | 'FEE_ACCEPTED'
+  | 'FEE_NEGOTIATED'
+  // Response classifications
   | 'DENIAL'
+  | 'PARTIAL_DENIAL'
+  | 'RECORDS_PROVIDED'
+  // Follow-ups
   | 'FOLLOW_UP'
+  | 'FOLLOWUP_SCHEDULED'
+  | 'FOLLOWUP_TRIGGERED'
+  // Portal tasks
   | 'PORTAL_TASK'
+  | 'PORTAL_TASK_CREATED'
+  | 'PORTAL_TASK_COMPLETED'
+  // Agent/Proposal events
   | 'GATE_TRIGGERED'
   | 'PROPOSAL_QUEUED'
+  | 'PROPOSAL_CREATED'
+  | 'PROPOSAL_APPROVED'
+  | 'PROPOSAL_DISMISSED'
+  | 'PROPOSAL_ADJUSTED'
+  // Agent runs
+  | 'RUN_STARTED'
+  | 'RUN_COMPLETED'
+  | 'RUN_FAILED'
+  | 'RUN_GATED'
+  // Human decisions
   | 'HUMAN_DECISION'
+  | 'HUMAN_APPROVAL'
+  // Execution events
+  | 'ACTION_EXECUTED'
+  | 'ACTION_DRY_RUN'
+  // Constraint/scope events
   | 'CONSTRAINT_DETECTED'
-  | 'SCOPE_UPDATED';
+  | 'SCOPE_UPDATED'
+  // Status changes
+  | 'STATUS_CHANGED'
+  | 'CASE_CLOSED'
+  | 'CASE_WITHDRAWN';
 
 // Agency List Item
 export interface AgencyListItem {

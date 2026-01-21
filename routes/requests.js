@@ -211,9 +211,10 @@ function toRequestDetail(caseData) {
 function toThreadMessage(message) {
     const rawBody = message.body_text || message.body_html || '';
     const cleanedBody = cleanEmailBody(rawBody);
+    const timestamp = message.sent_at || message.received_at || message.created_at;
 
     return {
-        id: String(message.id),
+        id: message.id,  // Numeric ID for API calls
         direction: message.direction === 'outbound' ? 'OUTBOUND' : 'INBOUND',
         channel: message.portal_notification ? 'PORTAL' : 'EMAIL',
         from_email: message.from_email || '—',
@@ -221,7 +222,9 @@ function toThreadMessage(message) {
         subject: message.subject || '(No subject)',
         body: cleanedBody,
         raw_body: rawBody !== cleanedBody ? rawBody : undefined,
-        sent_at: message.sent_at || message.received_at || message.created_at,
+        sent_at: timestamp,
+        timestamp: timestamp,  // Alias for convenience
+        processed_at: message.processed_at || null,  // When this message was processed by the agent
         attachments: []
     };
 }
@@ -856,6 +859,82 @@ router.patch('/:id', async (req, res) => {
         });
     } catch (error) {
         console.error('Error updating request:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * PATCH /api/requests/:id/scope-items/:itemIndex
+ * Update a scope item's status (for manually setting Unknown items)
+ */
+router.patch('/:id/scope-items/:itemIndex', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+        const itemIndex = parseInt(req.params.itemIndex);
+        const { status, reason } = req.body;
+
+        // Validate status
+        const validStatuses = ['REQUESTED', 'PENDING', 'CONFIRMED_AVAILABLE', 'NOT_DISCLOSABLE', 'NOT_HELD'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+            });
+        }
+
+        // Get case
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        // Parse current scope items
+        let scopeItems = parseScopeItems(caseData);
+
+        // Validate index
+        if (itemIndex < 0 || itemIndex >= scopeItems.length) {
+            return res.status(400).json({
+                success: false,
+                error: `Invalid item index. Must be between 0 and ${scopeItems.length - 1}`
+            });
+        }
+
+        // Update the item
+        scopeItems[itemIndex] = {
+            ...scopeItems[itemIndex],
+            status: status,
+            reason: reason || scopeItems[itemIndex].reason || `Manually set to ${status}`,
+            updated_at: new Date().toISOString(),
+            updated_by: 'human'
+        };
+
+        // Save back to database
+        await db.updateCase(requestId, {
+            scope_items_jsonb: JSON.stringify(scopeItems)
+        });
+
+        // Log activity
+        await db.logActivity('scope_item_updated', `Scope item "${scopeItems[itemIndex].name}" status set to ${status}`, {
+            case_id: requestId,
+            item_index: itemIndex,
+            item_name: scopeItems[itemIndex].name,
+            new_status: status,
+            reason: reason
+        });
+
+        res.json({
+            success: true,
+            message: 'Scope item updated',
+            scope_items: scopeItems
+        });
+    } catch (error) {
+        console.error('Error updating scope item:', error);
         res.status(500).json({
             success: false,
             error: error.message

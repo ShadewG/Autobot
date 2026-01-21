@@ -5651,17 +5651,30 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
             });
         }
 
-        // Create the inbound message
+        // Get or create thread for this case (CRITICAL for messages to show in conversation)
+        let thread = await db.getThreadByCaseId(caseId);
+        if (!thread) {
+            const threadResult = await db.query(`
+                INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+                VALUES ($1, $2, NOW(), NOW())
+                RETURNING *
+            `, [caseId, `Thread for case ${caseId}`]);
+            thread = threadResult.rows[0];
+            console.log(`[simulate-response] Created thread ${thread.id} for case ${caseId}`);
+        }
+
+        // Create the inbound message with thread_id
         const message = await db.createMessage({
+            thread_id: thread.id,  // CRITICAL: Link to thread for conversation display
             case_id: caseId,
+            message_id: `sim-${Date.now()}-${Math.random().toString(36).slice(2)}`,  // Unique identifier
             direction: 'inbound',
             from_email: from_email || caseData.agency_email || 'agency@test.example.com',
             to_email: process.env.INBOUND_EMAIL || 'foia@autobot.test',
             subject: subject || `RE: ${caseData.case_name || 'FOIA Request'}`,
             body_text: body,
             body_html: `<p>${body.replace(/\n/g, '</p><p>')}</p>`,
-            provider_message_id: `sim-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            status: 'received'
+            received_at: new Date()
         });
 
         console.log(`[simulate-response] Created message ${message.id} for case ${caseId}`);

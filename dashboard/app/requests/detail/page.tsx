@@ -16,6 +16,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { DueDisplay } from "@/components/due-display";
 import { Timeline } from "@/components/timeline";
 import { Thread } from "@/components/thread";
@@ -24,7 +40,7 @@ import { CopilotPanel } from "@/components/copilot-panel";
 import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
-import { requestsAPI, casesAPI, fetcher } from "@/lib/api";
+import { requestsAPI, casesAPI, fetcher, type AgentRun } from "@/lib/api";
 import type { RequestWorkspaceResponse, NextAction, PauseReason } from "@/lib/types";
 import { formatDate, cn } from "@/lib/utils";
 import {
@@ -47,10 +63,18 @@ import {
   Play,
   Bot,
   Send,
+  ChevronDown,
+  RefreshCw,
+  Inbox,
+  RotateCcw,
+  Activity,
+  ClipboardPaste,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
 import { AutopilotSelector } from "@/components/autopilot-selector";
+import { SafetyHints } from "@/components/safety-hints";
+import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
 
 // Gate icons and colors
 const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; label: string }> = {
@@ -178,6 +202,17 @@ function RequestDetailContent() {
   const [isRevising, setIsRevising] = useState(false);
   const [isInvokingAgent, setIsInvokingAgent] = useState(false);
   const [isGeneratingInitial, setIsGeneratingInitial] = useState(false);
+  const [isRunningFollowup, setIsRunningFollowup] = useState(false);
+  const [showInboundDialog, setShowInboundDialog] = useState(false);
+  const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
+  const [isRunningInbound, setIsRunningInbound] = useState(false);
+  const [showPasteInboundDialog, setShowPasteInboundDialog] = useState(false);
+
+  // Fetch agent runs for the Runs tab
+  const { data: runsData, mutate: mutateRuns } = useSWR<{ runs: AgentRun[] }>(
+    id ? `/requests/${id}/agent-runs` : null,
+    fetcher
+  );
 
   const handleGenerateInitialRequest = async () => {
     if (!id) return;
@@ -206,6 +241,7 @@ function RequestDetailContent() {
       const result = await requestsAPI.invokeAgent(id);
       if (result.success) {
         mutate(); // Refresh data
+        mutateRuns();
       } else {
         alert(result.message || "Failed to invoke agent");
       }
@@ -216,6 +252,58 @@ function RequestDetailContent() {
       setIsInvokingAgent(false);
     }
   };
+
+  const handleRunFollowup = async () => {
+    if (!id) return;
+    setIsRunningFollowup(true);
+    try {
+      const result = await casesAPI.runFollowup(parseInt(id), {
+        autopilotMode: 'SUPERVISED',
+      });
+      if (result.success) {
+        mutate();
+        mutateRuns();
+      } else {
+        alert("Failed to trigger follow-up");
+      }
+    } catch (error: any) {
+      console.error("Error triggering follow-up:", error);
+      alert(error.message || "Failed to trigger follow-up");
+    } finally {
+      setIsRunningFollowup(false);
+    }
+  };
+
+  const handleRunInbound = async (messageId: number) => {
+    if (!id) return;
+    setIsRunningInbound(true);
+    try {
+      const result = await casesAPI.runInbound(parseInt(id), messageId, {
+        autopilotMode: 'SUPERVISED',
+      });
+      if (result.success) {
+        mutate();
+        mutateRuns();
+        setShowInboundDialog(false);
+        setSelectedMessageId(null);
+      } else {
+        alert("Failed to process inbound message");
+      }
+    } catch (error: any) {
+      console.error("Error processing inbound message:", error);
+      alert(error.message || "Failed to process inbound message");
+    } finally {
+      setIsRunningInbound(false);
+    }
+  };
+
+  // Get unprocessed inbound messages
+  const unprocessedInboundMessages = useMemo(() => {
+    if (!data?.thread_messages) return [];
+    return data.thread_messages.filter(m =>
+      m.direction === "INBOUND" && !m.processed_at
+    );
+  }, [data?.thread_messages]);
 
   const handleRevise = async (instruction: string) => {
     if (!id) return;
@@ -337,20 +425,51 @@ function RequestDetailContent() {
             compact
           />
 
-          {/* Run Agent Button */}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleInvokeAgent}
-            disabled={isInvokingAgent}
-          >
-            {isInvokingAgent ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-            ) : (
-              <Play className="h-4 w-4 mr-1" />
-            )}
-            Run Agent
-          </Button>
+          {/* Run Dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound}
+              >
+                {(isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound) ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4 mr-1" />
+                )}
+                Run
+                <ChevronDown className="h-3 w-3 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={handleGenerateInitialRequest}>
+                <Send className="h-4 w-4 mr-2" />
+                Run Initial
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => setShowInboundDialog(true)}
+                disabled={unprocessedInboundMessages.length === 0}
+              >
+                <Inbox className="h-4 w-4 mr-2" />
+                Run Inbound
+                {unprocessedInboundMessages.length > 0 && (
+                  <Badge variant="secondary" className="ml-2 text-xs">
+                    {unprocessedInboundMessages.length}
+                  </Badge>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleRunFollowup}>
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Run Follow-up
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleInvokeAgent}>
+                <Bot className="h-4 w-4 mr-2" />
+                Run Agent (General)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           {/* See in Notion button */}
           {request.notion_url && (
@@ -431,6 +550,45 @@ function RequestDetailContent() {
           </div>
         )}
 
+        {/* Case Status Panel */}
+        <div className="flex items-center gap-4 text-xs mb-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Status:</span>
+            <Badge variant="outline" className="font-medium">
+              {request.status}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">Autopilot:</span>
+            <Badge
+              variant={request.autopilot_mode === 'AUTO' ? 'default' : 'secondary'}
+              className="font-medium"
+            >
+              {request.autopilot_mode}
+            </Badge>
+          </div>
+          {request.requires_human && (
+            <div className="flex items-center gap-1.5">
+              <UserCheck className="h-3 w-3 text-amber-500" />
+              <span className="text-amber-600 font-medium">Requires Human</span>
+            </div>
+          )}
+          {request.pause_reason && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">Pause Reason:</span>
+              <Badge variant="outline" className="font-medium text-amber-600">
+                {request.pause_reason}
+              </Badge>
+            </div>
+          )}
+          {/* Safety Hints */}
+          <SafetyHints
+            lastInboundProcessed={lastInboundMessage?.processed_at !== undefined && lastInboundMessage?.processed_at !== null}
+            lastInboundProcessedAt={lastInboundMessage?.processed_at || undefined}
+            hasActiveRun={runsData?.runs?.some(r => r.status === 'running')}
+          />
+        </div>
+
         {/* Status after approval */}
         {proposalState !== "PENDING" && (
           <div className="mb-2">
@@ -464,6 +622,15 @@ function RequestDetailContent() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="runs" className="flex items-center gap-1">
+            <Activity className="h-3 w-3" />
+            Runs
+            {runsData?.runs && runsData.runs.length > 0 && (
+              <Badge variant="secondary" className="text-xs px-1.5">
+                {runsData.runs.length}
+              </Badge>
+            )}
+          </TabsTrigger>
           <TabsTrigger value="agent-log">Agent Log</TabsTrigger>
           <TabsTrigger value="agency">Agency</TabsTrigger>
         </TabsList>
@@ -476,10 +643,21 @@ function RequestDetailContent() {
               <div className="lg:col-span-5 min-w-0">
                 <Card className="h-full">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <Mail className="h-4 w-4" />
-                      Conversation
-                    </CardTitle>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Mail className="h-4 w-4" />
+                        Conversation
+                      </CardTitle>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setShowPasteInboundDialog(true)}
+                      >
+                        <ClipboardPaste className="h-3 w-3 mr-1" />
+                        Paste Email
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <Thread messages={thread_messages} />
@@ -540,6 +718,7 @@ function RequestDetailContent() {
                     nextAction={nextAction}
                     agency={agency_summary}
                     onChallenge={handleChallenge}
+                    onRefresh={mutate}
                   />
                 </div>
               </div>
@@ -575,7 +754,18 @@ function RequestDetailContent() {
 
               <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Conversation</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base">Conversation</CardTitle>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => setShowPasteInboundDialog(true)}
+                    >
+                      <ClipboardPaste className="h-3 w-3 mr-1" />
+                      Paste Email
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Thread messages={thread_messages} />
@@ -594,11 +784,145 @@ function RequestDetailContent() {
                     nextAction={nextAction}
                     agency={agency_summary}
                     onChallenge={handleChallenge}
+                    onRefresh={mutate}
                   />
                 </CardContent>
               </Card>
             </div>
           )}
+        </TabsContent>
+
+        {/* Runs Tab */}
+        <TabsContent value="runs" className="mt-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Agent Runs</CardTitle>
+              <Button variant="outline" size="sm" onClick={() => mutateRuns()}>
+                <RefreshCw className="h-4 w-4 mr-1" />
+                Refresh
+              </Button>
+            </CardHeader>
+            <CardContent>
+              {!runsData?.runs || runsData.runs.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8">
+                  No agent runs recorded for this case
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Run ID</TableHead>
+                      <TableHead>Trigger</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Started</TableHead>
+                      <TableHead>Completed</TableHead>
+                      <TableHead>Node Trace</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {runsData.runs.map((run) => (
+                      <TableRow key={run.id}>
+                        <TableCell className="font-mono text-sm">
+                          {run.id.slice(0, 8)}...
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline">{run.trigger_type}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              run.status === 'completed' ? 'default' :
+                              run.status === 'failed' ? 'destructive' :
+                              run.status === 'running' ? 'secondary' :
+                              run.status === 'gated' ? 'outline' :
+                              'secondary'
+                            }
+                            className={cn(
+                              run.status === 'completed' && 'bg-green-100 text-green-800',
+                              run.status === 'running' && 'bg-blue-100 text-blue-800'
+                            )}
+                          >
+                            {run.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {formatDate(run.started_at)}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {run.completed_at ? formatDate(run.completed_at) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {run.node_trace && run.node_trace.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {run.node_trace.slice(0, 3).map((node, i) => (
+                                <Badge key={i} variant="secondary" className="text-xs">
+                                  {node}
+                                </Badge>
+                              ))}
+                              {run.node_trace.length > 3 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  +{run.node_trace.length - 3}
+                                </Badge>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground text-xs">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                const result = await requestsAPI.replayAgentRun(id!, run.id);
+                                if (result.success) {
+                                  mutateRuns();
+                                }
+                              } catch (error: any) {
+                                alert(error.message || "Failed to replay run");
+                              }
+                            }}
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+
+              {/* Show error details for failed runs */}
+              {runsData?.runs?.filter(r => r.status === 'failed' && r.error_message).map((run) => (
+                <div key={`error-${run.id}`} className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <XCircle className="h-4 w-4 text-red-600" />
+                    <span className="font-medium text-red-700">
+                      Run {run.id.slice(0, 8)} Failed
+                    </span>
+                  </div>
+                  <pre className="text-xs text-red-600 whitespace-pre-wrap font-mono bg-red-100 p-2 rounded">
+                    {run.error_message}
+                  </pre>
+                </div>
+              ))}
+
+              {/* Show gated reason for gated runs */}
+              {runsData?.runs?.filter(r => r.status === 'gated' && r.gated_reason).map((run) => (
+                <div key={`gated-${run.id}`} className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    <UserCheck className="h-4 w-4 text-amber-600" />
+                    <span className="font-medium text-amber-700">
+                      Run {run.id.slice(0, 8)} Awaiting Approval
+                    </span>
+                  </div>
+                  <p className="text-sm text-amber-600">{run.gated_reason}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Agent Log Tab */}
@@ -713,6 +1037,87 @@ function RequestDetailContent() {
         open={snoozeModalOpen}
         onOpenChange={setSnoozeModalOpen}
         onSnooze={handleSnooze}
+      />
+
+      {/* Inbound Message Selection Dialog */}
+      <Dialog open={showInboundDialog} onOpenChange={setShowInboundDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Select Inbound Message to Process</DialogTitle>
+            <DialogDescription>
+              Choose an unprocessed inbound message to run through the agent pipeline
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[400px]">
+            {unprocessedInboundMessages.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No unprocessed inbound messages
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {unprocessedInboundMessages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={cn(
+                      "border rounded-lg p-3 cursor-pointer transition-colors",
+                      selectedMessageId === msg.id
+                        ? "border-primary bg-primary/5"
+                        : "hover:bg-muted/50"
+                    )}
+                    onClick={() => setSelectedMessageId(msg.id)}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-medium text-sm">
+                        {msg.subject || "(No subject)"}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatDate(msg.timestamp)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-muted-foreground line-clamp-2">
+                      {msg.body?.slice(0, 150)}...
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowInboundDialog(false);
+                setSelectedMessageId(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => selectedMessageId && handleRunInbound(selectedMessageId)}
+              disabled={!selectedMessageId || isRunningInbound}
+            >
+              {isRunningInbound ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Play className="h-4 w-4 mr-2" />
+                  Process Message
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Paste Inbound Email Dialog */}
+      <PasteInboundDialog
+        open={showPasteInboundDialog}
+        onOpenChange={setShowPasteInboundDialog}
+        caseId={parseInt(id || '0')}
+        onSuccess={() => mutate()}
       />
     </div>
   );

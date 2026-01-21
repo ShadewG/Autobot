@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Table,
   TableBody,
@@ -8,9 +9,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ScopeItem } from "@/lib/types";
-import { CheckCircle, XCircle, HelpCircle, FileX, Ban } from "lucide-react";
+import { CheckCircle, XCircle, HelpCircle, FileX, Ban, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const STATUS_CONFIG: Record<ScopeItem['status'], {
@@ -54,9 +61,17 @@ const STATUS_CONFIG: Record<ScopeItem['status'], {
 interface ScopeTableProps {
   items: ScopeItem[];
   className?: string;
+  onStatusChange?: (itemIndex: number, newStatus: ScopeItem['status'], reason?: string) => void;
+  isUpdating?: boolean;
 }
 
-export function ScopeTable({ items, className }: ScopeTableProps) {
+const SETTABLE_STATUSES: Array<{ status: ScopeItem['status']; label: string }> = [
+  { status: 'CONFIRMED_AVAILABLE', label: 'Mark as Available' },
+  { status: 'NOT_DISCLOSABLE', label: 'Mark as Exempt' },
+  { status: 'NOT_HELD', label: 'Mark as Not Held' },
+];
+
+export function ScopeTable({ items, className, onStatusChange, isUpdating }: ScopeTableProps) {
   if (!items || items.length === 0) {
     return (
       <div className="text-sm text-muted-foreground text-center py-4">
@@ -79,6 +94,8 @@ export function ScopeTable({ items, className }: ScopeTableProps) {
           {items.map((item, index) => {
             const config = STATUS_CONFIG[item.status];
             const Icon = config.icon;
+            const isUnknown = item.status === 'REQUESTED' || item.status === 'PENDING';
+            const canEdit = isUnknown && onStatusChange;
 
             return (
               <TableRow key={index} className={cn("text-sm", config.bgColor)}>
@@ -86,10 +103,43 @@ export function ScopeTable({ items, className }: ScopeTableProps) {
                   {item.name}
                 </TableCell>
                 <TableCell className="py-2">
-                  <div className={cn("flex items-center gap-1.5", config.color)}>
-                    <Icon className="h-4 w-4" />
-                    <span className="text-xs font-medium">{config.label}</span>
-                  </div>
+                  {canEdit ? (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        className={cn(
+                          "flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-200/50 transition-colors cursor-pointer",
+                          config.color,
+                          isUpdating && "opacity-50 pointer-events-none"
+                        )}
+                        disabled={isUpdating}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span className="text-xs font-medium">{config.label}</span>
+                        <ChevronDown className="h-3 w-3 ml-1 opacity-60" />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        {SETTABLE_STATUSES.map((s) => {
+                          const statusConfig = STATUS_CONFIG[s.status];
+                          const StatusIcon = statusConfig.icon;
+                          return (
+                            <DropdownMenuItem
+                              key={s.status}
+                              onClick={() => onStatusChange(index, s.status)}
+                              className={cn("flex items-center gap-2", statusConfig.color)}
+                            >
+                              <StatusIcon className="h-4 w-4" />
+                              <span>{s.label}</span>
+                            </DropdownMenuItem>
+                          );
+                        })}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <div className={cn("flex items-center gap-1.5", config.color)}>
+                      <Icon className="h-4 w-4" />
+                      <span className="text-xs font-medium">{config.label}</span>
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="py-2">
                   {item.reason ? (
@@ -112,7 +162,13 @@ export function ScopeTable({ items, className }: ScopeTableProps) {
                     </Tooltip>
                   ) : (
                     <span className="text-xs text-muted-foreground">
-                      {item.status === 'REQUESTED' ? 'No mention' : '—'}
+                      {isUnknown && canEdit ? (
+                        <span className="italic">Click status to set</span>
+                      ) : isUnknown ? (
+                        'No mention'
+                      ) : (
+                        '—'
+                      )}
                     </span>
                   )}
                 </TableCell>

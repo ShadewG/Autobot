@@ -818,7 +818,16 @@ router.get('/runs', async (req, res) => {
         ar.metadata,
         c.case_name,
         c.subject_name,
-        p.action_type AS final_action
+        c.pause_reason,
+        p.action_type AS final_action,
+        p.confidence,
+        p.risk_flags,
+        p.draft_subject,
+        p.draft_body_text,
+        p.reasoning,
+        p.warnings,
+        p.status AS proposal_status,
+        EXTRACT(EPOCH FROM (NOW() - ar.started_at)) AS duration_seconds
       FROM agent_runs ar
       LEFT JOIN cases c ON ar.case_id = c.id
       LEFT JOIN proposals p ON ar.proposal_id = p.id
@@ -846,19 +855,39 @@ router.get('/runs', async (req, res) => {
     const result = await db.query(query, params);
 
     // Map to expected format with string IDs for frontend compatibility
-    const runs = result.rows.map(row => ({
-      id: String(row.id),
-      case_id: String(row.case_id),
-      trigger_type: row.trigger_type || 'unknown',
-      status: mapRunStatus(row.status),
-      started_at: row.started_at,
-      completed_at: row.completed_at,
-      error_message: row.error_message,
-      final_action: row.final_action,
-      case_name: row.case_name || row.subject_name,
-      gated_reason: row.status === 'gated' ? 'Requires human approval' : null,
-      node_trace: row.metadata?.nodeTrace || null
-    }));
+    const runs = result.rows.map(row => {
+      const durationSeconds = row.duration_seconds ? Math.round(parseFloat(row.duration_seconds)) : null;
+      const isStuck = row.status === 'running' && durationSeconds && durationSeconds > 120;
+
+      return {
+        id: String(row.id),
+        case_id: String(row.case_id),
+        trigger_type: row.trigger_type || 'unknown',
+        status: mapRunStatus(row.status),
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        duration_seconds: durationSeconds,
+        is_stuck: isStuck,
+        error_message: row.error_message,
+        final_action: row.final_action,
+        case_name: row.case_name || row.subject_name,
+        pause_reason: row.pause_reason,
+        gated_reason: row.status === 'gated' ? 'Requires human approval' : null,
+        node_trace: row.metadata?.nodeTrace || null,
+        // Proposal data for gated runs
+        proposal_id: row.proposal_id ? String(row.proposal_id) : null,
+        proposal: row.proposal_id ? {
+          action_type: row.final_action,
+          confidence: row.confidence,
+          risk_flags: row.risk_flags,
+          draft_subject: row.draft_subject,
+          draft_preview: row.draft_body_text ? row.draft_body_text.slice(0, 200) : null,
+          reasoning: row.reasoning,
+          warnings: row.warnings,
+          status: row.proposal_status
+        } : null
+      };
+    });
 
     res.json({
       success: true,
@@ -891,8 +920,22 @@ router.get('/runs/:id', async (req, res) => {
       });
     }
 
-    // Get associated proposals
-    const proposals = await db.getProposalsByRunId(runId);
+    // Get associated proposals - try by run_id first, then fallback to case_id
+    let proposals = await db.getProposalsByRunId(runId);
+
+    // Fallback: if no proposals found by run_id, try to find recent proposals for this case
+    // This handles legacy runs where run_id wasn't set on proposals
+    if (proposals.length === 0 && run.case_id) {
+      const caseProposals = await db.query(`
+        SELECT * FROM proposals
+        WHERE case_id = $1
+          AND created_at >= $2
+          AND created_at <= COALESCE($3, NOW() + interval '1 hour')
+        ORDER BY created_at DESC
+        LIMIT 5
+      `, [run.case_id, run.started_at, run.ended_at]);
+      proposals = caseProposals.rows;
+    }
 
     // Get decision trace if available
     const decisionTrace = await db.getDecisionTraceByRunId(runId);
@@ -970,6 +1013,523 @@ router.post('/runs/:id/cancel', async (req, res) => {
 
   } catch (error) {
     logger.error('Error cancelling run', { runId, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /runs/:id/retry
+ *
+ * Retry a failed or gated run.
+ * Creates a new run with the same trigger type and case.
+ */
+router.post('/runs/:id/retry', async (req, res) => {
+  const runId = parseInt(req.params.id);
+
+  try {
+    // Get the original run
+    const originalRun = await db.getAgentRunById(runId);
+    if (!originalRun) {
+      return res.status(404).json({
+        success: false,
+        error: `Run ${runId} not found`
+      });
+    }
+
+    // Check if case already has an active run
+    const existingRun = await db.getActiveRunForCase(originalRun.case_id);
+    if (existingRun) {
+      return res.status(409).json({
+        success: false,
+        error: 'Case already has an active agent run',
+        active_run_id: existingRun.id
+      });
+    }
+
+    // Create a new run based on the original
+    const newRun = await db.createAgentRunFull({
+      case_id: originalRun.case_id,
+      trigger_type: `RETRY_${originalRun.trigger_type}`,
+      status: 'queued',
+      autopilot_mode: originalRun.autopilot_mode || 'SUPERVISED',
+      langgraph_thread_id: `retry:${originalRun.case_id}:run-${runId}:${Date.now()}`
+    });
+
+    // Enqueue the appropriate job based on original trigger type
+    let job;
+    const triggerType = originalRun.trigger_type?.toLowerCase() || 'manual';
+
+    if (triggerType.includes('initial')) {
+      job = await enqueueInitialRequestJob(newRun.id, originalRun.case_id, {
+        autopilotMode: newRun.autopilot_mode,
+        threadId: newRun.langgraph_thread_id
+      });
+    } else if (triggerType.includes('inbound')) {
+      // Need the original message ID
+      const messageId = originalRun.message_id;
+      if (messageId) {
+        job = await enqueueInboundMessageJob(newRun.id, originalRun.case_id, messageId, {
+          autopilotMode: newRun.autopilot_mode,
+          threadId: newRun.langgraph_thread_id
+        });
+      } else {
+        // Fall back to manual trigger
+        job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
+      }
+    } else if (triggerType.includes('followup')) {
+      job = await enqueueFollowupTriggerJob(newRun.id, originalRun.case_id, null, {
+        autopilotMode: newRun.autopilot_mode,
+        threadId: newRun.langgraph_thread_id,
+        manualTrigger: true
+      });
+    } else {
+      // Generic manual trigger
+      job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
+    }
+
+    logger.info('Agent run retry created', {
+      originalRunId: runId,
+      newRunId: newRun.id,
+      triggerType: newRun.trigger_type
+    });
+
+    res.status(202).json({
+      success: true,
+      message: 'Retry run created',
+      original_run_id: runId,
+      new_run: {
+        id: newRun.id,
+        status: newRun.status,
+        trigger_type: newRun.trigger_type
+      },
+      job_id: job?.id
+    });
+
+  } catch (error) {
+    logger.error('Error retrying run', { runId, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /cases/:id/ingest-email
+ *
+ * ATOMIC endpoint: Manually ingest an inbound email AND trigger agent processing.
+ * Used for manual data entry via paste or forwarding.
+ *
+ * Features:
+ * - Idempotent: Duplicate emails (same from+subject+body within 24h window) return 409
+ * - Atomic: Creates message AND triggers run in one call
+ * - Returns run_id for tracking
+ *
+ * Body:
+ * - from_email: string (required) - Sender email address
+ * - subject: string - Email subject
+ * - body_text: string (required) - Email body
+ * - message_id_header: string (optional) - Email Message-ID header for deduplication
+ * - received_at: string - ISO timestamp (defaults to now)
+ * - source: string - Source of the email (defaults to 'manual_paste')
+ * - autopilot_mode: 'AUTO' | 'SUPERVISED' (defaults to 'SUPERVISED')
+ * - trigger_run: boolean (defaults to true) - Set false to only create message without processing
+ */
+router.post('/cases/:id/ingest-email', async (req, res) => {
+  const caseId = parseInt(req.params.id);
+  const {
+    from_email,
+    subject,
+    body_text,
+    message_id_header,
+    received_at,
+    source = 'manual_paste',
+    autopilot_mode = 'SUPERVISED',
+    trigger_run = true
+  } = req.body || {};
+
+  try {
+    // === VALIDATION (422 for parsing failures) ===
+    const validationErrors = [];
+
+    if (!from_email) {
+      validationErrors.push({ field: 'from_email', error: 'required' });
+    } else if (!from_email.includes('@')) {
+      validationErrors.push({ field: 'from_email', error: 'invalid email format' });
+    }
+
+    if (!body_text) {
+      validationErrors.push({ field: 'body_text', error: 'required' });
+    } else if (body_text.length < 10) {
+      validationErrors.push({ field: 'body_text', error: 'too short (min 10 chars)' });
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(422).json({
+        success: false,
+        error: 'Validation failed',
+        details: validationErrors
+      });
+    }
+
+    // Verify case exists
+    const caseData = await db.getCaseById(caseId);
+    if (!caseData) {
+      return res.status(404).json({
+        success: false,
+        error: 'Case not found'
+      });
+    }
+
+    // === DEDUPLICATION ===
+    // Generate dedupe key from: message_id_header OR hash(from + subject + normalized_body)
+    const crypto = require('crypto');
+    const normalizedBody = body_text.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 500);
+    const dedupeKey = message_id_header ||
+      crypto.createHash('sha256')
+        .update(`${from_email}|${subject || ''}|${normalizedBody}`)
+        .digest('hex')
+        .slice(0, 32);
+
+    // Check for duplicate within 24h window
+    const duplicateCheck = await db.query(`
+      SELECT id, created_at FROM messages
+      WHERE thread_id IN (SELECT id FROM email_threads WHERE case_id = $1)
+        AND direction = 'inbound'
+        AND (
+          metadata->>'dedupe_key' = $2
+          OR metadata->>'message_id_header' = $3
+        )
+        AND created_at > NOW() - INTERVAL '24 hours'
+      LIMIT 1
+    `, [caseId, dedupeKey, message_id_header || 'none']);
+
+    if (duplicateCheck.rows.length > 0) {
+      const existing = duplicateCheck.rows[0];
+      logger.info('Duplicate email detected', { caseId, existingMessageId: existing.id, dedupeKey });
+      return res.status(409).json({
+        success: false,
+        error: 'Duplicate email already ingested',
+        existing_message_id: existing.id,
+        created_at: existing.created_at,
+        dedupe_key: dedupeKey
+      });
+    }
+
+    // === CHECK FOR ACTIVE RUN ===
+    if (trigger_run) {
+      const existingRun = await db.getActiveRunForCase(caseId);
+      if (existingRun) {
+        return res.status(409).json({
+          success: false,
+          error: 'Case has an active agent run. Wait for it to complete or cancel it first.',
+          active_run: {
+            id: existingRun.id,
+            status: existingRun.status,
+            started_at: existingRun.started_at
+          }
+        });
+      }
+    }
+
+    // === CREATE THREAD IF NEEDED ===
+    let thread = await db.getThreadByCaseId(caseId);
+    if (!thread) {
+      const threadResult = await db.query(`
+        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+        VALUES ($1, $2, NOW(), NOW())
+        RETURNING *
+      `, [caseId, subject || `Manual ingestion for case ${caseId}`]);
+      thread = threadResult.rows[0];
+    }
+
+    // === CREATE MESSAGE ===
+    const messageResult = await db.query(`
+      INSERT INTO messages (
+        thread_id,
+        direction,
+        from_email,
+        to_email,
+        subject,
+        body_text,
+        received_at,
+        created_at,
+        provider_message_id,
+        metadata
+      )
+      VALUES ($1, 'inbound', $2, $3, $4, $5, $6, NOW(), $7, $8)
+      RETURNING *
+    `, [
+      thread.id,
+      from_email,
+      caseData.our_email || process.env.FOIA_FROM_EMAIL || 'noreply@example.com',
+      subject || '(No subject)',
+      body_text,
+      received_at ? new Date(received_at) : new Date(),
+      `ingest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      JSON.stringify({
+        source,
+        manual_paste: true,
+        dedupe_key: dedupeKey,
+        message_id_header: message_id_header || null
+      })
+    ]);
+
+    const message = messageResult.rows[0];
+
+    // Update case last_response_date
+    await db.updateCase(caseId, {
+      last_response_date: message.received_at,
+      status: 'responded'
+    });
+
+    // Log activity
+    await db.logActivity('email_ingested', `Manually ingested inbound email from ${from_email}`, {
+      case_id: caseId,
+      message_id: message.id,
+      source: source,
+      from_email: from_email
+    });
+
+    // === TRIGGER RUN (atomic) ===
+    let run = null;
+    let job = null;
+
+    if (trigger_run) {
+      // Create agent run record
+      run = await db.createAgentRunFull({
+        case_id: caseId,
+        trigger_type: 'inbound_message',
+        message_id: message.id,
+        status: 'queued',
+        autopilot_mode: autopilot_mode,
+        langgraph_thread_id: `case:${caseId}:msg-${message.id}`
+      });
+
+      // Enqueue worker job
+      job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+        autopilotMode: autopilot_mode,
+        threadId: run.langgraph_thread_id
+      });
+
+      logger.info('Email ingested and run triggered', {
+        caseId,
+        messageId: message.id,
+        runId: run.id,
+        jobId: job.id
+      });
+    } else {
+      logger.info('Email ingested (no run triggered)', {
+        caseId,
+        messageId: message.id
+      });
+    }
+
+    // Return 201 for new resource, with run info
+    res.status(201).json({
+      success: true,
+      message: trigger_run ? 'Email ingested and processing started' : 'Email ingested successfully',
+      inbound_message_id: message.id,
+      thread_id: thread.id,
+      dedupe_key: dedupeKey,
+      run: run ? {
+        id: run.id,
+        status: run.status,
+        thread_id: run.langgraph_thread_id
+      } : null,
+      job_id: job?.id || null
+    });
+
+  } catch (error) {
+    logger.error('Error ingesting email', { caseId, error: error.message, stack: error.stack });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /cases/:id/inbound-and-run
+ *
+ * ATOMIC endpoint that creates an inbound message AND triggers agent processing in one call.
+ * This is the recommended endpoint for testing as it avoids race conditions.
+ *
+ * Body:
+ * - body_text: (required) The email body text
+ * - subject: (optional) Email subject
+ * - from_email: (optional) Sender email, defaults to agency email
+ * - classification: (optional) Pre-analyzed classification for testing
+ * - extracted_fee: (optional) Pre-extracted fee amount
+ * - autopilotMode: 'AUTO' | 'SUPERVISED' (default: 'SUPERVISED')
+ * - llmStubs: Object with stubbed LLM responses for testing
+ * - force_new_run: (optional) If true, cancels any active run first
+ */
+router.post('/cases/:id/inbound-and-run', async (req, res) => {
+  const caseId = parseInt(req.params.id);
+  const {
+    body_text,
+    subject,
+    from_email,
+    classification,
+    extracted_fee,
+    autopilotMode = 'SUPERVISED',
+    llmStubs,
+    force_new_run = false
+  } = req.body || {};
+
+  try {
+    // Validate body_text
+    if (!body_text) {
+      return res.status(400).json({
+        success: false,
+        error: 'body_text is required',
+        expected_format: {
+          body_text: 'string (required)',
+          subject: 'string (optional)',
+          from_email: 'string (optional)',
+          classification: 'string (optional) - FEE_QUOTE, DENIAL, etc.',
+          extracted_fee: 'number (optional)',
+          autopilotMode: 'AUTO | SUPERVISED (default: SUPERVISED)',
+          llmStubs: 'object (optional)',
+          force_new_run: 'boolean (optional) - cancel active run first'
+        }
+      });
+    }
+
+    // Verify case exists
+    const caseData = await db.getCaseById(caseId);
+    if (!caseData) {
+      return res.status(404).json({
+        success: false,
+        error: `Case ${caseId} not found`
+      });
+    }
+
+    // Check for existing active run
+    const existingRun = await db.getActiveRunForCase(caseId);
+    if (existingRun) {
+      if (force_new_run) {
+        // Cancel the existing run
+        await db.query(`
+          UPDATE agent_runs
+          SET status = 'failed',
+              ended_at = NOW(),
+              error = 'Cancelled by inbound-and-run force_new_run'
+          WHERE id = $1
+        `, [existingRun.id]);
+        logger.info('Cancelled existing run for force_new_run', { runId: existingRun.id, caseId });
+      } else {
+        return res.status(409).json({
+          success: false,
+          error: 'Case already has an active agent run',
+          hint: 'Set force_new_run: true to cancel the active run, or wait for it to complete',
+          activeRun: {
+            id: existingRun.id,
+            status: existingRun.status,
+            trigger_type: existingRun.trigger_type,
+            started_at: existingRun.started_at
+          }
+        });
+      }
+    }
+
+    // Get or create thread for the case
+    let thread = await db.getThreadByCaseId(caseId);
+    if (!thread) {
+      const threadResult = await db.query(`
+        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+        VALUES ($1, $2, NOW(), NOW())
+        RETURNING *
+      `, [caseId, subject || `Inbound for case ${caseId}`]);
+      thread = threadResult.rows[0];
+    }
+
+    // Create the inbound message
+    const messageResult = await db.query(`
+      INSERT INTO messages (
+        thread_id,
+        direction,
+        from_email,
+        to_email,
+        subject,
+        body_text,
+        body_html,
+        received_at,
+        created_at,
+        provider_message_id,
+        metadata
+      )
+      VALUES ($1, 'inbound', $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8)
+      RETURNING *
+    `, [
+      thread.id,
+      from_email || caseData.agency_email || 'agency@test.example.com',
+      process.env.FOIA_FROM_EMAIL || 'foia@autobot.example.com',
+      subject || `RE: ${caseData.case_name || 'FOIA Request'}`,
+      body_text,
+      `<p>${body_text.replace(/\n/g, '</p><p>')}</p>`,
+      `inbound-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      JSON.stringify({ source: 'inbound-and-run', classification, extracted_fee })
+    ]);
+
+    const message = messageResult.rows[0];
+
+    // Create response analysis record if classification provided
+    if (classification || extracted_fee) {
+      await db.query(`
+        INSERT INTO response_analysis (case_id, message_id, intent, sentiment, extracted_fee_amount)
+        VALUES ($1, $2, $3, $4, $5)
+      `, [caseId, message.id, classification || 'UNKNOWN', 'neutral', extracted_fee || null]);
+    }
+
+    // Create agent run record
+    const run = await db.createAgentRunFull({
+      case_id: caseId,
+      trigger_type: 'inbound_message',
+      message_id: message.id,
+      status: 'queued',
+      autopilot_mode: autopilotMode,
+      langgraph_thread_id: `case:${caseId}:msg-${message.id}`
+    });
+
+    // Enqueue worker job
+    const job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+      autopilotMode,
+      threadId: run.langgraph_thread_id,
+      llmStubs
+    });
+
+    logger.info('Inbound-and-run completed', {
+      caseId,
+      messageId: message.id,
+      runId: run.id,
+      jobId: job.id
+    });
+
+    res.status(202).json({
+      success: true,
+      message: 'Message created and processing queued',
+      data: {
+        message_id: message.id,
+        thread_id: thread.id,
+        run_id: run.id,
+        job_id: job.id,
+        classification: classification || null,
+        extracted_fee: extracted_fee || null
+      },
+      run: {
+        id: run.id,
+        status: run.status,
+        thread_id: run.langgraph_thread_id
+      }
+    });
+
+  } catch (error) {
+    logger.error('Error in inbound-and-run', { caseId, error: error.message, stack: error.stack });
     res.status(500).json({
       success: false,
       error: error.message

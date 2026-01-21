@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -8,10 +9,12 @@ import { ConstraintsDisplay } from "./constraints-display";
 import { ScopeTable, ScopeSummary } from "./scope-table";
 import { FeeBreakdown } from "./fee-breakdown";
 import { ExemptionClaimsList } from "./exemption-claim-card";
+import { requestsAPI } from "@/lib/api";
 import type {
   NextAction,
   RequestDetail,
   AgencySummary,
+  ScopeItem,
 } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
@@ -26,6 +29,7 @@ interface CopilotPanelProps {
   nextAction: NextAction | null;
   agency: AgencySummary;
   onChallenge?: (instruction: string) => void;
+  onRefresh?: () => void;
 }
 
 export function CopilotPanel({
@@ -33,7 +37,26 @@ export function CopilotPanel({
   nextAction,
   agency,
   onChallenge,
+  onRefresh,
 }: CopilotPanelProps) {
+  const [isUpdatingScope, setIsUpdatingScope] = useState(false);
+
+  const handleScopeStatusChange = async (
+    itemIndex: number,
+    newStatus: ScopeItem['status'],
+    reason?: string
+  ) => {
+    setIsUpdatingScope(true);
+    try {
+      await requestsAPI.updateScopeItem(request.id, itemIndex, newStatus, reason);
+      onRefresh?.();
+    } catch (error) {
+      console.error('Error updating scope item:', error);
+      alert('Failed to update scope item status');
+    } finally {
+      setIsUpdatingScope(false);
+    }
+  };
   // Hide "Proposed Action" when decision is required (shown in DecisionPanel instead)
   const isDecisionRequired =
     Boolean(request.pause_reason) ||
@@ -171,7 +194,11 @@ export function CopilotPanel({
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             {request.scope_items && request.scope_items.length > 0 ? (
-              <ScopeTable items={request.scope_items} />
+              <ScopeTable
+                items={request.scope_items}
+                onStatusChange={handleScopeStatusChange}
+                isUpdating={isUpdatingScope}
+              />
             ) : (
               <div>
                 <span className="text-muted-foreground">Scope:</span>

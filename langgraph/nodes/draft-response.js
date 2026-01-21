@@ -157,6 +157,46 @@ async function draftResponseNode(state) {
         break;
       }
 
+      case 'RESPOND_PARTIAL_APPROVAL': {
+        logs.push('Drafting partial approval response (accept released + challenge withheld)');
+
+        // Check if generatePartialApprovalResponse exists, otherwise use generateDenialRebuttal
+        // with partial approval context
+        if (typeof aiService.generatePartialApprovalResponse === 'function') {
+          draft = await aiService.generatePartialApprovalResponse(
+            latestInbound,
+            latestAnalysis,
+            caseData,
+            {
+              feeAmount: extractedFeeAmount,
+              adjustmentInstruction
+            }
+          );
+        } else {
+          // Fallback: Use denial rebuttal generator with partial approval instructions
+          const partialApprovalInstructions = `
+This is a PARTIAL APPROVAL response. The agency is releasing some records but withholding others.
+Your response should:
+1. Thank them for the partial release and accept any associated fee for the released records
+2. Ask for a detailed list of what records are being withheld and the specific statutory basis for each
+3. Request release of non-exempt portions with appropriate redactions (segregability)
+4. If applicable, request rolling/phased production of approved records while withheld items are reviewed
+${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` : ''}
+          `.trim();
+
+          draft = await aiService.generateDenialRebuttal(
+            latestInbound,
+            latestAnalysis,
+            caseData,
+            {
+              scopeItems,
+              adjustmentInstruction: partialApprovalInstructions
+            }
+          );
+        }
+        break;
+      }
+
       case 'ESCALATE': {
         // No draft needed for escalation
         logs.push('No draft needed for escalation action');

@@ -36,6 +36,49 @@ const db = require("../../services/database");
 const MAX_ITERATIONS = parseInt(process.env.LANGGRAPH_MAX_ITERATIONS) || 5;
 
 /**
+ * Wrap a node function with progress tracking
+ * Logs current node and updates agent_runs metadata for debugging stuck runs
+ */
+function withNodeTracking(nodeName, nodeFunction) {
+  return async (state) => {
+    const { runId, caseId } = state;
+
+    logger.info(`[NODE] Entering ${nodeName}`, { caseId, runId, nodeName });
+
+    // Update progress in DB (for debugging stuck runs)
+    if (runId) {
+      try {
+        await db.updateAgentRunNodeProgress(runId, nodeName);
+      } catch (e) {
+        // Non-fatal - just log
+        logger.warn('Failed to update node progress', { runId, nodeName, error: e.message });
+      }
+    }
+
+    const startTime = Date.now();
+
+    try {
+      const result = await nodeFunction(state);
+      const duration = Date.now() - startTime;
+
+      logger.info(`[NODE] Completed ${nodeName}`, { caseId, runId, nodeName, durationMs: duration });
+
+      return result;
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      logger.error(`[NODE] Failed ${nodeName}`, {
+        caseId,
+        runId,
+        nodeName,
+        durationMs: duration,
+        error: error.message
+      });
+      throw error;
+    }
+  };
+}
+
+/**
  * Route based on decision node output
  */
 function routeFromDecision(state) {
@@ -94,16 +137,17 @@ function routeFromGate(state) {
 function createFOIACaseGraphBuilder() {
   const graph = new StateGraph(FOIACaseStateAnnotation);
 
-  // === Add Nodes ===
-  graph.addNode("load_context", loadContextNode);
-  graph.addNode("classify_inbound", classifyInboundNode);
-  graph.addNode("update_constraints", updateConstraintsNode);
-  graph.addNode("decide_next_action", decideNextActionNode);
-  graph.addNode("draft_response", draftResponseNode);
-  graph.addNode("safety_check", safetyCheckNode);
-  graph.addNode("gate_or_execute", gateOrExecuteNode);
-  graph.addNode("execute_action", executeActionNode);
-  graph.addNode("commit_state", commitStateNode);
+  // === Add Nodes with progress tracking ===
+  // Wrapping each node enables debugging of stuck runs by recording current_node
+  graph.addNode("load_context", withNodeTracking("load_context", loadContextNode));
+  graph.addNode("classify_inbound", withNodeTracking("classify_inbound", classifyInboundNode));
+  graph.addNode("update_constraints", withNodeTracking("update_constraints", updateConstraintsNode));
+  graph.addNode("decide_next_action", withNodeTracking("decide_next_action", decideNextActionNode));
+  graph.addNode("draft_response", withNodeTracking("draft_response", draftResponseNode));
+  graph.addNode("safety_check", withNodeTracking("safety_check", safetyCheckNode));
+  graph.addNode("gate_or_execute", withNodeTracking("gate_or_execute", gateOrExecuteNode));
+  graph.addNode("execute_action", withNodeTracking("execute_action", executeActionNode));
+  graph.addNode("commit_state", withNodeTracking("commit_state", commitStateNode));
 
   // === Add Edges ===
 

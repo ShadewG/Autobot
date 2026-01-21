@@ -62,6 +62,45 @@ export const casesAPI = {
       }),
     });
   },
+
+  // Trigger inbound message processing for a case
+  runInbound: (
+    caseId: number,
+    messageId: number,
+    options?: { autopilotMode?: 'AUTO' | 'SUPERVISED' }
+  ): Promise<{
+    success: boolean;
+    run: { id: number; status: string; message_id: number };
+    job_id: string;
+    message: string;
+  }> => {
+    return fetchAPI(`/cases/${caseId}/run-inbound`, {
+      method: 'POST',
+      body: JSON.stringify({
+        messageId,
+        autopilotMode: options?.autopilotMode || 'SUPERVISED',
+      }),
+    });
+  },
+
+  // Trigger follow-up for a case
+  runFollowup: (
+    caseId: number,
+    options?: { autopilotMode?: 'AUTO' | 'SUPERVISED' }
+  ): Promise<{
+    success: boolean;
+    run: { id: number; status: string; thread_id: string };
+    followup: { count: number; schedule_id: number | null };
+    job_id: string;
+    message: string;
+  }> => {
+    return fetchAPI(`/cases/${caseId}/run-followup`, {
+      method: 'POST',
+      body: JSON.stringify({
+        autopilotMode: options?.autopilotMode || 'SUPERVISED',
+      }),
+    });
+  },
 };
 
 export const requestsAPI = {
@@ -193,21 +232,108 @@ export const requestsAPI = {
       body: JSON.stringify({ autopilot_mode: mode }),
     });
   },
+
+  // Update a scope item status
+  updateScopeItem: (
+    id: string,
+    itemIndex: number,
+    status: 'REQUESTED' | 'PENDING' | 'CONFIRMED_AVAILABLE' | 'NOT_DISCLOSABLE' | 'NOT_HELD',
+    reason?: string
+  ): Promise<{ success: boolean; scope_items: unknown[] }> => {
+    return fetchAPI(`/requests/${id}/scope-items/${itemIndex}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status, reason }),
+    });
+  },
 };
 
 // Agent run types
 export interface AgentRun {
   id: string;
   case_id: string;
+  case_name?: string;
   trigger_type: string;
   status: 'running' | 'completed' | 'failed' | 'gated';
   started_at: string;
   completed_at?: string;
+  duration_seconds?: number;
+  is_stuck?: boolean;
   error_message?: string;
   node_trace?: string[];
   final_action?: string;
+  pause_reason?: string;
   gated_reason?: string;
+  proposal_id?: string;
+  proposal?: {
+    action_type: string;
+    confidence?: number;
+    risk_flags?: string[];
+    draft_subject?: string;
+    draft_preview?: string;
+    reasoning?: string[];
+    warnings?: string[];
+    status?: string;
+  };
 }
+
+// Runs API
+export const runsAPI = {
+  // List all runs with optional filters
+  list: (params?: {
+    status?: string;
+    case_id?: number;
+    limit?: number;
+  }): Promise<{ success: boolean; runs: AgentRun[] }> => {
+    const searchParams = new URLSearchParams();
+    if (params?.status) {
+      searchParams.set('status', params.status);
+    }
+    if (params?.case_id) {
+      searchParams.set('case_id', String(params.case_id));
+    }
+    if (params?.limit) {
+      searchParams.set('limit', String(params.limit));
+    }
+    const query = searchParams.toString();
+    return fetchAPI(`/runs${query ? `?${query}` : ''}`);
+  },
+
+  // Get a single run with proposals and decision trace
+  get: (runId: string): Promise<{
+    success: boolean;
+    run: AgentRun;
+    proposals: ProposalListItem[];
+    decision_trace?: unknown;
+  }> => {
+    return fetchAPI(`/runs/${runId}`);
+  },
+
+  // Cancel a run
+  cancel: (
+    runId: string,
+    reason?: string
+  ): Promise<{ success: boolean; message: string; run_id: string }> => {
+    return fetchAPI(`/runs/${runId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  // Retry a run
+  retry: (
+    runId: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    original_run_id: string;
+    new_run: { id: number; status: string; trigger_type: string };
+    job_id?: string;
+  }> => {
+    return fetchAPI(`/runs/${runId}/retry`, {
+      method: 'POST',
+    });
+  },
+};
 
 export interface AgentRunDiff {
   run: AgentRun;
@@ -307,6 +433,88 @@ export const proposalsAPI = {
     return fetchAPI(`/proposals/${id}/decision`, {
       method: 'POST',
       body: JSON.stringify(decision),
+    });
+  },
+};
+
+// Portal Tasks API
+export interface PortalTask {
+  id: number;
+  case_id: number;
+  case_name?: string;
+  agency_name?: string;
+  portal_url?: string;
+  portal_provider?: string;
+  task_type: 'initial_submission' | 'fee_payment' | 'document_upload' | 'status_check';
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled';
+  instructions?: string;
+  payload?: Record<string, unknown>;
+  assigned_to?: string;
+  started_at?: string;
+  completed_at?: string;
+  completion_notes?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PortalTasksListResponse {
+  success: boolean;
+  count: number;
+  tasks: PortalTask[];
+}
+
+export const portalTasksAPI = {
+  // List pending portal tasks
+  list: (limit?: number): Promise<PortalTasksListResponse> => {
+    const query = limit ? `?limit=${limit}` : '';
+    return fetchAPI(`/portal-tasks${query}`);
+  },
+
+  // Get a single portal task
+  get: (id: number): Promise<{ success: boolean; task: PortalTask }> => {
+    return fetchAPI(`/portal-tasks/${id}`);
+  },
+
+  // Get portal tasks for a specific case
+  getForCase: (caseId: number): Promise<{ tasks: PortalTask[] }> => {
+    return fetchAPI(`/portal-tasks/case/${caseId}`);
+  },
+
+  // Claim a task (mark as in progress)
+  claim: (
+    id: number,
+    assignedTo?: string
+  ): Promise<{ success: boolean; task: PortalTask }> => {
+    return fetchAPI(`/portal-tasks/${id}/claim`, {
+      method: 'POST',
+      body: JSON.stringify({ assigned_to: assignedTo }),
+    });
+  },
+
+  // Complete a task
+  complete: (
+    id: number,
+    data: {
+      confirmation_number?: string;
+      notes?: string;
+      attachments?: string[];
+    }
+  ): Promise<{ success: boolean; task: PortalTask; message: string }> => {
+    return fetchAPI(`/portal-tasks/${id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Cancel a task
+  cancel: (
+    id: number,
+    reason?: string
+  ): Promise<{ success: boolean; task: PortalTask }> => {
+    return fetchAPI(`/portal-tasks/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
     });
   },
 };

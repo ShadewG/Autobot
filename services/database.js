@@ -909,6 +909,31 @@ class DatabaseService {
     }
 
     /**
+     * Update node progress for an agent run (for debugging stuck runs).
+     * Merges node tracking info into the metadata JSONB column.
+     *
+     * @param {number} runId - The agent run ID
+     * @param {string} nodeName - Current node being processed
+     * @param {number} iteration - Current iteration count (optional)
+     */
+    async updateAgentRunNodeProgress(runId, nodeName, iteration = null) {
+        const nodeProgress = {
+            current_node: nodeName,
+            node_started_at: new Date().toISOString(),
+            iteration_count: iteration
+        };
+
+        const query = `
+            UPDATE agent_runs
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+            WHERE id = $1
+            RETURNING *
+        `;
+        const result = await this.query(query, [runId, JSON.stringify(nodeProgress)]);
+        return result.rows[0];
+    }
+
+    /**
      * Get agent runs for a case with optional limit.
      */
     async getAgentRunsByCaseId(caseId, limit = 20) {
@@ -1003,13 +1028,15 @@ class DatabaseService {
 
         const query = `
             INSERT INTO proposals (
-                proposal_key, case_id, trigger_message_id, action_type,
+                proposal_key, case_id, run_id, trigger_message_id, action_type,
                 draft_subject, draft_body_text, draft_body_html,
                 reasoning, confidence, risk_flags, warnings,
                 can_auto_execute, requires_human, status,
                 langgraph_thread_id, adjustment_count
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (proposal_key) DO UPDATE SET
+                -- Update run_id if provided (link to the run that created/updated this)
+                run_id = COALESCE(EXCLUDED.run_id, proposals.run_id),
                 -- Don't update if already executed, and preserve existing if new is null
                 action_type = CASE
                     WHEN proposals.status = 'EXECUTED' THEN proposals.action_type
@@ -1064,6 +1091,7 @@ class DatabaseService {
         const values = [
             proposalData.proposalKey,
             proposalData.caseId,
+            proposalData.runId || null,  // Link proposal to agent_runs.id
             proposalData.triggerMessageId || null,
             proposalData.actionType,
             proposalData.draftSubject || null,

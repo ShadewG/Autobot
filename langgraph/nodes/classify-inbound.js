@@ -54,6 +54,10 @@ async function classifyInboundNode(state) {
       // Ensure fee_amount is a number (not string)
       const feeAmount = stub.fee_amount != null ? Number(stub.fee_amount) : null;
 
+      // Normalize classification to uppercase (e.g., 'clarification_request' -> 'CLARIFICATION_REQUEST')
+      // This ensures stubbed tests match the expected format used in decide-next-action
+      const normalizedClassification = stub.classification?.toUpperCase() || 'UNKNOWN';
+
       // Save stubbed analysis to DB (for consistency)
       await db.saveResponseAnalysis({
         messageId: latestInboundMessageId,
@@ -69,14 +73,20 @@ async function classifyInboundNode(state) {
         fullAnalysisJson: { stubbed: true, ...stub }
       });
 
+      logger.info('Stubbed classification normalized', {
+        caseId,
+        original: stub.classification,
+        normalized: normalizedClassification
+      });
+
       return {
-        classification: stub.classification,
+        classification: normalizedClassification,
         classificationConfidence: stub.confidence || 0.95,
         sentiment: stub.sentiment || 'neutral',
         extractedFeeAmount: feeAmount,
         extractedDeadline: stub.deadline || null,
         logs: [
-          `[STUBBED] Classified as ${stub.classification} (confidence: ${stub.confidence || 0.95}), ` +
+          `[STUBBED] Classified as ${normalizedClassification} (confidence: ${stub.confidence || 0.95}), ` +
           `sentiment: ${stub.sentiment || 'neutral'}, ` +
           `fee: ${feeAmount ?? 'none'}`
         ]
@@ -90,6 +100,9 @@ async function classifyInboundNode(state) {
     const classificationMap = {
       'fee_request': 'FEE_QUOTE',
       'denial': 'DENIAL',
+      'partial_denial': 'PARTIAL_APPROVAL',  // Some records approved, some denied
+      'partial_approval': 'PARTIAL_APPROVAL',
+      'partial_release': 'PARTIAL_APPROVAL',
       'acknowledgment': 'ACKNOWLEDGMENT',
       'delivery': 'RECORDS_READY',
       'more_info_needed': 'CLARIFICATION_REQUEST',

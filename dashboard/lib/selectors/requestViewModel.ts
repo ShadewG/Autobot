@@ -326,7 +326,7 @@ export function toWorkspaceVM(data: RequestWorkspaceResponse): WorkspaceVM {
   // Enhance with workspace-level data
   requestVM.hasInboundMessages = inboundMessages.length > 0;
   requestVM.lastInboundMessageId = inboundMessages.length > 0
-    ? inboundMessages[inboundMessages.length - 1].id
+    ? String(inboundMessages[inboundMessages.length - 1].id)
     : null;
 
   return {
