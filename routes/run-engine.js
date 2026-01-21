@@ -283,7 +283,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
     }
 
-    // Build human decision object (full details for graph, action-only for DB until JSONB migration)
+    // Build human decision object (full details for graph and DB)
     const humanDecision = {
       action,
       proposalId,
@@ -294,10 +294,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
     };
 
     // Update proposal with human decision
-    // Note: human_decision column is VARCHAR(50), so we store just the action
-    // The full humanDecision object is passed to the graph via the job data
+    // human_decision column is JSONB (migration 023 applied)
     await db.updateProposal(proposalId, {
-      human_decision: action, // Store just the action string for now
+      human_decision: humanDecision,  // Store full JSON object
       status: action === 'DISMISS' || action === 'WITHDRAW' ? 'DISMISSED' : 'DECISION_RECEIVED'
     });
 
