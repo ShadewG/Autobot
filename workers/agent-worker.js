@@ -362,7 +362,7 @@ async function processInitialRequestJob(job) {
     if (result.status === 'interrupted') {
       await db.updateAgentRun(runId, {
         status: 'paused',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       // Notify about pending approval
@@ -386,7 +386,7 @@ async function processInitialRequestJob(job) {
     if (result.status === 'completed') {
       await db.updateAgentRun(runId, {
         status: 'completed',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       await notionService.syncStatusToNotion(caseId);
@@ -407,7 +407,7 @@ async function processInitialRequestJob(job) {
 
     await db.updateAgentRun(runId, {
       status: 'failed',
-      finished_at: new Date(),
+      ended_at: new Date(),
       error_message: error.message
     });
 
@@ -451,7 +451,7 @@ async function processInboundMessageJob(job) {
     if (result.status === 'interrupted') {
       await db.updateAgentRun(runId, {
         status: 'paused',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       const caseData = await db.getCaseById(caseId);
@@ -474,7 +474,7 @@ async function processInboundMessageJob(job) {
     if (result.status === 'completed') {
       await db.updateAgentRun(runId, {
         status: 'completed',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       await notionService.syncStatusToNotion(caseId);
@@ -498,7 +498,7 @@ async function processInboundMessageJob(job) {
 
     await db.updateAgentRun(runId, {
       status: 'failed',
-      finished_at: new Date(),
+      ended_at: new Date(),
       error_message: error.message
     });
 
@@ -539,7 +539,7 @@ async function processFollowupTriggerJob(job) {
     if (result.status === 'interrupted') {
       await db.updateAgentRun(runId, {
         status: 'paused',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       const caseData = await db.getCaseById(caseId);
@@ -562,7 +562,7 @@ async function processFollowupTriggerJob(job) {
     if (result.status === 'completed') {
       await db.updateAgentRun(runId, {
         status: 'completed',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       await notionService.syncStatusToNotion(caseId);
@@ -583,7 +583,7 @@ async function processFollowupTriggerJob(job) {
 
     await db.updateAgentRun(runId, {
       status: 'failed',
-      finished_at: new Date(),
+      ended_at: new Date(),
       error_message: error.message
     });
 
@@ -623,7 +623,7 @@ async function processResumeRunJob(job) {
 
       await db.updateAgentRun(runId, {
         status: 'skipped',
-        finished_at: new Date(),
+        ended_at: new Date(),
         error_message: `Proposal ${originalProposalId} already in terminal state: ${proposal.status}`
       });
 
@@ -652,7 +652,7 @@ async function processResumeRunJob(job) {
 
       await db.updateAgentRun(runId, {
         status: 'skipped',
-        finished_at: new Date(),
+        ended_at: new Date(),
         error_message: `Proposal ${originalProposalId} already has execution: ${existingExecution.rows[0].id}`
       });
 
@@ -678,7 +678,7 @@ async function processResumeRunJob(job) {
     if (result.status === 'interrupted') {
       await db.updateAgentRun(runId, {
         status: 'paused',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       const caseData = await db.getCaseById(caseId);
@@ -701,7 +701,7 @@ async function processResumeRunJob(job) {
     if (result.status === 'completed') {
       await db.updateAgentRun(runId, {
         status: 'completed',
-        finished_at: new Date()
+        ended_at: new Date()
       });
 
       // Update original proposal status if provided
@@ -730,7 +730,7 @@ async function processResumeRunJob(job) {
 
     await db.updateAgentRun(runId, {
       status: 'failed',
-      finished_at: new Date(),
+      ended_at: new Date(),
       error_message: error.message
     });
 

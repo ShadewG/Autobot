@@ -800,7 +800,7 @@ router.get('/runs', async (req, res) => {
         ar.autopilot_mode,
         ar.error_message,
         ar.created_at AS started_at,
-        ar.finished_at AS completed_at,
+        ar.ended_at AS completed_at,
         ar.state_snapshot,
         c.case_name,
         c.subject_name,

@@ -5777,10 +5777,10 @@ router.get('/cases/:caseId/conversation', async (req, res) => {
 
         // Get agent runs
         const runs = await db.query(`
-            SELECT id, trigger_type, status, error_message, created_at, finished_at
+            SELECT id, trigger_type, status, error AS error_message, started_at AS created_at, ended_at
             FROM agent_runs
             WHERE case_id = $1
-            ORDER BY created_at ASC
+            ORDER BY started_at ASC
         `, [caseId]);
 
         res.json({
