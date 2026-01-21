@@ -813,8 +813,8 @@ router.get('/runs', async (req, res) => {
         ar.langgraph_thread_id,
         ar.proposal_id,
         ar.autopilot_mode,
-        ar.error_message,
-        ar.created_at AS started_at,
+        ar.error AS error_message,
+        ar.started_at,
         ar.ended_at AS completed_at,
         ar.state_snapshot,
         c.case_name,
@@ -841,7 +841,7 @@ router.get('/runs', async (req, res) => {
       paramIndex++;
     }
 
-    query += ` ORDER BY ar.created_at DESC LIMIT $${paramIndex}`;
+    query += ` ORDER BY ar.started_at DESC LIMIT $${paramIndex}`;
     params.push(limit);
 
     const result = await db.query(query, params);
