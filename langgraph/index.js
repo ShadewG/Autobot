@@ -15,8 +15,7 @@ const {
   invokeFOIACaseGraph,
   resumeFOIACaseGraph,
   resetThread,
-  getThreadInfo,
-  getRedisClient
+  getThreadInfo
 } = require('./graph/foia-case-graph');
 
 // Initial Request Graph (new)
@@ -69,7 +68,6 @@ module.exports = {
   // Thread management
   resetThread,
   getThreadInfo,
-  getRedisClient,
 
   // Configuration
   DRY_RUN,

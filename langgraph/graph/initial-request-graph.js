@@ -172,20 +172,50 @@ function createInitialRequestGraphBuilder() {
 
 // Import shared utilities from foia-case-graph
 const {
-  getRedisClient,
   acquireCaseLock,
   releaseCaseLock
 } = require('./foia-case-graph');
 
+const { PostgresSaver } = require("@langchain/langgraph-checkpoint-postgres");
 const db = require("../../services/database");
 
 /**
- * Create checkpointer (reuse from foia-case-graph pattern)
+ * Create checkpointer using PostgresSaver for persistent checkpoints
  */
+let _postgresCheckpointer = null;
+let _checkpointerSetupComplete = false;
+
 async function createCheckpointer() {
-  const { MemorySaver } = require("@langchain/langgraph");
-  logger.info('Using MemorySaver for initial request graph checkpoints');
-  return new MemorySaver();
+  if (_postgresCheckpointer) {
+    return _postgresCheckpointer;
+  }
+
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    logger.warn('DATABASE_URL not set, falling back to MemorySaver');
+    const { MemorySaver } = require("@langchain/langgraph");
+    return new MemorySaver();
+  }
+
+  try {
+    _postgresCheckpointer = PostgresSaver.fromConnString(databaseUrl, {
+      schema: 'langgraph'
+    });
+
+    if (!_checkpointerSetupComplete) {
+      logger.info('Setting up PostgresSaver for initial request graph...');
+      await _postgresCheckpointer.setup();
+      _checkpointerSetupComplete = true;
+    }
+
+    logger.info('Using PostgresSaver for initial request graph checkpoints');
+    return _postgresCheckpointer;
+  } catch (error) {
+    logger.error('PostgresSaver creation failed', { error: error.message });
+    const { MemorySaver } = require("@langchain/langgraph");
+    return new MemorySaver();
+  }
 }
 
 /**

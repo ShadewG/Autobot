@@ -16,8 +16,7 @@
  */
 
 const { StateGraph, START, END } = require("@langchain/langgraph");
-const { RedisSaver } = require("@langchain/langgraph-checkpoint-redis");
-const { createClient } = require("redis");
+const { PostgresSaver } = require("@langchain/langgraph-checkpoint-postgres");
 
 const { FOIACaseStateAnnotation, createInitialState } = require("../state/case-state");
 const { loadContextNode } = require("../nodes/load-context");
@@ -161,41 +160,48 @@ function createFOIACaseGraphBuilder() {
 /**
  * Create checkpointer based on config
  * P0 FIX #1: Checkpointer is passed at compile time, NOT invoke time
+ *
+ * Uses PostgresSaver for persistent checkpoints across worker processes.
+ * This is critical for human-in-the-loop flows where the graph interrupts
+ * and resumes later (potentially in a different process).
  */
-let _redisClient = null;
-
-async function getRedisClient() {
-  if (!_redisClient) {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    _redisClient = createClient({ url: redisUrl });
-    _redisClient.on('error', (err) => logger.error('Redis checkpointer error', { error: err.message }));
-    await _redisClient.connect();
-    logger.info('Redis checkpointer client connected');
-  }
-  return _redisClient;
-}
+let _postgresCheckpointer = null;
+let _checkpointerSetupComplete = false;
 
 async function createCheckpointer() {
-  // TEMPORARY: Force MemorySaver to debug checkpoint issues
-  // TODO: Fix RedisSaver compatibility with node-redis v5
-  const checkpointerType = 'memory';  // process.env.LANGGRAPH_CHECKPOINTER || 'memory';
-
-  if (checkpointerType === 'redis') {
-    try {
-      const client = await getRedisClient();
-      // RedisSaver takes client as FIRST argument, not in an object
-      const saver = new RedisSaver(client);
-      logger.info('Using RedisSaver for checkpoints');
-      return saver;
-    } catch (redisError) {
-      logger.error('RedisSaver creation failed, falling back to MemorySaver', { error: redisError.message });
-    }
+  if (_postgresCheckpointer) {
+    return _postgresCheckpointer;
   }
 
-  // Use MemorySaver (works but data lost on restart)
-  const { MemorySaver } = require("@langchain/langgraph");
-  logger.info('Using MemorySaver for checkpoints');
-  return new MemorySaver();
+  const databaseUrl = process.env.DATABASE_URL;
+
+  if (!databaseUrl) {
+    logger.warn('DATABASE_URL not set, falling back to MemorySaver (checkpoints will not persist!)');
+    const { MemorySaver } = require("@langchain/langgraph");
+    return new MemorySaver();
+  }
+
+  try {
+    // Create PostgresSaver from connection string
+    _postgresCheckpointer = PostgresSaver.fromConnString(databaseUrl, {
+      schema: 'langgraph'  // Use separate schema for checkpoint tables
+    });
+
+    // Setup creates the necessary tables on first use
+    if (!_checkpointerSetupComplete) {
+      logger.info('Setting up PostgresSaver checkpoint tables...');
+      await _postgresCheckpointer.setup();
+      _checkpointerSetupComplete = true;
+      logger.info('PostgresSaver setup complete');
+    }
+
+    logger.info('Using PostgresSaver for checkpoints (persistent across processes)');
+    return _postgresCheckpointer;
+  } catch (error) {
+    logger.error('PostgresSaver creation failed, falling back to MemorySaver', { error: error.message });
+    const { MemorySaver } = require("@langchain/langgraph");
+    return new MemorySaver();
+  }
 }
 
 /**
@@ -379,72 +385,74 @@ async function resumeFOIACaseGraph(caseId, humanDecision) {
 /**
  * Reset thread - delete all checkpoints for a case
  * Used for testing/iteration
+ *
+ * NOTE: With PostgresSaver, checkpoints are stored in langgraph.checkpoints table
  */
 async function resetThread(caseId) {
-  const client = await getRedisClient();
   const threadId = `case:${caseId}`;
 
-  // Find and delete all keys for this thread
-  const patterns = [
-    `checkpoint:${threadId}:*`,
-    `write_keys_zset:${threadId}:*`,
-    `writes:${threadId}:*`
-  ];
+  try {
+    // Delete from PostgreSQL checkpoint tables
+    const result1 = await db.query(
+      'DELETE FROM langgraph.checkpoint_writes WHERE thread_id = $1',
+      [threadId]
+    );
+    const result2 = await db.query(
+      'DELETE FROM langgraph.checkpoint_blobs WHERE thread_id = $1',
+      [threadId]
+    );
+    const result3 = await db.query(
+      'DELETE FROM langgraph.checkpoints WHERE thread_id = $1',
+      [threadId]
+    );
 
-  let deletedCount = 0;
-  for (const pattern of patterns) {
-    // Use SCAN instead of KEYS for production safety
-    let cursor = 0;
-    do {
-      const result = await client.scan(cursor, { MATCH: pattern, COUNT: 100 });
-      cursor = result.cursor;
-      if (result.keys.length > 0) {
-        await client.del(result.keys);
-        deletedCount += result.keys.length;
-      }
-    } while (cursor !== 0);
+    const deletedCount = (result1.rowCount || 0) + (result2.rowCount || 0) + (result3.rowCount || 0);
+    logger.info('Thread reset', { caseId, threadId, deletedCount });
+    return { threadId, deletedCount };
+  } catch (error) {
+    // Tables may not exist yet if setup hasn't run
+    logger.warn('Could not reset thread (tables may not exist)', { caseId, error: error.message });
+    return { threadId, deletedCount: 0 };
   }
-
-  logger.info('Thread reset', { caseId, threadId, deletedCount });
-  return { threadId, deletedCount };
 }
 
 /**
  * Get thread state/checkpoint info
  */
 async function getThreadInfo(caseId) {
-  const client = await getRedisClient();
   const threadId = `case:${caseId}`;
 
-  // Find checkpoint keys
-  const pattern = `checkpoint:${threadId}:*`;
-  let checkpoints = [];
+  try {
+    // Query PostgreSQL checkpoint tables
+    const countResult = await db.query(
+      'SELECT COUNT(*) as count FROM langgraph.checkpoints WHERE thread_id = $1',
+      [threadId]
+    );
 
-  let cursor = 0;
-  do {
-    const result = await client.scan(cursor, { MATCH: pattern, COUNT: 100 });
-    cursor = result.cursor;
-    checkpoints = checkpoints.concat(result.keys);
-  } while (cursor !== 0);
+    const latestResult = await db.query(`
+      SELECT checkpoint_id, metadata, created_at
+      FROM langgraph.checkpoints
+      WHERE thread_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [threadId]);
 
-  checkpoints.sort().reverse();
-
-  let latestCheckpoint = null;
-  if (checkpoints.length > 0) {
-    try {
-      latestCheckpoint = await client.json.get(checkpoints[0]);
-    } catch (e) {
-      // JSON module might not be available
-      latestCheckpoint = await client.get(checkpoints[0]);
-    }
+    return {
+      threadId,
+      checkpointCount: parseInt(countResult.rows[0]?.count || 0),
+      latestCheckpointId: latestResult.rows[0]?.checkpoint_id || null,
+      latestCheckpoint: latestResult.rows[0] || null
+    };
+  } catch (error) {
+    // Tables may not exist yet
+    logger.warn('Could not get thread info (tables may not exist)', { caseId, error: error.message });
+    return {
+      threadId,
+      checkpointCount: 0,
+      latestCheckpointId: null,
+      latestCheckpoint: null
+    };
   }
-
-  return {
-    threadId,
-    checkpointCount: checkpoints.length,
-    latestCheckpointKey: checkpoints[0] || null,
-    latestCheckpoint
-  };
 }
 
 module.exports = {
@@ -455,7 +463,6 @@ module.exports = {
   createInitialState,
   resetThread,
   getThreadInfo,
-  getRedisClient,
   // Export lock utilities for reuse by other graphs
   acquireCaseLock,
   releaseCaseLock

@@ -33,6 +33,7 @@
     "@hyperbrowser/sdk": "^0.74.0",
     "@langchain/core": "^1.1.15",
     "@langchain/langgraph": "^1.1.0",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.0",
     "@langchain/langgraph-checkpoint-redis": "^1.0.1",
     "@langchain/openai": "^1.2.2",
     "@notionhq/client": "^2.2.14",
