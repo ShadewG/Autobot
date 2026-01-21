@@ -1798,7 +1798,7 @@ class DatabaseService {
             SELECT * FROM agent_runs
             WHERE case_id = $1
               AND status IN ('created', 'queued', 'running', 'paused')
-            ORDER BY created_at DESC
+            ORDER BY started_at DESC
             LIMIT 1
         `, [caseId]);
         return result.rows[0];
