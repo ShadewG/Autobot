@@ -632,9 +632,9 @@ router.get('/proposals', async (req, res) => {
         c.state AS agency_state,
         c.status AS case_status,
         c.autopilot_mode,
-        ra.classification,
+        ra.intent AS classification,
         ra.sentiment,
-        ra.extracted_fee AS extracted_fee_amount
+        ra.extracted_fee_amount
       FROM proposals p
       JOIN cases c ON p.case_id = c.id
       LEFT JOIN response_analysis ra ON ra.case_id = c.id

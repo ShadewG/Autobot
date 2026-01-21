@@ -5759,7 +5759,7 @@ router.get('/cases/:caseId/conversation', async (req, res) => {
 
         // Get messages
         const messages = await db.query(`
-            SELECT m.*, ra.classification, ra.sentiment, ra.extracted_fee
+            SELECT m.*, ra.intent AS classification, ra.sentiment, ra.extracted_fee_amount
             FROM messages m
             LEFT JOIN response_analysis ra ON ra.message_id = m.id
             WHERE m.case_id = $1
