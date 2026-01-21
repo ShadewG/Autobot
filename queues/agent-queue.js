@@ -30,17 +30,22 @@ try {
   logger = require('../utils/logger');
 }
 
-// Get shared Redis connection
-const connection = getRedisConnection();
+// Lazy initialization - don't connect to Redis at module load time
+let connection = null;
+let agentQueue = null;
+let agentJobOptions = null;
 
-// Get standardized job options for agent queue
-const agentJobOptions = getJobOptions('agent');
-
-// Create the agent queue with standardized options
-const agentQueue = new Queue('agent-queue', {
-  connection,
-  defaultJobOptions: agentJobOptions
-});
+function getAgentQueue() {
+  if (!agentQueue) {
+    connection = getRedisConnection();
+    agentJobOptions = getJobOptions('agent');
+    agentQueue = new Queue('agent-queue', {
+      connection,
+      defaultJobOptions: agentJobOptions
+    });
+  }
+  return agentQueue;
+}
 
 /**
  * Add a job to invoke the LangGraph for a case
@@ -53,7 +58,7 @@ async function enqueueAgentJob(caseId, triggerType, options = {}) {
   // Generate idempotent job ID to prevent duplicate processing
   const jobId = generateAgentJobId(caseId, triggerType, options);
 
-  const job = await agentQueue.add('invoke-graph', {
+  const job = await getAgentQueue().add('invoke-graph', {
     caseId,
     triggerType,
     ...options
@@ -87,7 +92,7 @@ async function enqueueAgentJob(caseId, triggerType, options = {}) {
 async function enqueueInitialRequestJob(runId, caseId, options = {}) {
   const jobId = `initial:${caseId}:run-${runId}`;
 
-  const job = await agentQueue.add('run-initial-request', {
+  const job = await getAgentQueue().add('run-initial-request', {
     runId,
     caseId,
     autopilotMode: options.autopilotMode || 'SUPERVISED',
@@ -117,7 +122,7 @@ async function enqueueInitialRequestJob(runId, caseId, options = {}) {
 async function enqueueInboundMessageJob(runId, caseId, messageId, options = {}) {
   const jobId = `inbound:${caseId}:msg-${messageId}:run-${runId}`;
 
-  const job = await agentQueue.add('run-inbound-message', {
+  const job = await getAgentQueue().add('run-inbound-message', {
     runId,
     caseId,
     messageId,
@@ -148,7 +153,7 @@ async function enqueueInboundMessageJob(runId, caseId, messageId, options = {}) 
 async function enqueueFollowupTriggerJob(runId, caseId, followupScheduleId, options = {}) {
   const jobId = `followup:${caseId}:schedule-${followupScheduleId}:run-${runId}`;
 
-  const job = await agentQueue.add('run-followup-trigger', {
+  const job = await getAgentQueue().add('run-followup-trigger', {
     runId,
     caseId,
     followupScheduleId,
@@ -179,7 +184,7 @@ async function enqueueFollowupTriggerJob(runId, caseId, followupScheduleId, opti
 async function enqueueResumeRunJob(runId, caseId, humanDecision, options = {}) {
   const jobId = `resume:${caseId}:run-${runId}`;
 
-  const job = await agentQueue.add('resume-run', {
+  const job = await getAgentQueue().add('resume-run', {
     runId,
     caseId,
     humanDecision,
@@ -217,7 +222,7 @@ async function enqueueResumeJob(caseId, decision) {
     ? `resume:${caseId}:proposal-${decision.proposalId}`
     : `resume:${caseId}:${Date.now()}`;
 
-  const job = await agentQueue.add('resume-graph', {
+  const job = await getAgentQueue().add('resume-graph', {
     caseId,
     decision,
     // Include proposal ID for atomic claim checking in worker
@@ -243,33 +248,31 @@ async function enqueueResumeJob(caseId, decision) {
  * Get queue statistics
  */
 async function getQueueStats() {
+  const queue = getAgentQueue();
   const [waiting, active, completed, failed, delayed] = await Promise.all([
-    agentQueue.getWaitingCount(),
-    agentQueue.getActiveCount(),
-    agentQueue.getCompletedCount(),
-    agentQueue.getFailedCount(),
-    agentQueue.getDelayedCount()
+    queue.getWaitingCount(),
+    queue.getActiveCount(),
+    queue.getCompletedCount(),
+    queue.getFailedCount(),
+    queue.getDelayedCount()
   ]);
 
   return { waiting, active, completed, failed, delayed };
 }
 
 /**
- * Get the queue instance (for worker setup)
- */
-function getAgentQueue() {
-  return agentQueue;
-}
-
-/**
  * Get the Redis connection (for worker setup)
  */
 function getConnection() {
+  if (!connection) {
+    connection = getRedisConnection();
+  }
   return connection;
 }
 
 module.exports = {
-  agentQueue,
+  // Use getAgentQueue() instead of agentQueue directly (lazy init)
+  get agentQueue() { return getAgentQueue(); },
   getAgentQueue,
   getConnection,
   // Legacy functions (still used by existing code)
