@@ -50,8 +50,8 @@ portal-agent-log.json
 *.db
 case_tracker.db
 
-# Test scripts
-test-*.js
-cancel-case-*.js
-check-*.js
-run-*.js
+# Test scripts (root level only)
+/test-*.js
+/cancel-case-*.js
+/check-*.js
+/run-*.js
