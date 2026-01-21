@@ -259,15 +259,28 @@ router.post('/proposals/:id/decision', async (req, res) => {
     // Check for existing active run
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
-      return res.status(409).json({
-        success: false,
-        error: 'Case already has an active agent run',
-        activeRun: {
-          id: existingRun.id,
-          status: existingRun.status,
-          trigger_type: existingRun.trigger_type
-        }
-      });
+      // If the run is paused (waiting for this decision), complete it before resuming
+      if (existingRun.status === 'paused') {
+        logger.info('Completing paused run before processing decision', {
+          runId: existingRun.id,
+          proposalId
+        });
+        await db.updateAgentRun(existingRun.id, {
+          status: 'completed',
+          ended_at: new Date()
+        });
+      } else {
+        // Run is actually active (queued/running), block the decision
+        return res.status(409).json({
+          success: false,
+          error: 'Case already has an active agent run',
+          activeRun: {
+            id: existingRun.id,
+            status: existingRun.status,
+            trigger_type: existingRun.trigger_type
+          }
+        });
+      }
     }
 
     // Build human decision object
