@@ -1755,7 +1755,7 @@ class DatabaseService {
             data.scheduled_key,
             data.autopilot_mode,
             data.status || 'created',
-            data.metadata ? JSON.stringify(data.metadata) : '{}'
+            data.metadata || {}  // Pass JS object directly for JSONB column
         ]);
         return result.rows[0];
     }
