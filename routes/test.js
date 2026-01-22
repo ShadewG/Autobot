@@ -5911,6 +5911,38 @@ router.post('/cases/:caseId/setup-for-e2e', async (req, res) => {
 });
 
 /**
+ * GET /api/test/cases/:caseId/analysis
+ *
+ * Get response analysis records for a case.
+ * Useful for debugging AI analysis and scope_updates.
+ */
+router.get('/cases/:caseId/analysis', async (req, res) => {
+    const caseId = parseInt(req.params.caseId);
+
+    try {
+        const result = await db.query(`
+            SELECT ra.*, m.body_text AS message_text
+            FROM response_analysis ra
+            LEFT JOIN messages m ON m.id = ra.message_id
+            WHERE ra.case_id = $1
+            ORDER BY ra.created_at DESC
+        `, [caseId]);
+
+        res.json({
+            success: true,
+            count: result.rows.length,
+            analysis: result.rows
+        });
+    } catch (error) {
+        console.error('[analysis] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * GET /api/test/cases/:caseId/conversation
  *
  * Get the full conversation history for a case (messages + proposals).
