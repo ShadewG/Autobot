@@ -5855,11 +5855,12 @@ router.post('/cases/:caseId/setup-for-e2e', async (req, res) => {
             });
         }
 
-        // Update case with required fields
+        // Update case with required fields for E2E testing
         await db.query(`
             UPDATE cases SET
                 agency_email = $1,
-                status = COALESCE(NULLIF(status, 'CLOSED'), 'draft'),
+                status = 'draft',
+                submitted_at = NULL,
                 updated_at = NOW()
             WHERE id = $2
         `, [agency_email, caseId]);
