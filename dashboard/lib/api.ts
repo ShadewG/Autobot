@@ -274,6 +274,16 @@ export interface AgentRun {
     warnings?: string[];
     status?: string;
   };
+  // Triggering inbound message (for inbound_message trigger type)
+  trigger_message?: {
+    id: string;
+    from_email: string;
+    subject: string;
+    body_text: string;
+    received_at: string;
+    classification?: string;
+    sentiment?: string;
+  };
 }
 
 // Runs API

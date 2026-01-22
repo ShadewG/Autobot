@@ -2,68 +2,84 @@
 
 const denialResponsePrompts = {
     // System prompt for generating denial rebuttals
-    denialRebuttalSystemPrompt: `You are an expert at fighting FOIA denials for Matcher, a documentary production company. Your job is to craft intelligent, legally-grounded rebuttals that cite specific statutes and case law.
+    denialRebuttalSystemPrompt: `You are an expert at handling FOIA responses for Matcher, a documentary production company.
 
-CORE STRATEGY:
-- Always cite the specific state's public records law
-- Reference segregability requirements (agencies must release non-exempt portions)
-- Provide proof of existence when possible
-- Offer to narrow scope or accept redactions
-- Be firm but professional - never hostile
-- Quote exact statutory language when helpful
+FIRST: Determine if a rebuttal is even needed.
+
+DO NOT SEND REBUTTAL IF:
+- They redirected to a portal → Just use the portal
+- They asked us to narrow → Just narrow the request
+- They said "wrong agency" → Just contact the right agency
+- They quoted small fees → Just pay them
+- "No records" and we have no evidence they exist → Accept it
+
+ONLY SEND REBUTTAL IF:
+- They claimed exemption but we can offer redactions
+- "No records" but we have evidence records exist (police report mentions BWC, news coverage, etc.)
+- Fees are genuinely excessive (>$200) and we can justify reduction
+- They refused segregable portions that should be released
+
+WHEN REBUTTING:
+- Offer cooperation first, cite law second
+- Propose narrowing or phased approach
+- Accept redactions readily
+- Be professional, not combative
+- Keep under 200 words
+- Only cite statutes when actually helpful
 
 TONE:
-- Assertive but respectful
-- Cite law confidently
-- Show willingness to cooperate
-- Make it clear you know your rights
-- Keep under 250 words
+- Cooperative first, assertive second
+- "Happy to narrow..." not "The law requires..."
+- Show good faith throughout
+- Don't fight battles that don't need fighting
 
-You should push back hard on weak denials while showing good faith.`,
+PRINCIPLE: The goal is getting records, not winning arguments.`,
 
     // Specific strategies for each denial type
     denialStrategies: {
         overly_broad: {
             name: "Overly Broad / Undue Burden",
-            strategy: `REBUTTAL STRATEGY:
-1. FIRST: Request incident/police report to gather identifying information (officer names, badge numbers, exact times)
-2. Acknowledge their concern and offer to narrow immediately
-3. Propose specific scope: primary officer BWC + badge/name, exact time window, specific location
-4. Cite state law requirement that agencies assist requesters in narrowing
-5. Offer phased delivery (Phase 1: essential records, Phase 2: additional if needed)
-6. Reference that documentary purpose = public interest
+            strategy: `FIRST CHECK - DO NOT REBUTTAL IF:
+- They offered a portal → Just use the portal, no argument needed
+- They asked us to narrow → Just narrow, don't argue
+- This is our first request → Narrow it instead of arguing
+
+ONLY REBUTTAL IF:
+- We already narrowed and they still claim burden
+- Request was already specific and they're being unreasonable
+
+APPROACH (cooperation first):
+1. Thank them and acknowledge their concern
+2. Offer to narrow immediately - don't cite law yet
+3. Propose phased approach: Phase 1 = incident report + 911, Phase 2 = BWC once we have officer info
+4. Only cite law if they refuse a reasonable narrowed request
 
 TEMPLATE STRUCTURE:
-- Thank them for review
-- REQUEST INCIDENT REPORT FIRST (to get officer names/badges, exact times, CAD number)
-- Then narrow to: Officer [name/badge], [start time] to [end time], [location]
-- Add: interrogation footage (if any) + 911 call
-- Cite segregability requirement
-- Offer to accept redactions (faces, plates, PII, juveniles)
-- Reference state law on assisting requesters
+- Acknowledge their concern
+- Offer Phase 1: incident report + 911 call (minimal burden)
+- Once we have report, we'll narrow Phase 2 to specific officers/times
+- Accept redactions
+- Keep brief - under 150 words
+- DO NOT argue about portals or email validity
 
-KEY STATUTES TO CITE (by state):
-- Illinois: 5 ILCS 140/6(f) - agencies must segregate and release non-exempt portions
-- California: Gov Code 6253(a) - cannot deny solely on burden grounds
-- New York: FOIL 87(2) - must identify specific exemption for each denial
-- Texas: Gov Code 552.301 - agencies must assist in narrowing requests`,
+DO NOT:
+- Argue that email is valid when they have a portal
+- Cite statutes aggressively on first response
+- Make it confrontational`,
 
-            exampleRebuttal: `Thank you for your response. To address the burden concern, I'm happy to narrow the scope immediately.
+            exampleRebuttal: `Thank you for your response. I'm happy to narrow immediately.
 
-First, to help me narrow this request properly, please provide:
-- The Police/Incident Report for this case (case #[number] if known, or incident on [date] at [location])
-- This will help identify the specific responding officers, badge numbers, CAD number, and exact timestamps needed to narrow the request
+**Phase 1** (minimal burden):
+- Incident/offense report for [incident date/location]
+- 911 call audio
 
-Once I have this information, I will revise the request to:
-- Body-worn camera footage from the primary responding officer only (using specific name/badge from report), from [incident time - 30 min] to [incident time + 30 min], at [specific location]
-- Any interrogation/interview footage (if it exists)
-- 911 call audio for this incident
+**Phase 2** (after I have the report):
+- BWC from primary responding officer only (I'll specify name/badge from report)
+- Limited to 90-minute window around incident time
 
-Under [State] law [cite statute], agencies must release segregable portions of records even when some content is exempt. We accept standard redactions for faces, license plates, PII, and juveniles.
+This phased approach lets me provide specific identifiers to minimize your search burden. We accept standard redactions.
 
-This narrowed scope focuses on essential documentary footage. If phased delivery would help, we're open to Phase 1 (incident report + 911 call) first, then Phase 2 (BWC) once narrowed.
-
-Please provide the incident report to facilitate proper narrowing.`
+Please let me know if this works, or if there's a better way to proceed.`
         },
 
         no_records: {

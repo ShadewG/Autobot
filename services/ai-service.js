@@ -299,16 +299,23 @@ Body:
 ${messageData.body_text}
 
 Please analyze and provide a JSON response with:
-1. intent: (acknowledgment | question | delivery | denial | fee_request | more_info_needed)
+1. intent: (portal_redirect | acknowledgment | records_ready | question | delivery | partial_delivery | denial | fee_request | more_info_needed)
+   - portal_redirect: They want us to use their online portal (NextRequest, GovQA, etc.) - NOT a denial!
+   - records_ready: Records available for download
+   - acknowledgment: They received our request, processing
 2. denial_subtype: if intent is "denial", specify subtype (no_records | ongoing_investigation | privacy_exemption | overly_broad | excessive_fees | wrong_agency | retention_expired | format_issue | null)
 3. confidence_score: 0.0 to 1.0
 4. sentiment: (positive | neutral | negative | hostile)
 5. key_points: array of important points from the email
 6. extracted_deadline: any deadline mentioned (YYYY-MM-DD format or null)
 7. extracted_fee_amount: any fee amount mentioned (number or null)
-8. requires_action: boolean - does this require a response from us?
-9. suggested_action: what should we do next?
-10. summary: brief 1-2 sentence summary
+8. portal_url: if they mention a portal, extract the URL (or null)
+9. requires_response: boolean - do WE need to send an email reply? (Usually NO!)
+   - NO for: portal_redirect, acknowledgment, records_ready, delivery, partial_delivery
+   - MAYBE for: fee_request (only if negotiating), denial (only if worth challenging)
+   - YES for: question, more_info_needed
+10. suggested_action: what should we do next? (use_portal | wait | download | respond | challenge | pay_fee | etc.)
+11. summary: brief 1-2 sentence summary
 11. scope_updates: For EACH record we requested, analyze what the agency said about it. Return an array of objects with:
     - name: the record item name (exactly as listed above)
     - status: one of (CONFIRMED_AVAILABLE | NOT_DISCLOSABLE | NOT_HELD | PENDING | REQUESTED)
@@ -377,18 +384,62 @@ ${prompt}`
      */
     async generateAutoReply(messageData, analysis, caseData) {
         try {
-            console.log(`Generating auto-reply for case: ${caseData.case_name}`);
+            console.log(`Generating auto-reply for case: ${caseData.case_name}, intent: ${analysis.intent}`);
 
-            // Check if this is a simple case we can auto-reply to
-            const simpleIntents = ['acknowledgment', 'fee_request', 'more_info_needed'];
+            // FIRST: Check if response is even needed
+            const noResponseIntents = ['portal_redirect', 'acknowledgment', 'records_ready', 'delivery', 'partial_delivery'];
 
-            // Handle denials with strategic rebuttals (not manual review)
+            if (noResponseIntents.includes(analysis.intent)) {
+                console.log(`No response needed for intent: ${analysis.intent}`);
+                return {
+                    should_auto_reply: false,
+                    reason: `No email response needed for ${analysis.intent}`,
+                    suggested_action: analysis.intent === 'portal_redirect' ? 'use_portal' :
+                                     analysis.intent === 'records_ready' ? 'download' :
+                                     analysis.intent === 'delivery' ? 'download' : 'wait',
+                    portal_url: analysis.portal_url || null
+                };
+            }
+
+            // Handle denials - but check if rebuttal makes sense first
             if (analysis.intent === 'denial') {
+                // Don't rebuttal portal redirects misclassified as denials
+                if (analysis.denial_subtype === 'format_issue' && analysis.portal_url) {
+                    console.log('Portal redirect misclassified as denial - no response needed');
+                    return {
+                        should_auto_reply: false,
+                        reason: 'Portal redirect - use portal instead of responding',
+                        suggested_action: 'use_portal',
+                        portal_url: analysis.portal_url
+                    };
+                }
+
                 console.log(`Generating denial rebuttal for subtype: ${analysis.denial_subtype}`);
                 return await this.generateDenialRebuttal(messageData, analysis, caseData);
             }
 
-            if (!simpleIntents.includes(analysis.intent)) {
+            // Only these intents should get responses
+            const responseIntents = ['question', 'more_info_needed'];
+
+            // Fee requests: only respond if over auto-approve threshold
+            if (analysis.intent === 'fee_request') {
+                const feeAmount = analysis.extracted_fee_amount || 0;
+                const autoApproveMax = parseFloat(process.env.FEE_AUTO_APPROVE_MAX) || 100;
+
+                if (feeAmount <= autoApproveMax) {
+                    // Auto-approve small fees with brief acceptance
+                    console.log(`Auto-approving fee of $${feeAmount}`);
+                    return await this.generateFeeAcceptance(caseData, feeAmount);
+                }
+                // Larger fees need human review - don't auto-generate response
+                return {
+                    should_auto_reply: false,
+                    reason: `Fee of $${feeAmount} exceeds auto-approve threshold - needs human review`,
+                    requires_human_review: true
+                };
+            }
+
+            if (!responseIntents.includes(analysis.intent)) {
                 return {
                     should_auto_reply: false,
                     reason: 'Intent not suitable for auto-reply'
@@ -520,9 +571,42 @@ Return concise legal citations and key statutory language with sources.`;
      */
     async generateDenialRebuttal(messageData, analysis, caseData) {
         try {
-            console.log(`Generating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
+            console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
 
             const denialSubtype = analysis.denial_subtype || 'overly_broad';
+
+            // CHECK: Should we even rebuttal this?
+            // Some "denials" are just process redirects - don't fight them
+            const noRebuttalSubtypes = {
+                'wrong_agency': 'Get correct agency contact info instead of arguing',
+                'format_issue': 'Request alternative delivery or use their portal'
+            };
+
+            // If they mentioned a portal, don't argue - just use it
+            if (analysis.portal_url) {
+                console.log('Portal URL found - no rebuttal needed, use portal instead');
+                return {
+                    should_auto_reply: false,
+                    reason: 'Portal available - use portal instead of arguing via email',
+                    suggested_action: 'use_portal',
+                    portal_url: analysis.portal_url
+                };
+            }
+
+            // For "overly_broad" - check if this is really a fight worth having
+            if (denialSubtype === 'overly_broad') {
+                // If they just asked us to narrow or use a portal, do that instead
+                const bodyLower = (messageData.body_text || '').toLowerCase();
+                if (bodyLower.includes('portal') || bodyLower.includes('nextrequest') || bodyLower.includes('govqa')) {
+                    console.log('Agency suggested portal - use portal instead of arguing');
+                    return {
+                        should_auto_reply: false,
+                        reason: 'Agency has portal - submit there instead of arguing',
+                        suggested_action: 'use_portal'
+                    };
+                }
+            }
+
             let strategy = denialResponsePrompts.denialStrategies[denialSubtype];
 
             if (!strategy) {

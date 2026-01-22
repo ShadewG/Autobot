@@ -47,6 +47,7 @@ import {
   AlertTriangle,
   Clock,
   Mail,
+  Inbox,
   DollarSign,
   FileQuestion,
   ChevronRight,
@@ -66,6 +67,7 @@ import {
   FlaskConical,
   RotateCcw,
   Activity,
+  ArrowRight,
 } from "lucide-react";
 
 const ACTION_TYPE_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
@@ -410,15 +412,15 @@ export default function GatedInboxPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Link
-                        href={`/requests/detail?id=${selectedRun.case_id}`}
-                        className="text-sm text-primary hover:underline"
-                      >
-                        View Case
-                      </Link>
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/requests/detail?id=${selectedRun.case_id}`}>
+                          <ExternalLink className="h-3 w-3 mr-1" />
+                          View Full Case
+                        </Link>
+                      </Button>
                       <Link
                         href={`/runs?id=${selectedRun.id}`}
-                        className="text-sm text-muted-foreground hover:underline"
+                        className="text-xs text-muted-foreground hover:underline"
                       >
                         Run Trace
                       </Link>
@@ -545,6 +547,61 @@ export default function GatedInboxPage() {
                       )}
 
                       <Separator />
+
+                      {/* Inbound Message - what the agency sent */}
+                      {selectedRun.trigger_message && (
+                        <div>
+                          <p className="text-sm font-medium mb-2 flex items-center gap-2">
+                            <Inbox className="h-4 w-4 text-blue-600" />
+                            Agency Response
+                            {selectedRun.trigger_message.classification && (
+                              <Badge variant="outline" className="text-xs ml-2">
+                                {selectedRun.trigger_message.classification}
+                              </Badge>
+                            )}
+                            {selectedRun.trigger_message.sentiment && (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-xs",
+                                  selectedRun.trigger_message.sentiment === 'POSITIVE' && "text-green-600",
+                                  selectedRun.trigger_message.sentiment === 'NEGATIVE' && "text-red-600",
+                                  selectedRun.trigger_message.sentiment === 'HOSTILE' && "text-red-700 bg-red-50"
+                                )}
+                              >
+                                {selectedRun.trigger_message.sentiment}
+                              </Badge>
+                            )}
+                          </p>
+                          <div className="text-xs text-muted-foreground mb-2">
+                            From: <span className="font-medium text-foreground">{selectedRun.trigger_message.from_email}</span>
+                          </div>
+                          {selectedRun.trigger_message.subject && (
+                            <p className="text-sm mb-2">
+                              <span className="text-muted-foreground">Subject:</span>{" "}
+                              {selectedRun.trigger_message.subject}
+                            </p>
+                          )}
+                          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 max-h-[200px] overflow-auto">
+                            <pre className="text-sm whitespace-pre-wrap font-sans">
+                              {selectedRun.trigger_message.body_text || "(No content)"}
+                            </pre>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Arrow showing flow from inbound to response */}
+                      {selectedRun.trigger_message && (
+                        <div className="flex items-center justify-center py-2">
+                          <div className="flex items-center gap-2 text-muted-foreground">
+                            <ArrowRight className="h-4 w-4" />
+                            <span className="text-xs">AI Generated Response</span>
+                            <ArrowRight className="h-4 w-4" />
+                          </div>
+                        </div>
+                      )}
+
+                      {!selectedRun.trigger_message && <Separator />}
 
                       {/* Draft Content */}
                       <div>

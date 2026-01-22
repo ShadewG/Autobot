@@ -811,6 +811,7 @@ router.get('/runs', async (req, res) => {
         ar.status,
         ar.langgraph_thread_id,
         ar.proposal_id,
+        ar.message_id,
         ar.autopilot_mode,
         ar.error AS error_message,
         ar.started_at,
@@ -827,10 +828,18 @@ router.get('/runs', async (req, res) => {
         p.reasoning,
         p.warnings,
         p.status AS proposal_status,
+        m.from_email AS trigger_from_email,
+        m.subject AS trigger_subject,
+        m.body_text AS trigger_body_text,
+        m.created_at AS trigger_received_at,
+        ra.intent AS trigger_classification,
+        ra.sentiment AS trigger_sentiment,
         EXTRACT(EPOCH FROM (NOW() - ar.started_at)) AS duration_seconds
       FROM agent_runs ar
       LEFT JOIN cases c ON ar.case_id = c.id
       LEFT JOIN proposals p ON ar.proposal_id = p.id
+      LEFT JOIN messages m ON ar.message_id = m.id
+      LEFT JOIN response_analysis ra ON ra.message_id = m.id
       WHERE 1=1
     `;
 
@@ -885,6 +894,16 @@ router.get('/runs', async (req, res) => {
           reasoning: row.reasoning,
           warnings: row.warnings,
           status: row.proposal_status
+        } : null,
+        // Triggering inbound message data
+        trigger_message: row.message_id ? {
+          id: String(row.message_id),
+          from_email: row.trigger_from_email,
+          subject: row.trigger_subject,
+          body_text: row.trigger_body_text,
+          received_at: row.trigger_received_at,
+          classification: row.trigger_classification,
+          sentiment: row.trigger_sentiment
         } : null
       };
     });
