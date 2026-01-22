@@ -5669,7 +5669,7 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
             case_id: caseId,
             message_id: `sim-${Date.now()}-${Math.random().toString(36).slice(2)}`,  // Unique identifier
             direction: 'inbound',
-            from_email: from_email || caseData.agency_email || 'agency@test.example.com',
+            from_email: from_email || caseData.agency_email || 'records@agency.gov',
             to_email: process.env.INBOUND_EMAIL || 'foia@autobot.test',
             subject: subject || `RE: ${caseData.case_name || 'FOIA Request'}`,
             body_text: body,

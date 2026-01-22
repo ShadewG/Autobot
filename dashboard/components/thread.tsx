@@ -37,7 +37,7 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
         {channelIcons[message.channel]}
         <span>{isOutbound ? "To:" : "From:"}</span>
         <span className="font-medium truncate max-w-[200px]">
-          {isOutbound ? message.to_email : message.from_email}
+          {isOutbound ? (message.to_email || "Unknown") : (message.from_email || "records@agency.gov")}
         </span>
         <span>•</span>
         <span className="whitespace-nowrap">{formatDateTime(message.sent_at)}</span>

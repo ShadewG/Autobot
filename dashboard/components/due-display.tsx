@@ -30,6 +30,17 @@ const DUE_TYPE_CONFIG = {
   },
 };
 
+/**
+ * Check if a due date is "at risk" (within 48 hours but not yet overdue)
+ */
+function isAtRisk(nextDueAt: string | null): boolean {
+  if (!nextDueAt) return false;
+  const dueDate = new Date(nextDueAt);
+  const now = new Date();
+  const hoursUntilDue = (dueDate.getTime() - now.getTime()) / (1000 * 60 * 60);
+  return hoursUntilDue > 0 && hoursUntilDue <= 48;
+}
+
 interface DueDisplayProps {
   dueInfo?: DueInfo;
   // Fallback for old data format
@@ -107,7 +118,6 @@ export function DueDisplay({ dueInfo, nextDueAt, statutoryDueAt, compact = false
             <span className="font-medium">
               Overdue by {info.overdue_days} day{info.overdue_days !== 1 ? 's' : ''}
             </span>
-            <Badge variant="destructive" className="text-xs">AT RISK</Badge>
           </>
         ) : (
           <>
@@ -116,6 +126,10 @@ export function DueDisplay({ dueInfo, nextDueAt, statutoryDueAt, compact = false
               <span className="text-muted-foreground">{config.label}:</span>{" "}
               <span className="font-medium">{formatDate(info.next_due_at)}</span>
             </span>
+            {/* AT RISK badge only shows when close to due (within 48h) but not yet overdue */}
+            {isAtRisk(info.next_due_at) && (
+              <Badge variant="destructive" className="text-xs">AT RISK</Badge>
+            )}
           </>
         )}
       </div>

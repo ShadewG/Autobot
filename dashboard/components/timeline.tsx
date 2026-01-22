@@ -163,7 +163,7 @@ const eventColors: Record<string, string> = {
 // Category filter configuration
 const CATEGORY_FILTERS = [
   { id: 'MESSAGE', label: 'Messages', icon: MessageSquare, isDecisionRelevant: true },
-  { id: 'STATUS', label: 'Status', icon: Activity, isDecisionRelevant: false },
+  { id: 'STATUS', label: 'Status', icon: Activity, isDecisionRelevant: true },  // Include STATUS in default
   { id: 'COST', label: 'Costs', icon: DollarSign, isDecisionRelevant: true },
   { id: 'RESEARCH', label: 'Research', icon: Search, isDecisionRelevant: false },
   { id: 'AGENT', label: 'Agent', icon: Bot, isDecisionRelevant: true },
