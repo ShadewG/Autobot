@@ -58,12 +58,26 @@ class DatabaseService {
             }
         }
 
+        // Build scope_items_jsonb from requested_records if not provided
+        let scopeItemsJsonb = caseData.scope_items_jsonb;
+        if (!scopeItemsJsonb && caseData.requested_records) {
+            const records = Array.isArray(caseData.requested_records)
+                ? caseData.requested_records
+                : [caseData.requested_records];
+            scopeItemsJsonb = JSON.stringify(records.map(r => ({
+                name: typeof r === 'string' ? r : (r.name || r.description || JSON.stringify(r)),
+                status: 'REQUESTED',
+                reason: null,
+                confidence: null
+            })));
+        }
+
         const query = `
             INSERT INTO cases (
                 notion_page_id, case_name, subject_name, agency_name, agency_email,
                 state, incident_date, incident_location, requested_records,
-                additional_details, status, deadline_date, agency_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                additional_details, status, deadline_date, agency_id, scope_items_jsonb
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *
         `;
         const values = [
@@ -79,7 +93,8 @@ class DatabaseService {
             caseData.additional_details,
             caseData.status || 'ready_to_send',
             caseData.deadline_date,
-            agencyId
+            agencyId,
+            scopeItemsJsonb
         ];
         const result = await this.query(query, values);
         return result.rows[0];

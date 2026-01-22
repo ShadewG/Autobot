@@ -149,6 +149,88 @@ async function executeActionNode(state) {
     case 'APPROVE_FEE':   // Legacy name (for backwards compatibility)
     case 'NEGOTIATE_FEE':
     case 'DECLINE_FEE': {
+      // =========================================================================
+      // VALIDATION - Check all required fields before sending anything
+      // =========================================================================
+      const missingFields = [];
+
+      // Check delivery method
+      const hasEmail = !!caseData.agency_email;
+      const hasPortal = portalExecutor.requiresPortal(caseData);
+      if (!hasEmail && !hasPortal) {
+        missingFields.push('agency_email or portal_url');
+      }
+
+      // Check draft content
+      if (!draftSubject) {
+        missingFields.push('subject');
+      }
+      if (!draftBodyText && !draftBodyHtml) {
+        missingFields.push('body content');
+      }
+
+      // Check case data
+      if (!caseData.agency_name) {
+        missingFields.push('agency_name');
+      }
+
+      // If anything is missing, gate for human review
+      if (missingFields.length > 0) {
+        const pauseReason = `Cannot send: missing ${missingFields.join(', ')}`;
+        logs.push(`BLOCKED: ${pauseReason}`);
+
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          requires_human: true,
+          pause_reason: pauseReason
+        });
+
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null  // Release claim so it can retry after fix
+        });
+
+        return {
+          actionExecuted: false,
+          gatedForReview: true,
+          missingFields,
+          errors: [pauseReason],
+          logs
+        };
+      }
+
+      // =========================================================================
+      // ROUTING - Portal vs Email
+      // =========================================================================
+      if (!hasEmail && hasPortal) {
+        logs.push('No agency_email but portal_url exists - routing to portal executor');
+
+        const portalResult = await portalExecutor.createPortalTask({
+          caseId,
+          caseData,
+          proposalId,
+          runId,
+          actionType: proposalActionType,
+          subject: draftSubject,
+          bodyText: draftBodyText,
+          bodyHtml: draftBodyHtml
+        });
+
+        await db.updateProposal(proposalId, {
+          status: 'PENDING_PORTAL',
+          portalTaskId: portalResult.taskId
+        });
+
+        logs.push(`Portal task created: ${portalResult.taskId}`);
+
+        return {
+          actionExecuted: false,
+          requiresPortal: true,
+          portalTaskId: portalResult.taskId,
+          executionResult: portalResult,
+          logs
+        };
+      }
+
       // Get thread for proper email threading
       const thread = await db.getThreadByCaseId(caseId);
       const latestInbound = await db.getLatestInboundMessage(caseId);

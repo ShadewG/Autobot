@@ -45,10 +45,26 @@ async function loadContextNode(state) {
 
     // Extract constraints and scope from case data (use JSONB columns with fallbacks)
     const constraints = caseData.constraints_jsonb || caseData.constraints || [];
-    const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || caseData.requested_records?.map(r => ({
-      name: r,
-      status: 'REQUESTED'
-    })) || [];
+    let scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
+
+    // If no scope items but we have requested_records, generate and persist them
+    if ((!scopeItems || scopeItems.length === 0) && caseData.requested_records) {
+      const records = Array.isArray(caseData.requested_records)
+        ? caseData.requested_records
+        : [caseData.requested_records];
+      scopeItems = records.map(r => ({
+        name: typeof r === 'string' ? r : (r.name || r.description || JSON.stringify(r)),
+        status: 'REQUESTED',
+        reason: null,
+        confidence: null
+      }));
+
+      // Persist to database so future loads use the JSONB column
+      await db.updateCase(caseId, {
+        scope_items_jsonb: JSON.stringify(scopeItems)
+      });
+      logger.info('Generated and persisted scope_items_jsonb from requested_records', { caseId, count: scopeItems.length });
+    }
 
     return {
       // Store IDs/references, not full objects (fetch in nodes that need them)

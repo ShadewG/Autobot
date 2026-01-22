@@ -271,9 +271,13 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
             console.log(`Analyzing response for case: ${caseData.case_name}`);
 
             // Build requested records list for scope analysis
-            const requestedRecords = Array.isArray(caseData.requested_records)
-                ? caseData.requested_records
-                : (caseData.requested_records ? [caseData.requested_records] : []);
+            // Prefer scope_items_jsonb (structured) over requested_records (legacy)
+            const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
+            const requestedRecords = Array.isArray(scopeItems) && scopeItems.length > 0
+                ? scopeItems.map(item => item.name || item.description || item.item || JSON.stringify(item))
+                : (Array.isArray(caseData.requested_records)
+                    ? caseData.requested_records
+                    : (caseData.requested_records ? [caseData.requested_records] : []));
             const recordsList = requestedRecords.length > 0
                 ? requestedRecords.map((r, i) => `${i + 1}. ${r}`).join('\n')
                 : 'Not specified';
