@@ -14,34 +14,53 @@ const db = require('../../services/database');
 const logger = require('../../services/logger');
 
 /**
+ * Normalize item name for matching:
+ * - Strip number prefix (e.g., "1. ", "2. ")
+ * - Convert to lowercase
+ * - Trim whitespace
+ */
+function normalizeItemName(name) {
+  if (!name) return '';
+  // Strip leading number + period + space (e.g., "1. " or "10. ")
+  const stripped = name.replace(/^\d+\.\s*/, '');
+  return stripped.toLowerCase().trim();
+}
+
+/**
  * Merge scope updates from analysis with existing scope items
  * Handles both 'name' and 'item' formats for compatibility
  */
 function mergeScopeUpdates(existing, updates) {
   // Normalize existing: use 'name' as canonical key, but handle 'item' too
   const byItem = new Map(existing.map(s => {
-    const itemName = (s.name || s.item || '').toLowerCase();
+    const itemName = normalizeItemName(s.name || s.item);
     return [itemName, { ...s, name: s.name || s.item }];
   }));
 
   for (const update of updates) {
     // Handle both 'name' and 'item' in updates
-    const itemName = (update.name || update.item || '').toLowerCase();
+    // Strip number prefix that AI might have included from the prompt
+    const rawName = update.name || update.item || '';
+    const itemName = normalizeItemName(rawName);
     if (!itemName) continue;
 
     if (byItem.has(itemName)) {
-      // Update existing - merge with normalized name
-      const existing = byItem.get(itemName);
+      // Update existing - merge with normalized name (keep original name, not numbered)
+      const existingItem = byItem.get(itemName);
       byItem.set(itemName, {
-        ...existing,
-        ...update,
-        name: existing.name || update.name || update.item
+        ...existingItem,
+        status: update.status || existingItem.status,
+        reason: update.reason || existingItem.reason,
+        confidence: update.confidence || existingItem.confidence,
+        // Keep the original name without number prefix
+        name: existingItem.name
       });
     } else {
-      // Add new with normalized name
+      // Add new with cleaned name (strip number prefix)
+      const cleanName = rawName.replace(/^\d+\.\s*/, '');
       byItem.set(itemName, {
         ...update,
-        name: update.name || update.item
+        name: cleanName
       });
     }
   }
