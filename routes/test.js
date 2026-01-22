@@ -5753,6 +5753,84 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
 });
 
 /**
+ * POST /api/test/cases/:caseId/simulate-outbound
+ *
+ * Simulates an outbound message (our request/reply to agency).
+ * Useful for testing the conversation display.
+ *
+ * Body:
+ * - body: The email body text
+ * - subject: (optional) Email subject
+ * - to_email: (optional) Recipient email
+ * - type: 'initial' | 'reply' (optional, affects subject line)
+ */
+router.post('/cases/:caseId/simulate-outbound', async (req, res) => {
+    const caseId = parseInt(req.params.caseId);
+    const {
+        body = 'This is a FOIA request for records related to the incident.',
+        subject,
+        to_email,
+        type = 'initial'
+    } = req.body;
+
+    try {
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${caseId} not found`
+            });
+        }
+
+        // Get or create thread
+        let thread = await db.getThreadByCaseId(caseId);
+        if (!thread) {
+            const threadResult = await db.query(`
+                INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+                VALUES ($1, $2, NOW(), NOW())
+                RETURNING *
+            `, [caseId, `Thread for case ${caseId}`]);
+            thread = threadResult.rows[0];
+        }
+
+        const defaultSubject = type === 'initial'
+            ? `FOIA Request: ${caseData.case_name || 'Records Request'}`
+            : `RE: ${caseData.case_name || 'Records Request'}`;
+
+        const message = await db.createMessage({
+            thread_id: thread.id,
+            case_id: caseId,
+            message_id: `sim-out-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            direction: 'outbound',
+            from_email: process.env.INBOUND_EMAIL || 'foia@autobot.test',
+            to_email: to_email || caseData.agency_email || 'records@agency.gov',
+            subject: subject || defaultSubject,
+            body_text: body,
+            body_html: `<p>${body.replace(/\n/g, '</p><p>')}</p>`,
+            sent_at: new Date()
+        });
+
+        res.status(201).json({
+            success: true,
+            message: 'Simulated outbound message created',
+            data: {
+                message_id: message.id,
+                thread_id: thread.id,
+                direction: 'outbound',
+                type
+            }
+        });
+
+    } catch (error) {
+        console.error('[simulate-outbound] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * GET /api/test/cases/:caseId/conversation
  *
  * Get the full conversation history for a case (messages + proposals).
