@@ -5831,6 +5831,85 @@ router.post('/cases/:caseId/simulate-outbound', async (req, res) => {
 });
 
 /**
+ * POST /api/test/cases/:caseId/setup-for-e2e
+ *
+ * Sets up a case with required fields for E2E testing:
+ * - Sets agency_email (required for sending)
+ * - Sets status to DRAFT (so initial request can be sent)
+ * - Optionally triggers the initial request flow
+ */
+router.post('/cases/:caseId/setup-for-e2e', async (req, res) => {
+    const caseId = parseInt(req.params.caseId);
+    const {
+        agency_email = 'records@testpd.gov',
+        run_initial = false,
+        autopilot_mode = 'AUTO'
+    } = req.body;
+
+    try {
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: `Case ${caseId} not found`
+            });
+        }
+
+        // Update case with required fields
+        await db.query(`
+            UPDATE cases SET
+                agency_email = $1,
+                status = COALESCE(NULLIF(status, 'CLOSED'), 'draft'),
+                updated_at = NOW()
+            WHERE id = $2
+        `, [agency_email, caseId]);
+
+        const result = {
+            success: true,
+            message: 'Case set up for E2E testing',
+            case_id: caseId,
+            agency_email
+        };
+
+        // Optionally trigger initial request
+        if (run_initial) {
+            const { enqueueInitialRequestJob } = require('../queues/agent-queue');
+
+            // Create agent run record
+            const runResult = await db.query(`
+                INSERT INTO agent_runs (case_id, trigger_type, status, autopilot_mode, langgraph_thread_id, started_at)
+                VALUES ($1, 'initial_request', 'queued', $2, $3, NOW())
+                RETURNING id, langgraph_thread_id
+            `, [caseId, autopilot_mode, `initial:${caseId}:${Date.now()}`]);
+
+            const run = runResult.rows[0];
+
+            // Enqueue the job
+            const job = await enqueueInitialRequestJob(run.id, caseId, {
+                autopilotMode: autopilot_mode,
+                threadId: run.langgraph_thread_id
+            });
+
+            result.run = {
+                id: run.id,
+                status: 'queued',
+                thread_id: run.langgraph_thread_id
+            };
+            result.job_id = job.id;
+        }
+
+        res.json(result);
+
+    } catch (error) {
+        console.error('[setup-for-e2e] Error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * GET /api/test/cases/:caseId/conversation
  *
  * Get the full conversation history for a case (messages + proposals).
