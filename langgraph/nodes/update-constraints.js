@@ -187,9 +187,10 @@ async function updateConstraintsNode(state) {
     const scopeChanged = JSON.stringify(updatedScopeItems) !== JSON.stringify(currentScopeItems);
 
     const updatePayload = {};
-    if (constraintsChanged) updatePayload.constraints_jsonb = newConstraints;
-    if (scopeChanged) updatePayload.scope_items_jsonb = updatedScopeItems;
-    if (feeQuoteUpdate) updatePayload.fee_quote_jsonb = feeQuoteUpdate;
+    // JSONB columns need to be stringified for PostgreSQL pg driver
+    if (constraintsChanged) updatePayload.constraints_jsonb = JSON.stringify(newConstraints);
+    if (scopeChanged) updatePayload.scope_items_jsonb = JSON.stringify(updatedScopeItems);
+    if (feeQuoteUpdate) updatePayload.fee_quote_jsonb = JSON.stringify(feeQuoteUpdate);
 
     if (Object.keys(updatePayload).length > 0) {
       await db.updateCase(caseId, updatePayload);
