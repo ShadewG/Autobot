@@ -294,7 +294,7 @@ class DatabaseService {
         return result.rows[0];
     }
 
-    // Response Analysis
+    // Response Analysis - uses UPSERT to allow AI analysis to update existing records
     async createResponseAnalysis(analysisData) {
         const query = `
             INSERT INTO response_analysis (
@@ -302,6 +302,17 @@ class DatabaseService {
                 key_points, extracted_deadline, extracted_fee_amount,
                 requires_action, suggested_action, full_analysis_json
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (message_id) DO UPDATE SET
+                intent = COALESCE(EXCLUDED.intent, response_analysis.intent),
+                confidence_score = COALESCE(EXCLUDED.confidence_score, response_analysis.confidence_score),
+                sentiment = COALESCE(EXCLUDED.sentiment, response_analysis.sentiment),
+                key_points = COALESCE(EXCLUDED.key_points, response_analysis.key_points),
+                extracted_deadline = COALESCE(EXCLUDED.extracted_deadline, response_analysis.extracted_deadline),
+                extracted_fee_amount = COALESCE(EXCLUDED.extracted_fee_amount, response_analysis.extracted_fee_amount),
+                requires_action = COALESCE(EXCLUDED.requires_action, response_analysis.requires_action),
+                suggested_action = COALESCE(EXCLUDED.suggested_action, response_analysis.suggested_action),
+                full_analysis_json = COALESCE(EXCLUDED.full_analysis_json, response_analysis.full_analysis_json),
+                updated_at = NOW()
             RETURNING *
         `;
         const values = [
