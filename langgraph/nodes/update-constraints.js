@@ -157,23 +157,10 @@ async function updateConstraintsNode(state) {
       }
     }
 
-    // Merge scope updates
-    logger.info('update_constraints: scope_updates from analysis', {
-      caseId,
-      hasUpdates: !!parsed.scope_updates,
-      updatesCount: parsed.scope_updates?.length || 0,
-      currentCount: currentScopeItems.length
-    });
-
+    // Merge scope updates from AI analysis
     const updatedScopeItems = parsed.scope_updates && Array.isArray(parsed.scope_updates)
       ? mergeScopeUpdates(currentScopeItems, parsed.scope_updates)
       : currentScopeItems;
-
-    logger.info('update_constraints: after merge', {
-      caseId,
-      updatedCount: updatedScopeItems.length,
-      sampleUpdate: updatedScopeItems[0]
-    });
 
     // Build fee quote update if fee breakdown available
     let feeQuoteUpdate = null;
@@ -199,15 +186,6 @@ async function updateConstraintsNode(state) {
     const constraintsChanged = JSON.stringify(newConstraints.sort()) !== JSON.stringify(currentConstraints.sort());
     const scopeChanged = JSON.stringify(updatedScopeItems) !== JSON.stringify(currentScopeItems);
 
-    logger.info('update_constraints: change detection', {
-      caseId,
-      constraintsChanged,
-      scopeChanged,
-      hasFeeQuote: !!feeQuoteUpdate,
-      newConstraintsCount: newConstraints.length,
-      currentConstraintsCount: currentConstraints.length
-    });
-
     const updatePayload = {};
     // JSONB columns need to be stringified for PostgreSQL pg driver
     if (constraintsChanged) updatePayload.constraints_jsonb = JSON.stringify(newConstraints);
@@ -215,14 +193,8 @@ async function updateConstraintsNode(state) {
     if (feeQuoteUpdate) updatePayload.fee_quote_jsonb = JSON.stringify(feeQuoteUpdate);
 
     if (Object.keys(updatePayload).length > 0) {
-      logger.info('update_constraints: persisting to DB', {
-        caseId,
-        payloadKeys: Object.keys(updatePayload)
-      });
       await db.updateCase(caseId, updatePayload);
       logs.push('Persisted constraint/scope/fee updates to database');
-    } else {
-      logger.info('update_constraints: no changes to persist', { caseId });
     }
 
     return {
