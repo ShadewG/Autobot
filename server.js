@@ -60,6 +60,7 @@ const runEngineRoutes = require('./routes/run-engine');
 const portalTasksRoutes = require('./routes/portal-tasks');
 const shadowModeRoutes = require('./routes/shadow-mode');
 const casesRoutes = require('./routes/cases');
+const monitorRoutes = require('./routes/monitor');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
@@ -70,6 +71,7 @@ app.use('/api', runEngineRoutes);  // Run Engine (Phase 3): /api/cases/:id/run-*
 app.use('/api/portal-tasks', portalTasksRoutes);  // Portal Tasks (Phase 4): manual submission tracking
 app.use('/api/shadow', shadowModeRoutes);  // Shadow Mode (Phase 7.1): review tracking and metrics
 app.use('/api/cases', casesRoutes);  // Cases: /api/cases/import-notion
+app.use('/api/monitor', monitorRoutes);  // Monitor: /api/monitor/* for debugging
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
