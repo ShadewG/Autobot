@@ -158,6 +158,86 @@
         .expandable:hover {
             color: #58a6ff;
         }
+
+        /* Send Test Email Form */
+        .send-form {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .send-form h3 {
+            color: #58a6ff;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .form-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: flex-end;
+        }
+        .form-group {
+            flex: 1;
+        }
+        .form-group label {
+            display: block;
+            color: #8b949e;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 8px 12px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #c9d1d9;
+            font-size: 13px;
+        }
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+        .form-group textarea {
+            resize: vertical;
+            min-height: 60px;
+        }
+        .send-btn {
+            padding: 8px 20px;
+            background: #1f6feb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        .send-btn:hover { background: #388bfd; }
+        .send-btn:disabled { background: #21262d; cursor: not-allowed; }
+        .send-result {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            display: none;
+        }
+        .send-result.success {
+            background: #238636;
+            color: white;
+            display: block;
+        }
+        .send-result.error {
+            background: #f85149;
+            color: white;
+            display: block;
+        }
+        .config-info {
+            color: #8b949e;
+            font-size: 11px;
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -198,6 +278,31 @@
         <div class="stat-box">
             <div class="label">Queue (Email)</div>
             <div class="value" id="queueEmail">-</div>
+        </div>
+    </div>
+
+    <!-- Send Test Email Form -->
+    <div class="send-form">
+        <h3>Send Test Email</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="emailTo">To Email</label>
+                <input type="email" id="emailTo" placeholder="recipient@example.com">
+            </div>
+            <div class="form-group">
+                <label for="emailSubject">Subject</label>
+                <input type="text" id="emailSubject" placeholder="Test Email Subject" value="[TEST] Autobot Email Test">
+            </div>
+            <button class="send-btn" onclick="sendTestEmail()">Send Email</button>
+        </div>
+        <div class="form-group">
+            <label for="emailBody">Body (optional)</label>
+            <textarea id="emailBody" placeholder="This is a test email. Please reply to test inbound detection."></textarea>
+        </div>
+        <div id="sendResult" class="send-result"></div>
+        <div class="config-info">
+            From: <span id="configFrom">loading...</span> |
+            Reply to this address to test inbound webhook
         </div>
     </div>
 
@@ -452,8 +557,71 @@
         document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
         document.getElementById('refreshInterval').addEventListener('change', setupAutoRefresh);
 
+        // Load email config
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/monitor/config');
+                const config = await res.json();
+                document.getElementById('configFrom').textContent = config.from_email;
+            } catch (err) {
+                document.getElementById('configFrom').textContent = 'Error loading config';
+            }
+        }
+
+        // Send test email
+        async function sendTestEmail() {
+            const to = document.getElementById('emailTo').value.trim();
+            const subject = document.getElementById('emailSubject').value.trim();
+            const body = document.getElementById('emailBody').value.trim();
+            const resultDiv = document.getElementById('sendResult');
+            const sendBtn = document.querySelector('.send-btn');
+
+            if (!to) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = 'Please enter a recipient email address';
+                return;
+            }
+
+            if (!subject) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = 'Please enter a subject';
+                return;
+            }
+
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'Sending...';
+            resultDiv.style.display = 'none';
+
+            try {
+                const res = await fetch('/api/monitor/send-test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ to, subject, body: body || undefined })
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+                    resultDiv.className = 'send-result success';
+                    resultDiv.textContent = `Email sent to ${to}! Message ID: ${data.message_id}. Reply to ${data.from} to test inbound.`;
+                    // Refresh data to show new outbound
+                    setTimeout(loadData, 1000);
+                } else {
+                    resultDiv.className = 'send-result error';
+                    resultDiv.textContent = `Failed: ${data.error}`;
+                }
+            } catch (err) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = `Error: ${err.message}`;
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'Send Email';
+            }
+        }
+
         // Initial load
         loadData();
+        loadConfig();
         setupAutoRefresh();
     </script>
 </body>

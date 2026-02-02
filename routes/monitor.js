@@ -1,6 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const sgMail = require('@sendgrid/mail');
+
+// Initialize SendGrid
+if (process.env.SENDGRID_API_KEY) {
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
 
 /**
  * Monitor Dashboard - View all system activity for debugging
@@ -294,6 +300,82 @@ router.get('/unmatched', async (req, res) => {
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
+});
+
+/**
+ * POST /api/monitor/send-test
+ * Send a test email and track it for replies
+ */
+router.post('/send-test', express.json(), async (req, res) => {
+    try {
+        const { to, subject, body } = req.body;
+
+        if (!to || !subject) {
+            return res.status(400).json({ error: 'Missing required fields: to, subject' });
+        }
+
+        const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'samuel@matcher.com';
+        const fromName = process.env.SENDGRID_FROM_NAME || 'Samuel Hylton';
+        const emailBody = body || 'This is a test email from the Autobot monitor. Please reply to test inbound email detection.';
+
+        // Send via SendGrid
+        const msg = {
+            to: to,
+            from: { email: fromEmail, name: fromName },
+            replyTo: fromEmail,
+            subject: subject,
+            text: emailBody,
+            html: `<p>${emailBody.replace(/\n/g, '<br>')}</p>`
+        };
+
+        const [response] = await sgMail.send(msg);
+        const sendgridMessageId = response?.headers?.['x-message-id'] || null;
+
+        // Save to database for tracking
+        const messageResult = await db.query(`
+            INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, sent_at, sendgrid_message_id, created_at)
+            VALUES ('outbound', $1, $2, $3, $4, $5, NOW(), $6, NOW())
+            RETURNING id
+        `, [fromEmail, to, subject, emailBody, msg.html, sendgridMessageId]);
+
+        const messageId = messageResult.rows[0]?.id;
+
+        // Log activity
+        await db.logActivity('test_email_sent', `Test email sent to ${to}`, {
+            message_id: messageId,
+            to,
+            subject,
+            sendgrid_message_id: sendgridMessageId
+        });
+
+        res.json({
+            success: true,
+            message: 'Test email sent successfully',
+            message_id: messageId,
+            sendgrid_message_id: sendgridMessageId,
+            from: fromEmail,
+            to: to,
+            subject: subject,
+            note: `Reply to ${fromEmail} to test inbound detection`
+        });
+
+    } catch (error) {
+        console.error('Failed to send test email:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/monitor/config
+ * Get current email configuration
+ */
+router.get('/config', async (req, res) => {
+    res.json({
+        from_email: process.env.SENDGRID_FROM_EMAIL || 'samuel@matcher.com',
+        from_name: process.env.SENDGRID_FROM_NAME || 'Samuel Hylton',
+        sendgrid_configured: !!process.env.SENDGRID_API_KEY,
+        inbound_webhook: '/webhooks/inbound'
+    });
 });
 
 module.exports = router;
