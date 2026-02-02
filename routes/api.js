@@ -369,11 +369,15 @@ router.post('/test-sendgrid', async (req, res) => {
     try {
         const sendgridService = require('../services/sendgrid-service');
 
+        // Use foib-request.com - this is where Inbound Parse is configured
+        const fromEmail = 'requests@foib-request.com';
+        const fromName = 'FOIA Request Team';
+
         // Check if env vars are set
         const config = {
             api_key_set: !!process.env.SENDGRID_API_KEY,
-            from_email: process.env.SENDGRID_FROM_EMAIL || 'not set',
-            from_name: process.env.SENDGRID_FROM_NAME || 'not set',
+            from_email: fromEmail,
+            from_name: fromName,
             test_email: process.env.DEFAULT_TEST_EMAIL || 'not set'
         };
 
@@ -391,10 +395,11 @@ router.post('/test-sendgrid', async (req, res) => {
 
         const msg = {
             to: req.body.to || process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com',
-            from: process.env.SENDGRID_FROM_EMAIL || 'samuel@matcher.com',
-            subject: 'Test Email from Railway - Autobot MVP',
-            text: `This is a test email sent at ${new Date().toISOString()}`,
-            html: `<p>This is a test email sent from Railway at ${new Date().toISOString()}</p>`
+            from: { email: fromEmail, name: fromName },
+            replyTo: fromEmail,
+            subject: '[TEST] Email from Autobot - Reply to test inbound',
+            text: `This is a test email sent at ${new Date().toISOString()}\n\nReply to this email to test inbound webhook detection.`,
+            html: `<p>This is a test email sent at ${new Date().toISOString()}</p><p><strong>Reply to this email</strong> to test inbound webhook detection.</p>`
         };
 
         await sgMail.send(msg);

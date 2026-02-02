@@ -314,8 +314,9 @@ router.post('/send-test', express.json(), async (req, res) => {
             return res.status(400).json({ error: 'Missing required fields: to, subject' });
         }
 
-        const fromEmail = process.env.SENDGRID_FROM_EMAIL || 'samuel@matcher.com';
-        const fromName = process.env.SENDGRID_FROM_NAME || 'Samuel Hylton';
+        // Use foib-request.com domain - this is where Inbound Parse is configured
+        const fromEmail = 'requests@foib-request.com';
+        const fromName = 'FOIA Request Team';
         const emailBody = body || 'This is a test email from the Autobot monitor. Please reply to test inbound email detection.';
 
         // Send via SendGrid
@@ -371,10 +372,11 @@ router.post('/send-test', express.json(), async (req, res) => {
  */
 router.get('/config', async (req, res) => {
     res.json({
-        from_email: process.env.SENDGRID_FROM_EMAIL || 'samuel@matcher.com',
-        from_name: process.env.SENDGRID_FROM_NAME || 'Samuel Hylton',
+        from_email: 'requests@foib-request.com',
+        from_name: 'FOIA Request Team',
         sendgrid_configured: !!process.env.SENDGRID_API_KEY,
-        inbound_webhook: '/webhooks/inbound'
+        inbound_webhook: '/webhooks/inbound',
+        inbound_domains: ['foib-request.com', 'foia.foib-request.com', 'c.foib-request.com']
     });
 });
 
