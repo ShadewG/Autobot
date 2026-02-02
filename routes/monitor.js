@@ -42,6 +42,16 @@ router.get('/', async (req, res) => {
         const inbound = messages.filter(m => m.direction === 'inbound');
         const outbound = messages.filter(m => m.direction === 'outbound');
 
+        // Get actual total counts (not limited)
+        const countsResult = await db.query(`
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE direction = 'inbound') as inbound_total,
+                COUNT(*) FILTER (WHERE direction = 'outbound') as outbound_total
+            FROM messages
+        `);
+        const counts = countsResult.rows[0];
+
         // Get recent activity logs
         const activityResult = await db.query(`
             SELECT
@@ -107,10 +117,11 @@ router.get('/', async (req, res) => {
             success: true,
             timestamp: new Date().toISOString(),
             summary: {
-                total_messages: messages.length,
-                inbound_count: inbound.length,
-                outbound_count: outbound.length,
-                activity_count: activityResult.rows.length
+                total_messages: parseInt(counts.total) || 0,
+                inbound_count: parseInt(counts.inbound_total) || 0,
+                outbound_count: parseInt(counts.outbound_total) || 0,
+                activity_count: activityResult.rows.length,
+                showing: messages.length
             },
             queue: queueStatus,
             case_stats: statsResult.rows,
