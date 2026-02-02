@@ -3,6 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const axios = require('axios');
 const sendgridService = require('../services/sendgrid-service');
+const db = require('../services/database');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
 
 /**
@@ -91,6 +92,15 @@ const upload = multer({
 router.post('/inbound', upload.any(), async (req, res) => {
     try {
         console.log('Received inbound email webhook from SendGrid');
+
+        // Log webhook hit immediately for debugging
+        await db.logActivity('webhook_received', `Inbound webhook hit from ${req.body.from || req.body.sender || 'unknown'}`, {
+            from: req.body.from || req.body.sender,
+            to: req.body.to || req.body.recipient,
+            subject: req.body.subject,
+            ip: req.ip,
+            user_agent: req.headers['user-agent']
+        }).catch(e => console.error('Failed to log webhook hit:', e));
         console.log('Content-Type:', req.headers['content-type']);
         console.log('Body keys:', Object.keys(req.body));
         console.log('From:', req.body.from);
@@ -236,6 +246,34 @@ router.post('/inbound', upload.any(), async (req, res) => {
             });
         } else {
             console.warn('Inbound email could not be matched to a case');
+
+            // Save unmatched email to database for debugging
+            try {
+                const unmatchedMsg = await db.query(`
+                    INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, received_at, created_at)
+                    VALUES ('inbound', $1, $2, $3, $4, $5, NOW(), NOW())
+                    RETURNING id
+                `, [
+                    inboundData.from || inboundData.sender || 'unknown',
+                    inboundData.to || inboundData.recipient || 'unknown',
+                    inboundData.subject || '(no subject)',
+                    emailText || inboundData.text || inboundData.body_text || '',
+                    emailHtml || inboundData.html || inboundData.body_html || ''
+                ]);
+
+                // Log to activity
+                await db.logActivity('webhook_unmatched', `Unmatched inbound from ${inboundData.from || 'unknown'}`, {
+                    message_id: unmatchedMsg.rows[0]?.id,
+                    from: inboundData.from || inboundData.sender,
+                    to: inboundData.to || inboundData.recipient,
+                    subject: inboundData.subject
+                });
+
+                console.log(`Saved unmatched email with ID: ${unmatchedMsg.rows[0]?.id}`);
+            } catch (saveErr) {
+                console.error('Failed to save unmatched email:', saveErr);
+            }
+
             res.status(200).json({
                 success: true,
                 message: 'Email received but could not match to a case'
