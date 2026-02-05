@@ -541,7 +541,12 @@ router.post('/message/:id/reply', express.json(), async (req, res) => {
 router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
     try {
         const messageId = parseInt(req.params.id);
-        const { autopilotMode = 'SUPERVISED', force_new_run = false } = req.body || {};
+        const {
+            autopilotMode = 'SUPERVISED',
+            force_new_run = false,
+            body_text_override,
+            subject_override
+        } = req.body || {};
 
         const message = await db.getMessageById(messageId);
         if (!message) {
@@ -585,8 +590,8 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
 
         let inboundMessage = message;
 
-        // If the message was already processed, clone it for a fresh run
-        if (message.processed_at) {
+        // If override provided, always clone so we control the content
+        if (body_text_override || subject_override || message.processed_at) {
             const newMessageId = `monitor:${message.id}:${Date.now()}:${crypto.randomBytes(4).toString('hex')}`;
             inboundMessage = await db.createMessage({
                 thread_id: message.thread_id,
@@ -596,8 +601,8 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
                 direction: 'inbound',
                 from_email: message.from_email,
                 to_email: message.to_email,
-                subject: message.subject,
-                body_text: message.body_text || '(empty body)',
+                subject: subject_override || message.subject,
+                body_text: body_text_override || message.body_text || '(empty body)',
                 body_html: message.body_html || null,
                 message_type: 'manual_trigger',
                 received_at: new Date()

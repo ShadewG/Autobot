@@ -541,6 +541,8 @@
         <div class="drawer-section">
             <div class="drawer-label">Subject</div>
             <div class="drawer-value" id="drawerSubject">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Message ID</div>
+            <div class="drawer-value" id="drawerMessageId">-</div>
         </div>
 
         <div class="drawer-section">
@@ -836,6 +838,7 @@
 
                 currentMessage = data.message;
                 document.getElementById('drawerSubject').textContent = data.message.subject || '-';
+                document.getElementById('drawerMessageId').textContent = data.message.id || '-';
                 document.getElementById('drawerFrom').textContent = data.message.from_email || '-';
                 document.getElementById('drawerTo').textContent = data.message.to_email || '-';
                 document.getElementById('drawerDirection').textContent = data.message.direction || '-';
@@ -969,10 +972,17 @@
             appendLog(`Triggering AI (${mode}${force ? ', force' : ''}) for message ${currentMessage.id}...`);
 
             try {
+                const overrideBody = document.getElementById('drawerBody').textContent || '';
+                const overrideSubject = document.getElementById('drawerSubject').textContent || '';
                 const res = await fetch(`/api/monitor/message/${currentMessage.id}/trigger-ai`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ autopilotMode: mode, force_new_run: force })
+                    body: JSON.stringify({
+                        autopilotMode: mode,
+                        force_new_run: force,
+                        body_text_override: overrideBody,
+                        subject_override: overrideSubject
+                    })
                 });
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error || 'Failed to trigger AI');
