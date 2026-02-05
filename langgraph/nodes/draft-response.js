@@ -16,7 +16,8 @@ async function draftResponseNode(state) {
   const {
     caseId, proposalActionType, constraints, scopeItems,
     extractedFeeAmount, adjustmentInstruction: stateAdjustmentInstruction,
-    llmStubs
+    llmStubs,
+    latestInboundMessageId
   } = state;
 
   const logs = [];
@@ -37,10 +38,25 @@ async function draftResponseNode(state) {
     }
 
     const caseData = await db.getCaseById(caseId);
-    const messages = await db.getMessagesByCaseId(caseId);
-    const latestInbound = messages.filter(m => m.direction === 'inbound').pop();
-    const latestAnalysis = latestInbound ?
-      await db.getResponseAnalysisByMessageId(latestInbound.id) : null;
+
+    // Prefer the inbound message that triggered this run
+    let latestInbound = null;
+    let latestAnalysis = null;
+    if (latestInboundMessageId) {
+      latestInbound = await db.getMessageById(latestInboundMessageId);
+      latestAnalysis = latestInbound
+        ? await db.getResponseAnalysisByMessageId(latestInboundMessageId)
+        : null;
+    }
+
+    // Fallback to most recent inbound if trigger message missing
+    if (!latestInbound) {
+      const messages = await db.getMessagesByCaseId(caseId);
+      latestInbound = messages.filter(m => m.direction === 'inbound').pop();
+      latestAnalysis = latestInbound
+        ? await db.getResponseAnalysisByMessageId(latestInbound.id)
+        : null;
+    }
 
     let draft = { subject: null, body_text: null, body_html: null };
 
