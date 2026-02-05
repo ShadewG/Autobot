@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -24,12 +26,17 @@ export function NotionImport({ onImported }: NotionImportProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [notionUrl, setNotionUrl] = useState("");
+  const [autoSend, setAutoSend] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
+  const [isAutoSending, setIsAutoSending] = useState(false);
   const [result, setResult] = useState<{
     success: boolean;
     message: string;
     caseId?: number;
     caseName?: string;
+    autoSendStatus?: "pending" | "success" | "error";
+    autoSendMessage?: string;
+    autoSendError?: string;
   } | null>(null);
 
   const handleImport = async () => {
@@ -47,9 +54,42 @@ export function NotionImport({ onImported }: NotionImportProps) {
           message: response.message,
           caseId: response.case_id,
           caseName: (response as any).case?.case_name || `Case #${response.case_id}`,
+          autoSendStatus: autoSend ? "pending" : undefined,
         });
 
         onImported?.(response.case_id);
+
+        if (autoSend) {
+          setIsAutoSending(true);
+          try {
+            const runResponse = await casesAPI.runInitial(response.case_id, {
+              autopilotMode: "AUTO",
+            });
+
+            setResult((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    autoSendStatus: "success",
+                    autoSendMessage:
+                      runResponse.message || "Initial request queued to send",
+                  }
+                : prev
+            );
+          } catch (error: any) {
+            setResult((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    autoSendStatus: "error",
+                    autoSendError: error?.message || "Failed to start initial send",
+                  }
+                : prev
+            );
+          } finally {
+            setIsAutoSending(false);
+          }
+        }
       } else {
         setResult({
           success: false,
@@ -75,6 +115,7 @@ export function NotionImport({ onImported }: NotionImportProps) {
 
   const handleReset = () => {
     setNotionUrl("");
+    setAutoSend(true);
     setResult(null);
   };
 
@@ -104,6 +145,17 @@ export function NotionImport({ onImported }: NotionImportProps) {
                     <p className="font-medium text-green-800">{result.message}</p>
                     {result.caseName && (
                       <p className="text-sm text-green-700">{result.caseName}</p>
+                    )}
+                    {result.autoSendStatus === "pending" && (
+                      <p className="text-xs text-amber-700 mt-1">
+                        Queuing generation + send in AUTO mode...
+                      </p>
+                    )}
+                    {result.autoSendStatus === "success" && result.autoSendMessage && (
+                      <p className="text-xs text-green-700 mt-1">{result.autoSendMessage}</p>
+                    )}
+                    {result.autoSendStatus === "error" && result.autoSendError && (
+                      <p className="text-xs text-red-700 mt-1">{result.autoSendError}</p>
                     )}
                   </div>
                 </div>
@@ -154,6 +206,19 @@ export function NotionImport({ onImported }: NotionImportProps) {
                   The Notion integration must have access to this page.
                 </p>
               </div>
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label className="text-sm">Auto-send after import</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Imports, then immediately queues generation + send in AUTO mode.
+                  </p>
+                </div>
+                <Switch
+                  id="auto-send"
+                  checked={autoSend}
+                  onCheckedChange={(checked) => setAutoSend(!!checked)}
+                />
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>
@@ -161,7 +226,7 @@ export function NotionImport({ onImported }: NotionImportProps) {
               </Button>
               <Button
                 onClick={handleImport}
-                disabled={!notionUrl.trim() || isImporting}
+                disabled={!notionUrl.trim() || isImporting || isAutoSending}
               >
                 {isImporting ? (
                   <>

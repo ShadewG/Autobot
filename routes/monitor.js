@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const sgMail = require('@sendgrid/mail');
+const { enqueueInboundMessageJob } = require('../queues/agent-queue');
+const crypto = require('crypto');
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
@@ -378,6 +380,223 @@ router.get('/config', async (req, res) => {
         inbound_webhook: '/webhooks/inbound',
         inbound_domains: ['foib-request.com', 'foia.foib-request.com', 'c.foib-request.com']
     });
+});
+
+/**
+ * GET /api/monitor/message/:id
+ * Get full message details for drawer view
+ */
+router.get('/message/:id', async (req, res) => {
+    try {
+        const messageId = parseInt(req.params.id);
+        const message = await db.getMessageById(messageId);
+
+        if (!message) {
+            return res.status(404).json({ success: false, error: 'Message not found' });
+        }
+
+        let caseData = null;
+        if (message.case_id) {
+            caseData = await db.getCaseById(message.case_id);
+        } else if (message.thread_id) {
+            const thread = await db.getThreadById(message.thread_id);
+            if (thread?.case_id) {
+                caseData = await db.getCaseById(thread.case_id);
+            }
+        }
+
+        res.json({
+            success: true,
+            message,
+            case: caseData ? {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                agency_name: caseData.agency_name,
+                agency_email: caseData.agency_email,
+                status: caseData.status
+            } : null
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/monitor/message/:id/reply
+ * Send a reply to an inbound message
+ */
+router.post('/message/:id/reply', express.json(), async (req, res) => {
+    try {
+        const messageId = parseInt(req.params.id);
+        const { subject, body } = req.body || {};
+
+        if (!body) {
+            return res.status(400).json({ success: false, error: 'body is required' });
+        }
+
+        const message = await db.getMessageById(messageId);
+        if (!message) {
+            return res.status(404).json({ success: false, error: 'Message not found' });
+        }
+
+        if (message.direction !== 'inbound') {
+            return res.status(400).json({ success: false, error: 'Can only reply to inbound messages' });
+        }
+
+        const caseData = message.case_id ? await db.getCaseById(message.case_id) : null;
+        if (!caseData) {
+            return res.status(400).json({ success: false, error: 'Message is not associated with a case' });
+        }
+
+        const replySubject = subject || `Re: ${message.subject || ''}`.trim();
+        const emailBody = body;
+
+        const msg = {
+            to: message.from_email,
+            from: { email: 'requests@foib-request.com', name: 'FOIA Request Team' },
+            replyTo: 'requests@foib-request.com',
+            subject: replySubject,
+            text: emailBody,
+            html: `<p>${emailBody.replace(/\n/g, '<br>')}</p>`,
+            headers: {
+                'In-Reply-To': message.message_id || undefined,
+                'References': message.message_id || undefined
+            }
+        };
+
+        const [response] = await sgMail.send(msg);
+        const sendgridMessageId = response?.headers?.['x-message-id'] || null;
+
+        const messageResult = await db.query(`
+            INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, sent_at, sendgrid_message_id, created_at, thread_id, case_id, message_type)
+            VALUES ('outbound', $1, $2, $3, $4, $5, NOW(), $6, NOW(), $7, $8, 'manual_reply')
+            RETURNING id
+        `, ['requests@foib-request.com', message.from_email, replySubject, emailBody, msg.html, sendgridMessageId, message.thread_id, caseData.id]);
+
+        const newMessageId = messageResult.rows[0]?.id;
+
+        await db.logActivity('manual_reply_sent', `Manual reply sent to ${message.from_email}`, {
+            message_id: newMessageId,
+            case_id: caseData.id,
+            in_reply_to: messageId
+        });
+
+        res.json({
+            success: true,
+            message: 'Reply sent',
+            message_id: newMessageId,
+            sendgrid_message_id: sendgridMessageId
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/monitor/message/:id/trigger-ai
+ * Trigger AI processing for the selected inbound message
+ */
+router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
+    try {
+        const messageId = parseInt(req.params.id);
+        const { autopilotMode = 'SUPERVISED', force_new_run = false } = req.body || {};
+
+        const message = await db.getMessageById(messageId);
+        if (!message) {
+            return res.status(404).json({ success: false, error: 'Message not found' });
+        }
+
+        if (message.direction !== 'inbound') {
+            return res.status(400).json({ success: false, error: 'Only inbound messages can be processed' });
+        }
+
+        const caseData = message.case_id ? await db.getCaseById(message.case_id) : null;
+        if (!caseData) {
+            return res.status(400).json({ success: false, error: 'Message is not associated with a case' });
+        }
+
+        // If there's an active run, optionally cancel it
+        const existingRun = await db.getActiveRunForCase(caseData.id);
+        if (existingRun) {
+            if (!force_new_run) {
+                return res.status(409).json({
+                    success: false,
+                    error: 'Case already has an active agent run',
+                    hint: 'Set force_new_run: true to cancel the active run, or wait for it to complete',
+                    activeRun: {
+                        id: existingRun.id,
+                        status: existingRun.status,
+                        trigger_type: existingRun.trigger_type,
+                        started_at: existingRun.started_at
+                    }
+                });
+            }
+
+            await db.query(`
+                UPDATE agent_runs
+                SET status = 'failed',
+                    ended_at = NOW(),
+                    error = 'Cancelled by monitor trigger force_new_run'
+                WHERE id = $1
+            `, [existingRun.id]);
+        }
+
+        let inboundMessage = message;
+
+        // If the message was already processed, clone it for a fresh run
+        if (message.processed_at) {
+            const newMessageId = `monitor:${message.id}:${Date.now()}:${crypto.randomBytes(4).toString('hex')}`;
+            inboundMessage = await db.createMessage({
+                thread_id: message.thread_id,
+                case_id: caseData.id,
+                message_id: newMessageId,
+                sendgrid_message_id: null,
+                direction: 'inbound',
+                from_email: message.from_email,
+                to_email: message.to_email,
+                subject: message.subject,
+                body_text: message.body_text || '(empty body)',
+                body_html: message.body_html || null,
+                message_type: 'manual_trigger',
+                received_at: new Date()
+            });
+        }
+
+        const run = await db.createAgentRunFull({
+            case_id: caseData.id,
+            trigger_type: 'inbound_message',
+            status: 'queued',
+            message_id: inboundMessage.id,
+            autopilot_mode: autopilotMode,
+            langgraph_thread_id: `case:${caseData.id}:msg-${inboundMessage.id}`
+        });
+
+        const job = await enqueueInboundMessageJob(run.id, caseData.id, inboundMessage.id, {
+            autopilotMode,
+            threadId: run.langgraph_thread_id
+        });
+
+        await db.logActivity('manual_ai_trigger', `AI triggered for inbound message ${messageId}`, {
+            case_id: caseData.id,
+            message_id: messageId,
+            autopilotMode,
+            force_new_run
+        });
+
+        res.json({
+            success: true,
+            run: {
+                id: run.id,
+                status: run.status,
+                message_id: inboundMessage.id,
+                thread_id: run.langgraph_thread_id
+            },
+            job_id: job?.id || null,
+            note: inboundMessage.id === message.id ? 'Triggered on existing message' : 'Triggered on cloned message'
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 module.exports = router;

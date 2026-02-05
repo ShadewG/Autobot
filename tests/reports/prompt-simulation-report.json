@@ -1,0 +1,119 @@
+{
+  "timestamp": "2026-01-22T11:09:42.192Z",
+  "summary": {
+    "total": 6,
+    "passed": 0,
+    "failed": 6,
+    "passRate": 0,
+    "invariantViolations": 0,
+    "warnings": 0,
+    "jsonValidRate": 100,
+    "portalCorrectRate": 100,
+    "noEmailValidityRate": 100,
+    "noStatuteCitationsRate": 100
+  },
+  "pass_standards": {
+    "json_valid": {
+      "target": 100,
+      "actual": 100
+    },
+    "portal_no_response": {
+      "target": 100,
+      "actual": 100
+    },
+    "no_email_validity_args": {
+      "target": 100,
+      "actual": 100
+    },
+    "no_statute_citations": {
+      "target": 100,
+      "actual": 100
+    }
+  },
+  "results": [
+    {
+      "fixture_id": "portal_redirect_simple",
+      "category": "no_response",
+      "description": "Agency redirects to NextRequest portal with URL",
+      "passed": false,
+      "invariant_violations": [],
+      "errors": [
+        "Exception: "
+      ],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 3844
+    },
+    {
+      "fixture_id": "portal_redirect_no_url",
+      "category": "no_response",
+      "description": "Agency mentions portal but no direct link",
+      "passed": false,
+      "invariant_violations": [],
+      "errors": [
+        "Exception: "
+      ],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 3389
+    },
+    {
+      "fixture_id": "acknowledgment",
+      "category": "no_response",
+      "description": "Simple acknowledgment of receipt",
+      "passed": false,
+      "invariant_violations": [],
+      "errors": [
+        "Exception: "
+      ],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 6084
+    },
+    {
+      "fixture_id": "records_ready_link",
+      "category": "no_response",
+      "description": "Records available for download with link",
+      "passed": false,
+      "invariant_violations": [],
+      "errors": [
+        "Exception: "
+      ],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 7192
+    },
+    {
+      "fixture_id": "delivery_attached",
+      "category": "no_response",
+      "description": "Records attached directly to email",
+      "passed": false,
+      "invariant_violations": [],
+      "errors": [
+        "Exception: "
+      ],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 3158
+    },
+    {
+      "fixture_id": "partial_delivery_more_coming",
+      "category": "no_response",
+      "description": "Partial records delivered, more coming",
+      "passed": false,
+      "invariant_violations": [],
+      "errors": [
+        "Exception: "
+      ],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 5459
+    }
+  ]
+}

@@ -1,0 +1,664 @@
+{
+  "timestamp": "2026-01-23T11:39:56.252Z",
+  "model": "gpt-4o-mini",
+  "summary": {
+    "passed": 23,
+    "failed": 1,
+    "total": 24
+  },
+  "results": [
+    {
+      "fixture_id": "portal_redirect_simple",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": "https://raleighnc.nextrequest.com",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Use NextRequest for public records",
+          "Submit request through online portal",
+          "Faster processing guaranteed",
+          "Track request status online",
+          "Thank you from Records Division"
+        ],
+        "summary": "The Raleigh Police Department requests you to submit your FOIA request via their portal for faster processing."
+      },
+      "followup_text": null,
+      "duration_ms": 4004
+    },
+    {
+      "fixture_id": "portal_redirect_no_url",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": "https://govqa.charlotte.gov",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Submit requests through GovQA portal",
+          "Cannot process email requests",
+          "Search for 'Charlotte CMPD records request'",
+          "Public records requests only via portal",
+          "No fee mentioned"
+        ],
+        "summary": "Requests must be submitted through the GovQA portal. Email requests are not accepted."
+      },
+      "followup_text": null,
+      "duration_ms": 4127
+    },
+    {
+      "fixture_id": "acknowledgment",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "acknowledgment",
+        "confidence": 1,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": "2024-01-10",
+        "requires_response": false,
+        "suggested_action": "wait",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Request received and assigned a tracking number",
+          "Response expected within 5 business days",
+          "Acknowledgment of patience appreciated",
+          "From Chicago Police Department",
+          "Subject to Illinois FOIA"
+        ],
+        "summary": "The agency has acknowledged receipt of the FOIA request and will respond within 5 business days."
+      },
+      "followup_text": null,
+      "duration_ms": 3545
+    },
+    {
+      "fixture_id": "records_ready_link",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "records_ready",
+        "confidence": 1,
+        "sentiment": "positive",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "download",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Records are available for download",
+          "Link expires in 30 days",
+          "Total files: 3",
+          "Total size: 245 MB"
+        ],
+        "summary": "The requested records are ready for download. Access them via the provided link."
+      },
+      "followup_text": null,
+      "duration_ms": 3252
+    },
+    {
+      "fixture_id": "delivery_attached",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "records_ready",
+        "confidence": 1,
+        "sentiment": "positive",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "download",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Requested records are attached",
+          "Includes incident report and audio",
+          "No further action needed",
+          "Contact for questions",
+          "Request is complete"
+        ],
+        "summary": "The requested records are attached to the email. No further action is needed."
+      },
+      "followup_text": null,
+      "duration_ms": 4046
+    },
+    {
+      "fixture_id": "partial_delivery_more_coming",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "partial_delivery",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": "2023-11-10",
+        "requires_response": false,
+        "suggested_action": "wait",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Partial release of records provided",
+          "Incident report and 911 audio attached",
+          "Body-worn camera footage pending",
+          "Footage expected in 10 business days",
+          "From Phoenix Police Department"
+        ],
+        "summary": "A partial release of records has been provided, with more to follow in 10 days."
+      },
+      "followup_text": null,
+      "duration_ms": 2801
+    },
+    {
+      "fixture_id": "more_info_needed",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "question",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "respond",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Need exact date of the incident",
+          "Request DR number or case number",
+          "Specify address or intersection",
+          "Additional information required",
+          "Proceeding depends on response"
+        ],
+        "summary": "The agency requires more information to locate records. Please respond with details."
+      },
+      "followup_text": null,
+      "duration_ms": 5586
+    },
+    {
+      "fixture_id": "direct_question",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "question",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "respond",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Confirmation needed on footage type",
+          "Body-worn camera footage requested",
+          "Dashcam footage also available",
+          "Agency will proceed upon confirmation",
+          "Response required to continue"
+        ],
+        "summary": "The agency seeks confirmation on the type of footage requested. Please respond."
+      },
+      "followup_text": null,
+      "duration_ms": 3977
+    },
+    {
+      "fixture_id": "fee_request_low",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 1,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 35,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "pay_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Records located for your request",
+          "Cost for records is $35.00",
+          "Confirm to proceed with payment",
+          "Payment instructions will follow",
+          "San Diego PD Records"
+        ],
+        "summary": "The agency has found records and requires a $35 fee to proceed."
+      },
+      "followup_text": null,
+      "duration_ms": 3886
+    },
+    {
+      "fixture_id": "fee_request_high",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 1,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 750,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "negotiate_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Estimated cost is $750.00",
+          "Includes search, review, redaction, and copying",
+          "Search time: 5 hours",
+          "Review time: 3 hours",
+          "Please confirm if you wish to proceed"
+        ],
+        "summary": "The agency estimates a fee of $750 for processing your request. Please confirm if you wish to proceed."
+      },
+      "followup_text": null,
+      "duration_ms": 4193
+    },
+    {
+      "fixture_id": "denial_weak",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Denial subtype no_records should have suggested_action=respond, got send_rebuttal"
+      ],
+      "analysis": {
+        "intent": "denial",
+        "confidence": 1,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "send_rebuttal",
+        "reason_no_response": null,
+        "denial_subtype": "no_records",
+        "key_points": [
+          "Request for records is denied",
+          "Records not available for release",
+          "Response from Atlanta Police Department",
+          "FOIA request context",
+          "No further action required"
+        ],
+        "summary": "The request for records has been denied due to unavailability."
+      },
+      "followup_text": null,
+      "duration_ms": 4193
+    },
+    {
+      "fixture_id": "denial_strong",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "denial",
+        "confidence": 1,
+        "sentiment": "negative",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "send_rebuttal",
+        "reason_no_response": null,
+        "denial_subtype": "ongoing_investigation",
+        "key_points": [
+          "Request denied due to active investigation",
+          "Release would compromise witness safety",
+          "Pursuant to Florida Statute 119.071(2)(c)",
+          "Can re-submit after investigation closure",
+          "Involves incident from January 10, 2024"
+        ],
+        "summary": "The request for records is denied due to an ongoing criminal investigation. Re-submission is allowed after the investigation concludes."
+      },
+      "followup_text": null,
+      "duration_ms": 4958
+    },
+    {
+      "fixture_id": "wrong_agency",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "wrong_agency",
+        "confidence": 1,
+        "sentiment": "neutral",
+        "portal_url": "null",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "find_correct_agency",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Incident not under Dallas Police Department jurisdiction",
+          "Contact Dallas County Sheriff's Office for records",
+          "Provided contact information for the correct agency"
+        ],
+        "summary": "The request was redirected to the appropriate agency. No response needed."
+      },
+      "followup_text": null,
+      "duration_ms": 3186
+    },
+    {
+      "fixture_id": "retention_expired",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Denial subtype retention_expired should have suggested_action=respond, got send_rebuttal"
+      ],
+      "analysis": {
+        "intent": "denial",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "send_rebuttal",
+        "reason_no_response": null,
+        "denial_subtype": "retention_expired",
+        "key_points": [
+          "Body-worn camera footage not available",
+          "Retention policy limits footage to 180 days",
+          "Incident date exceeds retention period",
+          "Apologies for any inconvenience",
+          "Search conducted in agency systems"
+        ],
+        "summary": "The requested body-worn camera footage is no longer available due to retention policies."
+      },
+      "followup_text": null,
+      "duration_ms": 4192
+    },
+    {
+      "fixture_id": "hostile",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "hostile",
+        "confidence": 0.95,
+        "sentiment": "hostile",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "escalate",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Response is aggressive and dismissive",
+          "Claims request is a waste of resources",
+          "Suggests contacting during business hours",
+          "Refers to request as a fishing expedition",
+          "Indicates frustration with out-of-state requests"
+        ],
+        "summary": "The response is hostile and dismissive, indicating frustration with the request."
+      },
+      "followup_text": null,
+      "duration_ms": 3489
+    },
+    {
+      "fixture_id": "sensitive_minors",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "question",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "respond",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Records located but contain sensitive content",
+          "Incident involves a minor victim",
+          "Redactions required under Oregon law",
+          "Heavily redacted footage available",
+          "Confirmation needed to proceed"
+        ],
+        "summary": "Records are available but require redaction due to sensitivity. Confirmation needed to proceed."
+      },
+      "followup_text": null,
+      "duration_ms": 3367
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_1",
+      "category": "followup",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Follow-up should include: \"following up\""
+      ],
+      "analysis": null,
+      "followup_text": "Subject: Friendly Check-In on FOIA Request\n\nDear Austin Police Department,\n\nI hope this message finds you well! I wanted to follow up on my public records request submitted on January 13, 2026, regarding the incident report and related materials. I understand that you may be busy, but I would appreciate any updates you can provide on the status of my request.\n\nIf it would help expedite the process, I’m more than happy to assist in narrowing the scope of the request.\n\nThank you for your attention to this matter, and I look forward to hearing from you soon!\n\nBest regards,  \nSamuel Hylton  \nMatcher",
+      "duration_ms": 3048,
+      "word_count": 103
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_2",
+      "category": "followup",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Follow-up should include: \"original request\"",
+        "Follow-up should include: \"still awaiting\""
+      ],
+      "analysis": null,
+      "followup_text": "Subject: Follow-Up on FOIA Request - San Antonio Police Department\n\nDear [Recipient's Name],\n\nI hope this message finds you well. I am writing to follow up on my public records request submitted on January 6, 2026, regarding the incident report and related materials from the San Antonio Police Department. \n\nAs it has been 14 days since my initial request, I wanted to check in on the status of my inquiry. I understand that these matters can take time, but I would appreciate any updates you can provide regarding an estimated timeline for a response.\n\nThank you for your attention to this matter. I look forward to hearing from you soon.\n\nBest regards,  \nSamuel Hylton  \nMatcher",
+      "duration_ms": 4187,
+      "word_count": 115
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_3_final",
+      "category": "followup",
+      "passed": false,
+      "errors": [
+        "Follow-up contains forbidden phrase: \"sue\""
+      ],
+      "warnings": [
+        "Follow-up should include: \"third follow-up\"",
+        "Follow-up should include: \"formal determination\""
+      ],
+      "analysis": null,
+      "followup_text": "Subject: Final Follow-Up on FOIA Request\n\nDear Fort Worth Police Department,\n\nThis is my final follow-up regarding my public records request submitted on December 31, 2025, for the incident report and related materials. I understand that processing requests can take time, but I would appreciate a formal written determination regarding the status of my request.\n\nIf there are any issues or if you require further clarification, please let me know. Additionally, if there is a supervisor I can contact for further assistance, I would appreciate their information.\n\nAs a reminder, Texas law provides a deadline for responding to such requests, and I look forward to your prompt response.\n\nThank you for your attention to this matter.\n\nBest regards,  \nSamuel Hylton  \nMatcher",
+      "duration_ms": 4179,
+      "word_count": 121
+    },
+    {
+      "fixture_id": "multi_portal_plus_fee",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": "https://sanfrancisco.nextrequest.com",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Submit requests through NextRequest portal",
+          "Estimated fees will be provided later",
+          "Expect fees around $150-200",
+          "Formal estimate after submission",
+          "Contact SFPD Records Unit for questions"
+        ],
+        "summary": "Submit your records request via the NextRequest portal. Fees will be estimated after submission."
+      },
+      "followup_text": null,
+      "duration_ms": 4353
+    },
+    {
+      "fixture_id": "multi_portal_plus_denial_language",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": "https://boston.govqa.us",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Cannot process email requests",
+          "All requests must use the portal",
+          "Submit at the provided URL",
+          "Email requests will not be processed",
+          "Contact Boston Police Records for more info"
+        ],
+        "summary": "The Boston Police Department cannot process your email request. Please use the official portal."
+      },
+      "followup_text": null,
+      "duration_ms": 3316
+    },
+    {
+      "fixture_id": "multi_partial_approval_plus_fee",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 125,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "negotiate_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Partial release of records completed",
+          "No charge for incident report and 911 audio",
+          "BWC footage requires redaction",
+          "Cost for redacted footage is $125",
+          "Confirmation needed to proceed"
+        ],
+        "summary": "The agency has partially released records and requires confirmation to proceed with a fee."
+      },
+      "followup_text": null,
+      "duration_ms": 4719
+    },
+    {
+      "fixture_id": "multi_ack_plus_fee_estimate",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 75,
+        "deadline": "2024-01-05",
+        "requires_response": true,
+        "suggested_action": "pay_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Request received with tracking number DPD-2024-0567",
+          "Records exist based on preliminary review",
+          "Estimated fees range from $50 to $75",
+          "Formal fee letter will be provided",
+          "Expected response time is 5 business days"
+        ],
+        "summary": "Your FOIA request has been received. Estimated fees are $50-75."
+      },
+      "followup_text": null,
+      "duration_ms": 4757
+    },
+    {
+      "fixture_id": "multi_denial_plus_partial_release",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "analysis": {
+        "intent": "denial",
+        "confidence": 0.9,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "send_rebuttal",
+        "reason_no_response": null,
+        "denial_subtype": "ongoing_investigation",
+        "key_points": [
+          "Incident report granted",
+          "911 call audio granted",
+          "Body-worn camera footage denied",
+          "Witness statements denied",
+          "Appeal to Compliance Board available"
+        ],
+        "summary": "The request was partially granted with some records denied due to ongoing investigations."
+      },
+      "followup_text": null,
+      "duration_ms": 4154
+    }
+  ]
+}

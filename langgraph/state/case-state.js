@@ -67,6 +67,24 @@ const FOIACaseStateAnnotation = Annotation.Root({
     default: () => null
   }),
 
+  // === NEW: Prompt Tuning Fields (requires_response logic) ===
+  requiresResponse: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => true  // Default true for safety - only skip response when explicitly false
+  }),
+  portalUrl: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // Extracted portal URL if agency redirects to portal
+  }),
+  suggestedAction: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // AI-suggested action: use_portal, download, wait, respond, etc.
+  }),
+  reasonNoResponse: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // Explanation for why no response needed (for audit trail)
+  }),
+
   // === Constraints & Scope (persisted facts about this case) ===
   constraints: Annotation({
     reducer: (prev, v) => v ?? prev,

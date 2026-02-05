@@ -9,6 +9,7 @@
 
 const db = require('../../services/database');
 const logger = require('../../services/logger');
+const { createPortalTask } = require('../../services/executor-adapter');
 const {
   SEND_FOLLOWUP,
   SEND_REBUTTAL,
@@ -49,19 +50,116 @@ async function assessDenialStrength(caseData) {
 
 /**
  * Decide what action to take next
+ *
+ * IMPORTANT: Respects requires_response from classification.
+ * If requires_response === false, NO email is drafted.
+ * Instead, we update case state and return immediately.
  */
 async function decideNextActionNode(state) {
   const {
     caseId, classification, extractedFeeAmount, sentiment,
     constraints, triggerType, autopilotMode,
-    humanDecision
+    humanDecision,
+    // NEW: Prompt tuning fields
+    requiresResponse, portalUrl, suggestedAction, reasonNoResponse
   } = state;
 
   const logs = [];
   const reasoning = [];
 
   try {
-    // === Handle human resume first ===
+    // === FIRST: Check if response is even needed (prompt tuning fix) ===
+    // This is the key gate that prevents unnecessary email drafting
+    if (requiresResponse === false) {
+      reasoning.push(`No response needed: ${reasonNoResponse || 'Analysis determined no email required'}`);
+      logs.push(`Skipping email draft: requires_response=false (${classification})`);
+
+      // Handle based on suggested action
+      if (suggestedAction === 'use_portal') {
+        // CRITICAL: Portal redirect must create portal task AND update case status
+        // This is enforced by production readiness tests
+
+        // 1. Update case with portal URL and status
+        await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
+        await db.updateCaseStatus(caseId, 'pending', { substatus: 'portal_required' });
+        reasoning.push(`Portal redirect detected, saved URL: ${portalUrl || 'unknown'}`);
+
+        // 2. Create portal task for UI queue
+        try {
+          const caseData = await db.getCaseById(caseId);
+          await createPortalTask({
+            caseId,
+            portalUrl: portalUrl || caseData?.portal_url,
+            actionType: 'SUBMIT_VIA_PORTAL',
+            subject: caseData?.request_summary || 'FOIA Request',
+            bodyText: `Agency requires portal submission. Please submit the original request through their portal.`,
+            status: 'PENDING',
+            instructions: `Submit the FOIA request through the agency portal at: ${portalUrl || 'their website'}`
+          });
+          reasoning.push('Portal task created for manual submission');
+          logs.push('Portal task created successfully');
+        } catch (portalTaskError) {
+          // Log but don't fail - portal task creation is important but not blocking
+          logger.error('Failed to create portal task', { caseId, error: portalTaskError.message });
+          logs.push(`Warning: Portal task creation failed: ${portalTaskError.message}`);
+        }
+
+        return {
+          isComplete: true,
+          proposalActionType: NONE,
+          proposalReasoning: reasoning,
+          logs: [...logs, `Case updated: portal_required. Portal URL: ${portalUrl || 'see agency website'}. No email needed.`]
+        };
+      }
+
+      if (suggestedAction === 'download') {
+        // Records ready - mark case as completed
+        await db.updateCaseStatus(caseId, 'completed', { substatus: 'records_received' });
+        reasoning.push('Records ready for download');
+
+        return {
+          isComplete: true,
+          proposalActionType: NONE,
+          proposalReasoning: reasoning,
+          logs: [...logs, 'Case completed: records ready for download']
+        };
+      }
+
+      if (suggestedAction === 'wait') {
+        // Acknowledgment - just wait for next response
+        reasoning.push('Acknowledgment received, waiting for substantive response');
+
+        return {
+          isComplete: true,
+          proposalActionType: NONE,
+          proposalReasoning: reasoning,
+          logs: [...logs, 'Acknowledgment received, no action needed']
+        };
+      }
+
+      if (suggestedAction === 'find_correct_agency') {
+        // Wrong agency - mark for manual redirect
+        await db.updateCaseStatus(caseId, 'pending', { substatus: 'wrong_agency' });
+        reasoning.push('Wrong agency - needs manual redirect');
+
+        return {
+          isComplete: true,
+          proposalActionType: NONE,
+          proposalReasoning: reasoning,
+          logs: [...logs, 'Wrong agency detected, case flagged for manual redirect']
+        };
+      }
+
+      // Default no-response: just mark complete
+      return {
+        isComplete: true,
+        proposalActionType: NONE,
+        proposalReasoning: reasoning,
+        logs: [...logs, 'No email response needed']
+      };
+    }
+
+    // === Handle human resume ===
     if (humanDecision) {
       logs.push(`Processing human decision: ${humanDecision.action}`);
 
@@ -245,12 +343,14 @@ async function decideNextActionNode(state) {
       };
     }
 
-    // 5. RECORDS_READY / ACKNOWLEDGMENT - positive outcomes
+    // 5. NO-RESPONSE CLASSIFICATIONS (should already be caught by requires_response check above)
+    // These handlers exist as fallback if requires_response wasn't set properly
     if (classification === 'RECORDS_READY') {
       reasoning.push('Records are ready for pickup/download');
       await db.updateCaseStatus(caseId, 'completed', { substatus: 'records_received' });
       return {
         isComplete: true,
+        proposalActionType: NONE,
         proposalReasoning: reasoning,
         logs: [...logs, 'Case completed: records ready']
       };
@@ -260,8 +360,81 @@ async function decideNextActionNode(state) {
       reasoning.push('Acknowledgment received, no action needed');
       return {
         isComplete: true,
+        proposalActionType: NONE,
         proposalReasoning: reasoning,
         logs: [...logs, 'Acknowledgment received, waiting for next response']
+      };
+    }
+
+    // NEW: Portal redirect - no email, create portal task instead
+    // CRITICAL: This must create portal_task AND update case status (production readiness gate)
+    if (classification === 'PORTAL_REDIRECT') {
+      reasoning.push('Agency requires portal submission - no email response');
+
+      // 1. Update case status and portal URL
+      await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
+      await db.updateCaseStatus(caseId, 'pending', { substatus: 'portal_required' });
+
+      // 2. Create portal task for UI queue
+      try {
+        const caseData = await db.getCaseById(caseId);
+        await createPortalTask({
+          caseId,
+          portalUrl: portalUrl || caseData?.portal_url,
+          actionType: 'SUBMIT_VIA_PORTAL',
+          subject: caseData?.request_summary || 'FOIA Request',
+          bodyText: `Agency requires portal submission. Please submit the original request through their portal.`,
+          status: 'PENDING',
+          instructions: `Submit the FOIA request through the agency portal at: ${portalUrl || 'their website'}`
+        });
+        reasoning.push(`Portal task created, URL: ${portalUrl || 'unknown'}`);
+      } catch (portalTaskError) {
+        logger.error('Failed to create portal task', { caseId, error: portalTaskError.message });
+        reasoning.push(`Warning: Portal task creation failed: ${portalTaskError.message}`);
+      }
+
+      return {
+        isComplete: true,
+        proposalActionType: NONE,
+        proposalReasoning: reasoning,
+        logs: [...logs, `Portal redirect - task created. Use: ${portalUrl || 'agency portal'}`]
+      };
+    }
+
+    // NEW: Wrong agency - no email, find correct agency
+    if (classification === 'WRONG_AGENCY') {
+      reasoning.push('Wrong agency - needs redirect to correct custodian');
+      await db.updateCaseStatus(caseId, 'pending', { substatus: 'wrong_agency' });
+      return {
+        isComplete: true,
+        proposalActionType: NONE,
+        proposalReasoning: reasoning,
+        logs: [...logs, 'Wrong agency - flagged for manual redirect']
+      };
+    }
+
+    // NEW: Partial delivery - download and wait
+    if (classification === 'PARTIAL_DELIVERY') {
+      reasoning.push('Partial delivery received - download and wait for remainder');
+      return {
+        isComplete: true,
+        proposalActionType: NONE,
+        proposalReasoning: reasoning,
+        logs: [...logs, 'Partial delivery - download available records, await remainder']
+      };
+    }
+
+    // NEW: Hostile - always escalate with human review
+    if (classification === 'HOSTILE') {
+      reasoning.push('Hostile response detected - escalating to human review');
+      return {
+        proposalActionType: ESCALATE,
+        canAutoExecute: false,
+        requiresHuman: true,
+        pauseReason: 'SENSITIVE',
+        proposalReasoning: reasoning,
+        logs: [...logs, 'Hostile response - requires human review'],
+        nextNode: 'gate_or_execute'
       };
     }
 

@@ -238,6 +238,112 @@
             font-size: 11px;
             margin-top: 10px;
         }
+
+        /* Message Drawer */
+        .drawer-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            z-index: 1000;
+        }
+        .drawer {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 480px;
+            height: 100vh;
+            background: #0d1117;
+            border-left: 1px solid #30363d;
+            padding: 16px;
+            overflow-y: auto;
+            z-index: 1001;
+            display: none;
+        }
+        .drawer.active, .drawer-backdrop.active {
+            display: block;
+        }
+        .drawer-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .drawer-title {
+            font-size: 16px;
+            color: #58a6ff;
+        }
+        .drawer-close {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 6px 10px;
+            cursor: pointer;
+        }
+        .drawer-section {
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #21262d;
+        }
+        .drawer-label {
+            color: #8b949e;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .drawer-value {
+            color: #c9d1d9;
+            font-size: 13px;
+            word-break: break-word;
+        }
+        .drawer-body {
+            white-space: pre-wrap;
+            background: #161b22;
+            border: 1px solid #30363d;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        .drawer-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        .drawer-btn {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #c9d1d9;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .drawer-btn.primary { background: #238636; border-color: #238636; color: white; }
+        .drawer-btn.warn { background: #f0883e; border-color: #f0883e; color: #0d1117; }
+        .drawer-btn:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+        .drawer-input, .drawer-textarea, .drawer-select {
+            width: 100%;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+        .drawer-textarea { min-height: 90px; resize: vertical; }
+        .drawer-log {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 11px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            padding: 8px;
+            border-radius: 6px;
+            max-height: 160px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+        .clickable-row { cursor: pointer; }
+        .clickable-row:hover { background: #1f242b; }
     </style>
 </head>
 <body>
@@ -403,6 +509,67 @@
         </div>
     </div>
 
+    <!-- Message Drawer -->
+    <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
+    <div id="messageDrawer" class="drawer">
+        <div class="drawer-header">
+            <div class="drawer-title">Message Details</div>
+            <button class="drawer-close" onclick="closeDrawer()">Close</button>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-label">Subject</div>
+            <div class="drawer-value" id="drawerSubject">-</div>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-label">From</div>
+            <div class="drawer-value" id="drawerFrom">-</div>
+            <div class="drawer-label" style="margin-top:8px;">To</div>
+            <div class="drawer-value" id="drawerTo">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Direction</div>
+            <div class="drawer-value" id="drawerDirection">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Case</div>
+            <div class="drawer-value" id="drawerCase">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Received/Sent</div>
+            <div class="drawer-value" id="drawerTimestamp">-</div>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-label">Body</div>
+            <div class="drawer-body" id="drawerBody">-</div>
+        </div>
+
+        <div class="drawer-section" id="replySection" style="display:none;">
+            <div class="drawer-label">Reply</div>
+            <input class="drawer-input" id="replySubject" placeholder="Subject" />
+            <textarea class="drawer-textarea" id="replyBody" placeholder="Type your reply..."></textarea>
+            <div class="drawer-actions">
+                <button class="drawer-btn primary" id="replySendBtn" onclick="sendReply()">Send Reply</button>
+            </div>
+            <div id="replyResult" class="send-result" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="drawer-section" id="aiSection" style="display:none;">
+            <div class="drawer-label">AI Processing</div>
+            <div style="display:flex;gap:8px;margin-bottom:8px;">
+                <select class="drawer-select" id="aiMode">
+                    <option value="SUPERVISED">SUPERVISED</option>
+                    <option value="AUTO">AUTO</option>
+                </select>
+                <label style="font-size:12px;color:#8b949e;display:flex;align-items:center;gap:6px;">
+                    <input type="checkbox" id="aiForce" /> force new run
+                </label>
+            </div>
+            <div class="drawer-actions">
+                <button class="drawer-btn warn" id="aiTriggerBtn" onclick="triggerAI()">Trigger AI</button>
+                <a class="drawer-btn" id="aiRunLink" href="#" target="_blank" style="display:none;">View Run</a>
+            </div>
+            <div class="drawer-label" style="margin-top:10px;">Run Log</div>
+            <div class="drawer-log" id="aiLog"></div>
+        </div>
+    </div>
+
     <script>
         let refreshTimer = null;
 
@@ -481,7 +648,7 @@
                     .sort((a, b) => new Date(b.received_at || b.sent_at || b.created_at) - new Date(a.received_at || a.sent_at || a.created_at))
                     .slice(0, 100)
                     .map(m => `
-                        <tr>
+                        <tr class="clickable-row" data-message-id="${m.id}" onclick="openMessage(${m.id})">
                             <td class="timestamp">${relativeTime(m.received_at || m.sent_at || m.created_at)}</td>
                             <td>${directionBadge(m.direction)}</td>
                             <td>${truncate(m.from_email, 30)}</td>
@@ -493,7 +660,7 @@
 
                 // Inbound with analysis
                 document.getElementById('inboundMessages').innerHTML = inboundData.inbound.map(m => `
-                    <tr>
+                    <tr class="clickable-row" data-message-id="${m.id}" onclick="openMessage(${m.id})">
                         <td class="timestamp">${relativeTime(m.received_at || m.created_at)}</td>
                         <td>${truncate(m.from_email, 30)}</td>
                         <td class="email-subject">${truncate(m.subject, 50)}</td>
@@ -505,7 +672,7 @@
 
                 // Outbound
                 document.getElementById('outboundMessages').innerHTML = monitor.outbound.map(m => `
-                    <tr>
+                    <tr class="clickable-row" data-message-id="${m.id}" onclick="openMessage(${m.id})">
                         <td class="timestamp">${relativeTime(m.sent_at || m.created_at)}</td>
                         <td>${truncate(m.to_email, 35)}</td>
                         <td class="email-subject">${truncate(m.subject, 60)}</td>
@@ -527,7 +694,7 @@
                 // Unmatched
                 document.getElementById('unmatchedMessages').innerHTML = unmatchedData.unmatched.length ?
                     unmatchedData.unmatched.map(m => `
-                        <tr>
+                        <tr class="clickable-row" data-message-id="${m.id}" onclick="openMessage(${m.id})">
                             <td class="timestamp">${relativeTime(m.received_at || m.created_at)}</td>
                             <td>${truncate(m.from_email, 30)}</td>
                             <td>${truncate(m.to_email, 30)}</td>
@@ -616,6 +783,135 @@
             } finally {
                 sendBtn.disabled = false;
                 sendBtn.textContent = 'Send Email';
+            }
+        }
+
+        let currentMessage = null;
+        let aiLogLines = [];
+
+        function appendLog(line) {
+            aiLogLines.push(`[${new Date().toLocaleTimeString()}] ${line}`);
+            const logEl = document.getElementById('aiLog');
+            logEl.textContent = aiLogLines.slice(-200).join('\n');
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function resetLog() {
+            aiLogLines = [];
+            document.getElementById('aiLog').textContent = '';
+        }
+
+        async function openMessage(id) {
+            try {
+                const res = await fetch(`/api/monitor/message/${id}`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Failed to load message');
+
+                currentMessage = data.message;
+                document.getElementById('drawerSubject').textContent = data.message.subject || '-';
+                document.getElementById('drawerFrom').textContent = data.message.from_email || '-';
+                document.getElementById('drawerTo').textContent = data.message.to_email || '-';
+                document.getElementById('drawerDirection').textContent = data.message.direction || '-';
+                document.getElementById('drawerTimestamp').textContent = formatTime(data.message.received_at || data.message.sent_at || data.message.created_at);
+                document.getElementById('drawerBody').textContent = data.message.body_text || data.message.body_html || '-';
+
+                if (data.case) {
+                    document.getElementById('drawerCase').innerHTML = `<a class="case-link" href="/api/cases/${data.case.id}" target="_blank">#${data.case.id} ${truncate(data.case.case_name || '', 30)}</a>`;
+                } else {
+                    document.getElementById('drawerCase').textContent = 'Unmatched';
+                }
+
+                const isInbound = data.message.direction === 'inbound';
+                document.getElementById('replySection').style.display = isInbound ? 'block' : 'none';
+                document.getElementById('aiSection').style.display = data.case ? 'block' : 'none';
+
+                document.getElementById('replySubject').value = `Re: ${data.message.subject || ''}`.trim();
+                document.getElementById('replyBody').value = '';
+                document.getElementById('replyResult').style.display = 'none';
+                document.getElementById('aiRunLink').style.display = 'none';
+                resetLog();
+
+                document.getElementById('drawerBackdrop').classList.add('active');
+                document.getElementById('messageDrawer').classList.add('active');
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function closeDrawer() {
+            document.getElementById('drawerBackdrop').classList.remove('active');
+            document.getElementById('messageDrawer').classList.remove('active');
+        }
+
+        async function sendReply() {
+            if (!currentMessage) return;
+            const body = document.getElementById('replyBody').value.trim();
+            const subject = document.getElementById('replySubject').value.trim();
+            const resultDiv = document.getElementById('replyResult');
+            const btn = document.getElementById('replySendBtn');
+
+            if (!body) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = 'Reply body is required.';
+                resultDiv.style.display = 'block';
+                return;
+            }
+
+            btn.disabled = true;
+            resultDiv.style.display = 'none';
+
+            try {
+                const res = await fetch(`/api/monitor/message/${currentMessage.id}/reply`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ subject, body })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Failed to send reply');
+
+                resultDiv.className = 'send-result success';
+                resultDiv.textContent = `Reply sent. Message ID: ${data.message_id}`;
+                resultDiv.style.display = 'block';
+                setTimeout(loadData, 800);
+            } catch (err) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = err.message || 'Failed to send reply';
+                resultDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function triggerAI() {
+            if (!currentMessage) return;
+            const btn = document.getElementById('aiTriggerBtn');
+            const mode = document.getElementById('aiMode').value;
+            const force = document.getElementById('aiForce').checked;
+            btn.disabled = true;
+            appendLog(`Triggering AI (${mode}${force ? ', force' : ''}) for message ${currentMessage.id}...`);
+
+            try {
+                const res = await fetch(`/api/monitor/message/${currentMessage.id}/trigger-ai`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ autopilotMode: mode, force_new_run: force })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Failed to trigger AI');
+
+                appendLog(`Run queued: run_id=${data.run.id}, status=${data.run.status}`);
+                if (data.job_id) appendLog(`Job queued: ${data.job_id}`);
+                if (data.note) appendLog(data.note);
+                if (data.run?.id) {
+                    const link = document.getElementById('aiRunLink');
+                    link.href = `/api/runs/${data.run.id}`;
+                    link.style.display = 'inline-flex';
+                }
+                setTimeout(loadData, 1000);
+            } catch (err) {
+                appendLog(`Error: ${err.message || err}`);
+            } finally {
+                btn.disabled = false;
             }
         }
 

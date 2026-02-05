@@ -1,0 +1,790 @@
+{
+  "version": "2.0.0",
+  "schema_version": "2026-01-22-v1",
+  "description": "Golden fixture suite for FOIA response classification and reply generation",
+  "created": "2026-01-22",
+  "updated": "2026-01-22",
+  "schema_notes": "v2.0 adds schema_version to each expected block, multi-intent fixtures, and portal_task assertions",
+  "fixtures": [
+    {
+      "fixture_id": "portal_redirect_simple",
+      "category": "no_response",
+      "description": "Agency redirects to NextRequest portal with URL",
+      "message": {
+        "id": "msg-portal-001",
+        "message_id": "<portal-001@test.fixture>",
+        "from_email": "records@raleighpd.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Public Records Request",
+        "body_text": "Thank you for your request. The Raleigh Police Department uses NextRequest for all public records requests.\n\nPlease submit your request through our online portal at:\nhttps://raleighnc.nextrequest.com\n\nThis will ensure faster processing and allow you to track your request status.\n\nThank you,\nRecords Division",
+        "received_at": "2026-01-20T10:00:00Z"
+      },
+      "case_data": {
+        "id": 1001,
+        "case_name": "Walton Shooting - Raleigh PD",
+        "subject_name": "Marcus Walton",
+        "agency_name": "Raleigh Police Department",
+        "state": "NC",
+        "incident_date": "2021-07-31",
+        "incident_location": "Rock Quarry Rd & Vardeman St"
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "intent": "portal_redirect",
+        "requires_response": false,
+        "portal_url": "https://raleighnc.nextrequest.com",
+        "suggested_action": "use_portal",
+        "should_draft_email": false,
+        "denial_subtype": null,
+        "e2e_assertions": {
+          "proposal_created": false,
+          "portal_task_created": true,
+          "case_status": "portal_required"
+        }
+      }
+    },
+    {
+      "fixture_id": "portal_redirect_no_url",
+      "category": "no_response",
+      "description": "Agency mentions portal but no direct link",
+      "message": {
+        "id": "msg-portal-002",
+        "message_id": "<portal-002@test.fixture>",
+        "from_email": "foia@charlotte.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request",
+        "body_text": "Good morning,\n\nCharlotte-Mecklenburg Police Department requires all public records requests to be submitted through our GovQA portal. Please search for 'Charlotte CMPD records request' to find our submission page.\n\nWe cannot process email requests.\n\nRecords Unit",
+        "received_at": "2026-01-20T11:00:00Z"
+      },
+      "case_data": {
+        "id": 1002,
+        "case_name": "Test Case - Charlotte",
+        "subject_name": "John Doe",
+        "agency_name": "Charlotte-Mecklenburg Police Department",
+        "state": "NC"
+      },
+      "expected": {
+        "intent": "portal_redirect",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "use_portal",
+        "should_draft_email": false,
+        "denial_subtype": null
+      }
+    },
+    {
+      "fixture_id": "acknowledgment",
+      "category": "no_response",
+      "description": "Simple acknowledgment of receipt",
+      "message": {
+        "id": "msg-ack-001",
+        "message_id": "<ack-001@test.fixture>",
+        "from_email": "foia@cityofchicago.org",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: FOIA Request Received - #2024-001234",
+        "body_text": "Your FOIA request has been received and assigned tracking number 2024-001234.\n\nWe will respond within 5 business days as required by the Illinois FOIA.\n\nThank you for your patience.\n\nChicago Police Department\nFreedom of Information Office",
+        "received_at": "2026-01-20T12:00:00Z"
+      },
+      "case_data": {
+        "id": 1003,
+        "case_name": "Test Case - Chicago Ack",
+        "subject_name": "Jane Smith",
+        "agency_name": "Chicago Police Department",
+        "state": "IL"
+      },
+      "expected": {
+        "intent": "acknowledgment",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "wait",
+        "should_draft_email": false,
+        "denial_subtype": null
+      }
+    },
+    {
+      "fixture_id": "records_ready_link",
+      "category": "no_response",
+      "description": "Records available for download with link",
+      "message": {
+        "id": "msg-ready-001",
+        "message_id": "<ready-001@test.fixture>",
+        "from_email": "records@seattle.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "Your records are ready - Request #SPD-2024-0456",
+        "body_text": "Your requested records are now available for download.\n\nPlease click the link below to access your files:\nhttps://seattle.govqa.us/download/abc123xyz\n\nThis link will expire in 30 days.\n\nTotal files: 3\nTotal size: 245 MB\n\nSeattle Police Department Records Unit",
+        "received_at": "2026-01-20T13:00:00Z"
+      },
+      "case_data": {
+        "id": 1004,
+        "case_name": "Test Case - Seattle Ready",
+        "subject_name": "Bob Johnson",
+        "agency_name": "Seattle Police Department",
+        "state": "WA"
+      },
+      "expected": {
+        "intent": "records_ready",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "download",
+        "should_draft_email": false,
+        "denial_subtype": null
+      }
+    },
+    {
+      "fixture_id": "delivery_attached",
+      "category": "no_response",
+      "description": "Records attached directly to email",
+      "message": {
+        "id": "msg-delivery-001",
+        "message_id": "<delivery-001@test.fixture>",
+        "from_email": "records@denver.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: CORA Request - Records Attached",
+        "body_text": "Please find the requested records attached to this email.\n\nAttached files:\n- Incident_Report_2024-0789.pdf\n- 911_Call_Audio.mp3\n\nThis completes your request. If you have any questions, please reply to this email.\n\nDenver Police Department\nRecords Section",
+        "received_at": "2026-01-20T14:00:00Z",
+        "attachments": ["Incident_Report_2024-0789.pdf", "911_Call_Audio.mp3"]
+      },
+      "case_data": {
+        "id": 1005,
+        "case_name": "Test Case - Denver Delivery",
+        "subject_name": "Alice Williams",
+        "agency_name": "Denver Police Department",
+        "state": "CO"
+      },
+      "expected": {
+        "intent": "records_ready",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "download",
+        "should_draft_email": false,
+        "denial_subtype": null
+      }
+    },
+    {
+      "fixture_id": "partial_delivery_more_coming",
+      "category": "no_response",
+      "description": "Partial records delivered, more coming",
+      "message": {
+        "id": "msg-partial-001",
+        "message_id": "<partial-001@test.fixture>",
+        "from_email": "records@phoenix.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Partial Release",
+        "body_text": "We are providing a partial release of responsive records.\n\nAttached: Incident Report and 911 audio.\n\nThe body-worn camera footage is still being processed for redactions. We expect to provide that within 10 business days.\n\nPhoenix Police Department\nPublic Records Unit",
+        "received_at": "2026-01-20T15:00:00Z"
+      },
+      "case_data": {
+        "id": 1006,
+        "case_name": "Test Case - Phoenix Partial",
+        "subject_name": "Charlie Brown",
+        "agency_name": "Phoenix Police Department",
+        "state": "AZ"
+      },
+      "expected": {
+        "intent": ["partial_delivery", "records_ready"],
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "download",
+        "should_draft_email": false,
+        "denial_subtype": null,
+        "notes": "AI sometimes classifies as records_ready - both are acceptable no-response intents"
+      }
+    },
+    {
+      "fixture_id": "more_info_needed",
+      "category": "respond_required",
+      "description": "Agency needs clarification on date/location",
+      "message": {
+        "id": "msg-info-001",
+        "message_id": "<info-001@test.fixture>",
+        "from_email": "records@lapd.org",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Clarification Needed",
+        "body_text": "Thank you for your request. We need some additional information to locate the responsive records:\n\n1. What is the exact date of the incident?\n2. Can you provide a DR number or case number if known?\n3. What is the specific address or intersection?\n\nPlease provide this information so we can proceed with your request.\n\nLAPD Records Division",
+        "received_at": "2026-01-20T16:00:00Z"
+      },
+      "case_data": {
+        "id": 1007,
+        "case_name": "Test Case - LAPD Clarification",
+        "subject_name": "David Lee",
+        "agency_name": "Los Angeles Police Department",
+        "state": "CA",
+        "incident_date": "2024-03-15",
+        "incident_location": "500 N Main St"
+      },
+      "expected": {
+        "intent": ["more_info_needed", "question"],
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "respond",
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "notes": "Both intents map to CLARIFICATION_REQUEST in router",
+        "draft_constraints": {
+          "max_words": 100,
+          "must_include": ["March 15", "500 N Main"],
+          "must_not_include": ["pursuant", "statute", "law requires"]
+        }
+      }
+    },
+    {
+      "fixture_id": "direct_question",
+      "category": "respond_required",
+      "description": "Agency asks direct clarifying question",
+      "message": {
+        "id": "msg-question-001",
+        "message_id": "<question-001@test.fixture>",
+        "from_email": "foia@houstonpd.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: FOIA Request - Quick Question",
+        "body_text": "Hi,\n\nJust to confirm - you only want the body-worn camera footage, not the dashcam as well? We have both available.\n\nPlease confirm and we'll proceed.\n\nThanks,\nHouston PD Records",
+        "received_at": "2026-01-20T17:00:00Z"
+      },
+      "case_data": {
+        "id": 1008,
+        "case_name": "Test Case - Houston Question",
+        "subject_name": "Eva Martinez",
+        "agency_name": "Houston Police Department",
+        "state": "TX"
+      },
+      "expected": {
+        "intent": ["more_info_needed", "question"],
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "respond",
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "notes": "'Just to confirm' is a confirmation request - either intent is acceptable",
+        "draft_constraints": {
+          "max_words": 80,
+          "must_not_include": ["pursuant", "statute"]
+        }
+      }
+    },
+    {
+      "fixture_id": "fee_request_low",
+      "category": "respond_required",
+      "description": "Small fee quote that should be auto-accepted",
+      "message": {
+        "id": "msg-fee-low-001",
+        "message_id": "<fee-low-001@test.fixture>",
+        "from_email": "records@sandiego.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Fee Estimate",
+        "body_text": "We have located responsive records for your request.\n\nThe cost for these records is $35.00 for copying and processing.\n\nPlease confirm you wish to proceed with payment and we will provide payment instructions.\n\nSan Diego PD Records",
+        "received_at": "2026-01-20T18:00:00Z"
+      },
+      "case_data": {
+        "id": 1009,
+        "case_name": "Test Case - SD Low Fee",
+        "subject_name": "Frank Wilson",
+        "agency_name": "San Diego Police Department",
+        "state": "CA"
+      },
+      "expected": {
+        "intent": "fee_request",
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "pay_fee",
+        "fee_amount": 35,
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "draft_constraints": {
+          "max_words": 80,
+          "tone": "acceptance",
+          "must_not_include": ["breakdown", "itemize", "negotiate", "excessive"]
+        }
+      }
+    },
+    {
+      "fixture_id": "fee_request_high",
+      "category": "respond_required",
+      "description": "High fee quote requiring breakdown request",
+      "message": {
+        "id": "msg-fee-high-001",
+        "message_id": "<fee-high-001@test.fixture>",
+        "from_email": "records@nypd.org",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: FOIL Request - Cost Estimate",
+        "body_text": "We have reviewed your request and estimate the cost at $750.00.\n\nThis includes:\n- Search time: 5 hours @ $75/hr = $375\n- Review time: 3 hours @ $75/hr = $225\n- Redaction: 1 hour @ $75/hr = $75\n- Media copying: $75\n\nPlease confirm if you wish to proceed.\n\nNYPD Records Access Office",
+        "received_at": "2026-01-20T19:00:00Z"
+      },
+      "case_data": {
+        "id": 1010,
+        "case_name": "Test Case - NYPD High Fee",
+        "subject_name": "Grace Kim",
+        "agency_name": "New York Police Department",
+        "state": "NY"
+      },
+      "expected": {
+        "intent": "fee_request",
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "negotiate_fee",
+        "fee_amount": 750,
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "draft_constraints": {
+          "max_words": 200,
+          "tone": "negotiation",
+          "should_include": ["breakdown", "narrow", "phase"]
+        }
+      }
+    },
+    {
+      "fixture_id": "denial_weak",
+      "category": "respond_required",
+      "description": "Denial without proper statutory citation",
+      "message": {
+        "id": "msg-denial-weak-001",
+        "message_id": "<denial-weak-001@test.fixture>",
+        "from_email": "records@atlanta.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Open Records Request - Denied",
+        "body_text": "Your request for records is denied.\n\nThe records you requested are not available for release at this time.\n\nAtlanta Police Department",
+        "received_at": "2026-01-20T20:00:00Z"
+      },
+      "case_data": {
+        "id": 1011,
+        "case_name": "Test Case - Atlanta Weak Denial",
+        "subject_name": "Henry Adams",
+        "agency_name": "Atlanta Police Department",
+        "state": "GA"
+      },
+      "expected": {
+        "intent": "denial",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "send_rebuttal",
+        "should_draft_email": false,
+        "denial_subtype": "no_records",
+        "notes": "Denials don't require auto-response - suggested_action indicates human review may want to challenge"
+      }
+    },
+    {
+      "fixture_id": "denial_strong",
+      "category": "respond_required",
+      "description": "Denial with explicit exemption cited",
+      "message": {
+        "id": "msg-denial-strong-001",
+        "message_id": "<denial-strong-001@test.fixture>",
+        "from_email": "records@miami.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Public Records Request - Denial",
+        "body_text": "Your request for records related to the incident on January 10, 2024 is denied.\n\nThis matter involves an active criminal investigation. Release of these records would interfere with the investigation and compromise witness safety.\n\nThe request is denied pursuant to Florida Statute 119.071(2)(c) - Active Criminal Investigative Information.\n\nYou may re-submit your request after the investigation is closed.\n\nMiami Police Department\nRecords Division",
+        "received_at": "2026-01-21T08:00:00Z"
+      },
+      "case_data": {
+        "id": 1012,
+        "case_name": "Test Case - Miami Strong Denial",
+        "subject_name": "Ivan Petrov",
+        "agency_name": "Miami Police Department",
+        "state": "FL"
+      },
+      "expected": {
+        "intent": "denial",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "send_rebuttal",
+        "should_draft_email": false,
+        "denial_subtype": "ongoing_investigation",
+        "notes": "Strong denial with statutory cite - human review may want to challenge but no auto-response"
+      }
+    },
+    {
+      "fixture_id": "wrong_agency",
+      "category": "respond_required",
+      "description": "Wrong custodian - need to find correct agency",
+      "message": {
+        "id": "msg-wrong-001",
+        "message_id": "<wrong-001@test.fixture>",
+        "from_email": "records@dallaspd.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Not Our Records",
+        "body_text": "Thank you for your request.\n\nThe incident you described occurred in the jurisdiction of the Dallas County Sheriff's Office, not the Dallas Police Department.\n\nPlease contact them at:\nDallas County Sheriff's Office\nRecords Division\nrecords@dallascounty.org\n\nDallas Police Department",
+        "received_at": "2026-01-21T09:00:00Z"
+      },
+      "case_data": {
+        "id": 1013,
+        "case_name": "Test Case - Dallas Wrong Agency",
+        "subject_name": "Jack Thompson",
+        "agency_name": "Dallas Police Department",
+        "state": "TX"
+      },
+      "expected": {
+        "intent": "wrong_agency",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "find_correct_agency",
+        "should_draft_email": false,
+        "denial_subtype": "wrong_agency",
+        "new_agency_contact": "records@dallascounty.org"
+      }
+    },
+    {
+      "fixture_id": "retention_expired",
+      "category": "respond_required",
+      "description": "Records destroyed due to retention policy",
+      "message": {
+        "id": "msg-retention-001",
+        "message_id": "<retention-001@test.fixture>",
+        "from_email": "records@memphis.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Records Not Available",
+        "body_text": "We have searched our systems and unfortunately the body-worn camera footage you requested is no longer available.\n\nPer Memphis PD retention policy BWC-2019-001, body camera footage is retained for 180 days unless flagged for investigation or litigation hold.\n\nThe incident date of March 15, 2023 is beyond our retention period.\n\nWe apologize for any inconvenience.\n\nMemphis Police Department",
+        "received_at": "2026-01-21T10:00:00Z"
+      },
+      "case_data": {
+        "id": 1014,
+        "case_name": "Test Case - Memphis Retention",
+        "subject_name": "Karen White",
+        "agency_name": "Memphis Police Department",
+        "state": "TN",
+        "incident_date": "2023-03-15"
+      },
+      "expected": {
+        "intent": "denial",
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "send_rebuttal",
+        "should_draft_email": false,
+        "denial_subtype": "retention_expired",
+        "notes": "Retention expiry is factual - no auto-response warranted"
+      }
+    },
+    {
+      "fixture_id": "hostile",
+      "category": "respond_required",
+      "description": "Hostile/aggressive response from agency",
+      "message": {
+        "id": "msg-hostile-001",
+        "message_id": "<hostile-001@test.fixture>",
+        "from_email": "sgt.smith@smalltown.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Your request",
+        "body_text": "Look, we don't have time for this. We're a small department with real crimes to solve.\n\nYour fishing expedition is a waste of our resources. If you want to make a real request, call the station during business hours like a normal person.\n\nWe're not jumping through hoops for some out-of-state documentary company.\n\n- Sgt. Smith",
+        "received_at": "2026-01-21T11:00:00Z"
+      },
+      "case_data": {
+        "id": 1015,
+        "case_name": "Test Case - Hostile Response",
+        "subject_name": "Larry Davis",
+        "agency_name": "Smalltown Police Department",
+        "state": "OK"
+      },
+      "expected": {
+        "intent": "hostile",
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "escalate",
+        "sentiment": "hostile",
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "draft_constraints": {
+          "max_words": 150,
+          "tone": "professional_firm",
+          "should_include": ["supervisor", "written response"],
+          "must_not_include": ["hostile", "rude", "unprofessional"]
+        }
+      }
+    },
+    {
+      "fixture_id": "sensitive_minors",
+      "category": "respond_required",
+      "description": "Response mentions minors/sensitive content",
+      "message": {
+        "id": "msg-sensitive-001",
+        "message_id": "<sensitive-001@test.fixture>",
+        "from_email": "records@portland.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Sensitive Content Notice",
+        "body_text": "We have located responsive records. However, please be advised:\n\nThe incident involves a minor victim (age 14) and contains graphic descriptions of injuries. The body camera footage shows the minor in distress.\n\nUnder Oregon law, we must redact all identifying information about the juvenile. We can provide heavily redacted footage with faces, voices, and identifying details obscured.\n\nDo you wish to proceed with the redacted version?\n\nPortland Police Bureau",
+        "received_at": "2026-01-21T12:00:00Z"
+      },
+      "case_data": {
+        "id": 1016,
+        "case_name": "Test Case - Portland Sensitive",
+        "subject_name": "Case involving minor",
+        "agency_name": "Portland Police Bureau",
+        "state": "OR"
+      },
+      "expected": {
+        "intent": "question",
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "respond",
+        "sentiment": "neutral",
+        "should_draft_email": true,
+        "is_sensitive": true,
+        "notes": "Agency asks 'do you wish to proceed?' - this is a blocking confirmation request",
+        "draft_constraints": {
+          "max_words": 100,
+          "should_include": ["accept redactions", "proceed"],
+          "must_not_include": ["unredacted", "full footage"]
+        }
+      }
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_1",
+      "category": "followup",
+      "description": "First follow-up after no response (7 days)",
+      "message": null,
+      "case_data": {
+        "id": 1017,
+        "case_name": "Test Case - First Followup",
+        "subject_name": "Mike Nelson",
+        "agency_name": "Austin Police Department",
+        "state": "TX",
+        "send_date": "2026-01-13",
+        "followup_count": 0
+      },
+      "expected": {
+        "followup_number": 1,
+        "should_draft_email": true,
+        "draft_constraints": {
+          "max_words": 120,
+          "tone": "polite",
+          "should_include": ["following up", "status"],
+          "must_not_include": ["deadline", "statute", "law requires", "legal"]
+        }
+      }
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_2",
+      "category": "followup",
+      "description": "Second follow-up after no response (14 days)",
+      "message": null,
+      "case_data": {
+        "id": 1018,
+        "case_name": "Test Case - Second Followup",
+        "subject_name": "Nancy Green",
+        "agency_name": "San Antonio Police Department",
+        "state": "TX",
+        "send_date": "2026-01-06",
+        "followup_count": 1
+      },
+      "expected": {
+        "followup_number": 2,
+        "should_draft_email": true,
+        "draft_constraints": {
+          "max_words": 150,
+          "tone": "firm",
+          "should_include": ["original request", "still awaiting"],
+          "may_include": ["state deadline", "response timeline"]
+        }
+      }
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_3_final",
+      "category": "followup",
+      "description": "Final follow-up before escalation (21 days)",
+      "message": null,
+      "case_data": {
+        "id": 1019,
+        "case_name": "Test Case - Final Followup",
+        "subject_name": "Oscar Brown",
+        "agency_name": "Fort Worth Police Department",
+        "state": "TX",
+        "send_date": "2025-12-31",
+        "followup_count": 2
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "followup_number": 3,
+        "should_draft_email": true,
+        "draft_constraints": {
+          "max_words": 180,
+          "tone": "final_firm",
+          "should_include": ["third follow-up", "formal determination"],
+          "may_include": ["supervisor", "escalate", "Texas Public Information Act"],
+          "must_not_include": ["lawsuit", "attorney", "sue"]
+        }
+      }
+    },
+    {
+      "fixture_id": "multi_portal_plus_fee",
+      "category": "multi_intent",
+      "description": "Portal redirect with fee mentioned - portal takes precedence",
+      "message": {
+        "id": "msg-multi-001",
+        "message_id": "<multi-001@test.fixture>",
+        "from_email": "records@sanfrancisco.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Portal Required",
+        "body_text": "Thank you for your records request.\n\nSan Francisco requires all requests be submitted through our NextRequest portal at:\nhttps://sanfrancisco.nextrequest.com\n\nOnce submitted, estimated fees will be provided. Based on similar requests, expect approximately $150-200 in processing fees.\n\nPlease submit through the portal and we will provide a formal estimate.\n\nSFPD Records Unit",
+        "received_at": "2026-01-21T14:00:00Z"
+      },
+      "case_data": {
+        "id": 1020,
+        "case_name": "Test Case - Multi Portal+Fee",
+        "subject_name": "Paula Richards",
+        "agency_name": "San Francisco Police Department",
+        "state": "CA"
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "intent": "portal_redirect",
+        "requires_response": false,
+        "portal_url": "https://sanfrancisco.nextrequest.com",
+        "suggested_action": "use_portal",
+        "should_draft_email": false,
+        "denial_subtype": null,
+        "notes": "Fee mention does NOT override portal redirect - must use portal first",
+        "e2e_assertions": {
+          "proposal_created": false,
+          "portal_task_created": true,
+          "case_status": "portal_required"
+        }
+      }
+    },
+    {
+      "fixture_id": "multi_portal_plus_denial_language",
+      "category": "multi_intent",
+      "description": "Portal redirect disguised as denial - portal takes precedence",
+      "message": {
+        "id": "msg-multi-002",
+        "message_id": "<multi-002@test.fixture>",
+        "from_email": "records@boston.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Cannot Process",
+        "body_text": "We are unable to process your email request.\n\nThe Boston Police Department cannot accept public records requests via email. All requests must be submitted through our official portal.\n\nPlease submit at: https://boston.govqa.us\n\nEmail requests will not be processed.\n\nBoston Police Records",
+        "received_at": "2026-01-21T15:00:00Z"
+      },
+      "case_data": {
+        "id": 1021,
+        "case_name": "Test Case - Multi Portal as Denial",
+        "subject_name": "Quinn Adams",
+        "agency_name": "Boston Police Department",
+        "state": "MA"
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "intent": "portal_redirect",
+        "requires_response": false,
+        "portal_url": "https://boston.govqa.us",
+        "suggested_action": "use_portal",
+        "should_draft_email": false,
+        "denial_subtype": null,
+        "notes": "CRITICAL: 'Cannot process' with portal link is NOT a denial - it's a portal redirect",
+        "invariant_check": "must_not_classify_as_denial",
+        "e2e_assertions": {
+          "proposal_created": false,
+          "portal_task_created": true,
+          "case_status": "portal_required"
+        }
+      }
+    },
+    {
+      "fixture_id": "multi_partial_approval_plus_fee",
+      "category": "multi_intent",
+      "description": "Partial approval with fee for remaining records",
+      "message": {
+        "id": "msg-multi-003",
+        "message_id": "<multi-003@test.fixture>",
+        "from_email": "records@philadelphia.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Records Request - Partial Release + Fee",
+        "body_text": "We have completed review of your request.\n\nATTACHED: Incident report and 911 audio (no charge).\n\nADDITIONAL RECORDS AVAILABLE:\nBody-worn camera footage requires redaction for third-party privacy. The cost for redacted footage is $125.00.\n\nPlease confirm if you wish to proceed with the BWC footage.\n\nPhiladelphia Police Department",
+        "received_at": "2026-01-21T16:00:00Z",
+        "attachments": ["Incident_Report.pdf", "911_Audio.mp3"]
+      },
+      "case_data": {
+        "id": 1022,
+        "case_name": "Test Case - Multi Partial+Fee",
+        "subject_name": "Robert Stone",
+        "agency_name": "Philadelphia Police Department",
+        "state": "PA"
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "intent": ["fee_request", "question"],
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "pay_fee",
+        "fee_amount": 125,
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "notes": "Fee blocks release of BWC footage - fee_request takes precedence over partial delivery",
+        "draft_constraints": {
+          "max_words": 120,
+          "should_include": ["accept", "proceed"],
+          "must_not_include": ["demand", "lawsuit"]
+        },
+        "e2e_assertions": {
+          "proposal_created": true,
+          "proposal_action_type": "RESPOND_FEE_ACCEPTANCE"
+        }
+      }
+    },
+    {
+      "fixture_id": "multi_ack_plus_fee_estimate",
+      "category": "multi_intent",
+      "description": "Acknowledgment with preliminary fee estimate",
+      "message": {
+        "id": "msg-multi-004",
+        "message_id": "<multi-004@test.fixture>",
+        "from_email": "records@detroit.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: FOIA Request Received",
+        "body_text": "Your FOIA request has been received and assigned tracking number DPD-2024-0567.\n\nPreliminary review indicates the records exist. Based on the scope of your request, we estimate fees may be in the range of $50-75. We will provide a formal fee letter once records are located.\n\nExpected response time: 5 business days.\n\nDetroit Police Department FOIA Unit",
+        "received_at": "2026-01-21T17:00:00Z"
+      },
+      "case_data": {
+        "id": 1023,
+        "case_name": "Test Case - Multi Ack+Fee Estimate",
+        "subject_name": "Sarah Jones",
+        "agency_name": "Detroit Police Department",
+        "state": "MI"
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "intent": "fee_request",
+        "requires_response": true,
+        "portal_url": null,
+        "suggested_action": "pay_fee",
+        "fee_amount": 75,
+        "should_draft_email": true,
+        "denial_subtype": null,
+        "notes": "AI prioritizes fee mention - fee_request with response needed to confirm/negotiate",
+        "e2e_assertions": {
+          "proposal_created": true
+        }
+      }
+    },
+    {
+      "fixture_id": "multi_denial_plus_partial_release",
+      "category": "multi_intent",
+      "description": "Denial of some records with partial release of others",
+      "message": {
+        "id": "msg-multi-005",
+        "message_id": "<multi-005@test.fixture>",
+        "from_email": "records@baltimore.gov",
+        "to_email": "requests@foib-request.com",
+        "subject": "RE: Public Records Request - Determination",
+        "body_text": "We have completed review of your request.\n\nGRANTED (attached):\n- Incident report\n- 911 call audio\n\nDENIED:\n- Body-worn camera footage: Denied pursuant to Maryland Public Information Act §4-351 - active investigation.\n- Witness statements: Denied pursuant to MPIA §4-343 - investigative records.\n\nYou may appeal this determination to the Public Information Act Compliance Board.\n\nBaltimore Police Department",
+        "received_at": "2026-01-21T18:00:00Z",
+        "attachments": ["Incident_Report.pdf", "911_Audio.mp3"]
+      },
+      "case_data": {
+        "id": 1024,
+        "case_name": "Test Case - Multi Denial+Partial",
+        "subject_name": "Tom Miller",
+        "agency_name": "Baltimore Police Department",
+        "state": "MD"
+      },
+      "expected": {
+        "schema_version": "2026-01-22-v1",
+        "intent": ["partial_delivery", "denial"],
+        "requires_response": false,
+        "portal_url": null,
+        "suggested_action": "download",
+        "should_draft_email": false,
+        "denial_subtype": "ongoing_investigation",
+        "notes": "Mixed grant/denial - AI may classify either way. Both require no immediate response (records attached, human may appeal later).",
+        "e2e_assertions": {
+          "proposal_created": false
+        }
+      }
+    }
+  ]
+}
