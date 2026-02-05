@@ -813,6 +813,7 @@
         }
 
         let currentMessage = null;
+        let currentRunId = null;
         let aiLogLines = [];
 
         function appendLog(line) {
@@ -857,6 +858,7 @@
                 document.getElementById('replyResult').style.display = 'none';
                 document.getElementById('aiRunLink').style.display = 'none';
                 resetLog();
+                currentRunId = null;
                 await loadProposals(id);
 
                 document.getElementById('drawerBackdrop').classList.add('active');
@@ -866,21 +868,34 @@
             }
         }
 
-        async function loadProposals(messageId) {
+        async function loadProposals(messageId, runId = null) {
             const list = document.getElementById('proposalList');
             list.innerHTML = '<div class="timestamp">Loading proposals...</div>';
 
             try {
-                const res = await fetch(`/api/monitor/message/${messageId}/proposals`);
-                const data = await res.json();
-                if (!data.success) throw new Error(data.error || 'Failed to load proposals');
+                let proposals = [];
+                let headerNote = '';
 
-                if (!data.proposals || data.proposals.length === 0) {
-                    list.innerHTML = '<div class="timestamp">No proposals for this message.</div>';
+                if (runId) {
+                    const runRes = await fetch(`/api/runs/${runId}`);
+                    const runData = await runRes.json();
+                    if (!runData.success) throw new Error(runData.error || 'Failed to load run');
+                    proposals = runData.proposals || [];
+                    headerNote = `Showing proposals for run #${runId}`;
+                } else {
+                    const res = await fetch(`/api/monitor/message/${messageId}/proposals`);
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.error || 'Failed to load proposals');
+                    proposals = data.proposals || [];
+                    headerNote = 'Showing proposals for this message';
+                }
+
+                if (!proposals || proposals.length === 0) {
+                    list.innerHTML = `<div class="timestamp">${headerNote}. No proposals yet.</div>`;
                     return;
                 }
 
-                list.innerHTML = data.proposals.map(p => {
+                list.innerHTML = `<div class="proposal-meta">${headerNote}</div>` + proposals.map(p => {
                     const status = p.status || 'UNKNOWN';
                     const body = truncate(p.draft_body_text || '', 140);
                     const canApprove = status === 'PENDING_APPROVAL';
@@ -969,8 +984,9 @@
                     const link = document.getElementById('aiRunLink');
                     link.href = `/api/runs/${data.run.id}`;
                     link.style.display = 'inline-flex';
+                    currentRunId = data.run.id;
                 }
-                await loadProposals(currentMessage.id);
+                await loadProposals(currentMessage.id, currentRunId);
                 setTimeout(loadData, 1000);
             } catch (err) {
                 appendLog(`Error: ${err.message || err}`);
