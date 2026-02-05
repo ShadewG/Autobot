@@ -342,6 +342,27 @@
             overflow-y: auto;
             white-space: pre-wrap;
         }
+        .proposal-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 8px;
+        }
+        .proposal-title {
+            font-size: 12px;
+            color: #58a6ff;
+            margin-bottom: 6px;
+        }
+        .proposal-meta {
+            font-size: 11px;
+            color: #8b949e;
+            margin-bottom: 6px;
+        }
+        .proposal-actions {
+            display: flex;
+            gap: 6px;
+        }
         .clickable-row { cursor: pointer; }
         .clickable-row:hover { background: #1f242b; }
     </style>
@@ -567,6 +588,11 @@
             </div>
             <div class="drawer-label" style="margin-top:10px;">Run Log</div>
             <div class="drawer-log" id="aiLog"></div>
+        </div>
+
+        <div class="drawer-section" id="proposalSection" style="display:none;">
+            <div class="drawer-label">Proposals</div>
+            <div id="proposalList"></div>
         </div>
     </div>
 
@@ -824,17 +850,54 @@
                 const isInbound = data.message.direction === 'inbound';
                 document.getElementById('replySection').style.display = isInbound ? 'block' : 'none';
                 document.getElementById('aiSection').style.display = data.case ? 'block' : 'none';
+                document.getElementById('proposalSection').style.display = data.case ? 'block' : 'none';
 
                 document.getElementById('replySubject').value = `Re: ${data.message.subject || ''}`.trim();
                 document.getElementById('replyBody').value = '';
                 document.getElementById('replyResult').style.display = 'none';
                 document.getElementById('aiRunLink').style.display = 'none';
                 resetLog();
+                await loadProposals(id);
 
                 document.getElementById('drawerBackdrop').classList.add('active');
                 document.getElementById('messageDrawer').classList.add('active');
             } catch (err) {
                 console.error(err);
+            }
+        }
+
+        async function loadProposals(messageId) {
+            const list = document.getElementById('proposalList');
+            list.innerHTML = '<div class="timestamp">Loading proposals...</div>';
+
+            try {
+                const res = await fetch(`/api/monitor/message/${messageId}/proposals`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Failed to load proposals');
+
+                if (!data.proposals || data.proposals.length === 0) {
+                    list.innerHTML = '<div class="timestamp">No proposals for this message.</div>';
+                    return;
+                }
+
+                list.innerHTML = data.proposals.map(p => {
+                    const status = p.status || 'UNKNOWN';
+                    const body = truncate(p.draft_body_text || '', 140);
+                    const canApprove = status === 'PENDING_APPROVAL';
+                    return `
+                        <div class="proposal-card">
+                            <div class="proposal-title">${p.action_type || 'Action'} #${p.id}</div>
+                            <div class="proposal-meta">Status: ${status} · Confidence: ${p.confidence || '-'}</div>
+                            <div class="proposal-meta">${body || '-'}</div>
+                            <div class="proposal-actions">
+                                <button class="drawer-btn primary" ${canApprove ? '' : 'disabled'} onclick="approveProposal(${p.id})">Approve</button>
+                                <a class="drawer-btn" href="/api/proposals/${p.id}" target="_blank">View</a>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } catch (err) {
+                list.innerHTML = `<div class="timestamp">Error loading proposals: ${err.message}</div>`;
             }
         }
 
@@ -907,11 +970,29 @@
                     link.href = `/api/runs/${data.run.id}`;
                     link.style.display = 'inline-flex';
                 }
+                await loadProposals(currentMessage.id);
                 setTimeout(loadData, 1000);
             } catch (err) {
                 appendLog(`Error: ${err.message || err}`);
             } finally {
                 btn.disabled = false;
+            }
+        }
+
+        async function approveProposal(proposalId) {
+            appendLog(`Approving proposal ${proposalId}...`);
+            try {
+                const res = await fetch(`/api/monitor/proposals/${proposalId}/approve`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Approval failed');
+                appendLog(`Approved proposal ${proposalId}.`);
+                if (currentMessage) await loadProposals(currentMessage.id);
+                setTimeout(loadData, 1000);
+            } catch (err) {
+                appendLog(`Approval error: ${err.message || err}`);
             }
         }
 

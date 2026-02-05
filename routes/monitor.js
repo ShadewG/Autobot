@@ -383,6 +383,48 @@ router.get('/config', async (req, res) => {
 });
 
 /**
+ * GET /api/monitor/message/:id/proposals
+ * Return proposals tied to this message (trigger_message_id)
+ */
+router.get('/message/:id/proposals', async (req, res) => {
+    try {
+        const messageId = parseInt(req.params.id);
+        const result = await db.query(`
+            SELECT *
+            FROM proposals
+            WHERE trigger_message_id = $1
+            ORDER BY created_at DESC
+        `, [messageId]);
+
+        res.json({ success: true, proposals: result.rows });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/monitor/proposals/:id/approve
+ * Convenience wrapper to approve a proposal
+ */
+router.post('/proposals/:id/approve', express.json(), async (req, res) => {
+    try {
+        const proposalId = parseInt(req.params.id);
+
+        const axios = require('axios');
+        const baseUrl = process.env.WEBHOOK_BASE_URL || 'http://localhost:3000';
+
+        const response = await axios.post(`${baseUrl}/api/proposals/${proposalId}/decision`, {
+            action: 'APPROVE',
+            decidedBy: 'monitor'
+        }, { timeout: 15000 });
+
+        res.json({ success: true, decision: response.data });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /api/monitor/message/:id
  * Get full message details for drawer view
  */
