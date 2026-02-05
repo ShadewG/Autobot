@@ -270,6 +270,38 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
         try {
             console.log(`Analyzing response for case: ${caseData.case_name}`);
 
+            // Strip quoted history to focus the model on the latest reply
+            const stripQuotedText = (text) => {
+                if (!text) return text;
+                const lines = text.split(/\r?\n/);
+                let cutIndex = lines.length;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (/^On .+ wrote:$/i.test(line)) {
+                        cutIndex = i;
+                        break;
+                    }
+                    if (/^From: /i.test(line)) {
+                        cutIndex = i;
+                        break;
+                    }
+                    if (/^-----Original Message-----$/i.test(line)) {
+                        cutIndex = i;
+                        break;
+                    }
+                    if (line.startsWith('>') && i > 0 && !lines[i - 1].trim()) {
+                        cutIndex = i;
+                        break;
+                    }
+                }
+
+                const trimmed = lines.slice(0, cutIndex).join('\n').trim();
+                return trimmed.length >= 5 ? trimmed : text;
+            };
+
+            const cleanedBody = stripQuotedText(messageData.body_text || '');
+
             // Build requested records list for scope analysis
             // Prefer scope_items_jsonb (structured) over requested_records (legacy)
             const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
@@ -296,7 +328,7 @@ ${recordsList}
 From: ${messageData.from_email}
 Subject: ${messageData.subject}
 Body:
-${messageData.body_text}
+${cleanedBody}
 
 Please analyze and provide a JSON response with:
 1. intent: (portal_redirect | acknowledgment | records_ready | question | delivery | partial_delivery | denial | fee_request | more_info_needed)
