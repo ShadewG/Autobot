@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const sgMail = require('@sendgrid/mail');
-const { enqueueInboundMessageJob } = require('../queues/agent-queue');
+const { enqueueInboundMessageJob, enqueueResumeRunJob } = require('../queues/agent-queue');
 const crypto = require('crypto');
 
 // Initialize SendGrid
@@ -409,16 +409,75 @@ router.get('/message/:id/proposals', async (req, res) => {
 router.post('/proposals/:id/approve', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
+        const proposal = await db.getProposalById(proposalId);
+        if (!proposal) {
+            return res.status(404).json({ success: false, error: `Proposal ${proposalId} not found` });
+        }
 
-        const axios = require('axios');
-        const baseUrl = process.env.WEBHOOK_BASE_URL || 'http://localhost:3000';
+        if (proposal.status !== 'PENDING_APPROVAL') {
+            return res.status(409).json({
+                success: false,
+                error: `Proposal is not pending approval`,
+                current_status: proposal.status
+            });
+        }
 
-        const response = await axios.post(`${baseUrl}/api/proposals/${proposalId}/decision`, {
+        const caseId = proposal.case_id;
+        const existingRun = await db.getActiveRunForCase(caseId);
+        if (existingRun) {
+            if (existingRun.status === 'paused') {
+                await db.updateAgentRun(existingRun.id, {
+                    status: 'completed',
+                    ended_at: new Date()
+                });
+            } else {
+                return res.status(409).json({
+                    success: false,
+                    error: 'Case already has an active agent run',
+                    activeRun: {
+                        id: existingRun.id,
+                        status: existingRun.status,
+                        trigger_type: existingRun.trigger_type
+                    }
+                });
+            }
+        }
+
+        const humanDecision = {
             action: 'APPROVE',
+            proposalId,
+            instruction: null,
+            reason: null,
+            decidedAt: new Date().toISOString(),
             decidedBy: 'monitor'
-        }, { timeout: 15000 });
+        };
 
-        res.json({ success: true, decision: response.data });
+        await db.updateProposal(proposalId, {
+            human_decision: humanDecision,
+            status: 'DECISION_RECEIVED'
+        });
+
+        const run = await db.createAgentRunFull({
+            case_id: caseId,
+            trigger_type: 'resume',
+            status: 'queued',
+            autopilot_mode: proposal.autopilot_mode || 'SUPERVISED',
+            langgraph_thread_id: `resume:${caseId}:proposal-${proposalId}`
+        });
+
+        const job = await enqueueResumeRunJob(run.id, caseId, humanDecision, {
+            isInitialRequest: proposal.action_type === 'SEND_INITIAL_REQUEST',
+            originalProposalId: proposalId
+        });
+
+        res.status(202).json({
+            success: true,
+            message: 'Decision received, resume queued',
+            run: { id: run.id, status: run.status },
+            proposal_id: proposalId,
+            action: 'APPROVE',
+            job_id: job.id
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -590,8 +649,16 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
 
         let inboundMessage = message;
 
-        // If override provided, always clone so we control the content
-        if (body_text_override || subject_override || message.processed_at) {
+        const normalizedBodyOverride = typeof body_text_override === 'string' ? body_text_override.trim() : '';
+        const normalizedSubjectOverride = typeof subject_override === 'string' ? subject_override.trim() : '';
+        const normalizedMessageBody = (message.body_text || '').trim();
+        const normalizedMessageSubject = (message.subject || '').trim();
+        const shouldCloneForOverride =
+            (normalizedBodyOverride && normalizedBodyOverride !== normalizedMessageBody) ||
+            (normalizedSubjectOverride && normalizedSubjectOverride !== normalizedMessageSubject);
+
+        // Clone only when override content is different from stored message
+        if (shouldCloneForOverride) {
             const newMessageId = `monitor:${message.id}:${Date.now()}:${crypto.randomBytes(4).toString('hex')}`;
             inboundMessage = await db.createMessage({
                 thread_id: message.thread_id,
@@ -601,8 +668,8 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
                 direction: 'inbound',
                 from_email: message.from_email,
                 to_email: message.to_email,
-                subject: subject_override || message.subject,
-                body_text: body_text_override || message.body_text || '(empty body)',
+                subject: normalizedSubjectOverride || message.subject,
+                body_text: normalizedBodyOverride || message.body_text || '(empty body)',
                 body_html: message.body_html || null,
                 message_type: 'manual_trigger',
                 received_at: new Date()

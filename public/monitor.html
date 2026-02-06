@@ -972,16 +972,12 @@
             appendLog(`Triggering AI (${mode}${force ? ', force' : ''}) for message ${currentMessage.id}...`);
 
             try {
-                const overrideBody = document.getElementById('drawerBody').textContent || '';
-                const overrideSubject = document.getElementById('drawerSubject').textContent || '';
                 const res = await fetch(`/api/monitor/message/${currentMessage.id}/trigger-ai`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         autopilotMode: mode,
-                        force_new_run: force,
-                        body_text_override: overrideBody,
-                        subject_override: overrideSubject
+                        force_new_run: force
                     })
                 });
                 const data = await res.json();
@@ -1013,7 +1009,9 @@
                     headers: { 'Content-Type': 'application/json' }
                 });
                 const data = await res.json();
-                if (!data.success) throw new Error(data.error || 'Approval failed');
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || `Approval failed (${res.status})`);
+                }
                 appendLog(`Approved proposal ${proposalId}.`);
                 if (currentMessage) await loadProposals(currentMessage.id);
                 setTimeout(loadData, 1000);
