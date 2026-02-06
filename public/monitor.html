@@ -12,7 +12,33 @@
             color: #c9d1d9;
             padding: 20px;
         }
-        h1 { color: #58a6ff; margin-bottom: 20px; }
+        h1 { color: #58a6ff; margin-bottom: 0; }
+        .topline {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 14px;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .runtime-badges {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .runtime-badge {
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 4px 10px;
+            font-size: 11px;
+            color: #8b949e;
+            background: #161b22;
+        }
+        .runtime-badge.live {
+            color: #3fb950;
+            border-color: #2f6f44;
+        }
         h2 { color: #8b949e; margin: 20px 0 10px; font-size: 14px; text-transform: uppercase; }
         .stats {
             display: flex;
@@ -362,13 +388,26 @@
         .proposal-actions {
             display: flex;
             gap: 6px;
+            flex-wrap: wrap;
+        }
+        .proposal-decision-note {
+            font-size: 11px;
+            color: #8b949e;
+            margin-top: 6px;
         }
         .clickable-row { cursor: pointer; }
         .clickable-row:hover { background: #1f242b; }
     </style>
 </head>
 <body>
-    <h1>System Monitor</h1>
+    <div class="topline">
+        <h1>System Monitor</h1>
+        <div class="runtime-badges">
+            <span class="runtime-badge live" id="runtimeMode">Execution: LIVE</span>
+            <span class="runtime-badge" id="shadowMode">Shadow: OFF</span>
+            <span class="runtime-badge" id="queueBadge">Queue: -</span>
+        </div>
+    </div>
 
     <div class="refresh-bar">
         <div class="auto-refresh">
@@ -556,6 +595,14 @@
             <div class="drawer-value" id="drawerCase">-</div>
             <div class="drawer-label" style="margin-top:8px;">Received/Sent</div>
             <div class="drawer-value" id="drawerTimestamp">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Source</div>
+            <div class="drawer-value" id="drawerSource">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Message Type</div>
+            <div class="drawer-value" id="drawerMessageType">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Processed At</div>
+            <div class="drawer-value" id="drawerProcessedAt">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Processed Run</div>
+            <div class="drawer-value" id="drawerProcessedRun">-</div>
         </div>
 
         <div class="drawer-section">
@@ -587,9 +634,37 @@
             <div class="drawer-actions">
                 <button class="drawer-btn warn" id="aiTriggerBtn" onclick="triggerAI()">Trigger AI</button>
                 <a class="drawer-btn" id="aiRunLink" href="#" target="_blank" style="display:none;">View Run</a>
+                <a class="drawer-btn" id="aiMessageLink" href="#" target="_blank" style="display:none;">View Message API</a>
             </div>
+            <div class="drawer-label" style="margin-top:10px;">Run Status</div>
+            <div class="drawer-value" id="runStatusText">-</div>
             <div class="drawer-label" style="margin-top:10px;">Run Log</div>
             <div class="drawer-log" id="aiLog"></div>
+        </div>
+
+        <div class="drawer-section" id="simulationSection" style="display:none;">
+            <div class="drawer-label">Simulation</div>
+            <div class="form-group" style="margin-bottom:8px;">
+                <label for="simCaseId">Case ID</label>
+                <input class="drawer-input" id="simCaseId" placeholder="49" />
+            </div>
+            <div class="form-group" style="margin-bottom:8px;">
+                <label for="simFrom">From</label>
+                <input class="drawer-input" id="simFrom" placeholder="records@agency.gov" />
+            </div>
+            <div class="form-group" style="margin-bottom:8px;">
+                <label for="simSubject">Subject</label>
+                <input class="drawer-input" id="simSubject" placeholder="Re: Case..." />
+            </div>
+            <div class="form-group" style="margin-bottom:8px;">
+                <label for="simBody">Body</label>
+                <textarea class="drawer-textarea" id="simBody" placeholder="Manual inbound simulation text"></textarea>
+            </div>
+            <div class="drawer-actions">
+                <button class="drawer-btn" id="simCreateBtn" onclick="simulateInbound(false)">Create Simulated Inbound</button>
+                <button class="drawer-btn primary" id="simCreateTriggerBtn" onclick="simulateInbound(true)">Create + Trigger AI</button>
+            </div>
+            <div id="simResult" class="send-result" style="margin-top:8px;"></div>
         </div>
 
         <div class="drawer-section" id="proposalSection" style="display:none;">
@@ -758,6 +833,11 @@
                 const res = await fetch('/api/monitor/config');
                 const config = await res.json();
                 document.getElementById('configFrom').textContent = config.from_email;
+                document.getElementById('runtimeMode').textContent = `Execution: ${config.execution_mode || 'LIVE'}`;
+                document.getElementById('shadowMode').textContent = `Shadow: ${config.shadow_mode ? 'ON' : 'OFF'}`;
+                const queueGen = (config.queue?.generation?.waiting || 0) + (config.queue?.generation?.active || 0);
+                const queueEmail = (config.queue?.email?.waiting || 0) + (config.queue?.email?.active || 0);
+                document.getElementById('queueBadge').textContent = `Queue G:${queueGen} E:${queueEmail}`;
             } catch (err) {
                 document.getElementById('configFrom').textContent = 'Error loading config';
             }
@@ -816,6 +896,7 @@
 
         let currentMessage = null;
         let currentRunId = null;
+        let runPollTimer = null;
         let aiLogLines = [];
 
         function appendLog(line) {
@@ -844,6 +925,11 @@
                 document.getElementById('drawerDirection').textContent = data.message.direction || '-';
                 document.getElementById('drawerTimestamp').textContent = formatTime(data.message.received_at || data.message.sent_at || data.message.created_at);
                 document.getElementById('drawerBody').textContent = data.message.body_text || data.message.body_html || '-';
+                document.getElementById('drawerSource').textContent = data.source || '-';
+                document.getElementById('drawerMessageType').textContent = data.message.message_type || '-';
+                document.getElementById('drawerProcessedAt').textContent = formatTime(data.message.processed_at);
+                document.getElementById('drawerProcessedRun').textContent = data.message.processed_run_id || '-';
+                document.getElementById('runStatusText').textContent = '-';
 
                 if (data.case) {
                     document.getElementById('drawerCase').innerHTML = `<a class="case-link" href="/api/cases/${data.case.id}" target="_blank">#${data.case.id} ${truncate(data.case.case_name || '', 30)}</a>`;
@@ -855,11 +941,18 @@
                 document.getElementById('replySection').style.display = isInbound ? 'block' : 'none';
                 document.getElementById('aiSection').style.display = data.case ? 'block' : 'none';
                 document.getElementById('proposalSection').style.display = data.case ? 'block' : 'none';
+                document.getElementById('simulationSection').style.display = data.case ? 'block' : 'none';
 
                 document.getElementById('replySubject').value = `Re: ${data.message.subject || ''}`.trim();
                 document.getElementById('replyBody').value = '';
                 document.getElementById('replyResult').style.display = 'none';
                 document.getElementById('aiRunLink').style.display = 'none';
+                document.getElementById('aiMessageLink').style.display = 'inline-flex';
+                document.getElementById('aiMessageLink').href = `/api/monitor/message/${data.message.id}`;
+                document.getElementById('simCaseId').value = data.case?.id || '';
+                document.getElementById('simFrom').value = data.case?.agency_email || data.message.from_email || '';
+                document.getElementById('simSubject').value = data.message.subject || '';
+                document.getElementById('simBody').value = data.message.body_text || '';
                 resetLog();
                 currentRunId = null;
                 await loadProposals(id);
@@ -902,15 +995,37 @@
                     const status = p.status || 'UNKNOWN';
                     const body = truncate(p.draft_body_text || '', 140);
                     const canApprove = status === 'PENDING_APPROVAL';
+                    let verdict = 'Pending decision';
+                    if (p.status === 'EXECUTED') {
+                        if (p.outbound_message_id && p.outbound_sendgrid_message_id) {
+                            verdict = `Sent live (message #${p.outbound_message_id})`;
+                        } else if (p.execution_status === 'FAILED') {
+                            verdict = 'Not sent (execution failed)';
+                        } else if (p.execution_status === 'SKIPPED') {
+                            verdict = 'Not sent (execution skipped)';
+                        } else if (p.execution_status === 'QUEUED') {
+                            verdict = 'Queued (awaiting send worker)';
+                        } else if (p.execution_status === 'SENT' && !p.outbound_message_id) {
+                            verdict = 'Sent by executor, awaiting outbound row';
+                        } else {
+                            verdict = 'Not sent (no outbound evidence)';
+                        }
+                    }
                     return `
                         <div class="proposal-card">
                             <div class="proposal-title">${p.action_type || 'Action'} #${p.id}</div>
                             <div class="proposal-meta">Status: ${status} · Confidence: ${p.confidence || '-'}</div>
+                            <div class="proposal-meta">Execution: ${p.execution_key || '-'} | Email Job: ${p.email_job_id || '-'}</div>
+                            <div class="proposal-meta">Execution Status: ${p.execution_status || '-'}</div>
+                            <div class="proposal-meta">Send Verdict: ${verdict}</div>
                             <div class="proposal-meta">${body || '-'}</div>
                             <div class="proposal-actions">
                                 <button class="drawer-btn primary" ${canApprove ? '' : 'disabled'} onclick="approveProposal(${p.id})">Approve</button>
+                                <button class="drawer-btn" ${canApprove ? '' : 'disabled'} onclick="adjustProposal(${p.id})">Adjust</button>
+                                <button class="drawer-btn" ${canApprove ? '' : 'disabled'} onclick="dismissProposal(${p.id})">Dismiss</button>
                                 <a class="drawer-btn" href="/api/proposals/${p.id}" target="_blank">View</a>
                             </div>
+                            <div class="proposal-decision-note">Run: ${p.run_id || '-'} | Trigger Message: ${p.trigger_message_id || '-'}</div>
                         </div>
                     `;
                 }).join('');
@@ -922,6 +1037,10 @@
         function closeDrawer() {
             document.getElementById('drawerBackdrop').classList.remove('active');
             document.getElementById('messageDrawer').classList.remove('active');
+            if (runPollTimer) {
+                clearInterval(runPollTimer);
+                runPollTimer = null;
+            }
         }
 
         async function sendReply() {
@@ -972,10 +1091,11 @@
             appendLog(`Triggering AI (${mode}${force ? ', force' : ''}) for message ${currentMessage.id}...`);
 
             try {
-                const res = await fetch(`/api/monitor/message/${currentMessage.id}/trigger-ai`, {
+                const res = await fetch(`/api/monitor/trigger-inbound-run`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
+                        message_id: currentMessage.id,
                         autopilotMode: mode,
                         force_new_run: force
                     })
@@ -991,6 +1111,7 @@
                     link.href = `/api/runs/${data.run.id}`;
                     link.style.display = 'inline-flex';
                     currentRunId = data.run.id;
+                    pollRunStatus(currentRunId);
                 }
                 await loadProposals(currentMessage.id, currentRunId);
                 setTimeout(loadData, 1000);
@@ -1001,22 +1122,150 @@
             }
         }
 
-        async function approveProposal(proposalId) {
-            appendLog(`Approving proposal ${proposalId}...`);
+        async function proposeDecision(proposalId, action) {
+            appendLog(`${action} proposal ${proposalId}...`);
             try {
-                const res = await fetch(`/api/monitor/proposals/${proposalId}/approve`, {
+                const payload = { action };
+                if (action === 'ADJUST') {
+                    const instruction = prompt('Adjustment instruction:');
+                    if (!instruction || !instruction.trim()) {
+                        appendLog('Adjust cancelled: instruction required.');
+                        return;
+                    }
+                    payload.instruction = instruction.trim();
+                }
+                const res = await fetch(`/api/monitor/proposals/${proposalId}/decision`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' }
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) {
-                    throw new Error(data.error || `Approval failed (${res.status})`);
+                    throw new Error(data.error || `Decision failed (${res.status})`);
                 }
-                appendLog(`Approved proposal ${proposalId}.`);
+                appendLog(`${action} accepted for proposal ${proposalId} (HTTP ${res.status}).`);
+                if (data.message) appendLog(`Decision response: ${data.message}`);
+                if (data.run?.id) {
+                    currentRunId = data.run.id;
+                    pollRunStatus(currentRunId);
+                }
                 if (currentMessage) await loadProposals(currentMessage.id);
                 setTimeout(loadData, 1000);
             } catch (err) {
-                appendLog(`Approval error: ${err.message || err}`);
+                appendLog(`Decision error: ${err.message || err}`);
+            }
+        }
+
+        async function approveProposal(proposalId) {
+            return proposeDecision(proposalId, 'APPROVE');
+        }
+
+        async function adjustProposal(proposalId) {
+            return proposeDecision(proposalId, 'ADJUST');
+        }
+
+        async function dismissProposal(proposalId) {
+            return proposeDecision(proposalId, 'DISMISS');
+        }
+
+        async function pollRunStatus(runId) {
+            if (!runId) return;
+            if (runPollTimer) clearInterval(runPollTimer);
+
+            const terminalStatuses = new Set(['completed', 'paused', 'failed']);
+            const runStatusText = document.getElementById('runStatusText');
+
+            const pollOnce = async () => {
+                try {
+                    const res = await fetch(`/api/runs/${runId}`);
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.error || 'Run fetch failed');
+                    const run = data.run || {};
+                    runStatusText.textContent = `${run.status || '-'} | node=${run?.metadata?.current_node || '-'} | started=${formatTime(run.started_at)} | ended=${formatTime(run.ended_at)}`;
+                    if (terminalStatuses.has(run.status)) {
+                        appendLog(`Run ${runId} reached terminal state: ${run.status}`);
+                        clearInterval(runPollTimer);
+                        runPollTimer = null;
+                        if (currentMessage) await loadProposals(currentMessage.id, runId);
+                    }
+                } catch (error) {
+                    appendLog(`Run poll error: ${error.message || error}`);
+                    clearInterval(runPollTimer);
+                    runPollTimer = null;
+                }
+            };
+
+            await pollOnce();
+            runPollTimer = setInterval(pollOnce, 2000);
+        }
+
+        async function simulateInbound(triggerAfterCreate) {
+            const caseId = parseInt(document.getElementById('simCaseId').value, 10);
+            const from = document.getElementById('simFrom').value.trim();
+            const subject = document.getElementById('simSubject').value.trim();
+            const body = document.getElementById('simBody').value.trim();
+            const resultDiv = document.getElementById('simResult');
+
+            if (!caseId || !from || !body) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = 'Simulation requires case id, from email, and body.';
+                resultDiv.style.display = 'block';
+                return;
+            }
+
+            try {
+                const createRes = await fetch('/api/monitor/simulate-inbound', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        case_id: caseId,
+                        subject,
+                        body_text: body,
+                        from_email: from,
+                        attach_to_thread: true,
+                        mark_processed: false
+                    })
+                });
+                const createData = await createRes.json();
+                if (!createRes.ok || !createData.success) {
+                    throw new Error(createData.error || `Simulation create failed (${createRes.status})`);
+                }
+
+                resultDiv.className = 'send-result success';
+                resultDiv.textContent = `Simulated inbound created: message ${createData.message_id}`;
+                resultDiv.style.display = 'block';
+                appendLog(`Simulated inbound created: message ${createData.message_id}`);
+
+                if (triggerAfterCreate) {
+                    const triggerRes = await fetch('/api/monitor/trigger-inbound-run', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message_id: createData.message_id,
+                            autopilotMode: document.getElementById('aiMode').value,
+                            force_new_run: document.getElementById('aiForce').checked
+                        })
+                    });
+                    const triggerData = await triggerRes.json();
+                    if (!triggerRes.ok || !triggerData.success) {
+                        throw new Error(triggerData.error || `Simulation trigger failed (${triggerRes.status})`);
+                    }
+
+                    appendLog(`Run queued: run_id=${triggerData.run.id}, status=${triggerData.run.status}`);
+                    if (triggerData.job_id) appendLog(`Job queued: ${triggerData.job_id}`);
+                    currentRunId = triggerData.run.id;
+                    const link = document.getElementById('aiRunLink');
+                    link.href = `/api/runs/${currentRunId}`;
+                    link.style.display = 'inline-flex';
+                    await pollRunStatus(currentRunId);
+                }
+
+                await loadData();
+            } catch (error) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = `Simulation error: ${error.message || error}`;
+                resultDiv.style.display = 'block';
+                appendLog(`Simulation error: ${error.message || error}`);
             }
         }
 
