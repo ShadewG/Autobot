@@ -17,22 +17,8 @@ const logger = require('./logger');
 // EXECUTION MODE CONFIGURATION
 // ============================================================================
 
-/**
- * Execution mode: 'DRY' or 'LIVE'
- * Default to DRY in development, LIVE in production (unless overridden)
- */
-const EXECUTION_MODE = (() => {
-  const mode = process.env.EXECUTION_MODE?.toUpperCase();
-  if (mode === 'LIVE') return 'LIVE';
-  if (mode === 'DRY') return 'DRY';
-
-  // Legacy support: check LANGGRAPH_DRY_RUN
-  if (process.env.LANGGRAPH_DRY_RUN === 'false') return 'LIVE';
-  if (process.env.LANGGRAPH_DRY_RUN === 'true') return 'DRY';
-
-  // Default based on environment
-  return process.env.NODE_ENV === 'production' ? 'LIVE' : 'DRY';
-})();
+// Hardcoded execution mode: always live sends
+const EXECUTION_MODE = 'LIVE';
 
 const isDryRun = () => EXECUTION_MODE === 'DRY';
 const isLiveMode = () => EXECUTION_MODE === 'LIVE';

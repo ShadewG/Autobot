@@ -18,15 +18,15 @@
 const db = require('./database');
 const logger = require('./logger');
 
-// Shadow mode configuration
-const SHADOW_MODE = process.env.SHADOW_MODE === 'true';
-const EXECUTION_MODE = process.env.EXECUTION_MODE || 'DRY';
+// Hardcoded mode: shadow mode disabled, execution always live
+const SHADOW_MODE = false;
+const EXECUTION_MODE = 'LIVE';
 
 /**
  * Check if running in shadow mode
  */
 function isShadowMode() {
-  return SHADOW_MODE || EXECUTION_MODE === 'DRY';
+  return false;
 }
 
 /**
