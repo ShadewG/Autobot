@@ -264,6 +264,70 @@
             font-size: 11px;
             margin-top: 10px;
         }
+        .ops-panel {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        .ops-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        .ops-card {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px;
+        }
+        .ops-card .label {
+            color: #8b949e;
+            font-size: 11px;
+        }
+        .ops-card .value {
+            font-size: 20px;
+            color: #58a6ff;
+            font-weight: 700;
+        }
+        .ops-lists {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .ops-list {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .ops-list h4 {
+            font-size: 12px;
+            color: #8b949e;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .ops-item {
+            padding: 6px 0;
+            border-bottom: 1px solid #21262d;
+            font-size: 12px;
+        }
+        .ops-item:last-child {
+            border-bottom: none;
+        }
+        .ops-item a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+        .ops-item a:hover {
+            text-decoration: underline;
+        }
 
         /* Message Drawer */
         .drawer-backdrop {
@@ -472,6 +536,61 @@
         </div>
     </div>
 
+    <div class="ops-panel">
+        <h3 style="color:#58a6ff; margin-bottom:8px; font-size:14px;">Live Operations</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="notionUrlInput">Notion Case Link</label>
+                <input type="text" id="notionUrlInput" placeholder="https://www.notion.so/...">
+            </div>
+            <button class="send-btn" onclick="importNotionCase(false)">Import Case</button>
+            <button class="send-btn" onclick="importNotionCase(true)">Import + Run Initial (SUPERVISED)</button>
+        </div>
+        <div id="notionImportResult" class="send-result"></div>
+
+        <div class="ops-grid">
+            <div class="ops-card">
+                <div class="label">Inbound (24h)</div>
+                <div class="value" id="opsInbound24h">-</div>
+            </div>
+            <div class="ops-card">
+                <div class="label">Pending Approvals</div>
+                <div class="value" id="opsPendingApprovals">-</div>
+            </div>
+            <div class="ops-card">
+                <div class="label">Unmatched Inbound</div>
+                <div class="value" id="opsUnmatchedInbound">-</div>
+            </div>
+            <div class="ops-card">
+                <div class="label">Unprocessed Inbound</div>
+                <div class="value" id="opsUnprocessedInbound">-</div>
+            </div>
+            <div class="ops-card">
+                <div class="label">Active Runs</div>
+                <div class="value" id="opsActiveRuns">-</div>
+            </div>
+            <div class="ops-card">
+                <div class="label">Stuck Runs (&gt;2m)</div>
+                <div class="value" id="opsStuckRuns">-</div>
+            </div>
+        </div>
+
+        <div class="ops-lists">
+            <div class="ops-list">
+                <h4>Pending Approval Queue</h4>
+                <div id="opsPendingList"></div>
+            </div>
+            <div class="ops-list">
+                <h4>Unmatched Inbound Queue</h4>
+                <div id="opsUnmatchedList"></div>
+            </div>
+            <div class="ops-list">
+                <h4>Unprocessed Inbound Queue</h4>
+                <div id="opsUnprocessedList"></div>
+            </div>
+        </div>
+    </div>
+
     <div class="tabs">
         <div class="tab active" data-panel="all">All Messages</div>
         <div class="tab" data-panel="inbound">Inbound</div>
@@ -623,9 +742,8 @@
         <div class="drawer-section" id="aiSection" style="display:none;">
             <div class="drawer-label">AI Processing</div>
             <div style="display:flex;gap:8px;margin-bottom:8px;">
-                <select class="drawer-select" id="aiMode">
+                <select class="drawer-select" id="aiMode" disabled>
                     <option value="SUPERVISED">SUPERVISED</option>
-                    <option value="AUTO">AUTO</option>
                 </select>
                 <label style="font-size:12px;color:#8b949e;display:flex;align-items:center;gap:6px;">
                     <input type="checkbox" id="aiForce" /> force new run
@@ -727,15 +845,17 @@
         // Load all data
         async function loadData() {
             try {
-                const [monitorRes, inboundRes, unmatchedRes] = await Promise.all([
+                const [monitorRes, inboundRes, unmatchedRes, liveRes] = await Promise.all([
                     fetch('/api/monitor?limit=100'),
                     fetch('/api/monitor/inbound?limit=100'),
-                    fetch('/api/monitor/unmatched?limit=50')
+                    fetch('/api/monitor/unmatched?limit=50'),
+                    fetch('/api/monitor/live-overview?limit=25')
                 ]);
 
                 const monitor = await monitorRes.json();
                 const inboundData = await inboundRes.json();
                 const unmatchedData = await unmatchedRes.json();
+                const live = await liveRes.json();
 
                 // Update stats
                 document.getElementById('totalMessages').textContent = monitor.summary.total_messages;
@@ -808,10 +928,53 @@
                     '<tr><td colspan="5" style="text-align:center;color:#8b949e">No unmatched emails</td></tr>';
 
                 document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+                renderLiveOverview(live);
 
             } catch (err) {
                 console.error('Failed to load data:', err);
             }
+        }
+
+        function renderOpsList(listId, items, renderer) {
+            const el = document.getElementById(listId);
+            if (!el) return;
+            if (!items || items.length === 0) {
+                el.innerHTML = '<div class="timestamp">None</div>';
+                return;
+            }
+            el.innerHTML = items.map(renderer).join('');
+        }
+
+        function renderLiveOverview(payload) {
+            if (!payload || !payload.success) return;
+            const s = payload.summary || {};
+            document.getElementById('opsInbound24h').textContent = s.inbound_24h ?? 0;
+            document.getElementById('opsPendingApprovals').textContent = s.pending_approvals_total ?? 0;
+            document.getElementById('opsUnmatchedInbound').textContent = s.unmatched_inbound_total ?? 0;
+            document.getElementById('opsUnprocessedInbound').textContent = s.unprocessed_inbound_total ?? 0;
+            document.getElementById('opsActiveRuns').textContent = s.active_runs_total ?? 0;
+            document.getElementById('opsStuckRuns').textContent = s.stuck_runs_total ?? 0;
+
+            renderOpsList('opsPendingList', payload.pending_approvals, (p) => `
+                <div class="ops-item">
+                    <div><a href="/api/proposals/${p.id}" target="_blank">Proposal #${p.id}</a> · Case #${p.case_id || '-'}</div>
+                    <div>${p.action_type || '-'} · msg ${p.trigger_message_id || '-'} · ${relativeTime(p.created_at)}</div>
+                </div>
+            `);
+
+            renderOpsList('opsUnmatchedList', payload.unmatched_inbound, (m) => `
+                <div class="ops-item">
+                    <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${truncate(m.from_email, 36)}</div>
+                    <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
+                </div>
+            `);
+
+            renderOpsList('opsUnprocessedList', payload.unprocessed_inbound, (m) => `
+                <div class="ops-item">
+                    <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · Case #${m.case_id || '-'}</div>
+                    <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
+                </div>
+            `);
         }
 
         // Auto-refresh setup
@@ -838,8 +1001,65 @@
                 const queueGen = (config.queue?.generation?.waiting || 0) + (config.queue?.generation?.active || 0);
                 const queueEmail = (config.queue?.email?.waiting || 0) + (config.queue?.email?.active || 0);
                 document.getElementById('queueBadge').textContent = `Queue G:${queueGen} E:${queueEmail}`;
+                document.getElementById('aiMode').value = config.default_autopilot_mode || 'SUPERVISED';
             } catch (err) {
                 document.getElementById('configFrom').textContent = 'Error loading config';
+            }
+        }
+
+        async function importNotionCase(runInitial) {
+            const notionUrl = document.getElementById('notionUrlInput').value.trim();
+            const resultDiv = document.getElementById('notionImportResult');
+            if (!notionUrl) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = 'Notion URL is required.';
+                resultDiv.style.display = 'block';
+                return;
+            }
+
+            resultDiv.style.display = 'none';
+            try {
+                const importRes = await fetch('/api/cases/import-notion', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notion_url: notionUrl })
+                });
+                const importData = await importRes.json();
+                if (!importRes.ok || !importData.success) {
+                    throw new Error(importData.error || `Import failed (${importRes.status})`);
+                }
+
+                const caseId = importData.case_id || importData.case?.id;
+                if (!caseId) {
+                    throw new Error('Case import succeeded but no case_id returned');
+                }
+
+                if (!runInitial) {
+                    resultDiv.className = 'send-result success';
+                    resultDiv.textContent = `Case imported: #${caseId}`;
+                    resultDiv.style.display = 'block';
+                    await loadData();
+                    return;
+                }
+
+                const runRes = await fetch(`/api/cases/${caseId}/run-initial`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ autopilotMode: 'SUPERVISED' })
+                });
+                const runData = await runRes.json();
+                if (!runRes.ok || !runData.success) {
+                    throw new Error(runData.error || `Initial run failed (${runRes.status})`);
+                }
+
+                resultDiv.className = 'send-result success';
+                resultDiv.textContent = `Case #${caseId} imported. Initial run queued: run #${runData.run?.id}`;
+                resultDiv.style.display = 'block';
+                await loadData();
+            } catch (err) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = err.message || 'Notion import failed';
+                resultDiv.style.display = 'block';
             }
         }
 

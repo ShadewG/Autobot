@@ -559,8 +559,134 @@ router.get('/config', async (req, res) => {
         inbound_domains: ['foib-request.com', 'foia.foib-request.com', 'c.foib-request.com'],
         execution_mode: 'LIVE',
         shadow_mode: false,
+        default_autopilot_mode: 'SUPERVISED',
+        require_human_approval: true,
         queue
     });
+});
+
+/**
+ * GET /api/monitor/live-overview
+ * Operational summary focused on missed routing / missed response paths.
+ */
+router.get('/live-overview', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit, 10) || 25, 100);
+
+        const summaryResult = await db.query(`
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE direction = 'inbound'
+                      AND COALESCE(received_at, created_at) >= NOW() - INTERVAL '24 hours'
+                ) AS inbound_24h,
+                COUNT(*) FILTER (
+                    WHERE direction = 'inbound'
+                      AND (thread_id IS NULL OR case_id IS NULL)
+                ) AS unmatched_inbound_total,
+                COUNT(*) FILTER (
+                    WHERE direction = 'inbound'
+                      AND processed_at IS NULL
+                ) AS unprocessed_inbound_total
+            FROM messages
+        `);
+
+        const pendingApprovalsResult = await db.query(`
+            SELECT
+                p.id,
+                p.case_id,
+                p.action_type,
+                p.confidence,
+                p.created_at,
+                p.trigger_message_id,
+                c.case_name
+            FROM proposals p
+            LEFT JOIN cases c ON c.id = p.case_id
+            WHERE p.status = 'PENDING_APPROVAL'
+            ORDER BY p.created_at DESC
+            LIMIT $1
+        `, [limit]);
+
+        const activeRunsResult = await db.query(`
+            SELECT
+                r.id,
+                r.case_id,
+                r.status,
+                r.trigger_type,
+                r.started_at,
+                r.metadata,
+                c.case_name
+            FROM agent_runs r
+            LEFT JOIN cases c ON c.id = r.case_id
+            WHERE r.status IN ('queued', 'running', 'paused')
+            ORDER BY r.started_at DESC
+            LIMIT $1
+        `, [limit]);
+
+        const unmatchedInboundResult = await db.query(`
+            SELECT
+                m.id,
+                m.from_email,
+                m.subject,
+                m.received_at,
+                m.created_at
+            FROM messages m
+            WHERE m.direction = 'inbound'
+              AND (m.thread_id IS NULL OR m.case_id IS NULL)
+            ORDER BY COALESCE(m.received_at, m.created_at) DESC
+            LIMIT $1
+        `, [limit]);
+
+        const unprocessedInboundResult = await db.query(`
+            SELECT
+                m.id,
+                m.case_id,
+                m.from_email,
+                m.subject,
+                m.received_at,
+                m.created_at,
+                c.case_name
+            FROM messages m
+            LEFT JOIN cases c ON c.id = m.case_id
+            WHERE m.direction = 'inbound'
+              AND m.processed_at IS NULL
+            ORDER BY COALESCE(m.received_at, m.created_at) DESC
+            LIMIT $1
+        `, [limit]);
+
+        const stuckRunsResult = await db.query(`
+            SELECT
+                id,
+                case_id,
+                trigger_type,
+                status,
+                started_at,
+                metadata
+            FROM agent_runs
+            WHERE status = 'running'
+              AND started_at < NOW() - INTERVAL '2 minutes'
+            ORDER BY started_at ASC
+            LIMIT $1
+        `, [limit]);
+
+        res.json({
+            success: true,
+            summary: {
+                inbound_24h: parseInt(summaryResult.rows[0]?.inbound_24h || 0, 10),
+                unmatched_inbound_total: parseInt(summaryResult.rows[0]?.unmatched_inbound_total || 0, 10),
+                unprocessed_inbound_total: parseInt(summaryResult.rows[0]?.unprocessed_inbound_total || 0, 10),
+                pending_approvals_total: pendingApprovalsResult.rows.length,
+                active_runs_total: activeRunsResult.rows.length,
+                stuck_runs_total: stuckRunsResult.rows.length
+            },
+            pending_approvals: pendingApprovalsResult.rows,
+            active_runs: activeRunsResult.rows,
+            unmatched_inbound: unmatchedInboundResult.rows,
+            unprocessed_inbound: unprocessedInboundResult.rows,
+            stuck_runs: stuckRunsResult.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 /**
@@ -737,7 +863,8 @@ router.post('/simulate-inbound', express.json(), async (req, res) => {
  */
 router.post('/trigger-inbound-run', express.json(), async (req, res) => {
     try {
-        const { message_id, autopilotMode = 'SUPERVISED', force_new_run = false } = req.body || {};
+        const { message_id, force_new_run = false } = req.body || {};
+        const autopilotMode = 'SUPERVISED';
         if (!message_id) {
             return res.status(400).json({ success: false, error: 'message_id is required' });
         }
@@ -761,6 +888,8 @@ router.post('/trigger-inbound-run', express.json(), async (req, res) => {
 
         res.json({
             success: true,
+            approval_required: true,
+            autopilot_mode: autopilotMode,
             run: {
                 id: run.id,
                 status: run.status,
@@ -894,12 +1023,12 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
     try {
         const messageId = parseInt(req.params.id);
         const {
-            autopilotMode = 'SUPERVISED',
             force_new_run = false,
             override_mode = false,
             body_text_override,
             subject_override
         } = req.body || {};
+        const autopilotMode = 'SUPERVISED';
 
         const message = await db.getMessageById(messageId);
         if (!message) {
@@ -957,6 +1086,8 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
 
         res.json({
             success: true,
+            approval_required: true,
+            autopilot_mode: autopilotMode,
             run: {
                 id: run.id,
                 status: run.status,
