@@ -10,6 +10,22 @@
 
 const db = require('../../services/database');
 const logger = require('../../services/logger');
+const COMMIT_STEP_TIMEOUT_MS = parseInt(process.env.COMMIT_STEP_TIMEOUT_MS || '5000', 10);
+
+async function withTimeout(promise, timeoutMs, label) {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timer);
+    return result;
+  } catch (error) {
+    clearTimeout(timer);
+    throw error;
+  }
+}
 
 /**
  * Get statutory response days by state
@@ -117,42 +133,42 @@ async function commitStateNode(state) {
   const logs = [];
 
   try {
-    const caseData = await db.getCaseById(caseId);
+    const caseData = await withTimeout(db.getCaseById(caseId), COMMIT_STEP_TIMEOUT_MS, 'getCaseById');
 
     // === Recompute due_info ===
-    const dueInfo = await computeDueInfo(caseData);
+    const dueInfo = await withTimeout(computeDueInfo(caseData), COMMIT_STEP_TIMEOUT_MS, 'computeDueInfo');
 
     if (dueInfo.next_due_at) {
-      await db.updateCase(caseId, {
+      await withTimeout(db.updateCase(caseId, {
         next_due_at: dueInfo.next_due_at,
         updated_at: new Date()
-      });
+      }), COMMIT_STEP_TIMEOUT_MS, 'updateCase(next_due_at)');
       logs.push(`Updated next_due_at: ${dueInfo.next_due_at.toISOString()}`);
     } else {
       logs.push('No next_due_at to update');
     }
 
     // === Log decision for adaptive learning ===
-    await db.createAgentDecision({
+    await withTimeout(db.createAgentDecision({
       caseId,
       reasoning: (proposalReasoning || []).join('\n') || 'No reasoning recorded',
       actionTaken: proposalActionType || 'NONE',
       confidence: proposalConfidence || 0.8,
       triggerType: triggerType,
       outcome: actionExecuted ? 'executed' : 'gated'
-    });
+    }), COMMIT_STEP_TIMEOUT_MS, 'createAgentDecision');
 
     logs.push('Decision logged for learning');
 
     // === Log timeline event ===
-    await db.logActivity('agent_decision',
+    await withTimeout(db.logActivity('agent_decision',
       `Agent decided: ${proposalActionType || 'NONE'}`, {
         caseId,
         reasoning: proposalReasoning,
         executed: actionExecuted,
         result: executionResult
       }
-    );
+    ), COMMIT_STEP_TIMEOUT_MS, 'logActivity(agent_decision)');
 
     return {
       isComplete: true,

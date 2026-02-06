@@ -527,7 +527,20 @@ async function processInboundMessageJob(job) {
       };
     }
 
-    return { success: true, status: result.status };
+    // Defensive fallback: never leave run in "running" on unknown statuses
+    await db.updateAgentRun(runId, {
+      status: 'completed',
+      ended_at: new Date(),
+      error_message: `Non-standard graph status: ${result.status || 'unknown'}`
+    });
+
+    log.warn('Inbound message processing returned non-standard status; forcing completion', {
+      runId,
+      caseId,
+      status: result.status
+    });
+
+    return { success: true, status: result.status || 'unknown' };
 
   } catch (error) {
     log.error('Inbound message job failed', { runId, caseId, error: error.message });
