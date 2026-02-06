@@ -545,6 +545,7 @@
             </div>
             <button class="send-btn" onclick="importNotionCase(false)">Import Case</button>
             <button class="send-btn" onclick="importNotionCase(true)">Import + Run Initial (SUPERVISED)</button>
+            <button class="send-btn" style="background:#f85149;" onclick="resetOperationalState()">Reset Active/Pending</button>
         </div>
         <div id="notionImportResult" class="send-result"></div>
 
@@ -1059,6 +1060,33 @@
             } catch (err) {
                 resultDiv.className = 'send-result error';
                 resultDiv.textContent = err.message || 'Notion import failed';
+                resultDiv.style.display = 'block';
+            }
+        }
+
+        async function resetOperationalState() {
+            const resultDiv = document.getElementById('notionImportResult');
+            const ok = window.confirm('Reset active runs and pending approvals for clean-slate testing?');
+            if (!ok) return;
+
+            resultDiv.style.display = 'none';
+            try {
+                const res = await fetch('/api/monitor/reset-state', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || `Reset failed (${res.status})`);
+                }
+                resultDiv.className = 'send-result success';
+                resultDiv.textContent = `Reset complete. Runs closed: ${data.runs_reset}. Proposals dismissed: ${data.proposals_dismissed}.`;
+                resultDiv.style.display = 'block';
+                await loadData();
+            } catch (err) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = err.message || 'Reset failed';
                 resultDiv.style.display = 'block';
             }
         }

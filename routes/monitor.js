@@ -690,6 +690,55 @@ router.get('/live-overview', async (req, res) => {
 });
 
 /**
+ * POST /api/monitor/reset-state
+ * Operational reset for clean slate testing.
+ * Does not delete cases/messages/history; it closes active runs and dismisses pending approvals.
+ */
+router.post('/reset-state', express.json(), async (req, res) => {
+    try {
+        const resetRunsResult = await db.query(`
+            UPDATE agent_runs
+            SET status = 'failed',
+                ended_at = COALESCE(ended_at, NOW()),
+                error = COALESCE(error, 'Manual reset from monitor')
+            WHERE status IN ('queued', 'running', 'paused')
+            RETURNING id
+        `);
+
+        const dismissProposalsResult = await db.query(`
+            UPDATE proposals
+            SET status = 'DISMISSED',
+                human_decision = COALESCE(
+                    human_decision,
+                    jsonb_build_object(
+                        'action', 'DISMISS',
+                        'reason', 'Manual reset from monitor',
+                        'decidedAt', to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"'),
+                        'decidedBy', 'monitor-reset'
+                    )
+                ),
+                updated_at = NOW()
+            WHERE status IN ('PENDING_APPROVAL', 'DECISION_RECEIVED')
+            RETURNING id
+        `);
+
+        await db.logActivity('monitor_reset_state', 'Monitor reset operational state', {
+            runs_reset: resetRunsResult.rowCount,
+            proposals_dismissed: dismissProposalsResult.rowCount
+        });
+
+        res.json({
+            success: true,
+            message: 'Operational state reset',
+            runs_reset: resetRunsResult.rowCount,
+            proposals_dismissed: dismissProposalsResult.rowCount
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /api/monitor/message/:id/proposals
  * Return proposals tied to this message (trigger_message_id)
  */
