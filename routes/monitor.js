@@ -193,6 +193,8 @@ router.get('/', async (req, res) => {
                 c.id as case_id,
                 c.case_name,
                 c.agency_name,
+                c.agency_email,
+                c.portal_url,
                 c.status as case_status
             FROM messages m
             LEFT JOIN email_threads t ON m.thread_id = t.id
@@ -320,6 +322,7 @@ router.get('/inbound', async (req, res) => {
                 c.case_name,
                 c.agency_name,
                 c.agency_email,
+                c.portal_url,
                 ra.intent,
                 ra.sentiment,
                 ra.suggested_action
@@ -362,7 +365,9 @@ router.get('/outbound', async (req, res) => {
                 m.sendgrid_message_id,
                 c.id as case_id,
                 c.case_name,
-                c.agency_name
+                c.agency_name,
+                c.agency_email,
+                c.portal_url
             FROM messages m
             LEFT JOIN email_threads t ON m.thread_id = t.id
             LEFT JOIN cases c ON t.case_id = c.id
@@ -967,6 +972,7 @@ router.get('/message/:id', async (req, res) => {
         }
 
         let caseData = null;
+        let latestInitialRouteMode = null;
         if (message.case_id) {
             caseData = await db.getCaseById(message.case_id);
         } else if (message.thread_id) {
@@ -974,6 +980,18 @@ router.get('/message/:id', async (req, res) => {
             if (thread?.case_id) {
                 caseData = await db.getCaseById(thread.case_id);
             }
+        }
+
+        if (caseData?.id) {
+            const routeResult = await db.query(`
+                SELECT metadata
+                FROM agent_runs
+                WHERE case_id = $1
+                  AND trigger_type = 'initial_request'
+                ORDER BY started_at DESC
+                LIMIT 1
+            `, [caseData.id]);
+            latestInitialRouteMode = routeResult.rows[0]?.metadata?.route_mode || null;
         }
 
         res.json({
@@ -985,7 +1003,9 @@ router.get('/message/:id', async (req, res) => {
                 case_name: caseData.case_name,
                 agency_name: caseData.agency_name,
                 agency_email: caseData.agency_email,
-                status: caseData.status
+                portal_url: caseData.portal_url,
+                status: caseData.status,
+                latest_initial_route_mode: latestInitialRouteMode
             } : null
         });
     } catch (error) {

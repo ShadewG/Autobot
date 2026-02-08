@@ -111,6 +111,10 @@
         .badge.webhook { background: #8957e5; color: white; }
         .badge.agent { background: #f0883e; color: white; }
         .badge.error { background: #f85149; color: white; }
+        .badge.route-email { background: #1f6feb; color: #fff; }
+        .badge.route-portal { background: #f0883e; color: #0d1117; }
+        .badge.route-hybrid { background: #8957e5; color: #fff; }
+        .badge.route-none { background: #30363d; color: #c9d1d9; }
 
         .email-subject {
             max-width: 400px;
@@ -721,6 +725,8 @@
             <div class="drawer-value" id="drawerDirection">-</div>
             <div class="drawer-label" style="margin-top:8px;">Case</div>
             <div class="drawer-value" id="drawerCase">-</div>
+            <div class="drawer-label" style="margin-top:8px;">Routing Profile</div>
+            <div class="drawer-value" id="drawerRoutingProfile">-</div>
             <div class="drawer-label" style="margin-top:8px;">Received/Sent</div>
             <div class="drawer-value" id="drawerTimestamp">-</div>
             <div class="drawer-label" style="margin-top:8px;">Source</div>
@@ -843,6 +849,23 @@
             return `<span class="badge ${dir}">${dir}</span>`;
         }
 
+        function getRoutingProfile(data) {
+            const hasPortal = !!data?.portal_url;
+            const hasEmail = !!data?.agency_email;
+            if (hasPortal && hasEmail) return 'HYBRID';
+            if (hasPortal) return 'PORTAL';
+            if (hasEmail) return 'EMAIL';
+            return 'UNKNOWN';
+        }
+
+        function routeBadgeForRecord(data) {
+            const profile = getRoutingProfile(data);
+            if (profile === 'HYBRID') return '<span class="badge route-hybrid">HYBRID</span>';
+            if (profile === 'PORTAL') return '<span class="badge route-portal">PORTAL</span>';
+            if (profile === 'EMAIL') return '<span class="badge route-email">EMAIL</span>';
+            return '<span class="badge route-none">NONE</span>';
+        }
+
         // Badge for event type
         function eventBadge(type) {
             const cls = type.includes('error') ? 'error' :
@@ -886,7 +909,7 @@
                             <td>${truncate(m.from_email, 30)}</td>
                             <td>${truncate(m.to_email, 30)}</td>
                             <td class="email-subject">${truncate(m.subject, 60)}</td>
-                            <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">#${m.case_id}</a>` : '-'}</td>
+                            <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">#${m.case_id}</a> ${routeBadgeForRecord(m)}` : '-'}</td>
                         </tr>
                     `).join('');
 
@@ -896,7 +919,7 @@
                         <td class="timestamp">${relativeTime(m.received_at || m.created_at)}</td>
                         <td>${truncate(m.from_email, 30)}</td>
                         <td class="email-subject">${truncate(m.subject, 50)}</td>
-                        <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">${truncate(m.case_name, 30)}</a>` : '<span style="color:#f85149">UNMATCHED</span>'}</td>
+                        <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">${truncate(m.case_name, 30)}</a> ${routeBadgeForRecord(m)}` : '<span style="color:#f85149">UNMATCHED</span>'}</td>
                         <td>${m.intent ? `<span class="badge">${m.intent}</span>` : '-'}</td>
                         <td>${m.suggested_action || '-'}</td>
                     </tr>
@@ -908,7 +931,7 @@
                         <td class="timestamp">${relativeTime(m.sent_at || m.created_at)}</td>
                         <td>${truncate(m.to_email, 35)}</td>
                         <td class="email-subject">${truncate(m.subject, 60)}</td>
-                        <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">#${m.case_id}</a>` : '-'}</td>
+                        <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">#${m.case_id}</a> ${routeBadgeForRecord(m)}` : '-'}</td>
                     </tr>
                 `).join('');
 
@@ -1049,8 +1072,12 @@
                     const hasPortal = !!importData.case?.portal_url;
                     const hasEmail = !!importData.case?.agency_email;
                     const routeHint = hasPortal && hasEmail
-                        ? ' This case has both portal and email. Pick Initial Route before running initial.'
-                        : '';
+                        ? ' Routing profile: HYBRID (both portal + email). Pick Initial Route before running initial.'
+                        : hasPortal
+                            ? ' Routing profile: PORTAL.'
+                            : hasEmail
+                                ? ' Routing profile: EMAIL.'
+                                : ' Routing profile: UNKNOWN (missing contact channel).';
                     resultDiv.textContent = `Case imported: #${caseId}.${routeHint}`;
                     resultDiv.style.display = 'block';
                     await loadData();
@@ -1201,8 +1228,12 @@
 
                 if (data.case) {
                     document.getElementById('drawerCase').innerHTML = `<a class="case-link" href="/api/cases/${data.case.id}" target="_blank">#${data.case.id} ${truncate(data.case.case_name || '', 30)}</a>`;
+                    const routeProfile = getRoutingProfile(data.case);
+                    const latestRoute = data.case.latest_initial_route_mode || 'not set';
+                    document.getElementById('drawerRoutingProfile').textContent = `${routeProfile} | latest initial route: ${latestRoute}`;
                 } else {
                     document.getElementById('drawerCase').textContent = 'Unmatched';
+                    document.getElementById('drawerRoutingProfile').textContent = '-';
                 }
 
                 const isInbound = data.message.direction === 'inbound';
