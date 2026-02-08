@@ -474,6 +474,8 @@ class NotionService {
                 // We would need to fetch the related page
                 // For now, return the first relation ID or empty string
                 return prop.relation?.[0]?.id || '';
+            case 'rollup':
+                return this.extractPlainValue(prop);
             default:
                 return null;
         }
@@ -709,6 +711,9 @@ Respond with JSON:
                     break;
                 case 'title':
                     candidate = prop.title?.map(t => t.plain_text).join(' ');
+                    break;
+                case 'rollup':
+                    candidate = this.extractPlainValue(prop);
                     break;
                 default:
                     break;
@@ -1505,6 +1510,29 @@ Respond with JSON:
                 return prop.files?.map(f => f.name || f.file?.url).filter(Boolean) || [];
             case 'relation':
                 return prop.relation?.map(rel => rel.id).filter(Boolean) || [];
+            case 'rollup': {
+                const rollup = prop.rollup;
+                if (!rollup) return null;
+                if (rollup.type === 'array') {
+                    const items = rollup.array
+                        .map(item => this.extractPlainValue(item))
+                        .filter(Boolean);
+                    return items.length ? items.join(' ') : null;
+                }
+                if (rollup.type === 'number') {
+                    return rollup.number;
+                }
+                if (rollup.type === 'date') {
+                    return rollup.date?.start || null;
+                }
+                if (rollup.type === 'rich_text') {
+                    return rollup.rich_text?.map(t => t.plain_text).join(' ').trim() || null;
+                }
+                if (rollup.type === 'title') {
+                    return rollup.title?.map(t => t.plain_text).join(' ').trim() || null;
+                }
+                return null;
+            }
             default:
                 return null;
         }
