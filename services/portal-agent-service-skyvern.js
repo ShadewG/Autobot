@@ -633,7 +633,7 @@ class PortalAgentServiceSkyvern {
     _buildWorkflowPersonalInfo(caseData, preferredEmail) {
         return {
             name: process.env.REQUESTER_NAME || 'Samuel Hylton',
-            email: preferredEmail || process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com',
+            email: preferredEmail || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
             phone: process.env.REQUESTER_PHONE || '209-800-7702',
             organization: process.env.REQUESTER_ORG || 'Matcher / FOIA Request Team',
             title: process.env.REQUESTER_TITLE || 'Documentary Researcher',
