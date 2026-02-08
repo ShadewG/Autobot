@@ -465,6 +465,53 @@
         }
         .clickable-row { cursor: pointer; }
         .clickable-row:hover { background: #1f242b; }
+        .case-inspector {
+            margin-top: 14px;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            background: #161b22;
+            padding: 12px;
+        }
+        .case-inspector h3 {
+            color: #58a6ff;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .case-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+        .case-grid .cell {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 12px;
+        }
+        .case-grid .cell .k {
+            color: #8b949e;
+            display: block;
+            font-size: 11px;
+            margin-bottom: 2px;
+        }
+        .case-list {
+            max-height: 220px;
+            overflow-y: auto;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            background: #0d1117;
+            padding: 8px;
+        }
+        .case-list-item {
+            font-size: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid #21262d;
+        }
+        .case-list-item:last-child {
+            border-bottom: none;
+        }
     </style>
 </head>
 <body>
@@ -606,6 +653,7 @@
 
     <div class="tabs">
         <div class="tab active" data-panel="all">All Messages</div>
+        <div class="tab" data-panel="cases">All Cases</div>
         <div class="tab" data-panel="inbound">Inbound</div>
         <div class="tab" data-panel="outbound">Outbound</div>
         <div class="tab" data-panel="activity">Activity Log</div>
@@ -645,6 +693,36 @@
                 </thead>
                 <tbody id="inboundMessages"></tbody>
             </table>
+        </div>
+    </div>
+
+    <div id="cases" class="panel">
+        <div class="scroll-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Updated</th>
+                        <th>Case</th>
+                        <th>Agency</th>
+                        <th>Routing</th>
+                        <th>Status</th>
+                        <th>Pending</th>
+                        <th>Messages</th>
+                        <th>Active Run</th>
+                    </tr>
+                </thead>
+                <tbody id="caseRows"></tbody>
+            </table>
+        </div>
+        <div id="caseInspector" class="case-inspector" style="display:none;">
+            <h3 id="caseInspectorTitle">Case Inspector</h3>
+            <div id="caseInspectorGrid" class="case-grid"></div>
+            <h3>Correspondence</h3>
+            <div id="caseInspectorMessages" class="case-list"></div>
+            <h3 style="margin-top:10px;">Runs</h3>
+            <div id="caseInspectorRuns" class="case-list"></div>
+            <h3 style="margin-top:10px;">Proposals</h3>
+            <div id="caseInspectorProposals" class="case-list"></div>
         </div>
     </div>
 
@@ -874,20 +952,24 @@
             return `<span class="badge ${cls}">${type}</span>`;
         }
 
+        let caseCache = [];
+
         // Load all data
         async function loadData() {
             try {
-                const [monitorRes, inboundRes, unmatchedRes, liveRes] = await Promise.all([
+                const [monitorRes, inboundRes, unmatchedRes, liveRes, casesRes] = await Promise.all([
                     fetch('/api/monitor?limit=100'),
                     fetch('/api/monitor/inbound?limit=100'),
                     fetch('/api/monitor/unmatched?limit=50'),
-                    fetch('/api/monitor/live-overview?limit=25')
+                    fetch('/api/monitor/live-overview?limit=25'),
+                    fetch('/api/monitor/cases?limit=300')
                 ]);
 
                 const monitor = await monitorRes.json();
                 const inboundData = await inboundRes.json();
                 const unmatchedData = await unmatchedRes.json();
                 const live = await liveRes.json();
+                const casesData = await casesRes.json();
 
                 // Update stats
                 document.getElementById('totalMessages').textContent = monitor.summary.total_messages;
@@ -961,10 +1043,37 @@
 
                 document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
                 renderLiveOverview(live);
+                renderCases(casesData);
 
             } catch (err) {
                 console.error('Failed to load data:', err);
             }
+        }
+
+        function renderCases(payload) {
+            const rowsEl = document.getElementById('caseRows');
+            if (!payload || !payload.success) {
+                rowsEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#f85149">Failed to load cases</td></tr>';
+                return;
+            }
+            caseCache = payload.cases || [];
+            if (!caseCache.length) {
+                rowsEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e">No cases found</td></tr>';
+                return;
+            }
+
+            rowsEl.innerHTML = caseCache.map(c => `
+                <tr class="clickable-row" onclick="openCase(${c.id})">
+                    <td class="timestamp">${relativeTime(c.updated_at)}</td>
+                    <td><a class="case-link" href="/api/cases/${c.id}" target="_blank">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
+                    <td>${truncate(c.agency_name, 30)}</td>
+                    <td>${routeBadgeForRecord(c)}</td>
+                    <td>${truncate(c.status || '-', 24)}</td>
+                    <td>${c.pending_approvals || 0}</td>
+                    <td>${c.total_messages || 0} (in ${c.inbound_messages || 0} / out ${c.outbound_messages || 0})</td>
+                    <td>${c.active_run_id ? `#${c.active_run_id} ${c.active_run_status}` : '-'}</td>
+                </tr>
+            `).join('');
         }
 
         function renderOpsList(listId, items, renderer) {
@@ -1260,6 +1369,76 @@
                 document.getElementById('messageDrawer').classList.add('active');
             } catch (err) {
                 console.error(err);
+            }
+        }
+
+        async function openCase(caseId) {
+            const inspector = document.getElementById('caseInspector');
+            const title = document.getElementById('caseInspectorTitle');
+            const grid = document.getElementById('caseInspectorGrid');
+            const msgList = document.getElementById('caseInspectorMessages');
+            const runList = document.getElementById('caseInspectorRuns');
+            const proposalList = document.getElementById('caseInspectorProposals');
+
+            inspector.style.display = 'block';
+            title.textContent = `Case #${caseId}`;
+            grid.innerHTML = '<div class="cell">Loading...</div>';
+            msgList.innerHTML = '<div class="timestamp">Loading...</div>';
+            runList.innerHTML = '<div class="timestamp">Loading...</div>';
+            proposalList.innerHTML = '<div class="timestamp">Loading...</div>';
+
+            try {
+                const res = await fetch(`/api/monitor/case/${caseId}`);
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || `Failed to load case (${res.status})`);
+
+                const c = data.case;
+                title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
+                grid.innerHTML = `
+                    <div class="cell"><span class="k">Status</span>${c.status || '-'}</div>
+                    <div class="cell"><span class="k">Substatus</span>${truncate(c.substatus || '-', 80)}</div>
+                    <div class="cell"><span class="k">Agency</span>${truncate(c.agency_name || '-', 60)}</div>
+                    <div class="cell"><span class="k">Routing</span>${getRoutingProfile(c)}</div>
+                    <div class="cell"><span class="k">Agency Email</span>${c.agency_email || '-'}</div>
+                    <div class="cell"><span class="k">Portal URL</span>${c.portal_url ? `<a class="case-link" href="${c.portal_url}" target="_blank">open</a>` : '-'}</div>
+                    <div class="cell"><span class="k">Autopilot</span>${c.autopilot_mode || '-'}</div>
+                    <div class="cell"><span class="k">Updated</span>${formatTime(c.updated_at)}</div>
+                `;
+
+                const messages = data.messages || [];
+                msgList.innerHTML = messages.length
+                    ? messages.map(m => `
+                        <div class="case-list-item">
+                            <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
+                            <div>${truncate(m.subject || '-', 120)}</div>
+                        </div>
+                    `).join('')
+                    : '<div class="timestamp">No correspondence yet</div>';
+
+                const runs = data.runs || [];
+                runList.innerHTML = runs.length
+                    ? runs.map(r => `
+                        <div class="case-list-item">
+                            <div><a class="case-link" href="/api/runs/${r.id}" target="_blank">Run #${r.id}</a> · ${r.trigger_type} · ${r.status}</div>
+                            <div>${formatTime(r.started_at)}${r.ended_at ? ` -> ${formatTime(r.ended_at)}` : ''}</div>
+                        </div>
+                    `).join('')
+                    : '<div class="timestamp">No runs yet</div>';
+
+                const proposals = data.proposals || [];
+                proposalList.innerHTML = proposals.length
+                    ? proposals.map(p => `
+                        <div class="case-list-item">
+                            <div><a class="case-link" href="/api/proposals/${p.id}" target="_blank">Proposal #${p.id}</a> · ${p.action_type} · ${p.status}</div>
+                            <div>${truncate(p.draft_subject || '-', 110)}</div>
+                        </div>
+                    `).join('')
+                    : '<div class="timestamp">No proposals yet</div>';
+            } catch (error) {
+                grid.innerHTML = `<div class="cell">Error: ${error.message || error}</div>`;
+                msgList.innerHTML = '<div class="timestamp">-</div>';
+                runList.innerHTML = '<div class="timestamp">-</div>';
+                proposalList.innerHTML = '<div class="timestamp">-</div>';
             }
         }
 

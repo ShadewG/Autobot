@@ -696,6 +696,169 @@ router.get('/live-overview', async (req, res) => {
 });
 
 /**
+ * GET /api/monitor/cases
+ * Case-centric monitoring list with progress signals.
+ */
+router.get('/cases', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+        const status = req.query.status || null;
+        const params = [];
+        let whereClause = '';
+
+        if (status) {
+            params.push(status);
+            whereClause = `WHERE c.status = $1`;
+        }
+
+        params.push(limit);
+        const limitParam = `$${params.length}`;
+
+        const result = await db.query(`
+            SELECT
+                c.id,
+                c.case_name,
+                c.agency_name,
+                c.subject_name,
+                c.status,
+                c.substatus,
+                c.agency_email,
+                c.portal_url,
+                c.created_at,
+                c.updated_at,
+                msg_counts.total_messages,
+                msg_counts.inbound_messages,
+                msg_counts.outbound_messages,
+                last_msg.last_message_at,
+                last_msg.last_message_subject,
+                proposal_counts.pending_approvals,
+                active_run.id AS active_run_id,
+                active_run.status AS active_run_status,
+                active_run.trigger_type AS active_run_trigger_type
+            FROM cases c
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*)::int AS total_messages,
+                    COUNT(*) FILTER (WHERE m.direction = 'inbound')::int AS inbound_messages,
+                    COUNT(*) FILTER (WHERE m.direction = 'outbound')::int AS outbound_messages
+                FROM messages m
+                WHERE m.case_id = c.id
+            ) msg_counts ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    COALESCE(m.received_at, m.sent_at, m.created_at) AS last_message_at,
+                    m.subject AS last_message_subject
+                FROM messages m
+                WHERE m.case_id = c.id
+                ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
+                LIMIT 1
+            ) last_msg ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (WHERE p.status = 'PENDING_APPROVAL')::int AS pending_approvals
+                FROM proposals p
+                WHERE p.case_id = c.id
+            ) proposal_counts ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    r.id,
+                    r.status,
+                    r.trigger_type
+                FROM agent_runs r
+                WHERE r.case_id = c.id
+                  AND r.status IN ('created', 'queued', 'running', 'paused')
+                ORDER BY r.started_at DESC
+                LIMIT 1
+            ) active_run ON true
+            ${whereClause}
+            ORDER BY c.updated_at DESC
+            LIMIT ${limitParam}
+        `, params);
+
+        res.json({ success: true, cases: result.rows, count: result.rows.length });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/monitor/case/:id
+ * Full case inspection view with correspondence and progress.
+ */
+router.get('/case/:id', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        if (!caseId) {
+            return res.status(400).json({ success: false, error: 'Invalid case id' });
+        }
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: `Case ${caseId} not found` });
+        }
+
+        const [threadResult, messagesResult, runsResult, proposalsResult, portalTasksResult] = await Promise.all([
+            db.query(`
+                SELECT *
+                FROM email_threads
+                WHERE case_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+            `, [caseId]),
+            db.query(`
+                SELECT
+                    id, direction, from_email, to_email, subject, body_text, body_html,
+                    message_type, sendgrid_message_id, sent_at, received_at, created_at,
+                    processed_at, processed_run_id
+                FROM messages
+                WHERE case_id = $1
+                ORDER BY COALESCE(received_at, sent_at, created_at) DESC
+                LIMIT 300
+            `, [caseId]),
+            db.query(`
+                SELECT
+                    id, trigger_type, status, started_at, ended_at, error, autopilot_mode,
+                    proposal_id, message_id, metadata
+                FROM agent_runs
+                WHERE case_id = $1
+                ORDER BY started_at DESC
+                LIMIT 100
+            `, [caseId]),
+            db.query(`
+                SELECT
+                    id, action_type, status, confidence, trigger_message_id, run_id,
+                    draft_subject, draft_body_text, created_at, updated_at, execution_key, email_job_id
+                FROM proposals
+                WHERE case_id = $1
+                ORDER BY created_at DESC
+                LIMIT 100
+            `, [caseId]),
+            db.query(`
+                SELECT
+                    id, status, portal_url, action_type, proposal_id,
+                    assigned_to, completed_at, completion_notes, created_at, updated_at
+                FROM portal_tasks
+                WHERE case_id = $1
+                ORDER BY created_at DESC
+                LIMIT 100
+            `, [caseId]).catch(() => ({ rows: [] }))
+        ]);
+
+        res.json({
+            success: true,
+            case: caseData,
+            thread: threadResult.rows[0] || null,
+            messages: messagesResult.rows,
+            runs: runsResult.rows,
+            proposals: proposalsResult.rows,
+            portal_tasks: portalTasksResult.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /api/monitor/reset-state
  * Operational reset for clean slate testing.
  * Does not delete cases/messages/history; it closes active runs and dismisses pending approvals.
