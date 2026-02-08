@@ -213,7 +213,7 @@
             font-size: 12px;
             margin-bottom: 4px;
         }
-        .form-group input, .form-group textarea {
+        .form-group input, .form-group textarea, .form-group select {
             width: 100%;
             padding: 8px 12px;
             background: #0d1117;
@@ -222,7 +222,7 @@
             color: #c9d1d9;
             font-size: 13px;
         }
-        .form-group input:focus, .form-group textarea:focus {
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
             outline: none;
             border-color: #58a6ff;
         }
@@ -542,6 +542,14 @@
             <div class="form-group">
                 <label for="notionUrlInput">Notion Case Link</label>
                 <input type="text" id="notionUrlInput" placeholder="https://www.notion.so/...">
+            </div>
+            <div class="form-group" style="max-width: 220px;">
+                <label for="initialRouteMode">Initial Route</label>
+                <select id="initialRouteMode">
+                    <option value="">Require Decision</option>
+                    <option value="email">Email Chain</option>
+                    <option value="portal">Portal Task</option>
+                </select>
             </div>
             <button class="send-btn" onclick="importNotionCase(false)">Import Case</button>
             <button class="send-btn" onclick="importNotionCase(true)">Import + Run Initial (SUPERVISED)</button>
@@ -1010,6 +1018,7 @@
 
         async function importNotionCase(runInitial) {
             const notionUrl = document.getElementById('notionUrlInput').value.trim();
+            const routeMode = document.getElementById('initialRouteMode').value;
             const resultDiv = document.getElementById('notionImportResult');
             if (!notionUrl) {
                 resultDiv.className = 'send-result error';
@@ -1037,7 +1046,12 @@
 
                 if (!runInitial) {
                     resultDiv.className = 'send-result success';
-                    resultDiv.textContent = `Case imported: #${caseId}`;
+                    const hasPortal = !!importData.case?.portal_url;
+                    const hasEmail = !!importData.case?.agency_email;
+                    const routeHint = hasPortal && hasEmail
+                        ? ' This case has both portal and email. Pick Initial Route before running initial.'
+                        : '';
+                    resultDiv.textContent = `Case imported: #${caseId}.${routeHint}`;
                     resultDiv.style.display = 'block';
                     await loadData();
                     return;
@@ -1046,15 +1060,21 @@
                 const runRes = await fetch(`/api/cases/${caseId}/run-initial`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ autopilotMode: 'SUPERVISED' })
+                    body: JSON.stringify({
+                        autopilotMode: 'SUPERVISED',
+                        route_mode: routeMode || undefined
+                    })
                 });
                 const runData = await runRes.json();
                 if (!runRes.ok || !runData.success) {
+                    if (runData.requires_route_decision) {
+                        throw new Error('Route decision required. Pick Initial Route: Email Chain or Portal Task, then run again.');
+                    }
                     throw new Error(runData.error || `Initial run failed (${runRes.status})`);
                 }
 
                 resultDiv.className = 'send-result success';
-                resultDiv.textContent = `Case #${caseId} imported. Initial run queued: run #${runData.run?.id}`;
+                resultDiv.textContent = `Case #${caseId} imported. Initial run queued: run #${runData.run?.id}${runData.route_mode ? ` (${runData.route_mode})` : ''}`;
                 resultDiv.style.display = 'block';
                 await loadData();
             } catch (err) {

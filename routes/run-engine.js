@@ -30,7 +30,7 @@ const logger = require('../services/logger');
  */
 router.post('/cases/:id/run-initial', async (req, res) => {
   const caseId = parseInt(req.params.id);
-  const { autopilotMode = 'SUPERVISED', llmStubs } = req.body || {};
+  const { autopilotMode = 'SUPERVISED', llmStubs, route_mode } = req.body || {};
 
   try {
     // Verify case exists
@@ -39,6 +39,31 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       return res.status(404).json({
         success: false,
         error: `Case ${caseId} not found`
+      });
+    }
+
+    const hasPortal = !!caseData.portal_url;
+    const hasEmail = !!caseData.agency_email;
+    const normalizedRouteMode = typeof route_mode === 'string' ? route_mode.toLowerCase() : null;
+
+    if (normalizedRouteMode && !['email', 'portal'].includes(normalizedRouteMode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'route_mode must be one of: email, portal'
+      });
+    }
+
+    if (hasPortal && hasEmail && !normalizedRouteMode) {
+      return res.status(409).json({
+        success: false,
+        error: 'Route decision required for case with both email and portal',
+        requires_route_decision: true,
+        options: ['email', 'portal'],
+        case: {
+          id: caseData.id,
+          agency_email: caseData.agency_email,
+          portal_url: caseData.portal_url
+        }
       });
     }
 
@@ -63,7 +88,10 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       trigger_type: 'initial_request',
       status: 'queued',
       autopilot_mode: autopilotMode,
-      langgraph_thread_id: `initial:${caseId}:${Date.now()}`
+      langgraph_thread_id: `initial:${caseId}:${Date.now()}`,
+      metadata: {
+        route_mode: normalizedRouteMode || null
+      }
     });
 
     // Enqueue worker job
@@ -82,6 +110,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
     res.status(202).json({
       success: true,
       message: 'Initial request generation queued',
+      route_mode: normalizedRouteMode || null,
       run: {
         id: run.id,
         status: run.status,

@@ -101,11 +101,45 @@ async function executeActionNode(state) {
   logs.push(`Claimed execution with key: ${executionKey}`);
 
   const caseData = await db.getCaseById(caseId);
+  const runData = runId ? await db.getAgentRunById(runId) : null;
+  const routeMode = runData?.metadata?.route_mode || null;
+  const hasPortal = portalExecutor.requiresPortal(caseData);
+  const hasEmail = !!caseData?.agency_email;
+
+  logs.push(`Route mode: ${routeMode || 'auto'}`);
+
+  // For initial requests with both channels available, force explicit routing.
+  if (proposalActionType === 'SEND_INITIAL_REQUEST' && hasPortal && hasEmail && !routeMode) {
+    const pauseReason = 'Route decision required: choose email or portal for initial request';
+    logs.push(`BLOCKED: ${pauseReason}`);
+
+    await db.updateCaseStatus(caseId, 'needs_human_review', {
+      requires_human: true,
+      pause_reason: pauseReason
+    });
+
+    await db.updateProposal(proposalId, {
+      status: 'PENDING_APPROVAL',
+      execution_key: null
+    });
+
+    return {
+      actionExecuted: false,
+      gatedForReview: true,
+      missingFields: ['route_mode'],
+      errors: [pauseReason],
+      logs
+    };
+  }
 
   // =========================================================================
   // PORTAL CHECK - Route portal cases to portal executor
   // =========================================================================
-  if (portalExecutor.requiresPortal(caseData) && proposalActionType.startsWith('SEND_')) {
+  const shouldForcePortal =
+    routeMode === 'portal' ||
+    (routeMode !== 'email' && hasPortal);
+
+  if (shouldForcePortal && proposalActionType.startsWith('SEND_')) {
     logs.push('Portal case detected - routing to portal executor');
 
     const portalResult = await portalExecutor.createPortalTask({
@@ -155,8 +189,6 @@ async function executeActionNode(state) {
       const missingFields = [];
 
       // Check delivery method
-      const hasEmail = !!caseData.agency_email;
-      const hasPortal = portalExecutor.requiresPortal(caseData);
       if (!hasEmail && !hasPortal) {
         missingFields.push('agency_email or portal_url');
       }
