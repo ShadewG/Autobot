@@ -65,6 +65,8 @@
             margin-bottom: 15px;
             border-bottom: 1px solid #30363d;
             padding-bottom: 10px;
+            overflow-x: auto;
+            white-space: nowrap;
         }
         .tab {
             padding: 8px 16px;
@@ -73,6 +75,7 @@
             border-radius: 6px;
             cursor: pointer;
             color: #8b949e;
+            flex: 0 0 auto;
         }
         .tab:hover { background: #30363d; }
         .tab.active { background: #238636; color: white; border-color: #238636; }
@@ -634,6 +637,9 @@
                 <div class="value" id="opsStuckRuns">-</div>
             </div>
         </div>
+        <div style="margin-top:8px;">
+            <button class="send-btn" onclick="openCasesPanel()">Open All Cases</button>
+        </div>
 
         <div class="ops-lists">
             <div class="ops-list">
@@ -896,6 +902,17 @@
                 document.getElementById(tab.dataset.panel).classList.add('active');
             });
         });
+
+        function openCasesPanel() {
+            const tab = document.querySelector('.tab[data-panel="cases"]');
+            const panel = document.getElementById('cases');
+            if (!tab || !panel) return;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            panel.classList.add('active');
+            panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
 
         // Format timestamp
         function formatTime(ts) {
