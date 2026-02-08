@@ -1181,7 +1181,7 @@
                 const importRes = await fetch('/api/cases/import-notion', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ notion_url: notionUrl })
+                    body: JSON.stringify({ notion_url: notionUrl, refresh_existing: true })
                 });
                 const importData = await importRes.json();
                 if (!importRes.ok || !importData.success) {

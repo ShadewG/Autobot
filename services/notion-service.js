@@ -1411,14 +1411,22 @@ Respond with JSON:
             // Parse the page
             const notionCase = this.parseNotionPage(page);
 
-            // Enrich with police department data
-            await this.enrichWithPoliceDepartment(notionCase);
+            // Enrich with police department data and fallback contact extraction from case page.
+            await this.enrichWithPoliceDepartment(notionCase, page);
 
             // Add page content as additional details if we have it
             if (pageContent && !notionCase.additional_details) {
                 notionCase.additional_details = pageContent.substring(0, 5000); // Limit to 5000 chars
             } else if (pageContent) {
                 notionCase.additional_details += '\n\n--- Page Content ---\n' + pageContent.substring(0, 5000);
+            }
+
+            if (!notionCase.portal_url) {
+                const portalFromText = this.findPortalInText(notionCase.additional_details || pageContent || '');
+                if (portalFromText) {
+                    notionCase.portal_url = portalFromText;
+                    console.log(`Detected portal URL from single-page import text: ${portalFromText}`);
+                }
             }
 
             // Check if already exists

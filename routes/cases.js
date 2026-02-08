@@ -88,7 +88,7 @@ function extractNotionPageId(input) {
  * Returns the created case.
  */
 router.post('/import-notion', async (req, res) => {
-  const { notion_url } = req.body || {};
+  const { notion_url, refresh_existing = true } = req.body || {};
 
   try {
     // Validate input
@@ -114,15 +114,41 @@ router.post('/import-notion', async (req, res) => {
     // Check if case already exists
     const existing = await db.getCaseByNotionId(pageId);
     if (existing) {
+      let effectiveCase = existing;
+
+      // Re-sync existing case from Notion so recently added portal/email fields are picked up.
+      if (refresh_existing) {
+        const freshCase = await notionService.fetchPageById(pageId);
+        const updates = {
+          case_name: freshCase.case_name || existing.case_name,
+          subject_name: freshCase.subject_name || existing.subject_name,
+          agency_name: freshCase.agency_name || existing.agency_name,
+          agency_email: freshCase.agency_email || existing.agency_email,
+          alternate_agency_email: freshCase.alternate_agency_email || existing.alternate_agency_email,
+          state: freshCase.state || existing.state,
+          incident_date: freshCase.incident_date || existing.incident_date,
+          incident_location: freshCase.incident_location || existing.incident_location,
+          requested_records: freshCase.requested_records || existing.requested_records,
+          additional_details: freshCase.additional_details || existing.additional_details,
+          portal_url: freshCase.portal_url || existing.portal_url,
+          portal_provider: freshCase.portal_provider || existing.portal_provider
+        };
+        effectiveCase = await db.updateCase(existing.id, updates);
+      }
+
       return res.json({
         success: true,
-        message: 'Case already exists',
-        case_id: existing.id,
+        message: refresh_existing ? 'Case already exists (re-synced from Notion)' : 'Case already exists',
+        case_id: effectiveCase.id,
         case: {
-          id: existing.id,
-          case_name: existing.case_name,
-          agency_name: existing.agency_name,
-          status: existing.status
+          id: effectiveCase.id,
+          case_name: effectiveCase.case_name,
+          subject_name: effectiveCase.subject_name,
+          agency_name: effectiveCase.agency_name,
+          agency_email: effectiveCase.agency_email,
+          status: effectiveCase.status,
+          portal_url: effectiveCase.portal_url,
+          portal_provider: effectiveCase.portal_provider
         }
       });
     }

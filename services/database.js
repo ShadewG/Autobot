@@ -76,8 +76,9 @@ class DatabaseService {
             INSERT INTO cases (
                 notion_page_id, case_name, subject_name, agency_name, agency_email,
                 state, incident_date, incident_location, requested_records,
-                additional_details, status, deadline_date, agency_id, scope_items_jsonb
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                additional_details, status, deadline_date, agency_id, scope_items_jsonb,
+                portal_url, portal_provider, alternate_agency_email
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             RETURNING *
         `;
         const values = [
@@ -94,7 +95,10 @@ class DatabaseService {
             caseData.status || 'ready_to_send',
             caseData.deadline_date,
             agencyId,
-            scopeItemsJsonb
+            scopeItemsJsonb,
+            caseData.portal_url || null,
+            caseData.portal_provider || null,
+            caseData.alternate_agency_email || null
         ];
         const result = await this.query(query, values);
         return result.rows[0];
