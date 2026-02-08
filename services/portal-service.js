@@ -272,7 +272,7 @@ class PortalService {
 
         // Email (check this first before name fields)
         if (label.includes('email') || field.type === 'email') {
-            return process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com';
+            return process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
         }
 
         // Phone

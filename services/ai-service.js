@@ -254,7 +254,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 
         // Get requester info from env or use defaults
         const requesterName = process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const requesterEmail = process.env.REQUESTER_EMAIL || 'shadewofficial@gmail.com';
+        const requesterEmail = process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
 
         return `Generate a professional FOIA/public records request following the structure in the system prompt.
 
