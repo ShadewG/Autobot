@@ -53,20 +53,6 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       });
     }
 
-    if (hasPortal && hasEmail && !normalizedRouteMode) {
-      return res.status(409).json({
-        success: false,
-        error: 'Route decision required for case with both email and portal',
-        requires_route_decision: true,
-        options: ['email', 'portal'],
-        case: {
-          id: caseData.id,
-          agency_email: caseData.agency_email,
-          portal_url: caseData.portal_url
-        }
-      });
-    }
-
     // Check for existing active run
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {

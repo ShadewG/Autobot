@@ -18,6 +18,7 @@
 
 const db = require('../../services/database');
 const logger = require('../../services/logger');
+const { portalQueue } = require('../../queues/email-queue');
 const {
   EXECUTION_MODE,
   isDryRun,
@@ -102,7 +103,7 @@ async function executeActionNode(state) {
 
   const caseData = await db.getCaseById(caseId);
   const runData = runId ? await db.getAgentRunById(runId) : null;
-  const routeMode = runData?.metadata?.route_mode || null;
+  const routeMode = runData?.metadata?.route_mode || existingProposal?.human_decision?.route_mode || null;
   const hasPortal = portalExecutor.requiresPortal(caseData);
   const hasEmail = !!caseData?.agency_email;
 
@@ -158,6 +159,23 @@ async function executeActionNode(state) {
       status: 'PENDING_PORTAL',
       portalTaskId: portalResult.taskId
     });
+
+    // Auto-launch Skyvern for portal route after approval
+    if (portalQueue) {
+      const portalJob = await portalQueue.add('portal-submit', {
+        caseId,
+        portalUrl: caseData.portal_url,
+        provider: caseData.portal_provider || null,
+        instructions: draftBodyText || draftBodyHtml || null
+      }, {
+        attempts: 1,
+        removeOnComplete: 100,
+        removeOnFail: 100
+      });
+      logs.push(`Portal submission queued: ${portalJob.id}`);
+    } else {
+      logs.push('Portal queue unavailable - portal task created without auto-launch');
+    }
 
     logs.push(`Portal task created: ${portalResult.taskId}`);
 

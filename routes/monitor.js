@@ -70,7 +70,7 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
     };
 }
 
-async function processProposalDecision(proposalId, action, { instruction = null, reason = null, decidedBy = 'monitor' } = {}) {
+async function processProposalDecision(proposalId, action, { instruction = null, reason = null, route_mode = null, decidedBy = 'monitor' } = {}) {
     const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS'];
     if (!allowedActions.includes(action)) {
         const err = new Error(`action must be one of: ${allowedActions.join(', ')}`);
@@ -118,6 +118,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         action,
         proposalId,
         instruction,
+        route_mode,
         reason,
         decidedAt: new Date().toISOString(),
         decidedBy
@@ -753,6 +754,8 @@ router.get('/message/:id/proposals', async (req, res) => {
         const result = await db.query(`
             SELECT
                 p.*,
+                c.agency_email,
+                c.portal_url,
                 latest_exec.id AS execution_id,
                 latest_exec.status AS execution_status,
                 latest_exec.provider_message_id AS execution_provider_message_id,
@@ -761,6 +764,7 @@ router.get('/message/:id/proposals', async (req, res) => {
                 outbound.sendgrid_message_id AS outbound_sendgrid_message_id,
                 outbound.sent_at AS outbound_sent_at
             FROM proposals p
+            LEFT JOIN cases c ON c.id = p.case_id
             LEFT JOIN LATERAL (
                 SELECT
                     e.id,
@@ -819,8 +823,8 @@ router.post('/proposals/:id/approve', express.json(), async (req, res) => {
 router.post('/proposals/:id/decision', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
-        const { action, instruction = null, reason = null } = req.body || {};
-        const result = await processProposalDecision(proposalId, action, { instruction, reason });
+        const { action, instruction = null, reason = null, route_mode = null } = req.body || {};
+        const result = await processProposalDecision(proposalId, action, { instruction, reason, route_mode });
         res.status(action === 'DISMISS' ? 200 : 202).json(result);
     } catch (error) {
         const status = error.status || 500;
