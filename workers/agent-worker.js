@@ -86,7 +86,9 @@ async function processInvokeJob(job) {
     scheduledFollowupId, scheduled_followup_id,
     replayRunId, originalRunId,
     llmStubs, llm_stubs,
-    deterministic
+    deterministic,
+    // Human review resolution fields
+    reviewAction, instruction
   } = job.data;
   const log = logger.forAgent ? logger.forAgent(caseId, triggerType) : logger;
 
@@ -123,6 +125,8 @@ async function processInvokeJob(job) {
         if (actualMessageId) options.messageId = actualMessageId;
         if (actualFollowupId) options.scheduledFollowupId = actualFollowupId;
         if (actualLlmStubs) options.llmStubs = actualLlmStubs;  // Pass through for E2E testing
+        if (reviewAction) options.reviewAction = reviewAction;
+        if (instruction) options.reviewInstruction = instruction;
 
         log.info('Invoking graph with options', {
           caseId,

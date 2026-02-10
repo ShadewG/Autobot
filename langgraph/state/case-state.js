@@ -203,6 +203,16 @@ const FOIACaseStateAnnotation = Annotation.Root({
     default: () => []
   }),
 
+  // === Human Review Resolution ===
+  reviewAction: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // retry_portal | send_via_email | appeal | narrow_scope | negotiate_fee | accept_fee | reprocess | custom
+  }),
+  reviewInstruction: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // Human instruction text from resolve-review
+  }),
+
   // === Testing/Deterministic Mode ===
   llmStubs: Annotation({
     reducer: (prev, v) => v !== undefined ? v : prev,
@@ -236,7 +246,9 @@ function createInitialState(caseId, triggerType, options = {}) {
     isComplete: false,
     logs: [`Graph started: trigger=${triggerType}, caseId=${caseId}, run=${options.runId || 'none'}`],
     errors: [],
-    llmStubs: options.llmStubs || null  // For deterministic E2E testing
+    llmStubs: options.llmStubs || null,  // For deterministic E2E testing
+    reviewAction: options.reviewAction || null,
+    reviewInstruction: options.reviewInstruction || null
   };
 }
 

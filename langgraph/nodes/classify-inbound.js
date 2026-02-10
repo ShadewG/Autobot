@@ -24,6 +24,15 @@ async function classifyInboundNode(state) {
     };
   }
 
+  // Skip classification for human review resolution (action comes from human, not message)
+  if (triggerType === 'HUMAN_REVIEW_RESOLUTION') {
+    return {
+      classification: 'HUMAN_REVIEW_RESOLUTION',
+      classificationConfidence: 1.0,
+      logs: [`Skipped classification: human review resolution (reviewAction=${state.reviewAction})`]
+    };
+  }
+
   // Skip if no inbound message
   if (!latestInboundMessageId) {
     return {

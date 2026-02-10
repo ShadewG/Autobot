@@ -61,7 +61,9 @@ async function decideNextActionNode(state) {
     constraints, triggerType, autopilotMode,
     humanDecision,
     // NEW: Prompt tuning fields
-    requiresResponse, portalUrl, suggestedAction, reasonNoResponse
+    requiresResponse, portalUrl, suggestedAction, reasonNoResponse,
+    // Human review resolution fields
+    reviewAction, reviewInstruction
   } = state;
 
   const logs = [];
@@ -157,6 +159,186 @@ async function decideNextActionNode(state) {
         proposalReasoning: reasoning,
         logs: [...logs, 'No email response needed']
       };
+    }
+
+    // === Handle HUMAN_REVIEW_RESOLUTION trigger ===
+    // Maps review actions from the resolve-review UI to graph actions
+    if (triggerType === 'HUMAN_REVIEW_RESOLUTION' && reviewAction) {
+      reasoning.push(`Human review resolution: action=${reviewAction}`);
+      if (reviewInstruction) {
+        reasoning.push(`Instruction: ${reviewInstruction}`);
+      }
+
+      const caseData = await db.getCaseById(caseId);
+
+      // Map reviewAction to appropriate graph action
+      switch (reviewAction) {
+        case 'retry_portal': {
+          // Re-trigger portal submission
+          reasoning.push('Retrying portal submission');
+          const currentPortalUrl = caseData?.portal_url;
+          if (currentPortalUrl) {
+            await db.updateCaseStatus(caseId, 'portal_in_progress', {
+              substatus: 'Portal retry requested by human',
+              requires_human: false
+            });
+            try {
+              await createPortalTask({
+                caseId,
+                portalUrl: currentPortalUrl,
+                actionType: 'SUBMIT_VIA_PORTAL',
+                subject: caseData?.request_summary || 'FOIA Request',
+                bodyText: reviewInstruction || 'Retry portal submission per human review',
+                status: 'PENDING',
+                instructions: reviewInstruction || `Retry portal submission at: ${currentPortalUrl}`
+              });
+              reasoning.push('Portal task created for retry');
+            } catch (err) {
+              reasoning.push(`Portal task creation failed: ${err.message}`);
+            }
+          } else {
+            reasoning.push('No portal URL found - cannot retry portal');
+          }
+          return {
+            isComplete: true,
+            proposalActionType: NONE,
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Portal retry initiated via human review']
+          };
+        }
+
+        case 'send_via_email': {
+          // Switch to email submission - draft and send original request via email
+          reasoning.push('Switching to email submission per human review');
+          await db.updateCaseStatus(caseId, 'pending', {
+            substatus: 'Switched to email submission',
+            requires_human: false
+          });
+          return {
+            proposalActionType: SEND_FOLLOWUP,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Send the original FOIA request via email instead of portal',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Drafting email submission per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'appeal': {
+          // Draft an appeal/rebuttal
+          reasoning.push('Drafting appeal per human review');
+          return {
+            proposalActionType: SEND_REBUTTAL,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Draft an appeal citing legal grounds for the records request',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Drafting appeal per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'narrow_scope': {
+          // Narrow scope and resubmit
+          reasoning.push('Narrowing scope per human review');
+          return {
+            proposalActionType: SEND_CLARIFICATION,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Narrow the scope of the records request and resubmit',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Narrowing scope per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'negotiate_fee': {
+          reasoning.push('Negotiating fee per human review');
+          return {
+            proposalActionType: NEGOTIATE_FEE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Negotiate the quoted fee amount',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Negotiating fee per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'accept_fee': {
+          reasoning.push('Accepting fee per human review');
+          return {
+            proposalActionType: ACCEPT_FEE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || null,
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Accepting fee per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'reprocess': {
+          // Let normal classification flow handle it
+          reasoning.push('Reprocessing case - falling through to normal classification');
+          // Clear the review fields so normal flow takes over
+          // The classify node already returned HUMAN_REVIEW_RESOLUTION as classification,
+          // but we want to re-analyze. Return escalate to gate for now.
+          await db.updateCaseStatus(caseId, 'pending', {
+            substatus: 'Reprocessing per human review',
+            requires_human: false
+          });
+          return {
+            proposalActionType: ESCALATE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Reprocessing case per human review'],
+            nextNode: 'gate_or_execute'
+          };
+        }
+
+        case 'custom': {
+          // Use the instruction to draft a response
+          reasoning.push('Custom action per human review');
+          if (!reviewInstruction) {
+            reasoning.push('No instruction provided for custom action');
+            return {
+              isComplete: true,
+              proposalActionType: NONE,
+              proposalReasoning: reasoning,
+              logs: [...logs, 'Custom action with no instruction - skipping']
+            };
+          }
+          return {
+            proposalActionType: SEND_FOLLOWUP,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction,
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Drafting custom response per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        default:
+          reasoning.push(`Unknown review action: ${reviewAction}`);
+          return {
+            proposalActionType: ESCALATE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            proposalReasoning: reasoning,
+            logs: [...logs, `Unknown review action: ${reviewAction}`]
+          };
+      }
     }
 
     // === Handle human resume ===
