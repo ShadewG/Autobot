@@ -755,6 +755,10 @@
                     <label for="portalReviewResearch">Case Research Snapshot (read-only)</label>
                     <textarea id="portalReviewResearch" readonly></textarea>
                 </div>
+                <div class="form-group">
+                    <label for="portalReviewRawDetails">Raw Case Text For AI/Skyvern (read-only)</label>
+                    <textarea id="portalReviewRawDetails" readonly></textarea>
+                </div>
                 <div class="proposal-actions">
                     <button class="send-btn" onclick="confirmPortalSubmission()">Confirm + Submit Portal</button>
                     <button class="drawer-btn" onclick="hidePortalReview()">Cancel</button>
@@ -1546,6 +1550,7 @@
             document.getElementById('portalReviewProvider').value = c.portal_provider || '';
             document.getElementById('portalReviewInstructions').value = draftInstructions;
             document.getElementById('portalReviewResearch').value = buildCaseResearchSnapshot(c);
+            document.getElementById('portalReviewRawDetails').value = (c.additional_details || '').trim();
             panel.style.display = 'block';
         }
 
@@ -1594,6 +1599,7 @@
             const portalUrl = document.getElementById('portalReviewUrl').value.trim();
             const provider = document.getElementById('portalReviewProvider').value.trim();
             const instructions = document.getElementById('portalReviewInstructions').value.trim();
+            const researchContext = document.getElementById('portalReviewRawDetails').value.trim();
 
             if (!portalUrl) {
                 resultDiv.className = 'send-result error';
@@ -1610,7 +1616,8 @@
                     body: JSON.stringify({
                         portal_url: portalUrl,
                         provider: provider || null,
-                        instructions: instructions || null
+                        instructions: instructions || null,
+                        research_context: researchContext || null
                     })
                 });
                 const data = await res.json();

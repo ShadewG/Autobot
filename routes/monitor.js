@@ -868,7 +868,7 @@ router.get('/case/:id', async (req, res) => {
 router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
     try {
         const caseId = parseInt(req.params.id);
-        const { instructions = null, provider = null, portal_url = null } = req.body || {};
+        const { instructions = null, provider = null, portal_url = null, research_context = null } = req.body || {};
 
         const caseData = await db.getCaseById(caseId);
         if (!caseData) {
@@ -898,11 +898,16 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             return res.status(503).json({ success: false, error: 'Portal queue unavailable' });
         }
 
+        const baseInstructions = instructions || `Monitor-triggered portal submission for case ${caseId}`;
+        const appendedResearch = research_context
+            ? `${baseInstructions}\n\nCase research context:\n${research_context}`
+            : baseInstructions;
+
         const job = await portalQueue.add('portal-submit', {
             caseId,
             portalUrl: normalizedPortalUrl,
             provider: provider || caseData.portal_provider || null,
-            instructions: instructions || `Monitor-triggered portal submission for case ${caseId}`
+            instructions: appendedResearch
         });
 
         await db.updateCaseStatus(caseId, 'portal_in_progress', {
