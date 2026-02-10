@@ -169,12 +169,11 @@ async function decideNextActionNode(state) {
         reasoning.push(`Instruction: ${reviewInstruction}`);
       }
 
-      const caseData = await db.getCaseById(caseId);
-
       // Map reviewAction to appropriate graph action
       switch (reviewAction) {
         case 'retry_portal': {
-          // Re-trigger portal submission
+          // Re-trigger portal submission — only case that needs full case data
+          const caseData = await db.getCaseById(caseId);
           reasoning.push('Retrying portal submission');
           const currentPortalUrl = caseData?.portal_url;
           if (currentPortalUrl) {
@@ -210,10 +209,6 @@ async function decideNextActionNode(state) {
         case 'send_via_email': {
           // Switch to email submission - draft and send original request via email
           reasoning.push('Switching to email submission per human review');
-          await db.updateCaseStatus(caseId, 'pending', {
-            substatus: 'Switched to email submission',
-            requires_human: false
-          });
           return {
             proposalActionType: SEND_FOLLOWUP,
             canAutoExecute: false,
@@ -285,15 +280,8 @@ async function decideNextActionNode(state) {
         }
 
         case 'reprocess': {
-          // Let normal classification flow handle it
-          reasoning.push('Reprocessing case - falling through to normal classification');
-          // Clear the review fields so normal flow takes over
-          // The classify node already returned HUMAN_REVIEW_RESOLUTION as classification,
-          // but we want to re-analyze. Return escalate to gate for now.
-          await db.updateCaseStatus(caseId, 'pending', {
-            substatus: 'Reprocessing per human review',
-            requires_human: false
-          });
+          // Re-analyze — escalate to gate for human to review fresh
+          reasoning.push('Reprocessing case per human review');
           return {
             proposalActionType: ESCALATE,
             canAutoExecute: false,
