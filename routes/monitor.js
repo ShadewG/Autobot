@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const sgMail = require('@sendgrid/mail');
 const { enqueueInboundMessageJob, enqueueResumeRunJob } = require('../queues/agent-queue');
+const { portalQueue } = require('../queues/email-queue');
 const crypto = require('crypto');
 
 // Initialize SendGrid
@@ -852,6 +853,60 @@ router.get('/case/:id', async (req, res) => {
             runs: runsResult.rows,
             proposals: proposalsResult.rows,
             portal_tasks: portalTasksResult.rows
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/monitor/case/:id/trigger-portal
+ * Force queue a portal submission job for manual live testing.
+ */
+router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const { instructions = null, provider = null } = req.body || {};
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: `Case ${caseId} not found` });
+        }
+
+        if (!caseData.portal_url) {
+            return res.status(400).json({ success: false, error: 'Case has no portal_url' });
+        }
+
+        if (!portalQueue) {
+            return res.status(503).json({ success: false, error: 'Portal queue unavailable' });
+        }
+
+        const job = await portalQueue.add('portal-submit', {
+            caseId,
+            portalUrl: caseData.portal_url,
+            provider: provider || caseData.portal_provider || null,
+            instructions: instructions || `Monitor-triggered portal submission for case ${caseId}`
+        });
+
+        await db.updateCaseStatus(caseId, 'portal_in_progress', {
+            substatus: 'Monitor-triggered portal submission queued',
+            last_portal_status: 'Portal submission queued (monitor trigger)',
+            last_portal_status_at: new Date()
+        });
+
+        await db.logActivity('monitor_portal_trigger', `Portal submission queued from monitor for case ${caseId}`, {
+            case_id: caseId,
+            portal_url: caseData.portal_url,
+            provider: provider || caseData.portal_provider || null,
+            job_id: job?.id || null
+        });
+
+        res.json({
+            success: true,
+            message: 'Portal submission queued',
+            case_id: caseId,
+            job_id: job?.id || null,
+            portal_url: caseData.portal_url
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

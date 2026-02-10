@@ -702,9 +702,9 @@
         </div>
     </div>
 
-    <div id="cases" class="panel">
-        <div class="scroll-container">
-            <table>
+        <div id="cases" class="panel">
+            <div class="scroll-container">
+                <table>
                 <thead>
                     <tr>
                         <th>Updated</th>
@@ -718,11 +718,13 @@
                     </tr>
                 </thead>
                 <tbody id="caseRows"></tbody>
-            </table>
-        </div>
+                </table>
+            </div>
         <div id="caseInspector" class="case-inspector" style="display:none;">
             <h3 id="caseInspectorTitle">Case Inspector</h3>
             <div id="caseInspectorGrid" class="case-grid"></div>
+            <div id="caseInspectorActions" style="margin-top:10px;"></div>
+            <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
             <h3>Correspondence</h3>
             <div id="caseInspectorMessages" class="case-list"></div>
             <h3 style="margin-top:10px;">Runs</h3>
@@ -1396,6 +1398,8 @@
             const msgList = document.getElementById('caseInspectorMessages');
             const runList = document.getElementById('caseInspectorRuns');
             const proposalList = document.getElementById('caseInspectorProposals');
+            const actions = document.getElementById('caseInspectorActions');
+            const actionResult = document.getElementById('caseInspectorActionResult');
 
             inspector.style.display = 'block';
             title.textContent = `Case #${caseId}`;
@@ -1403,6 +1407,8 @@
             msgList.innerHTML = '<div class="timestamp">Loading...</div>';
             runList.innerHTML = '<div class="timestamp">Loading...</div>';
             proposalList.innerHTML = '<div class="timestamp">Loading...</div>';
+            actions.innerHTML = '';
+            actionResult.style.display = 'none';
 
             try {
                 const res = await fetch(`/api/monitor/case/${caseId}`);
@@ -1420,7 +1426,15 @@
                     <div class="cell"><span class="k">Portal URL</span>${c.portal_url ? `<a class="case-link" href="${c.portal_url}" target="_blank">open</a>` : '-'}</div>
                     <div class="cell"><span class="k">Autopilot</span>${c.autopilot_mode || '-'}</div>
                     <div class="cell"><span class="k">Updated</span>${formatTime(c.updated_at)}</div>
+                    <div class="cell"><span class="k">Portal Status</span>${c.last_portal_status || '-'}</div>
+                    <div class="cell"><span class="k">Skyvern Task</span>${c.last_portal_task_url ? `<a class="case-link" href="${c.last_portal_task_url}" target="_blank">open task</a>` : '-'}</div>
+                    <div class="cell"><span class="k">Skyvern Recording</span>${c.last_portal_recording_url ? `<a class="case-link" href="${c.last_portal_recording_url}" target="_blank">open recording</a>` : '-'}</div>
+                    <div class="cell"><span class="k">Portal Updated</span>${formatTime(c.last_portal_status_at)}</div>
                 `;
+
+                actions.innerHTML = c.portal_url
+                    ? `<button class="send-btn" onclick="triggerPortalSubmission(${c.id})">Trigger Portal Submission (Skyvern)</button>`
+                    : `<span class="timestamp">No portal URL on case; cannot trigger portal submission.</span>`;
 
                 const messages = data.messages || [];
                 msgList.innerHTML = messages.length
@@ -1456,6 +1470,32 @@
                 msgList.innerHTML = '<div class="timestamp">-</div>';
                 runList.innerHTML = '<div class="timestamp">-</div>';
                 proposalList.innerHTML = '<div class="timestamp">-</div>';
+                actions.innerHTML = '';
+                actionResult.style.display = 'none';
+            }
+        }
+
+        async function triggerPortalSubmission(caseId) {
+            const resultDiv = document.getElementById('caseInspectorActionResult');
+            resultDiv.style.display = 'none';
+            try {
+                const res = await fetch(`/api/monitor/case/${caseId}/trigger-portal`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+
+                resultDiv.className = 'send-result success';
+                resultDiv.textContent = `Portal job queued for case #${caseId}. Job: ${data.job_id || '-'} (refresh in 10-30s for Skyvern task link).`;
+                resultDiv.style.display = 'block';
+                await openCase(caseId);
+                await loadData();
+            } catch (err) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = err.message || 'Portal trigger failed';
+                resultDiv.style.display = 'block';
             }
         }
 
