@@ -1330,6 +1330,72 @@ router.post('/message/:id/reply', express.json(), async (req, res) => {
 });
 
 /**
+ * POST /api/monitor/message/:id/match-case
+ * Manually attach an unmatched inbound message to a case/thread.
+ */
+router.post('/message/:id/match-case', express.json(), async (req, res) => {
+    try {
+        const messageId = parseInt(req.params.id);
+        const { case_id } = req.body || {};
+        const caseId = parseInt(case_id);
+
+        if (!caseId) {
+            return res.status(400).json({ success: false, error: 'case_id is required' });
+        }
+
+        const message = await db.getMessageById(messageId);
+        if (!message) {
+            return res.status(404).json({ success: false, error: 'Message not found' });
+        }
+
+        if (message.direction !== 'inbound') {
+            return res.status(400).json({ success: false, error: 'Only inbound messages can be matched' });
+        }
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: `Case ${caseId} not found` });
+        }
+
+        let thread = await db.getThreadByCaseId(caseId);
+        if (!thread) {
+            thread = await db.createEmailThread({
+                case_id: caseId,
+                thread_id: message.message_id || `monitor-match:${caseId}:${Date.now()}`,
+                subject: message.subject || `Case ${caseId} correspondence`,
+                agency_email: caseData.agency_email || message.from_email || '',
+                initial_message_id: null,
+                status: 'active'
+            });
+        }
+
+        await db.query(`
+            UPDATE messages
+            SET case_id = $2,
+                thread_id = $3
+            WHERE id = $1
+            RETURNING id
+        `, [messageId, caseId, thread.id]);
+
+        await db.logActivity('monitor_message_matched', `Monitor matched message ${messageId} to case ${caseId}`, {
+            message_id: messageId,
+            case_id: caseId,
+            thread_id: thread.id
+        });
+
+        res.json({
+            success: true,
+            message: 'Message matched to case',
+            message_id: messageId,
+            case_id: caseId,
+            thread_id: thread.id
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /api/monitor/message/:id/trigger-ai
  * Trigger AI processing for the selected inbound message
  */

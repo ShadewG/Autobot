@@ -857,6 +857,7 @@
                         <th>To</th>
                         <th>Subject</th>
                         <th>Body Preview</th>
+                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody id="unmatchedMessages"></tbody>
@@ -1133,9 +1134,10 @@
                             <td>${truncate(m.to_email, 30)}</td>
                             <td class="email-subject">${truncate(m.subject, 40)}</td>
                             <td class="email-body">${truncate(m.body_text, 50)}</td>
+                            <td><button class="drawer-btn" onclick="event.stopPropagation();matchMessageToCasePrompt(${m.id});">Match to Case</button></td>
                         </tr>
                     `).join('') :
-                    '<tr><td colspan="5" style="text-align:center;color:#8b949e">No unmatched emails</td></tr>';
+                    '<tr><td colspan="6" style="text-align:center;color:#8b949e">No unmatched emails</td></tr>';
 
                 document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
                 renderLiveOverview(live);
@@ -1318,6 +1320,10 @@
                 <div class="ops-item">
                     <div><a href="#" onclick="openCase(${p.case_id});return false;">Case #${p.case_id || '-'}</a> · Proposal #${p.id}</div>
                     <div>${p.action_type || '-'} · ${relativeTime(p.created_at)}</div>
+                    <div style="margin-top:4px;">
+                        <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
+                        <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
+                    </div>
                 </div>
             `);
 
@@ -1325,6 +1331,9 @@
                 <div class="ops-item">
                     <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${truncate(m.from_email, 36)}</div>
                     <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
+                    <div style="margin-top:4px;">
+                        <button class="drawer-btn" onclick="matchMessageToCasePrompt(${m.id})">Match to Case</button>
+                    </div>
                 </div>
             `);
 
@@ -1332,8 +1341,63 @@
                 <div class="ops-item">
                     <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · Case #${m.case_id || '-'}</div>
                     <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
+                    <div style="margin-top:4px;">
+                        <button class="drawer-btn warn" ${m.case_id ? '' : 'disabled'} onclick="triggerAIFromOps(${m.id})">Trigger AI</button>
+                    </div>
                 </div>
             `);
+        }
+
+        async function openPendingApproval(proposalId, triggerMessageId, caseId) {
+            if (triggerMessageId) {
+                await openMessage(triggerMessageId);
+                return;
+            }
+            if (caseId) {
+                await openCase(caseId);
+                alert(`Proposal #${proposalId} has no trigger message. Open the case panel and review proposals.`);
+                return;
+            }
+            alert(`Proposal #${proposalId} missing case/message linkage.`);
+        }
+
+        async function triggerAIFromOps(messageId) {
+            try {
+                const res = await fetch('/api/monitor/trigger-inbound-run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message_id: messageId, force_new_run: false })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+                await loadData();
+            } catch (err) {
+                alert(`Failed to trigger AI: ${err.message || err}`);
+            }
+        }
+
+        async function matchMessageToCasePrompt(messageId) {
+            const input = prompt(`Match Message #${messageId} to Case ID:`);
+            if (!input) return;
+            const caseId = parseInt(input, 10);
+            if (!caseId) {
+                alert('Invalid case ID');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/monitor/message/${messageId}/match-case`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ case_id: caseId })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+                await loadData();
+                await openMessage(messageId);
+            } catch (err) {
+                alert(`Failed to match message: ${err.message || err}`);
+            }
         }
 
         // Auto-refresh setup
