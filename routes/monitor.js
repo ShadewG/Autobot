@@ -5,6 +5,7 @@ const sgMail = require('@sendgrid/mail');
 const { enqueueInboundMessageJob, enqueueResumeRunJob } = require('../queues/agent-queue');
 const { portalQueue } = require('../queues/email-queue');
 const crypto = require('crypto');
+const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
@@ -837,7 +838,8 @@ router.get('/case/:id', async (req, res) => {
             db.query(`
                 SELECT
                     id, status, portal_url, action_type, proposal_id,
-                    assigned_to, completed_at, completion_notes, created_at, updated_at
+                    assigned_to, completed_at, completion_notes, created_at, updated_at,
+                    subject, body_text, instructions, confirmation_number
                 FROM portal_tasks
                 WHERE case_id = $1
                 ORDER BY created_at DESC
@@ -866,14 +868,29 @@ router.get('/case/:id', async (req, res) => {
 router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
     try {
         const caseId = parseInt(req.params.id);
-        const { instructions = null, provider = null } = req.body || {};
+        const { instructions = null, provider = null, portal_url = null } = req.body || {};
 
         const caseData = await db.getCaseById(caseId);
         if (!caseData) {
             return res.status(404).json({ success: false, error: `Case ${caseId} not found` });
         }
 
-        if (!caseData.portal_url) {
+        const normalizedPortalUrl = portal_url
+            ? normalizePortalUrl(String(portal_url).trim())
+            : normalizePortalUrl(caseData.portal_url || '');
+
+        if (!normalizedPortalUrl || !isSupportedPortalUrl(normalizedPortalUrl)) {
+            return res.status(400).json({ success: false, error: 'Valid portal URL is required' });
+        }
+
+        if (!caseData.portal_url || caseData.portal_url !== normalizedPortalUrl || (provider && provider !== caseData.portal_provider)) {
+            await db.updateCase(caseId, {
+                portal_url: normalizedPortalUrl,
+                portal_provider: provider || caseData.portal_provider || null
+            });
+        }
+
+        if (!normalizedPortalUrl) {
             return res.status(400).json({ success: false, error: 'Case has no portal_url' });
         }
 
@@ -883,7 +900,7 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
 
         const job = await portalQueue.add('portal-submit', {
             caseId,
-            portalUrl: caseData.portal_url,
+            portalUrl: normalizedPortalUrl,
             provider: provider || caseData.portal_provider || null,
             instructions: instructions || `Monitor-triggered portal submission for case ${caseId}`
         });
@@ -896,7 +913,7 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
 
         await db.logActivity('monitor_portal_trigger', `Portal submission queued from monitor for case ${caseId}`, {
             case_id: caseId,
-            portal_url: caseData.portal_url,
+            portal_url: normalizedPortalUrl,
             provider: provider || caseData.portal_provider || null,
             job_id: job?.id || null
         });
@@ -906,7 +923,8 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             message: 'Portal submission queued',
             case_id: caseId,
             job_id: job?.id || null,
-            portal_url: caseData.portal_url
+            portal_url: normalizedPortalUrl,
+            monitor_case_url: `/api/monitor/case/${caseId}`
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

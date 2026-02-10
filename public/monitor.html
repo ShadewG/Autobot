@@ -725,6 +725,37 @@
             <div id="caseInspectorGrid" class="case-grid"></div>
             <div id="caseInspectorActions" style="margin-top:10px;"></div>
             <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
+            <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
+                <h3 style="margin-top:0;">Portal Submission Review</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="portalReviewCase">Case</label>
+                        <input id="portalReviewCase" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label for="portalReviewAgency">Agency</label>
+                        <input id="portalReviewAgency" readonly>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="portalReviewUrl">Portal URL</label>
+                        <input id="portalReviewUrl" placeholder="https://...">
+                    </div>
+                    <div class="form-group">
+                        <label for="portalReviewProvider">Portal Provider (optional)</label>
+                        <input id="portalReviewProvider" placeholder="GovQA / NextRequest / etc">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="portalReviewInstructions">Instructions sent to Skyvern</label>
+                    <textarea id="portalReviewInstructions" placeholder="What to submit in the portal..."></textarea>
+                </div>
+                <div class="proposal-actions">
+                    <button class="send-btn" onclick="confirmPortalSubmission()">Confirm + Submit Portal</button>
+                    <button class="drawer-btn" onclick="hidePortalReview()">Cancel</button>
+                </div>
+            </div>
             <h3>Correspondence</h3>
             <div id="caseInspectorMessages" class="case-list"></div>
             <h3 style="margin-top:10px;">Runs</h3>
@@ -1319,6 +1350,9 @@
 
         let currentMessage = null;
         let currentRunId = null;
+        let currentCaseData = null;
+        let latestCasePortalTasks = [];
+        let portalLinkPollTimer = null;
         let runPollTimer = null;
         let aiLogLines = [];
 
@@ -1400,6 +1434,7 @@
             const proposalList = document.getElementById('caseInspectorProposals');
             const actions = document.getElementById('caseInspectorActions');
             const actionResult = document.getElementById('caseInspectorActionResult');
+            const reviewPanel = document.getElementById('casePortalReview');
 
             inspector.style.display = 'block';
             title.textContent = `Case #${caseId}`;
@@ -1409,6 +1444,13 @@
             proposalList.innerHTML = '<div class="timestamp">Loading...</div>';
             actions.innerHTML = '';
             actionResult.style.display = 'none';
+            reviewPanel.style.display = 'none';
+            currentCaseData = null;
+            latestCasePortalTasks = [];
+            if (portalLinkPollTimer) {
+                clearInterval(portalLinkPollTimer);
+                portalLinkPollTimer = null;
+            }
 
             try {
                 const res = await fetch(`/api/monitor/case/${caseId}`);
@@ -1416,6 +1458,8 @@
                 if (!res.ok || !data.success) throw new Error(data.error || `Failed to load case (${res.status})`);
 
                 const c = data.case;
+                currentCaseData = c;
+                latestCasePortalTasks = data.portal_tasks || [];
                 title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
                 grid.innerHTML = `
                     <div class="cell"><span class="k">Status</span>${c.status || '-'}</div>
@@ -1433,7 +1477,7 @@
                 `;
 
                 actions.innerHTML = c.portal_url
-                    ? `<button class="send-btn" onclick="triggerPortalSubmission(${c.id})">Trigger Portal Submission (Skyvern)</button>`
+                    ? `<button class="send-btn" onclick="showPortalReview(${c.id})">Review + Trigger Portal Submission</button>`
                     : `<span class="timestamp">No portal URL on case; cannot trigger portal submission.</span>`;
 
                 const messages = data.messages || [];
@@ -1475,28 +1519,105 @@
             }
         }
 
-        async function triggerPortalSubmission(caseId) {
+        function showPortalReview(caseId) {
+            const panel = document.getElementById('casePortalReview');
+            const c = currentCaseData;
+            if (!c || c.id !== caseId) return;
+
+            let draftInstructions = `Submit public-records request for case #${c.id} (${c.case_name || ''}) to ${c.agency_name || 'agency'} portal.`;
+            const latestTask = latestCasePortalTasks.find(t => t.status !== 'COMPLETED') || latestCasePortalTasks[0];
+            if (latestTask?.instructions) {
+                draftInstructions = latestTask.instructions;
+            }
+
+            document.getElementById('portalReviewCase').value = `#${c.id} ${c.case_name || ''}`.trim();
+            document.getElementById('portalReviewAgency').value = c.agency_name || '';
+            document.getElementById('portalReviewUrl').value = c.portal_url || '';
+            document.getElementById('portalReviewProvider').value = c.portal_provider || '';
+            document.getElementById('portalReviewInstructions').value = draftInstructions;
+            panel.style.display = 'block';
+        }
+
+        function hidePortalReview() {
+            document.getElementById('casePortalReview').style.display = 'none';
+        }
+
+        async function confirmPortalSubmission() {
+            if (!currentCaseData?.id) return;
+            const caseId = currentCaseData.id;
             const resultDiv = document.getElementById('caseInspectorActionResult');
+            const portalUrl = document.getElementById('portalReviewUrl').value.trim();
+            const provider = document.getElementById('portalReviewProvider').value.trim();
+            const instructions = document.getElementById('portalReviewInstructions').value.trim();
+
+            if (!portalUrl) {
+                resultDiv.className = 'send-result error';
+                resultDiv.textContent = 'Portal URL is required.';
+                resultDiv.style.display = 'block';
+                return;
+            }
+
             resultDiv.style.display = 'none';
             try {
                 const res = await fetch(`/api/monitor/case/${caseId}/trigger-portal`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
+                    body: JSON.stringify({
+                        portal_url: portalUrl,
+                        provider: provider || null,
+                        instructions: instructions || null
+                    })
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
 
                 resultDiv.className = 'send-result success';
-                resultDiv.textContent = `Portal job queued for case #${caseId}. Job: ${data.job_id || '-'} (refresh in 10-30s for Skyvern task link).`;
+                resultDiv.innerHTML = `Portal job queued for case #${caseId}. Job: ${data.job_id || '-'}.
+                    <div style="margin-top:6px;">Waiting for Skyvern link...</div>`;
                 resultDiv.style.display = 'block';
+                hidePortalReview();
                 await openCase(caseId);
                 await loadData();
+                startPortalLinkPolling(caseId);
             } catch (err) {
                 resultDiv.className = 'send-result error';
                 resultDiv.textContent = err.message || 'Portal trigger failed';
                 resultDiv.style.display = 'block';
             }
+        }
+
+        function startPortalLinkPolling(caseId) {
+            const resultDiv = document.getElementById('caseInspectorActionResult');
+            if (portalLinkPollTimer) clearInterval(portalLinkPollTimer);
+            let attempts = 0;
+            portalLinkPollTimer = setInterval(async () => {
+                attempts += 1;
+                try {
+                    const res = await fetch(`/api/monitor/case/${caseId}`);
+                    const data = await res.json();
+                    if (!res.ok || !data.success) return;
+                    const c = data.case || {};
+                    const task = c.last_portal_task_url;
+                    const recording = c.last_portal_recording_url;
+                    if (task || recording) {
+                        const parts = [];
+                        if (task) parts.push(`<a class="case-link" href="${task}" target="_blank">Skyvern Task</a>`);
+                        if (recording) parts.push(`<a class="case-link" href="${recording}" target="_blank">Recording</a>`);
+                        resultDiv.className = 'send-result success';
+                        resultDiv.innerHTML = `Portal submission started. ${parts.join(' | ')}`;
+                        clearInterval(portalLinkPollTimer);
+                        portalLinkPollTimer = null;
+                        openCase(caseId);
+                        return;
+                    }
+                    if (attempts >= 20) {
+                        resultDiv.className = 'send-result';
+                        resultDiv.textContent = 'Portal queued. Skyvern link not available yet. Refresh shortly.';
+                        clearInterval(portalLinkPollTimer);
+                        portalLinkPollTimer = null;
+                    }
+                } catch (_) {}
+            }, 3000);
         }
 
         async function loadProposals(messageId, runId = null) {
