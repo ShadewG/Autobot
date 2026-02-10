@@ -180,6 +180,18 @@ export const requestsAPI = {
     });
   },
 
+  // Resolve a human review action
+  resolveReview: (
+    id: string,
+    action: string,
+    instruction?: string
+  ): Promise<{ success: boolean; message: string; job_id?: string; immediate?: boolean }> => {
+    return fetchAPI(`/requests/${id}/resolve-review`, {
+      method: 'POST',
+      body: JSON.stringify({ action, instruction }),
+    });
+  },
+
   // Withdraw/close a request
   withdraw: (
     id: string,

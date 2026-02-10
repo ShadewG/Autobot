@@ -167,6 +167,31 @@ function toRequestListItem(caseData) {
 }
 
 /**
+ * Detect review reason from case data when requires_human is true but no pause_reason is set
+ */
+function detectReviewReason(caseData) {
+    const substatus = (caseData.substatus || '').toLowerCase();
+    const status = (caseData.status || '').toLowerCase();
+
+    // Portal failure indicators
+    if (substatus.includes('portal') && (substatus.includes('fail') || substatus.includes('error'))) return 'PORTAL_FAILED';
+    if (status === 'error' && caseData.portal_url) return 'PORTAL_FAILED';
+
+    // Fee quote indicators
+    if (substatus.includes('fee') || substatus.includes('quote') || substatus.includes('cost')) return 'FEE_QUOTE';
+    if (caseData.last_fee_quote_amount) return 'FEE_QUOTE';
+
+    // Denial indicators
+    if (substatus.includes('denial') || substatus.includes('denied') || substatus.includes('reject')) return 'DENIAL';
+
+    // Missing info indicators
+    if (substatus.includes('missing') || substatus.includes('contact') || substatus.includes('info')) return 'MISSING_INFO';
+    if (status === 'needs_contact_info') return 'MISSING_INFO';
+
+    return 'GENERAL';
+}
+
+/**
  * Transform case data to RequestDetail format
  */
 function toRequestDetail(caseData) {
@@ -200,7 +225,11 @@ function toRequestDetail(caseData) {
         notion_url: notionUrl,
         submitted_at: caseData.send_date || null,
         statutory_due_at: listItem.due_info.statutory_due_at,
-        attachments: [] // Will be populated from messages
+        attachments: [], // Will be populated from messages
+        substatus: caseData.substatus || null,
+        review_reason: caseData.requires_human && !caseData.pause_reason
+            ? detectReviewReason(caseData)
+            : undefined
     };
 }
 
@@ -791,6 +820,143 @@ router.post('/:id/withdraw', async (req, res) => {
         });
     } catch (error) {
         log.error(`Error withdrawing request: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/resolve-review
+ * Resolve a human review with a chosen action + optional custom instruction
+ */
+router.post('/:id/resolve-review', async (req, res) => {
+    const requestId = parseInt(req.params.id);
+    const { action, instruction } = req.body;
+    const log = logger.forCase(requestId);
+
+    try {
+        if (!action) {
+            return res.status(400).json({
+                success: false,
+                error: 'action is required'
+            });
+        }
+
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        log.info(`Resolving human review with action: ${action}`);
+
+        // Immediate actions — update status directly, no agent invocation
+        const IMMEDIATE_ACTIONS = {
+            put_on_hold: { status: 'awaiting_response', substatus: 'On hold (manual)' },
+            close: { status: 'completed', substatus: 'Closed by user' },
+            submit_manually: { status: 'portal_in_progress', substatus: 'Manual portal submission' }
+        };
+
+        if (IMMEDIATE_ACTIONS[action]) {
+            const { status, substatus } = IMMEDIATE_ACTIONS[action];
+            await db.updateCase(requestId, {
+                status,
+                substatus,
+                requires_human: false,
+                pause_reason: null
+            });
+
+            await db.logActivity('human_decision', `Review resolved: ${action}${instruction ? ` — ${instruction}` : ''}`, {
+                case_id: requestId,
+                review_action: action,
+                instruction: instruction || null,
+                previous_status: caseData.status
+            });
+
+            // Sync to Notion
+            try {
+                const notionService = require('../services/notion-service');
+                await notionService.syncStatusToNotion(requestId);
+            } catch (notionError) {
+                log.warn(`Failed to sync to Notion: ${notionError.message}`);
+            }
+
+            log.info(`Review resolved immediately: ${action}`);
+            return res.json({
+                success: true,
+                message: `Review resolved: ${action}`,
+                immediate: true
+            });
+        }
+
+        // Agent-based actions — clear review flags, enqueue agent job
+        const ACTION_INSTRUCTIONS = {
+            retry_portal: 'Retry the portal submission',
+            send_via_email: 'Switch to email submission',
+            appeal: 'Draft an appeal citing legal grounds',
+            narrow_scope: 'Narrow scope and resubmit',
+            negotiate_fee: 'Negotiate the quoted fee',
+            accept_fee: 'Accept fee and proceed',
+            reprocess: 'Re-analyze and determine best action',
+            custom: instruction || 'Follow custom instructions'
+        };
+
+        const baseInstruction = ACTION_INSTRUCTIONS[action];
+        if (!baseInstruction) {
+            return res.status(400).json({
+                success: false,
+                error: `Unknown action: ${action}`
+            });
+        }
+
+        // Build combined instruction
+        const combinedInstruction = instruction
+            ? `${baseInstruction}. Additional instructions: ${instruction}`
+            : baseInstruction;
+
+        // Clear review flags
+        await db.updateCase(requestId, {
+            requires_human: false,
+            pause_reason: null,
+            substatus: `Resolving: ${action}`
+        });
+
+        // Log activity
+        await db.logActivity('human_decision', `Review resolved: ${action}${instruction ? ` — ${instruction}` : ''}`, {
+            case_id: requestId,
+            review_action: action,
+            instruction: instruction || null,
+            previous_status: caseData.status
+        });
+
+        // Enqueue agent job
+        const { enqueueAgentJob } = require('../queues/agent-queue');
+        const job = await enqueueAgentJob(requestId, 'HUMAN_REVIEW_RESOLUTION', {
+            reviewAction: action,
+            instruction: combinedInstruction
+        });
+
+        // Sync to Notion
+        try {
+            const notionService = require('../services/notion-service');
+            await notionService.syncStatusToNotion(requestId);
+        } catch (notionError) {
+            log.warn(`Failed to sync to Notion: ${notionError.message}`);
+        }
+
+        log.info(`Review resolved with agent job: ${job.id}`);
+
+        res.json({
+            success: true,
+            message: `Review resolved: ${action}`,
+            job_id: job.id
+        });
+    } catch (error) {
+        log.error(`Error resolving review: ${error.message}`);
         res.status(500).json({
             success: false,
             error: error.message

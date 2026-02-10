@@ -91,6 +91,9 @@ export interface RequestDetail extends RequestListItem {
   agency_email: string | null;
   // External links
   notion_url: string | null;
+  // Human review fields
+  review_reason?: ReviewReason;
+  substatus?: string;
 }
 
 // Timeline Event for the timeline column
@@ -238,6 +241,13 @@ export type PauseReason =
   | 'ID_REQUIRED'
   | 'SENSITIVE'
   | 'CLOSE_ACTION';
+
+export type ReviewReason =
+  | 'PORTAL_FAILED'
+  | 'FEE_QUOTE'
+  | 'DENIAL'
+  | 'MISSING_INFO'
+  | 'GENERAL';
 
 export type AutopilotMode = 'AUTO' | 'SUPERVISED' | 'MANUAL';
 

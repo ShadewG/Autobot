@@ -187,6 +187,21 @@ function RequestDetailContent() {
     setAdjustModalOpen(true);
   };
 
+  const handleResolveReview = async (action: string, instruction?: string) => {
+    if (!id) return;
+    try {
+      // For submit_manually, also open the portal URL
+      if (action === "submit_manually" && data?.request?.portal_url) {
+        window.open(data.request.portal_url, "_blank");
+      }
+      await requestsAPI.resolveReview(id, action, instruction);
+      mutate();
+    } catch (error: any) {
+      console.error("Error resolving review:", error);
+      alert(error.message || "Failed to resolve review. Please try again.");
+    }
+  };
+
   const handleChallenge = (instruction: string) => {
     // Pre-fill the adjust modal with the challenge instruction
     setAdjustModalOpen(true);
@@ -709,6 +724,7 @@ function RequestDetailContent() {
                     onWithdraw={handleWithdraw}
                     onNarrowScope={handleNarrowScope}
                     onAppeal={handleAppeal}
+                    onResolveReview={handleResolveReview}
                     isLoading={isApproving}
                   />
 

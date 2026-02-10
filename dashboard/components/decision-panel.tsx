@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import {
   Collapsible,
@@ -17,7 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { RequestDetail, NextAction, AgencySummary, PauseReason, ThreadMessage } from "@/lib/types";
+import type { RequestDetail, NextAction, AgencySummary, PauseReason, ReviewReason, ThreadMessage } from "@/lib/types";
 import {
   CheckCircle,
   MessageSquare,
@@ -34,6 +35,13 @@ import {
   ChevronUp,
   FileText,
   HelpCircle,
+  Globe,
+  Mail,
+  RotateCcw,
+  Pause,
+  XCircle,
+  Search,
+  Star,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +56,7 @@ interface DecisionPanelProps {
   onNarrowScope: () => void;
   onAppeal: () => void;
   onOpenPortal?: () => void;
+  onResolveReview?: (action: string, instruction?: string) => Promise<void>;
   isLoading?: boolean;
 }
 
@@ -388,6 +397,97 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   },
 };
 
+// Review action button config
+interface ReviewActionConfig {
+  id: string;
+  label: string;
+  description: string;
+  variant: "default" | "outline" | "ghost";
+  recommended?: boolean;
+}
+
+// Review panel config per reason
+interface ReviewConfig {
+  icon: React.ReactNode;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  title: string;
+  question: string;
+  actions: ReviewActionConfig[];
+}
+
+const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
+  PORTAL_FAILED: {
+    icon: <Globe className="h-5 w-5" />,
+    color: "text-red-700",
+    bgColor: "bg-red-50",
+    borderColor: "border-red-300",
+    title: "Portal Submission Failed",
+    question: "The portal submission failed. How should we proceed?",
+    actions: [
+      { id: "retry_portal", label: "Retry Portal", description: "Attempt the portal submission again", variant: "default", recommended: true },
+      { id: "send_via_email", label: "Send via Email", description: "Switch to email submission instead", variant: "outline" },
+      { id: "submit_manually", label: "Submit Manually", description: "Open portal URL for manual submission", variant: "outline" },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "ghost" },
+    ],
+  },
+  FEE_QUOTE: {
+    icon: <DollarSign className="h-5 w-5" />,
+    color: "text-amber-700",
+    bgColor: "bg-amber-50",
+    borderColor: "border-amber-300",
+    title: "Fee Quote Received",
+    question: "A fee has been quoted. What would you like to do?",
+    actions: [
+      { id: "accept_fee", label: "Accept & Proceed", description: "Accept the fee and continue", variant: "default", recommended: true },
+      { id: "negotiate_fee", label: "Negotiate Fee", description: "Ask for a lower fee or waiver", variant: "outline" },
+      { id: "close", label: "Decline & Close", description: "Decline the fee and close request", variant: "outline" },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "ghost" },
+    ],
+  },
+  DENIAL: {
+    icon: <Ban className="h-5 w-5" />,
+    color: "text-red-700",
+    bgColor: "bg-red-50",
+    borderColor: "border-red-300",
+    title: "Request Denied",
+    question: "The request was denied. How should we respond?",
+    actions: [
+      { id: "appeal", label: "Appeal Denial", description: "Draft an appeal citing legal grounds", variant: "default", recommended: true },
+      { id: "narrow_scope", label: "Narrow Scope & Retry", description: "Reduce scope and resubmit", variant: "outline" },
+      { id: "close", label: "Close Request", description: "Accept the denial and close", variant: "outline" },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "ghost" },
+    ],
+  },
+  MISSING_INFO: {
+    icon: <Search className="h-5 w-5" />,
+    color: "text-blue-700",
+    bgColor: "bg-blue-50",
+    borderColor: "border-blue-300",
+    title: "Missing Information",
+    question: "Additional information is needed to proceed.",
+    actions: [
+      { id: "reprocess", label: "Re-process", description: "Re-analyze and determine best action", variant: "default", recommended: true },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "outline" },
+      { id: "close", label: "Skip / Close", description: "Close this request", variant: "ghost" },
+    ],
+  },
+  GENERAL: {
+    icon: <AlertTriangle className="h-5 w-5" />,
+    color: "text-yellow-700",
+    bgColor: "bg-yellow-50",
+    borderColor: "border-yellow-300",
+    title: "Needs Review",
+    question: "This request needs human review. What would you like to do?",
+    actions: [
+      { id: "reprocess", label: "Re-process", description: "Re-analyze and determine best action", variant: "default", recommended: true },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "outline" },
+      { id: "close", label: "Close Request", description: "Close this request", variant: "ghost" },
+    ],
+  },
+};
+
 export function DecisionPanel({
   request,
   nextAction,
@@ -399,11 +499,15 @@ export function DecisionPanel({
   onNarrowScope,
   onAppeal,
   onOpenPortal,
+  onResolveReview,
   isLoading,
 }: DecisionPanelProps) {
   const [costCap, setCostCap] = useState<string>("");
   const [showCostCap, setShowCostCap] = useState(false);
   const [draftExpanded, setDraftExpanded] = useState(false);
+  const [customInstruction, setCustomInstruction] = useState("");
+  const [showCustomInstruction, setShowCustomInstruction] = useState(false);
+  const [reviewActionLoading, setReviewActionLoading] = useState<string | null>(null);
 
   // Robust detection of whether decision is required
   const pauseReasonRaw = request.pause_reason ?? null;
@@ -441,6 +545,129 @@ export function DecisionPanel({
   const config = normalized === "UNKNOWN"
     ? UNKNOWN_GATE_CONFIG
     : GATE_CONFIGS[normalized];
+
+  // If UNKNOWN gate but we have a review_reason, show the review-specific panel
+  if (normalized === "UNKNOWN" && request.review_reason && onResolveReview) {
+    const reviewConfig = REVIEW_CONFIGS[request.review_reason];
+
+    const handleReviewAction = async (actionId: string) => {
+      setReviewActionLoading(actionId);
+      try {
+        await onResolveReview(actionId, customInstruction || undefined);
+      } finally {
+        setReviewActionLoading(null);
+      }
+    };
+
+    return (
+      <Card className={cn("border-2", reviewConfig.borderColor, reviewConfig.bgColor)}>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className={cn("text-base flex items-center gap-2", reviewConfig.color)}>
+              {reviewConfig.icon}
+              Decision Required
+            </CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Reason badge */}
+          <Badge
+            variant="outline"
+            className={cn("font-semibold text-sm px-3 py-1", reviewConfig.color, reviewConfig.borderColor)}
+          >
+            {reviewConfig.title}
+          </Badge>
+
+          {/* Substatus context */}
+          {request.substatus && (
+            <div className="bg-white/60 rounded-md p-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+                Context
+              </p>
+              <p className="text-sm">{request.substatus}</p>
+            </div>
+          )}
+
+          {/* The explicit decision question */}
+          <p className="text-sm font-semibold">
+            {reviewConfig.question}
+          </p>
+
+          <Separator className="bg-white/50" />
+
+          {/* Action buttons — stacked */}
+          <div className="space-y-2">
+            {reviewConfig.actions.map((action) => (
+              <Button
+                key={action.id}
+                onClick={() => handleReviewAction(action.id)}
+                variant={action.variant}
+                className={cn(
+                  "w-full justify-between",
+                  action.variant === "outline" && "bg-white",
+                  action.variant === "ghost" && "text-muted-foreground"
+                )}
+                disabled={isLoading || reviewActionLoading !== null}
+              >
+                <span className="flex items-center gap-2 text-left">
+                  {reviewActionLoading === action.id ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <span className="text-sm">{action.label}</span>
+                  )}
+                  {action.recommended && (
+                    <Badge variant="secondary" className="ml-1 text-[10px]">Recommended</Badge>
+                  )}
+                </span>
+                <ArrowRight className="h-4 w-4 flex-shrink-0" />
+              </Button>
+            ))}
+          </div>
+
+          {/* Custom instructions textarea — collapsible */}
+          <Collapsible open={showCustomInstruction} onOpenChange={setShowCustomInstruction}>
+            <CollapsibleTrigger asChild>
+              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-white/50">
+                <span className="flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />
+                  Custom instructions
+                </span>
+                {showCustomInstruction ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="space-y-2">
+                <Textarea
+                  value={customInstruction}
+                  onChange={(e) => setCustomInstruction(e.target.value)}
+                  placeholder="Add specific instructions for the agent (e.g., 'cite public interest exception', 'limit to 2023 records only')"
+                  className="bg-white text-sm min-h-[80px]"
+                />
+                {customInstruction && (
+                  <Button
+                    onClick={() => handleReviewAction("custom")}
+                    variant="outline"
+                    size="sm"
+                    className="w-full bg-white"
+                    disabled={isLoading || reviewActionLoading !== null}
+                  >
+                    {reviewActionLoading === "custom" ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : null}
+                    Send Custom Instruction
+                  </Button>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const agencyPoints = extractAgencyPoints(request, lastInboundMessage, normalized);
   const recommendation = config.getRecommendation?.(request, nextAction, agencyPoints);
