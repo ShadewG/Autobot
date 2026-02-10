@@ -192,13 +192,17 @@ class NotionService {
             const cases = [];
             for (const page of response) {
                 let caseData = this.parseNotionPage(page);
+
+                // Export ALL case page property values so nothing is missed
+                const allPropsText = this.formatAllPropertiesAsText(page.properties);
                 const fullPageText = await this.getFullPagePlainText(page.id);
+
+                caseData.additional_details = [caseData.additional_details, allPropsText, fullPageText]
+                    .filter(Boolean)
+                    .join('\n\n')
+                    .trim();
                 if (fullPageText) {
                     caseData.full_page_text = fullPageText;
-                    caseData.additional_details = [caseData.additional_details, fullPageText]
-                        .filter(Boolean)
-                        .join('\n\n')
-                        .trim();
                 }
 
                 if (this.enableAINormalization) {
@@ -210,14 +214,17 @@ class NotionService {
                 }
                 caseData = this.enrichCaseFromNarrative(caseData);
 
-                if (!caseData.portal_url) {
-                    const portalFromText = this.findPortalInText(caseData.additional_details || fullPageText || '');
+                // Enrich with PD data first — portal URL from PD card takes priority
+                const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
+
+                // Text fallback only if PD didn't provide a portal URL
+                if (!enrichedCase.portal_url) {
+                    const portalFromText = this.findPortalInText(enrichedCase.additional_details || fullPageText || '');
                     if (portalFromText) {
-                        caseData.portal_url = portalFromText;
+                        enrichedCase.portal_url = portalFromText;
                         console.log(`Detected portal URL from page text: ${portalFromText}`);
                     }
                 }
-                const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
                 enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
                 cases.push(enrichedCase);
             }
@@ -433,12 +440,21 @@ class NotionService {
                 all_fields: allFieldsData
             };
 
-            const { emailCandidate, portalCandidate } = await this.extractContactsWithAI(fieldsPayload, caseData);
+            let { emailCandidate, portalCandidate } = await this.extractContactsWithAI(fieldsPayload, caseData);
 
             // NO FALLBACK - return null if not found
             caseData.agency_email = emailCandidate || null;
 
-            if (!caseData.portal_url && portalCandidate) {
+            // If AI/regex didn't find a portal URL, scan ALL PD fields directly
+            if (!portalCandidate) {
+                portalCandidate = this.extractFirstUrlFromProperties(deptProps);
+                if (portalCandidate) {
+                    console.log(`Extracted portal URL directly from PD fields: ${portalCandidate}`);
+                }
+            }
+
+            // PD-sourced portal URL always overrides text-extracted ones
+            if (portalCandidate) {
                 caseData.portal_url = portalCandidate;
             }
 
@@ -807,6 +823,53 @@ Respond with JSON:
         return null;
     }
 
+    /**
+     * Scan ALL properties for URLs, prioritizing portal-named fields.
+     * Used as a broad fallback when AI and regex extraction fail.
+     */
+    extractFirstUrlFromProperties(properties = {}) {
+        const portalFieldUrls = [];
+        const otherFieldUrls = [];
+
+        for (const [name, prop] of Object.entries(properties)) {
+            const urls = [];
+
+            // Direct URL for url-type properties
+            if (prop.type === 'url' && prop.url) {
+                urls.push(prop.url);
+            }
+
+            // Also extract URLs embedded in text content
+            const textValue = this.extractPlainValue(prop);
+            if (textValue) {
+                for (const u of extractUrls(String(textValue))) {
+                    if (!urls.includes(u)) urls.push(u);
+                }
+            }
+
+            if (!urls.length) continue;
+
+            const lowerName = name.toLowerCase();
+            const isPortalField = lowerName.includes('portal') ||
+                                  lowerName.includes('request form') ||
+                                  lowerName.includes('online form') ||
+                                  lowerName.includes('submission');
+
+            for (const url of urls) {
+                const normalized = normalizePortalUrl(url);
+                if (normalized && isSupportedPortalUrl(normalized)) {
+                    if (isPortalField) {
+                        portalFieldUrls.push(normalized);
+                    } else {
+                        otherFieldUrls.push(normalized);
+                    }
+                }
+            }
+        }
+
+        return portalFieldUrls[0] || otherFieldUrls[0] || null;
+    }
+
     async getFullPagePlainText(blockId, depth = 0) {
         try {
             const lines = [];
@@ -880,9 +943,26 @@ Respond with JSON:
             return null;
         }
         const urls = extractUrls(text);
+        const urlPortalHints = [
+            'portal', 'records-request', 'public-records', 'open-records',
+            'request-center', 'nextrequest', 'govqa', 'mycusthelp',
+            'justfoia', '/webapp/_rs/', 'foia', 'publicrecords',
+            'openrecords', 'records_request'
+        ];
+
         for (const rawUrl of urls) {
             const normalized = normalizePortalUrl(rawUrl);
-            if (normalized && this.isLikelyPortalUrl(normalized, text)) {
+            if (!normalized || !isSupportedPortalUrl(normalized)) continue;
+
+            // Known portal provider domain — always accept
+            if (detectPortalProviderByUrl(normalized)) {
+                return normalized;
+            }
+
+            // Only accept URLs that contain portal keywords in the URL itself.
+            // This avoids picking up article/news links from free-form text.
+            const lowerUrl = normalized.toLowerCase();
+            if (urlPortalHints.some(h => lowerUrl.includes(h))) {
                 return normalized;
             }
         }
@@ -1521,15 +1601,18 @@ Respond with JSON:
             // Parse the page
             const notionCase = this.parseNotionPage(page);
 
+            // Export ALL case page property values so nothing is missed
+            const allPropsText = this.formatAllPropertiesAsText(page.properties);
+
             // Enrich with police department data and fallback contact extraction from case page.
             await this.enrichWithPoliceDepartment(notionCase, page);
 
-            // Add page content as additional details if we have it
-            if (pageContent && !notionCase.additional_details) {
-                notionCase.additional_details = pageContent.substring(0, 5000); // Limit to 5000 chars
-            } else if (pageContent) {
-                notionCase.additional_details += '\n\n--- Page Content ---\n' + pageContent.substring(0, 5000);
-            }
+            // Combine: existing details + all properties + page content
+            notionCase.additional_details = [
+                notionCase.additional_details,
+                allPropsText,
+                pageContent ? pageContent.substring(0, 5000) : null
+            ].filter(Boolean).join('\n\n').trim();
             this.enrichCaseFromNarrative(notionCase);
 
             if (!notionCase.portal_url) {
@@ -1576,6 +1659,22 @@ Respond with JSON:
             exportData[name] = prop ? this.extractPlainValue(prop) : null;
         });
         return exportData;
+    }
+
+    /**
+     * Format ALL property values as a readable text block.
+     * Ensures no case data is lost regardless of which Notion field it lives in.
+     */
+    formatAllPropertiesAsText(properties = {}) {
+        const lines = [];
+        for (const [name, prop] of Object.entries(properties)) {
+            const value = this.extractPlainValue(prop);
+            if (!value) continue;
+            const text = Array.isArray(value) ? value.filter(Boolean).join(', ') : String(value);
+            if (!text.trim()) continue;
+            lines.push(`${name}: ${text.trim()}`);
+        }
+        return lines.length ? '--- Notion Fields ---\n' + lines.join('\n') : '';
     }
 
     preparePropertiesForAI(properties = {}) {
