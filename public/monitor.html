@@ -1490,9 +1490,23 @@
                     <div class="cell"><span class="k">Portal Updated</span>${formatTime(c.last_portal_status_at)}</div>
                 `;
 
-                actions.innerHTML = c.portal_url
-                    ? `<button class="send-btn" onclick="showPortalReview(${c.id})">Review + Trigger Portal Submission</button>`
-                    : `<span class="timestamp">No portal URL on case; cannot trigger portal submission.</span>`;
+                // Build actions based on case status
+                const isNeedsReview = c.requires_human || c.status === 'needs_human_review';
+                let actionsHtml = '';
+
+                if (isNeedsReview) {
+                    actionsHtml += buildReviewActions(c);
+                }
+
+                if (c.portal_url) {
+                    actionsHtml += `<button class="send-btn" onclick="showPortalReview(${c.id})" style="margin-top:6px;">Review + Trigger Portal Submission</button>`;
+                }
+
+                if (!actionsHtml) {
+                    actionsHtml = `<span class="timestamp">No actions available for this case.</span>`;
+                }
+
+                actions.innerHTML = actionsHtml;
 
                 const messages = data.messages || [];
                 msgList.innerHTML = messages.length
@@ -1556,6 +1570,124 @@
 
         function hidePortalReview() {
             document.getElementById('casePortalReview').style.display = 'none';
+        }
+
+        // =====================================================================
+        // Human Review Actions
+        // =====================================================================
+
+        function detectReviewReason(c) {
+            const sub = (c.substatus || '').toLowerCase();
+            const status = (c.status || '').toLowerCase();
+            if (sub.includes('portal') && (sub.includes('fail') || sub.includes('error'))) return 'PORTAL_FAILED';
+            if (status === 'error' && c.portal_url) return 'PORTAL_FAILED';
+            if (sub.includes('portal')) return 'PORTAL_FAILED';
+            if (sub.includes('fee') || sub.includes('quote') || sub.includes('cost')) return 'FEE_QUOTE';
+            if (c.last_fee_quote_amount) return 'FEE_QUOTE';
+            if (sub.includes('denial') || sub.includes('denied') || sub.includes('reject')) return 'DENIAL';
+            if (sub.includes('missing') || sub.includes('contact') || sub.includes('info needed')) return 'MISSING_INFO';
+            if (status === 'needs_contact_info') return 'MISSING_INFO';
+            return 'GENERAL';
+        }
+
+        const REVIEW_ACTIONS = {
+            PORTAL_FAILED: [
+                { id: 'retry_portal', label: 'Retry Portal', primary: true },
+                { id: 'send_via_email', label: 'Send via Email' },
+                { id: 'submit_manually', label: 'Submit Manually (opens portal)' },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+            ],
+            FEE_QUOTE: [
+                { id: 'accept_fee', label: 'Accept & Proceed', primary: true },
+                { id: 'negotiate_fee', label: 'Negotiate Fee' },
+                { id: 'close', label: 'Decline & Close' },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+            ],
+            DENIAL: [
+                { id: 'appeal', label: 'Appeal Denial', primary: true },
+                { id: 'narrow_scope', label: 'Narrow Scope & Retry' },
+                { id: 'close', label: 'Close Request' },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+            ],
+            MISSING_INFO: [
+                { id: 'reprocess', label: 'Re-process', primary: true },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+                { id: 'close', label: 'Skip / Close' },
+            ],
+            GENERAL: [
+                { id: 'reprocess', label: 'Re-process', primary: true },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+                { id: 'close', label: 'Close Request' },
+            ],
+        };
+
+        const REVIEW_LABELS = {
+            PORTAL_FAILED: 'Portal Failed',
+            FEE_QUOTE: 'Fee Quote',
+            DENIAL: 'Denial',
+            MISSING_INFO: 'Missing Info',
+            GENERAL: 'Needs Review',
+        };
+
+        function buildReviewActions(c) {
+            const reason = detectReviewReason(c);
+            const actions = REVIEW_ACTIONS[reason] || REVIEW_ACTIONS.GENERAL;
+            const label = REVIEW_LABELS[reason] || 'Needs Review';
+
+            let html = `<div style="margin-bottom:8px;">
+                <span style="display:inline-block;padding:3px 10px;border-radius:4px;font-size:12px;font-weight:600;background:#30363d;color:#f0883e;margin-bottom:6px;">${label}</span>
+                ${c.substatus ? `<div style="font-size:11px;color:#8b949e;margin-bottom:6px;">Context: ${c.substatus}</div>` : ''}
+            </div>`;
+
+            html += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">`;
+            for (const action of actions) {
+                const style = action.primary
+                    ? 'background:#1f6feb;color:white;'
+                    : 'background:#21262d;color:#c9d1d9;border:1px solid #30363d;';
+                html += `<button onclick="resolveReview(${c.id},'${action.id}')" style="padding:6px 14px;border:none;border-radius:6px;cursor:pointer;font-size:12px;${style}">${action.label}</button>`;
+            }
+            html += `</div>`;
+
+            html += `<div style="margin-top:6px;">
+                <input id="reviewInstruction_${c.id}" type="text" placeholder="Custom instruction (optional)" style="width:100%;padding:6px 10px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;box-sizing:border-box;">
+                <button onclick="resolveReview(${c.id},'custom',document.getElementById('reviewInstruction_${c.id}').value)" style="margin-top:4px;padding:5px 12px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;cursor:pointer;font-size:11px;">Send Custom Instruction</button>
+            </div>`;
+
+            return html;
+        }
+
+        async function resolveReview(caseId, action, instruction) {
+            const actionResult = document.getElementById('caseInspectorActionResult');
+
+            // For submit_manually, also open the portal URL
+            if (action === 'submit_manually' && currentCaseData?.portal_url) {
+                window.open(currentCaseData.portal_url, '_blank');
+            }
+
+            try {
+                actionResult.style.display = 'block';
+                actionResult.className = 'send-result';
+                actionResult.textContent = `Resolving: ${action}...`;
+
+                const res = await fetch(`/api/requests/${caseId}/resolve-review`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action, instruction: instruction || undefined })
+                });
+                const data = await res.json();
+
+                if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
+
+                actionResult.className = 'send-result success';
+                actionResult.textContent = `✓ ${data.message}${data.job_id ? ` (job: ${data.job_id})` : ''}`;
+
+                // Refresh case after a moment
+                setTimeout(() => openCase(caseId), 1500);
+            } catch (err) {
+                actionResult.style.display = 'block';
+                actionResult.className = 'send-result error';
+                actionResult.textContent = `✗ ${err.message}`;
+            }
         }
 
         function buildPortalInstructions(c, proposals, messages) {
