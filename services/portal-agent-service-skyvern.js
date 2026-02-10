@@ -727,7 +727,7 @@ class PortalAgentServiceSkyvern {
                 last_portal_engine: 'skyvern_workflow',
                 last_portal_run_id: workflowRunId,
                 last_portal_details: JSON.stringify(workflowResponse),
-                last_portal_task_url: workflowRunLink || null,
+                last_portal_task_url: null, // Set after polling confirms the run exists
                 last_portal_account_email: portalAccount?.email || null
             });
 
@@ -855,8 +855,8 @@ class PortalAgentServiceSkyvern {
         }
         const maxPolls = parseInt(process.env.SKYVERN_WORKFLOW_MAX_POLLS || '480', 10);
         const pollIntervalMs = parseInt(process.env.SKYVERN_WORKFLOW_POLL_INTERVAL_MS || '5000', 10);
-        const statusEndpointBase = this.workflowStatusUrl.replace(/\/$/, '');
-        const statusUrl = `${statusEndpointBase}/${workflowRunId}`;
+        // Correct endpoint: /api/v1/workflows/{workflowId}/runs/{runId}
+        const statusUrl = `${this.baseUrl}/workflows/${this.workflowId}/runs/${workflowRunId}`;
 
         console.log(`⏳ Polling workflow run ${workflowRunId} for completion...`);
 
