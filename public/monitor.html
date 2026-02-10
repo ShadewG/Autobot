@@ -865,6 +865,28 @@
         </div>
     </div>
 
+    <div id="caseMatchModal" class="drawer-backdrop" style="display:none;" onclick="closeMatchModal(event)">
+        <div class="drawer" style="right:auto;left:50%;transform:translateX(-50%);width:min(760px,95vw);max-height:80vh;" onclick="event.stopPropagation()">
+            <div class="drawer-header">
+                <div class="drawer-title">Match Message To Case</div>
+                <button class="drawer-close" onclick="closeMatchModal()">Close</button>
+            </div>
+            <div class="drawer-section">
+                <div class="drawer-label">Message</div>
+                <div class="drawer-value" id="matchModalMessage">-</div>
+                <div class="drawer-label" style="margin-top:8px;">Search Cases</div>
+                <input class="drawer-input" id="matchModalSearch" placeholder="Search by case name, subject, agency, or ID" oninput="renderMatchCaseOptions()" />
+                <div class="drawer-label" style="margin-top:8px;">Select Case</div>
+                <div id="matchModalCaseList" class="case-list" style="max-height:280px; overflow:auto;"></div>
+                <div class="drawer-actions" style="margin-top:10px;">
+                    <button class="drawer-btn primary" id="matchModalConfirm" onclick="confirmMatchModal()" disabled>Confirm Match</button>
+                    <button class="drawer-btn" onclick="closeMatchModal()">Cancel</button>
+                </div>
+                <div id="matchModalResult" class="send-result" style="display:none; margin-top:8px;"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Message Drawer -->
     <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
     <div id="messageDrawer" class="drawer">
@@ -1088,7 +1110,7 @@
                             <td>${truncate(m.to_email, 30)}</td>
                             <td class="email-subject">${truncate(m.subject, 40)}</td>
                             <td class="email-body">${truncate(m.body_text, 50)}</td>
-                            <td><button class="drawer-btn" onclick="event.stopPropagation();matchMessageToCasePrompt(${m.id});">Match to Case</button></td>
+                            <td><button class="drawer-btn" onclick="event.stopPropagation();openMatchModal(${m.id});">Match to Case</button></td>
                         </tr>
                     `).join('') :
                     '<tr><td colspan="6" style="text-align:center;color:#8b949e">No unmatched emails</td></tr>';
@@ -1286,7 +1308,7 @@
                     <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${truncate(m.from_email, 36)}</div>
                     <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
                     <div style="margin-top:4px;">
-                        <button class="drawer-btn" onclick="matchMessageToCasePrompt(${m.id})">Match to Case</button>
+                        <button class="drawer-btn" onclick="openMatchModal(${m.id})">Match to Case</button>
                     </div>
                 </div>
             `);
@@ -1329,27 +1351,88 @@
             }
         }
 
-        async function matchMessageToCasePrompt(messageId) {
-            const input = prompt(`Match Message #${messageId} to Case ID:`);
-            if (!input) return;
-            const caseId = parseInt(input, 10);
-            if (!caseId) {
-                alert('Invalid case ID');
+        async function openMatchModal(messageId) {
+            matchModalMessageId = messageId;
+            matchModalSelectedCaseId = null;
+            document.getElementById('matchModalSearch').value = '';
+            document.getElementById('matchModalMessage').textContent = `Message #${messageId}`;
+            document.getElementById('matchModalConfirm').disabled = true;
+            document.getElementById('matchModalResult').style.display = 'none';
+            renderMatchCaseOptions();
+            const modal = document.getElementById('caseMatchModal');
+            modal.style.display = 'block';
+            modal.classList.add('active');
+        }
+
+        function closeMatchModal(event) {
+            if (event && event.target && event.target.id !== 'caseMatchModal') return;
+            const modal = document.getElementById('caseMatchModal');
+            modal.classList.remove('active');
+            modal.style.display = 'none';
+            matchModalMessageId = null;
+            matchModalSelectedCaseId = null;
+        }
+
+        function renderMatchCaseOptions() {
+            const listEl = document.getElementById('matchModalCaseList');
+            if (!listEl) return;
+            const q = (document.getElementById('matchModalSearch').value || '').trim().toLowerCase();
+            const cases = (caseCache || [])
+                .filter(c => {
+                    if (!q) return true;
+                    const hay = [
+                        String(c.id || ''),
+                        c.case_name || '',
+                        c.subject_name || '',
+                        c.agency_name || '',
+                        c.status || ''
+                    ].join(' ').toLowerCase();
+                    return hay.includes(q);
+                })
+                .slice(0, 120);
+
+            if (!cases.length) {
+                listEl.innerHTML = '<div class="timestamp">No matching cases</div>';
                 return;
             }
 
+            listEl.innerHTML = cases.map(c => `
+                <div class="case-list-item" style="cursor:pointer; border:${matchModalSelectedCaseId === c.id ? '1px solid #58a6ff' : '1px solid transparent'};" onclick="selectMatchCase(${c.id})">
+                    <div><strong>#${c.id}</strong> ${truncate(c.case_name, 90)}</div>
+                    <div>${truncate(c.agency_name || '-', 60)} · ${c.status || '-'} · ${getRoutingProfile(c)}</div>
+                </div>
+            `).join('');
+        }
+
+        function selectMatchCase(caseId) {
+            matchModalSelectedCaseId = caseId;
+            document.getElementById('matchModalConfirm').disabled = false;
+            renderMatchCaseOptions();
+        }
+
+        async function confirmMatchModal() {
+            const resultEl = document.getElementById('matchModalResult');
+            if (!matchModalMessageId || !matchModalSelectedCaseId) return;
+            resultEl.style.display = 'none';
             try {
-                const res = await fetch(`/api/monitor/message/${messageId}/match-case`, {
+                const res = await fetch(`/api/monitor/message/${matchModalMessageId}/match-case`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ case_id: caseId })
+                    body: JSON.stringify({ case_id: matchModalSelectedCaseId })
                 });
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+
+                resultEl.className = 'send-result success';
+                resultEl.textContent = `Matched Message #${matchModalMessageId} to Case #${matchModalSelectedCaseId}`;
+                resultEl.style.display = 'block';
                 await loadData();
-                await openMessage(messageId);
+                await openMessage(matchModalMessageId);
+                closeMatchModal();
             } catch (err) {
-                alert(`Failed to match message: ${err.message || err}`);
+                resultEl.className = 'send-result error';
+                resultEl.textContent = `Failed to match message: ${err.message || err}`;
+                resultEl.style.display = 'block';
             }
         }
 
@@ -1538,6 +1621,8 @@
         let latestCasePortalTasks = [];
         let currentCaseMessages = [];
         let currentCaseProposals = [];
+        let matchModalMessageId = null;
+        let matchModalSelectedCaseId = null;
         let portalLinkPollTimer = null;
         let runPollTimer = null;
         let aiLogLines = [];
