@@ -1008,7 +1008,7 @@
                             <td>${truncate(m.from_email, 30)}</td>
                             <td>${truncate(m.to_email, 30)}</td>
                             <td class="email-subject">${truncate(m.subject, 60)}</td>
-                            <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">#${m.case_id}</a> ${routeBadgeForRecord(m)}` : '-'}</td>
+                            <td>${m.case_id ? `<a class="case-link" href="#" onclick="openCase(${m.case_id});return false;">#${m.case_id}</a> ${routeBadgeForRecord(m)}` : '-'}</td>
                         </tr>
                     `).join('');
 
@@ -1018,7 +1018,7 @@
                         <td class="timestamp">${relativeTime(m.received_at || m.created_at)}</td>
                         <td>${truncate(m.from_email, 30)}</td>
                         <td class="email-subject">${truncate(m.subject, 50)}</td>
-                        <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">${truncate(m.case_name, 30)}</a> ${routeBadgeForRecord(m)}` : '<span style="color:#f85149">UNMATCHED</span>'}</td>
+                        <td>${m.case_id ? `<a class="case-link" href="#" onclick="openCase(${m.case_id});return false;">${truncate(m.case_name, 30)}</a> ${routeBadgeForRecord(m)}` : '<span style="color:#f85149">UNMATCHED</span>'}</td>
                         <td>${m.intent ? `<span class="badge">${m.intent}</span>` : '-'}</td>
                         <td>${m.suggested_action || '-'}</td>
                     </tr>
@@ -1030,7 +1030,7 @@
                         <td class="timestamp">${relativeTime(m.sent_at || m.created_at)}</td>
                         <td>${truncate(m.to_email, 35)}</td>
                         <td class="email-subject">${truncate(m.subject, 60)}</td>
-                        <td>${m.case_id ? `<a class="case-link" href="/api/cases/${m.case_id}" target="_blank">#${m.case_id}</a> ${routeBadgeForRecord(m)}` : '-'}</td>
+                        <td>${m.case_id ? `<a class="case-link" href="#" onclick="openCase(${m.case_id});return false;">#${m.case_id}</a> ${routeBadgeForRecord(m)}` : '-'}</td>
                     </tr>
                 `).join('');
 
@@ -1040,7 +1040,7 @@
                         <td class="timestamp">${relativeTime(a.created_at)}</td>
                         <td>${eventBadge(a.event_type)}</td>
                         <td>${truncate(a.description, 50)}</td>
-                        <td>${a.case_id ? `<a class="case-link" href="/api/cases/${a.case_id}" target="_blank">#${a.case_id}</a>` : '-'}</td>
+                        <td>${a.case_id ? `<a class="case-link" href="#" onclick="openCase(${a.case_id});return false;">#${a.case_id}</a>` : '-'}</td>
                         <td class="expandable" onclick="this.innerHTML = this.innerHTML.includes('...') ? JSON.stringify(${JSON.stringify(a.metadata).replace(/"/g, '&quot;')}, null, 2) : '${truncate(JSON.stringify(a.metadata), 30)}'">${truncate(JSON.stringify(a.metadata), 30)}</td>
                     </tr>
                 `).join('');
@@ -1082,7 +1082,7 @@
             rowsEl.innerHTML = caseCache.map(c => `
                 <tr class="clickable-row" onclick="openCase(${c.id})">
                     <td class="timestamp">${relativeTime(c.updated_at)}</td>
-                    <td><a class="case-link" href="/api/cases/${c.id}" target="_blank">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
+                    <td><a class="case-link" href="#" onclick="openCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
                     <td>${truncate(c.agency_name, 30)}</td>
                     <td>${routeBadgeForRecord(c)}</td>
                     <td>${truncate(c.status || '-', 24)}</td>
@@ -1353,7 +1353,7 @@
                 document.getElementById('runStatusText').textContent = '-';
 
                 if (data.case) {
-                    document.getElementById('drawerCase').innerHTML = `<a class="case-link" href="/api/cases/${data.case.id}" target="_blank">#${data.case.id} ${truncate(data.case.case_name || '', 30)}</a>`;
+                    document.getElementById('drawerCase').innerHTML = `<a class="case-link" href="#" onclick="openCase(${data.case.id});return false;">#${data.case.id} ${truncate(data.case.case_name || '', 30)}</a>`;
                     const routeProfile = getRoutingProfile(data.case);
                     const latestRoute = data.case.latest_initial_route_mode || 'not set';
                     document.getElementById('drawerRoutingProfile').textContent = `${routeProfile} | latest initial route: ${latestRoute}`;
