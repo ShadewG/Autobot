@@ -208,6 +208,7 @@ class NotionService {
                     });
                     caseData = this.applyNormalizedCaseData(caseData, normalized);
                 }
+                caseData = this.enrichCaseFromNarrative(caseData);
 
                 if (!caseData.portal_url) {
                     const portalFromText = this.findPortalInText(caseData.additional_details || fullPageText || '');
@@ -240,11 +241,19 @@ class NotionService {
             const page = await this.notion.pages.retrieve({ page_id: cleanPageId });
 
             const caseData = this.parseNotionPage(page);
+            const pageContent = await this.getFullPagePlainText(page.id);
+            if (pageContent) {
+                caseData.full_page_text = pageContent;
+                caseData.additional_details = [caseData.additional_details, pageContent]
+                    .filter(Boolean)
+                    .join('\n\n')
+                    .trim();
+            }
+            this.enrichCaseFromNarrative(caseData);
             const enrichedCase = await this.enrichWithPoliceDepartment(caseData, page);
 
             // Extract state from page content if not already set
             if (!enrichedCase.state) {
-                const pageContent = await this.getFullPagePlainText(page.id);
                 enrichedCase.state = await this.extractStateWithAI(enrichedCase, pageContent);
             }
             enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
@@ -306,7 +315,7 @@ class NotionService {
             // ACTUAL NOTION FIELD: "What to Request"
             requested_records: this.getProperty(props, 'What to Request', 'multi_select') ||
                              this.getProperty(props, 'Included Records', 'multi_select') ||
-                             ['Police report', 'Body cam footage'],
+                             [],
             // ACTUAL NOTION FIELDS: "Case Summary" and "Notes" (rollup)
             additional_details: this.getProperty(props, 'Case Summary', 'rich_text') ||
                               this.getProperty(props, 'Notes', 'rich_text') ||
@@ -315,6 +324,71 @@ class NotionService {
             // Add portal URL for reference
             portal_url: portalUrl
         };
+    }
+
+    enrichCaseFromNarrative(caseData) {
+        if (!caseData) return caseData;
+        const text = String(caseData.additional_details || '').trim();
+        if (!text) return caseData;
+
+        const pickLineValue = (patterns) => {
+            for (const pattern of patterns) {
+                const match = text.match(pattern);
+                if (match && match[1]) return match[1].trim();
+            }
+            return null;
+        };
+
+        const subjectFromText = pickLineValue([
+            /suspect name:\s*([^\n\r]+)/i,
+            /subject name:\s*([^\n\r]+)/i,
+            /suspect:\s*([^\n\r]+)/i
+        ]);
+        if (subjectFromText && (!caseData.subject_name || caseData.subject_name === caseData.case_name)) {
+            caseData.subject_name = subjectFromText;
+        }
+
+        const locationFromText = pickLineValue([
+            /location of the incident:\s*([^\n\r]+)/i,
+            /incident location:\s*([^\n\r]+)/i
+        ]);
+        if (locationFromText && !caseData.incident_location) {
+            caseData.incident_location = locationFromText;
+        }
+
+        const dateFromText = pickLineValue([
+            /date of the incident:\s*([^\n\r]+)/i,
+            /incident date:\s*([^\n\r]+)/i,
+            /on\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i
+        ]);
+        if (dateFromText && !caseData.incident_date) {
+            const parsed = new Date(dateFromText);
+            if (!Number.isNaN(parsed.getTime())) {
+                caseData.incident_date = parsed.toISOString().slice(0, 10);
+            }
+        }
+
+        const hasRequestedRecords = Array.isArray(caseData.requested_records) && caseData.requested_records.length > 0;
+        if (!hasRequestedRecords) {
+            const lower = text.toLowerCase();
+            const inferred = [];
+            const addIf = (cond, label) => { if (cond && !inferred.includes(label)) inferred.push(label); };
+
+            addIf(lower.includes('incident report') || lower.includes('offense report') || lower.includes('police report'), 'Incident report');
+            addIf(lower.includes('arrest report'), 'Arrest report');
+            addIf(lower.includes('body camera') || lower.includes('body cam') || lower.includes('bwc'), 'Body camera footage');
+            addIf(lower.includes('dash camera') || lower.includes('dashcam') || lower.includes('in-car'), 'Dash camera footage');
+            addIf(lower.includes('911') || lower.includes('dispatch audio') || lower.includes('radio traffic'), '911/dispatch audio');
+            addIf(lower.includes('surveillance') || lower.includes('cctv') || lower.includes('security camera'), 'Surveillance video');
+            addIf(lower.includes('interview') || lower.includes('interrogation'), 'Interview/interrogation recordings');
+            addIf(lower.includes('photograph'), 'Scene/evidence photographs');
+
+            if (inferred.length) {
+                caseData.requested_records = inferred;
+            }
+        }
+
+        return caseData;
     }
 
     /**
@@ -1456,6 +1530,7 @@ Respond with JSON:
             } else if (pageContent) {
                 notionCase.additional_details += '\n\n--- Page Content ---\n' + pageContent.substring(0, 5000);
             }
+            this.enrichCaseFromNarrative(notionCase);
 
             if (!notionCase.portal_url) {
                 const portalFromText = this.findPortalInText(notionCase.additional_details || pageContent || '');
