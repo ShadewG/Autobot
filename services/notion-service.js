@@ -225,6 +225,25 @@ class NotionService {
                         console.log(`Detected portal URL from page text: ${portalFromText}`);
                     }
                 }
+
+                // AI web search: confirm existing portal URL or discover one
+                if (enrichedCase.agency_name) {
+                    const searchResult = await this.searchForPortalUrl(
+                        enrichedCase.agency_name,
+                        enrichedCase.state,
+                        enrichedCase.portal_url
+                    );
+                    if (searchResult?.portal_url && searchResult.confidence !== 'low') {
+                        const normalized = normalizePortalUrl(searchResult.portal_url);
+                        if (normalized && isSupportedPortalUrl(normalized)) {
+                            enrichedCase.portal_url = normalized;
+                            if (searchResult.provider && searchResult.provider !== 'other') {
+                                enrichedCase.portal_provider = searchResult.provider;
+                            }
+                        }
+                    }
+                }
+
                 enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
                 cases.push(enrichedCase);
             }
@@ -969,6 +988,69 @@ Respond with JSON:
         return null;
     }
 
+    /**
+     * Use GPT web search to find or verify a portal URL for an agency.
+     * Returns { portal_url, provider, confidence } or null values on failure.
+     */
+    async searchForPortalUrl(agencyName, state, existingPortalUrl = null) {
+        try {
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            let instruction;
+            if (existingPortalUrl) {
+                instruction = `Verify and find the official online public records request portal URL for: ${agencyName}${state ? `, ${state}` : ''}.
+We currently have this URL on file: ${existingPortalUrl}
+Confirm if this is the correct records request submission portal, or find the correct one.
+Look for GovQA, NextRequest, JustFOIA portals, or the agency's own online records request form.
+Only return a URL you are confident is the correct records request submission page.`;
+            } else {
+                instruction = `Find the official online public records request portal URL for: ${agencyName}${state ? `, ${state}` : ''}.
+Look for GovQA, NextRequest, JustFOIA portals, or the agency's own online records request form.
+Only return a URL you are confident is the correct records request submission page, not a general info page.`;
+            }
+
+            const response = await openai.responses.create({
+                model: 'gpt-5.2',
+                tools: [{ type: 'web_search_preview' }],
+                input: [
+                    {
+                        role: 'system',
+                        content: `You search the web to find official public records request portal URLs for US law enforcement agencies.
+Return ONLY valid JSON, nothing else. Format:
+{"portal_url": "https://...", "provider": "govqa|nextrequest|justfoia|other|null", "confidence": "high|medium|low", "reasoning": "one sentence"}
+If you cannot find a portal, return: {"portal_url": null, "provider": null, "confidence": "low", "reasoning": "..."}`
+                    },
+                    { role: 'user', content: instruction }
+                ],
+            });
+
+            let text = '';
+            for (const item of response.output) {
+                if (item.type === 'message') {
+                    for (const c of item.content) {
+                        if (c.type === 'output_text') {
+                            text += c.text;
+                        }
+                    }
+                }
+            }
+
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                console.log(`Portal search for "${agencyName}": ${result.portal_url || '(none)'} [${result.confidence}] - ${result.reasoning}`);
+                return result;
+            }
+
+            console.warn(`Portal search for "${agencyName}": could not parse response`);
+            return { portal_url: null, provider: null, confidence: 'low', reasoning: 'Failed to parse search response' };
+        } catch (error) {
+            console.error(`Portal search failed for "${agencyName}":`, error.message);
+            return { portal_url: null, provider: null, confidence: 'low', reasoning: error.message };
+        }
+    }
+
     isLikelyPortalUrl(url, contextText = '') {
         const normalized = normalizePortalUrl(url);
         if (!normalized || !isSupportedPortalUrl(normalized)) {
@@ -1620,6 +1702,24 @@ Respond with JSON:
                 if (portalFromText) {
                     notionCase.portal_url = portalFromText;
                     console.log(`Detected portal URL from single-page import text: ${portalFromText}`);
+                }
+            }
+
+            // AI web search: confirm existing portal URL or discover one
+            if (notionCase.agency_name) {
+                const searchResult = await this.searchForPortalUrl(
+                    notionCase.agency_name,
+                    notionCase.state,
+                    notionCase.portal_url
+                );
+                if (searchResult?.portal_url && searchResult.confidence !== 'low') {
+                    const normalized = normalizePortalUrl(searchResult.portal_url);
+                    if (normalized && isSupportedPortalUrl(normalized)) {
+                        notionCase.portal_url = normalized;
+                        if (searchResult.provider && searchResult.provider !== 'other') {
+                            notionCase.portal_provider = searchResult.provider;
+                        }
+                    }
                 }
             }
 
