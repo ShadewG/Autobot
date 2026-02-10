@@ -918,52 +918,6 @@
             <div id="replyResult" class="send-result" style="margin-top:8px;"></div>
         </div>
 
-        <div class="drawer-section" id="aiSection" style="display:none;">
-            <div class="drawer-label">AI Processing</div>
-            <div style="display:flex;gap:8px;margin-bottom:8px;">
-                <select class="drawer-select" id="aiMode" disabled>
-                    <option value="SUPERVISED">SUPERVISED</option>
-                </select>
-                <label style="font-size:12px;color:#8b949e;display:flex;align-items:center;gap:6px;">
-                    <input type="checkbox" id="aiForce" /> force new run
-                </label>
-            </div>
-            <div class="drawer-actions">
-                <button class="drawer-btn warn" id="aiTriggerBtn" onclick="triggerAI()">Trigger AI</button>
-                <a class="drawer-btn" id="aiRunLink" href="#" target="_blank" style="display:none;">View Run</a>
-                <a class="drawer-btn" id="aiMessageLink" href="#" target="_blank" style="display:none;">View Message API</a>
-            </div>
-            <div class="drawer-label" style="margin-top:10px;">Run Status</div>
-            <div class="drawer-value" id="runStatusText">-</div>
-            <div class="drawer-label" style="margin-top:10px;">Run Log</div>
-            <div class="drawer-log" id="aiLog"></div>
-        </div>
-
-        <div class="drawer-section" id="simulationSection" style="display:none;">
-            <div class="drawer-label">Simulation</div>
-            <div class="form-group" style="margin-bottom:8px;">
-                <label for="simCaseId">Case ID</label>
-                <input class="drawer-input" id="simCaseId" placeholder="49" />
-            </div>
-            <div class="form-group" style="margin-bottom:8px;">
-                <label for="simFrom">From</label>
-                <input class="drawer-input" id="simFrom" placeholder="records@agency.gov" />
-            </div>
-            <div class="form-group" style="margin-bottom:8px;">
-                <label for="simSubject">Subject</label>
-                <input class="drawer-input" id="simSubject" placeholder="Re: Case..." />
-            </div>
-            <div class="form-group" style="margin-bottom:8px;">
-                <label for="simBody">Body</label>
-                <textarea class="drawer-textarea" id="simBody" placeholder="Manual inbound simulation text"></textarea>
-            </div>
-            <div class="drawer-actions">
-                <button class="drawer-btn" id="simCreateBtn" onclick="simulateInbound(false)">Create Simulated Inbound</button>
-                <button class="drawer-btn primary" id="simCreateTriggerBtn" onclick="simulateInbound(true)">Create + Trigger AI</button>
-            </div>
-            <div id="simResult" class="send-result" style="margin-top:8px;"></div>
-        </div>
-
         <div class="drawer-section" id="proposalSection" style="display:none;">
             <div class="drawer-label">Proposals</div>
             <div id="proposalList"></div>
@@ -1349,16 +1303,15 @@
         }
 
         async function openPendingApproval(proposalId, triggerMessageId, caseId) {
+            if (caseId) {
+                await openCase(caseId);
+                return;
+            }
             if (triggerMessageId) {
                 await openMessage(triggerMessageId);
                 return;
             }
-            if (caseId) {
-                await openCase(caseId);
-                alert(`Proposal #${proposalId} has no trigger message. Open the case panel and review proposals.`);
-                return;
-            }
-            alert(`Proposal #${proposalId} missing case/message linkage.`);
+            alert(`Proposal #${proposalId} missing case linkage.`);
         }
 
         async function triggerAIFromOps(messageId) {
@@ -1424,7 +1377,6 @@
                 const queueGen = (config.queue?.generation?.waiting || 0) + (config.queue?.generation?.active || 0);
                 const queueEmail = (config.queue?.email?.waiting || 0) + (config.queue?.email?.active || 0);
                 document.getElementById('queueBadge').textContent = `Queue G:${queueGen} E:${queueEmail}`;
-                document.getElementById('aiMode').value = config.default_autopilot_mode || 'SUPERVISED';
             } catch (err) {
                 document.getElementById('configFrom').textContent = 'Error loading config';
             }
@@ -1593,13 +1545,16 @@
         function appendLog(line) {
             aiLogLines.push(`[${new Date().toLocaleTimeString()}] ${line}`);
             const logEl = document.getElementById('aiLog');
-            logEl.textContent = aiLogLines.slice(-200).join('\n');
-            logEl.scrollTop = logEl.scrollHeight;
+            if (logEl) {
+                logEl.textContent = aiLogLines.slice(-200).join('\n');
+                logEl.scrollTop = logEl.scrollHeight;
+            }
         }
 
         function resetLog() {
             aiLogLines = [];
-            document.getElementById('aiLog').textContent = '';
+            const logEl = document.getElementById('aiLog');
+            if (logEl) logEl.textContent = '';
         }
 
         async function openMessage(id) {
@@ -1620,7 +1575,6 @@
                 document.getElementById('drawerMessageType').textContent = data.message.message_type || '-';
                 document.getElementById('drawerProcessedAt').textContent = formatTime(data.message.processed_at);
                 document.getElementById('drawerProcessedRun').textContent = data.message.processed_run_id || '-';
-                document.getElementById('runStatusText').textContent = '-';
 
                 if (data.case) {
                     document.getElementById('drawerCase').innerHTML = `<a class="case-link" href="#" onclick="openCase(${data.case.id});return false;">#${data.case.id} ${truncate(data.case.case_name || '', 30)}</a>`;
@@ -1634,20 +1588,11 @@
 
                 const isInbound = data.message.direction === 'inbound';
                 document.getElementById('replySection').style.display = isInbound ? 'block' : 'none';
-                document.getElementById('aiSection').style.display = data.case ? 'block' : 'none';
                 document.getElementById('proposalSection').style.display = data.case ? 'block' : 'none';
-                document.getElementById('simulationSection').style.display = data.case ? 'block' : 'none';
 
                 document.getElementById('replySubject').value = `Re: ${data.message.subject || ''}`.trim();
                 document.getElementById('replyBody').value = '';
                 document.getElementById('replyResult').style.display = 'none';
-                document.getElementById('aiRunLink').style.display = 'none';
-                document.getElementById('aiMessageLink').style.display = 'inline-flex';
-                document.getElementById('aiMessageLink').href = `/api/monitor/message/${data.message.id}`;
-                document.getElementById('simCaseId').value = data.case?.id || '';
-                document.getElementById('simFrom').value = data.case?.agency_email || data.message.from_email || '';
-                document.getElementById('simSubject').value = data.message.subject || '';
-                document.getElementById('simBody').value = data.message.body_text || '';
                 resetLog();
                 currentRunId = null;
                 await loadProposals(id);
@@ -2153,43 +2098,9 @@
         }
 
         async function triggerAI() {
+            // AI Processing panel removed; trigger via triggerAIFromOps or API directly
             if (!currentMessage) return;
-            const btn = document.getElementById('aiTriggerBtn');
-            const mode = document.getElementById('aiMode').value;
-            const force = document.getElementById('aiForce').checked;
-            btn.disabled = true;
-            appendLog(`Triggering AI (${mode}${force ? ', force' : ''}) for message ${currentMessage.id}...`);
-
-            try {
-                const res = await fetch(`/api/monitor/trigger-inbound-run`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message_id: currentMessage.id,
-                        autopilotMode: mode,
-                        force_new_run: force
-                    })
-                });
-                const data = await res.json();
-                if (!data.success) throw new Error(data.error || 'Failed to trigger AI');
-
-                appendLog(`Run queued: run_id=${data.run.id}, status=${data.run.status}`);
-                if (data.job_id) appendLog(`Job queued: ${data.job_id}`);
-                if (data.note) appendLog(data.note);
-                if (data.run?.id) {
-                    const link = document.getElementById('aiRunLink');
-                    link.href = `/api/runs/${data.run.id}`;
-                    link.style.display = 'inline-flex';
-                    currentRunId = data.run.id;
-                    pollRunStatus(currentRunId);
-                }
-                await loadProposals(currentMessage.id, currentRunId);
-                setTimeout(loadData, 1000);
-            } catch (err) {
-                appendLog(`Error: ${err.message || err}`);
-            } finally {
-                btn.disabled = false;
-            }
+            appendLog('AI trigger not available from this panel');
         }
 
         async function proposeDecision(proposalId, action, routeMode = null) {
@@ -2256,7 +2167,7 @@
                     const data = await res.json();
                     if (!data.success) throw new Error(data.error || 'Run fetch failed');
                     const run = data.run || {};
-                    runStatusText.textContent = `${run.status || '-'} | node=${run?.metadata?.current_node || '-'} | started=${formatTime(run.started_at)} | ended=${formatTime(run.ended_at)}`;
+                    if (runStatusText) runStatusText.textContent = `${run.status || '-'} | node=${run?.metadata?.current_node || '-'} | started=${formatTime(run.started_at)} | ended=${formatTime(run.ended_at)}`;
                     if (terminalStatuses.has(run.status)) {
                         appendLog(`Run ${runId} reached terminal state: ${run.status}`);
                         clearInterval(runPollTimer);
@@ -2274,74 +2185,8 @@
             runPollTimer = setInterval(pollOnce, 2000);
         }
 
-        async function simulateInbound(triggerAfterCreate) {
-            const caseId = parseInt(document.getElementById('simCaseId').value, 10);
-            const from = document.getElementById('simFrom').value.trim();
-            const subject = document.getElementById('simSubject').value.trim();
-            const body = document.getElementById('simBody').value.trim();
-            const resultDiv = document.getElementById('simResult');
-
-            if (!caseId || !from || !body) {
-                resultDiv.className = 'send-result error';
-                resultDiv.textContent = 'Simulation requires case id, from email, and body.';
-                resultDiv.style.display = 'block';
-                return;
-            }
-
-            try {
-                const createRes = await fetch('/api/monitor/simulate-inbound', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        case_id: caseId,
-                        subject,
-                        body_text: body,
-                        from_email: from,
-                        attach_to_thread: true,
-                        mark_processed: false
-                    })
-                });
-                const createData = await createRes.json();
-                if (!createRes.ok || !createData.success) {
-                    throw new Error(createData.error || `Simulation create failed (${createRes.status})`);
-                }
-
-                resultDiv.className = 'send-result success';
-                resultDiv.textContent = `Simulated inbound created: message ${createData.message_id}`;
-                resultDiv.style.display = 'block';
-                appendLog(`Simulated inbound created: message ${createData.message_id}`);
-
-                if (triggerAfterCreate) {
-                    const triggerRes = await fetch('/api/monitor/trigger-inbound-run', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            message_id: createData.message_id,
-                            autopilotMode: document.getElementById('aiMode').value,
-                            force_new_run: document.getElementById('aiForce').checked
-                        })
-                    });
-                    const triggerData = await triggerRes.json();
-                    if (!triggerRes.ok || !triggerData.success) {
-                        throw new Error(triggerData.error || `Simulation trigger failed (${triggerRes.status})`);
-                    }
-
-                    appendLog(`Run queued: run_id=${triggerData.run.id}, status=${triggerData.run.status}`);
-                    if (triggerData.job_id) appendLog(`Job queued: ${triggerData.job_id}`);
-                    currentRunId = triggerData.run.id;
-                    const link = document.getElementById('aiRunLink');
-                    link.href = `/api/runs/${currentRunId}`;
-                    link.style.display = 'inline-flex';
-                    await pollRunStatus(currentRunId);
-                }
-
-                await loadData();
-            } catch (error) {
-                resultDiv.className = 'send-result error';
-                resultDiv.textContent = `Simulation error: ${error.message || error}`;
-                resultDiv.style.display = 'block';
-                appendLog(`Simulation error: ${error.message || error}`);
-            }
+        async function simulateInbound() {
+            // Simulation panel removed
         }
 
         // Initial load
