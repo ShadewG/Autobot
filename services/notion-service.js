@@ -2,7 +2,7 @@ const { Client } = require('@notionhq/client');
 const db = require('./database');
 const aiService = require('./ai-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
-const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
+const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
 const STATE_ABBREVIATIONS = {
     'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
@@ -663,10 +663,11 @@ Respond with JSON:
                 }
             });
 
+            const rawText = Array.isArray(value) ? value.join(' ') : String(value || '');
             const urls = extractUrls(value);
             urls.forEach(url => {
                 const normalized = normalizePortalUrl(url);
-                if (normalized && !portals.includes(normalized)) {
+                if (normalized && this.isLikelyPortalUrl(normalized, rawText) && !portals.includes(normalized)) {
                     portals.push(normalized);
                 }
             });
@@ -679,7 +680,7 @@ Respond with JSON:
                         const cleanToken = token.replace(/[),.]+$/, '');
                         if (cleanToken.includes('.') && !cleanToken.includes('@')) {
                             const normalizedToken = normalizePortalUrl(cleanToken);
-                            if (normalizedToken && !portals.includes(normalizedToken)) {
+                            if (normalizedToken && this.isLikelyPortalUrl(normalizedToken, raw) && !portals.includes(normalizedToken)) {
                                 portals.push(normalizedToken);
                             }
                         }
@@ -807,11 +808,41 @@ Respond with JSON:
         const urls = extractUrls(text);
         for (const rawUrl of urls) {
             const normalized = normalizePortalUrl(rawUrl);
-            if (normalized && isSupportedPortalUrl(normalized)) {
+            if (normalized && this.isLikelyPortalUrl(normalized, text)) {
                 return normalized;
             }
         }
         return null;
+    }
+
+    isLikelyPortalUrl(url, contextText = '') {
+        const normalized = normalizePortalUrl(url);
+        if (!normalized || !isSupportedPortalUrl(normalized)) {
+            return false;
+        }
+
+        // Strong signal: known portal provider hostname.
+        if (detectPortalProviderByUrl(normalized)) {
+            return true;
+        }
+
+        const lowerUrl = normalized.toLowerCase();
+        const lowerContext = String(contextText || '').toLowerCase();
+        const portalHints = [
+            'portal',
+            'records request',
+            'public records',
+            'open records',
+            'request center',
+            'nextrequest',
+            'govqa',
+            'mycusthelp',
+            'justfoia',
+            '/webapp/_rs/'
+        ];
+
+        // Must include portal-like patterns in URL or nearby text.
+        return portalHints.some(h => lowerUrl.includes(h) || lowerContext.includes(h));
     }
 
     /**
