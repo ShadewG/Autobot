@@ -244,6 +244,15 @@ class NotionService {
                     }
                 }
 
+                // If still no portal and no email, search for an email as last resort
+                if (!enrichedCase.portal_url && !enrichedCase.agency_email && enrichedCase.agency_name) {
+                    const emailResult = await this.searchForAgencyEmail(enrichedCase.agency_name, enrichedCase.state);
+                    if (emailResult?.email) {
+                        enrichedCase.agency_email = emailResult.email;
+                        console.log(`AI email search found: ${emailResult.email}`);
+                    }
+                }
+
                 enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
                 cases.push(enrichedCase);
             }
@@ -1051,6 +1060,59 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
         }
     }
 
+    /**
+     * Use GPT web search to find a records request email for an agency.
+     * Used as fallback when no portal URL or email is found.
+     */
+    async searchForAgencyEmail(agencyName, state) {
+        try {
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const response = await openai.responses.create({
+                model: 'gpt-5.2',
+                tools: [{ type: 'web_search_preview' }],
+                input: [
+                    {
+                        role: 'system',
+                        content: `You search the web to find email addresses for submitting public records requests to US law enforcement agencies.
+Return ONLY valid JSON, nothing else. Format:
+{"email": "address@example.gov", "confidence": "high|medium|low", "reasoning": "one sentence"}
+If you cannot find an email, return: {"email": null, "confidence": "low", "reasoning": "..."}`
+                    },
+                    {
+                        role: 'user',
+                        content: `Find the email address for submitting public records / FOIA requests to: ${agencyName}${state ? `, ${state}` : ''}.
+Look for a records division email, FOIA email, or general agency email that accepts records requests.`
+                    }
+                ],
+            });
+
+            let text = '';
+            for (const item of response.output) {
+                if (item.type === 'message') {
+                    for (const c of item.content) {
+                        if (c.type === 'output_text') text += c.text;
+                    }
+                }
+            }
+
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                console.log(`Email search for "${agencyName}": ${result.email || '(none)'} [${result.confidence}] - ${result.reasoning}`);
+                if (result.email && result.confidence !== 'low') {
+                    return result;
+                }
+            }
+
+            return { email: null, confidence: 'low', reasoning: 'No email found' };
+        } catch (error) {
+            console.error(`Email search failed for "${agencyName}":`, error.message);
+            return { email: null, confidence: 'low', reasoning: error.message };
+        }
+    }
+
     isLikelyPortalUrl(url, contextText = '') {
         const normalized = normalizePortalUrl(url);
         if (!normalized || !isSupportedPortalUrl(normalized)) {
@@ -1732,6 +1794,15 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
 
             notionCase.state = this.normalizeStateCode(notionCase.state);
 
+            // If no portal and no email, use AI web search to find an email
+            if (!notionCase.portal_url && !notionCase.agency_email && notionCase.agency_name) {
+                const emailResult = await this.searchForAgencyEmail(notionCase.agency_name, notionCase.state);
+                if (emailResult?.email) {
+                    notionCase.agency_email = emailResult.email;
+                    console.log(`AI email search found: ${emailResult.email}`);
+                }
+            }
+
             // Calculate deadline
             const deadline = await this.calculateDeadline(notionCase.state);
             notionCase.deadline_date = deadline;
@@ -1739,6 +1810,28 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
             // Create case
             const newCase = await db.createCase(notionCase);
             console.log(`Created case from Notion page: ${newCase.case_name}`);
+
+            // Update Notion: set Status to "Auto" and Live Status to current state
+            try {
+                await this.updatePage(notionCase.notion_page_id, {
+                    live_status: this.mapStatusToNotion(newCase.status)
+                });
+                // Also set legacy Status to "Auto" if the property exists
+                const availableProps = await this.getPagePropertyNames(notionCase.notion_page_id);
+                if (availableProps.includes(this.legacyStatusProperty)) {
+                    await this.notion.pages.update({
+                        page_id: notionCase.notion_page_id,
+                        properties: {
+                            [this.legacyStatusProperty]: {
+                                select: { name: this.statusAutoValue }
+                            }
+                        }
+                    });
+                    console.log(`Set Notion "${this.legacyStatusProperty}" to "${this.statusAutoValue}"`);
+                }
+            } catch (syncErr) {
+                console.warn('Failed to update Notion status on import:', syncErr.message);
+            }
 
             // Log activity
             await db.logActivity('case_imported', `Imported case from Notion page: ${newCase.case_name}`, {
