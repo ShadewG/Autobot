@@ -546,8 +546,8 @@ export function DecisionPanel({
     ? UNKNOWN_GATE_CONFIG
     : GATE_CONFIGS[normalized];
 
-  // If UNKNOWN gate but we have a review_reason, show the review-specific panel
-  if (normalized === "UNKNOWN" && request.review_reason && onResolveReview) {
+  // If we have a review_reason, show the review-specific panel with action buttons
+  if (request.review_reason && onResolveReview) {
     const reviewConfig = REVIEW_CONFIGS[request.review_reason];
 
     const handleReviewAction = async (actionId: string) => {

@@ -167,9 +167,15 @@ function toRequestListItem(caseData) {
 }
 
 /**
- * Detect review reason from case data when requires_human is true but no pause_reason is set
+ * Detect review reason from case data when requires_human is true.
+ * Uses pause_reason first, then infers from substatus/status.
  */
 function detectReviewReason(caseData) {
+    // Map pause_reason directly if set
+    const pauseReason = (caseData.pause_reason || '').toUpperCase();
+    if (pauseReason === 'FEE_QUOTE') return 'FEE_QUOTE';
+    if (pauseReason === 'DENIAL') return 'DENIAL';
+
     const substatus = (caseData.substatus || '').toLowerCase();
     const status = (caseData.status || '').toLowerCase();
 
@@ -227,7 +233,7 @@ function toRequestDetail(caseData) {
         statutory_due_at: listItem.due_info.statutory_due_at,
         attachments: [], // Will be populated from messages
         substatus: caseData.substatus || null,
-        review_reason: caseData.requires_human && !caseData.pause_reason
+        review_reason: caseData.requires_human
             ? detectReviewReason(caseData)
             : undefined
     };
