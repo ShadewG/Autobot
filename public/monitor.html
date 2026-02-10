@@ -563,6 +563,10 @@
             <div class="label">Queue (Email)</div>
             <div class="value" id="queueEmail">-</div>
         </div>
+        <div class="stat-box" style="border-color:#f0883e;">
+            <div class="label">Phone Queue</div>
+            <div class="value" id="phoneQueueCount" style="color:#f0883e;">-</div>
+        </div>
     </div>
 
     <!-- Send Test Email Form -->
@@ -663,6 +667,7 @@
         <div class="tab" data-panel="inbound">Inbound</div>
         <div class="tab" data-panel="outbound">Outbound</div>
         <div class="tab" data-panel="activity">Activity Log</div>
+        <div class="tab" data-panel="phonecalls">Phone Calls <span id="phoneCallBadge" style="background:#f0883e;color:#0d1117;border-radius:10px;padding:1px 7px;font-size:11px;margin-left:4px;display:none;">0</span></div>
         <div class="tab" data-panel="unmatched">Unmatched</div>
     </div>
 
@@ -802,6 +807,39 @@
                     </tr>
                 </thead>
                 <tbody id="activityLog"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="phonecalls" class="panel">
+        <p style="color: #f0883e; margin-bottom: 15px;">
+            Cases that received no email response after follow-ups. A human needs to call the agency directly.
+        </p>
+        <div style="margin-bottom:10px;">
+            <select id="phoneCallFilter" onchange="loadPhoneCalls()" style="padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;">
+                <option value="">Pending + Claimed</option>
+                <option value="pending">Pending Only</option>
+                <option value="claimed">Claimed Only</option>
+                <option value="completed">Completed</option>
+                <option value="skipped">Skipped</option>
+            </select>
+        </div>
+        <div class="scroll-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Case</th>
+                        <th>Agency</th>
+                        <th>State</th>
+                        <th>Days Waiting</th>
+                        <th>Reason</th>
+                        <th>Status</th>
+                        <th>Assigned</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="phoneCallRows"></tbody>
             </table>
         </div>
     </div>
@@ -1102,9 +1140,131 @@
                 document.getElementById('lastUpdate').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
                 renderLiveOverview(live);
                 renderCases(casesData);
+                loadPhoneCalls();
 
             } catch (err) {
                 console.error('Failed to load data:', err);
+            }
+        }
+
+        // =========================================================================
+        // Phone Call Queue
+        // =========================================================================
+        async function loadPhoneCalls() {
+            try {
+                const filter = document.getElementById('phoneCallFilter')?.value || '';
+                const url = filter ? `/api/phone-calls?status=${filter}&limit=100` : '/api/phone-calls?limit=100';
+                const res = await fetch(url);
+                const data = await res.json();
+
+                if (!data.success) throw new Error(data.error);
+
+                // Update stat box and badge
+                const pendingCount = data.stats?.pending || 0;
+                document.getElementById('phoneQueueCount').textContent = pendingCount;
+                const badge = document.getElementById('phoneCallBadge');
+                if (pendingCount > 0) {
+                    badge.textContent = pendingCount;
+                    badge.style.display = 'inline';
+                } else {
+                    badge.style.display = 'none';
+                }
+
+                const rowsEl = document.getElementById('phoneCallRows');
+                if (!data.tasks || data.tasks.length === 0) {
+                    rowsEl.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e">No phone call tasks</td></tr>';
+                    return;
+                }
+
+                rowsEl.innerHTML = data.tasks.map(t => {
+                    const statusColor = t.status === 'pending' ? '#f0883e' :
+                                       t.status === 'claimed' ? '#58a6ff' :
+                                       t.status === 'completed' ? '#3fb950' : '#8b949e';
+
+                    let actions = '';
+                    if (t.status === 'pending') {
+                        actions = `<button class="drawer-btn primary" onclick="claimPhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Claim</button>
+                                   <button class="drawer-btn" onclick="skipPhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Skip</button>`;
+                    } else if (t.status === 'claimed') {
+                        actions = `<button class="drawer-btn primary" onclick="showCompletePhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Complete</button>
+                                   <button class="drawer-btn" onclick="skipPhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Skip</button>`;
+                    } else if (t.status === 'completed') {
+                        actions = `<span style="color:#3fb950;font-size:11px;">${t.call_outcome || 'done'}</span>`;
+                    } else {
+                        actions = `<span style="color:#8b949e;font-size:11px;">${t.status}</span>`;
+                    }
+
+                    return `<tr>
+                        <td>#${t.id}</td>
+                        <td><a class="case-link" href="#" onclick="openCase(${t.case_id});return false;">#${t.case_id}</a> ${truncate(t.case_name || '', 25)}</td>
+                        <td>${truncate(t.agency_name || '', 25)}</td>
+                        <td>${t.agency_state || '-'}</td>
+                        <td>${t.days_since_sent != null ? t.days_since_sent + 'd' : '-'}</td>
+                        <td><span style="font-size:11px;">${t.reason || '-'}</span></td>
+                        <td><span style="color:${statusColor};font-weight:600;">${t.status}</span></td>
+                        <td>${t.assigned_to || '-'}</td>
+                        <td>${actions}</td>
+                    </tr>`;
+                }).join('');
+            } catch (err) {
+                console.error('Failed to load phone calls:', err);
+                document.getElementById('phoneCallRows').innerHTML =
+                    '<tr><td colspan="9" style="text-align:center;color:#f85149">Failed to load</td></tr>';
+            }
+        }
+
+        async function claimPhoneCall(id) {
+            const name = prompt('Your name:');
+            if (!name) return;
+            try {
+                const res = await fetch(`/api/phone-calls/${id}/claim`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ assignedTo: name })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                loadPhoneCalls();
+            } catch (err) {
+                alert('Failed to claim: ' + err.message);
+            }
+        }
+
+        function showCompletePhoneCall(id) {
+            const outcomes = ['connected', 'voicemail', 'wrong_number', 'no_answer', 'transferred', 'resolved'];
+            const outcome = prompt('Call outcome:\\n' + outcomes.map((o, i) => `${i+1}. ${o}`).join('\\n') + '\\n\\nEnter number or name:');
+            if (!outcome) return;
+
+            const resolved = outcomes[parseInt(outcome) - 1] || outcome;
+            const notes = prompt('Call notes (optional):') || '';
+            const completedBy = prompt('Your name:') || 'unknown';
+
+            fetch(`/api/phone-calls/${id}/complete`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ outcome: resolved, notes, completedBy })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) throw new Error(data.error);
+                loadPhoneCalls();
+            })
+            .catch(err => alert('Failed to complete: ' + err.message));
+        }
+
+        async function skipPhoneCall(id) {
+            const notes = prompt('Reason for skipping (optional):') || '';
+            try {
+                const res = await fetch(`/api/phone-calls/${id}/skip`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notes })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                loadPhoneCalls();
+            } catch (err) {
+                alert('Failed to skip: ' + err.message);
             }
         }
 
@@ -1156,8 +1316,8 @@
 
             renderOpsList('opsPendingList', payload.pending_approvals, (p) => `
                 <div class="ops-item">
-                    <div><a href="/api/proposals/${p.id}" target="_blank">Proposal #${p.id}</a> · Case #${p.case_id || '-'}</div>
-                    <div>${p.action_type || '-'} · msg ${p.trigger_message_id || '-'} · ${relativeTime(p.created_at)}</div>
+                    <div><a href="#" onclick="openCase(${p.case_id});return false;">Case #${p.case_id || '-'}</a> · Proposal #${p.id}</div>
+                    <div>${p.action_type || '-'} · ${relativeTime(p.created_at)}</div>
                 </div>
             `);
 
