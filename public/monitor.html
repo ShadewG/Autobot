@@ -815,7 +815,7 @@
         <p style="color: #f0883e; margin-bottom: 15px;">
             Cases that received no email response after follow-ups. A human needs to call the agency directly.
         </p>
-        <div style="margin-bottom:10px;">
+        <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;">
             <select id="phoneCallFilter" onchange="loadPhoneCalls()" style="padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;">
                 <option value="">Pending + Claimed</option>
                 <option value="pending">Pending Only</option>
@@ -823,25 +823,122 @@
                 <option value="completed">Completed</option>
                 <option value="skipped">Skipped</option>
             </select>
+            <span id="phoneCallCount" style="color:#8b949e;font-size:12px;"></span>
         </div>
-        <div class="scroll-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Case</th>
-                        <th>Agency</th>
-                        <th>State</th>
-                        <th>Days Waiting</th>
-                        <th>Reason</th>
-                        <th>Status</th>
-                        <th>Assigned</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody id="phoneCallRows"></tbody>
-            </table>
+        <div id="phoneCallCards" style="display:flex;flex-direction:column;gap:10px;"></div>
+    </div>
+
+    <!-- Phone Call Detail Drawer -->
+    <div id="phoneDrawerBackdrop" class="drawer-backdrop" onclick="closePhoneDrawer()"></div>
+    <div id="phoneDrawer" class="drawer" style="width:520px;">
+        <div class="drawer-header">
+            <div class="drawer-title" id="phoneDrawerTitle">Call Details</div>
+            <button class="drawer-close" onclick="closePhoneDrawer()">Close</button>
         </div>
+
+        <div class="drawer-section">
+            <div class="drawer-label">Phone Number</div>
+            <div id="pdPhone" style="font-size:20px;font-weight:700;margin:4px 0 8px;"></div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <div>
+                    <div class="drawer-label">Agency</div>
+                    <div class="drawer-value" id="pdAgency">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">State</div>
+                    <div class="drawer-value" id="pdState">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">Contact Person</div>
+                    <div class="drawer-value" id="pdContact">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">Agency Email</div>
+                    <div class="drawer-value" id="pdEmail">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">FOIA Email</div>
+                    <div class="drawer-value" id="pdFoiaEmail">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">Fax</div>
+                    <div class="drawer-value" id="pdFax">-</div>
+                </div>
+            </div>
+            <div class="drawer-label" style="margin-top:8px;">Address</div>
+            <div class="drawer-value" id="pdAddress">-</div>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-label">Case</div>
+            <div class="drawer-value" id="pdCaseName">-</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
+                <div>
+                    <div class="drawer-label">Subject</div>
+                    <div class="drawer-value" id="pdSubject">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">Sent Date</div>
+                    <div class="drawer-value" id="pdSendDate">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">Days Waiting</div>
+                    <div class="drawer-value" id="pdDaysWaiting">-</div>
+                </div>
+                <div>
+                    <div class="drawer-label">Escalation Reason</div>
+                    <div class="drawer-value" id="pdReason">-</div>
+                </div>
+            </div>
+            <div class="drawer-label" style="margin-top:8px;">Request Details</div>
+            <div class="drawer-value" id="pdDetails" style="white-space:pre-wrap;max-height:120px;overflow-y:auto;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;font-size:12px;">-</div>
+        </div>
+
+        <div class="drawer-section">
+            <div class="drawer-label">Notes</div>
+            <div class="drawer-value" id="pdNotes" style="white-space:pre-wrap;">-</div>
+            <div id="pdCallNotes" style="display:none;margin-top:8px;">
+                <div class="drawer-label">Previous Call Notes</div>
+                <div class="drawer-value" id="pdCallNotesText">-</div>
+            </div>
+        </div>
+
+        <!-- Action forms (shown based on status) -->
+        <div class="drawer-section" id="pdActions">
+            <!-- Claim form -->
+            <div id="pdClaimForm" style="display:none;">
+                <div class="drawer-label">Claim This Call</div>
+                <input class="drawer-input" id="pdClaimName" placeholder="Your name" style="margin-bottom:8px;" />
+                <button class="drawer-btn primary" onclick="doClaimPhoneCall()" style="width:100%;">Claim This Call</button>
+            </div>
+            <!-- Complete form -->
+            <div id="pdCompleteForm" style="display:none;">
+                <div class="drawer-label">Mark Complete</div>
+                <select class="drawer-input" id="pdOutcome" style="margin-bottom:8px;">
+                    <option value="">Select outcome...</option>
+                    <option value="connected">Connected - Spoke with someone</option>
+                    <option value="voicemail">Voicemail - Left message</option>
+                    <option value="no_answer">No Answer</option>
+                    <option value="wrong_number">Wrong Number</option>
+                    <option value="transferred">Transferred to correct dept</option>
+                    <option value="resolved">Resolved - Got what we needed</option>
+                </select>
+                <textarea class="drawer-textarea" id="pdCompleteNotes" placeholder="Call notes — what happened, who you spoke with, next steps..." style="margin-bottom:8px;min-height:70px;"></textarea>
+                <button class="drawer-btn primary" onclick="doCompletePhoneCall()" style="width:100%;">Mark Complete</button>
+            </div>
+            <!-- Skip form -->
+            <div id="pdSkipForm" style="display:none;">
+                <div class="drawer-label" style="margin-top:12px;">Skip This Call</div>
+                <textarea class="drawer-textarea" id="pdSkipReason" placeholder="Reason for skipping (optional)..." style="margin-bottom:8px;min-height:50px;"></textarea>
+                <button class="drawer-btn warn" onclick="doSkipPhoneCall()" style="width:100%;">Skip</button>
+            </div>
+            <!-- Status display for completed/skipped -->
+            <div id="pdStatusDisplay" style="display:none;">
+                <div class="drawer-label">Status</div>
+                <div class="drawer-value" id="pdStatusText">-</div>
+            </div>
+        </div>
+        <div id="pdActionResult" class="send-result" style="display:none;margin-top:8px;"></div>
     </div>
 
     <div id="unmatched" class="panel">
@@ -1128,6 +1225,9 @@
         // =========================================================================
         // Phone Call Queue
         // =========================================================================
+        let phoneCallCache = [];
+        let activePhoneCallId = null;
+
         async function loadPhoneCalls() {
             try {
                 const filter = document.getElementById('phoneCallFilter')?.value || '';
@@ -1148,101 +1248,198 @@
                     badge.style.display = 'none';
                 }
 
-                const rowsEl = document.getElementById('phoneCallRows');
-                if (!data.tasks || data.tasks.length === 0) {
-                    rowsEl.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e">No phone call tasks</td></tr>';
+                phoneCallCache = data.tasks || [];
+                const cardsEl = document.getElementById('phoneCallCards');
+                const countEl = document.getElementById('phoneCallCount');
+                countEl.textContent = phoneCallCache.length > 0 ? `${phoneCallCache.length} call(s)` : '';
+
+                if (phoneCallCache.length === 0) {
+                    cardsEl.innerHTML = '<div style="text-align:center;color:#8b949e;padding:30px 0;">No phone call tasks</div>';
                     return;
                 }
 
-                rowsEl.innerHTML = data.tasks.map(t => {
+                cardsEl.innerHTML = phoneCallCache.map(t => {
+                    const priorityColor = t.priority >= 2 ? '#f85149' : t.priority === 1 ? '#f0883e' : '#30363d';
                     const statusColor = t.status === 'pending' ? '#f0883e' :
                                        t.status === 'claimed' ? '#58a6ff' :
                                        t.status === 'completed' ? '#3fb950' : '#8b949e';
+                    const phone = t.agency_phone || t.agency_phone_from_db;
+                    const phoneDisplay = phone
+                        ? `<a href="tel:${phone}" style="color:#58a6ff;font-size:16px;font-weight:700;text-decoration:none;" onclick="event.stopPropagation();">${phone}</a>`
+                        : `<span style="color:#f85149;font-size:13px;">No phone on file</span>`;
 
-                    let actions = '';
+                    const daysText = t.days_since_sent != null ? `${t.days_since_sent}d` : '-';
+
+                    let actionBtns = '';
                     if (t.status === 'pending') {
-                        actions = `<button class="drawer-btn primary" onclick="claimPhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Claim</button>
-                                   <button class="drawer-btn" onclick="skipPhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Skip</button>`;
+                        actionBtns = `<button class="drawer-btn primary" onclick="event.stopPropagation();openPhoneDrawer(${t.id})" style="font-size:11px;padding:4px 10px;">Claim</button>`;
                     } else if (t.status === 'claimed') {
-                        actions = `<button class="drawer-btn primary" onclick="showCompletePhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Complete</button>
-                                   <button class="drawer-btn" onclick="skipPhoneCall(${t.id})" style="font-size:11px;padding:4px 10px;">Skip</button>`;
-                    } else if (t.status === 'completed') {
-                        actions = `<span style="color:#3fb950;font-size:11px;">${t.call_outcome || 'done'}</span>`;
-                    } else {
-                        actions = `<span style="color:#8b949e;font-size:11px;">${t.status}</span>`;
+                        actionBtns = `<button class="drawer-btn primary" onclick="event.stopPropagation();openPhoneDrawer(${t.id})" style="font-size:11px;padding:4px 10px;">Complete</button>`;
                     }
 
-                    return `<tr>
-                        <td>#${t.id}</td>
-                        <td><a class="case-link" href="#" onclick="openCase(${t.case_id});return false;">#${t.case_id}</a> ${truncate(t.case_name || '', 25)}</td>
-                        <td>${truncate(t.agency_name || '', 25)}</td>
-                        <td>${t.agency_state || '-'}</td>
-                        <td>${t.days_since_sent != null ? t.days_since_sent + 'd' : '-'}</td>
-                        <td><span style="font-size:11px;">${t.reason || '-'}</span></td>
-                        <td><span style="color:${statusColor};font-weight:600;">${t.status}</span></td>
-                        <td>${t.assigned_to || '-'}</td>
-                        <td>${actions}</td>
-                    </tr>`;
+                    return `<div onclick="openPhoneDrawer(${t.id})" style="display:flex;gap:0;background:#161b22;border:1px solid #30363d;border-radius:8px;cursor:pointer;overflow:hidden;transition:border-color 0.15s;" onmouseover="this.style.borderColor='#58a6ff'" onmouseout="this.style.borderColor='#30363d'">
+                        <div style="width:4px;background:${priorityColor};flex-shrink:0;"></div>
+                        <div style="flex:1;padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;">
+                            <div style="flex:1;min-width:200px;">
+                                <div style="font-size:14px;color:#c9d1d9;font-weight:600;">${t.agency_name || 'Unknown Agency'} <span style="color:#8b949e;font-weight:400;font-size:12px;">${t.agency_state || ''}</span></div>
+                                <div style="margin-top:4px;">${phoneDisplay}</div>
+                                <div style="margin-top:4px;font-size:12px;color:#8b949e;">
+                                    <a class="case-link" href="#" onclick="event.stopPropagation();openCase(${t.case_id});return false;" style="color:#58a6ff;">#${t.case_id}</a>
+                                    ${t.case_name || ''}
+                                </div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+                                <span style="background:#21262d;color:#c9d1d9;padding:2px 8px;border-radius:10px;font-size:11px;" title="Days waiting">${daysText}</span>
+                                <span style="color:${statusColor};font-weight:600;font-size:12px;">${t.status}</span>
+                                ${t.assigned_to ? `<span style="color:#8b949e;font-size:11px;">${t.assigned_to}</span>` : ''}
+                                ${actionBtns}
+                            </div>
+                        </div>
+                    </div>`;
                 }).join('');
             } catch (err) {
                 console.error('Failed to load phone calls:', err);
-                document.getElementById('phoneCallRows').innerHTML =
-                    '<tr><td colspan="9" style="text-align:center;color:#f85149">Failed to load</td></tr>';
+                document.getElementById('phoneCallCards').innerHTML =
+                    '<div style="text-align:center;color:#f85149;padding:20px 0;">Failed to load phone calls</div>';
             }
         }
 
-        async function claimPhoneCall(id) {
-            const name = prompt('Your name:');
-            if (!name) return;
+        function openPhoneDrawer(id) {
+            const t = phoneCallCache.find(x => x.id === id);
+            if (!t) return;
+            activePhoneCallId = id;
+
+            const phone = t.agency_phone || t.agency_phone_from_db;
+            document.getElementById('phoneDrawerTitle').textContent = `Call #${t.id}`;
+
+            // Phone number
+            const pdPhone = document.getElementById('pdPhone');
+            if (phone) {
+                pdPhone.innerHTML = `<a href="tel:${phone}" style="color:#58a6ff;text-decoration:none;">${phone}</a>`;
+            } else {
+                pdPhone.innerHTML = `<span style="color:#f85149;">No phone on file</span>`;
+            }
+
+            // Agency info
+            document.getElementById('pdAgency').textContent = t.agency_name || '-';
+            document.getElementById('pdState').textContent = t.agency_state || t.state || '-';
+            document.getElementById('pdContact').textContent = t.contact_name || '-';
+            document.getElementById('pdEmail').textContent = t.agency_email || '-';
+            document.getElementById('pdFoiaEmail').textContent = t.email_foia || '-';
+            document.getElementById('pdFax').textContent = t.fax || '-';
+            document.getElementById('pdAddress').textContent = t.address || '-';
+
+            // Case info
+            document.getElementById('pdCaseName').innerHTML = `<a class="case-link" href="#" onclick="openCase(${t.case_id});closePhoneDrawer();return false;" style="color:#58a6ff;">#${t.case_id}</a> ${t.case_name || ''}`;
+            document.getElementById('pdSubject').textContent = t.subject_name || '-';
+            document.getElementById('pdSendDate').textContent = t.send_date ? new Date(t.send_date).toLocaleDateString() : '-';
+            document.getElementById('pdDaysWaiting').textContent = t.days_since_sent != null ? `${t.days_since_sent} days` : '-';
+            document.getElementById('pdReason').textContent = (t.reason || '-').replace(/_/g, ' ');
+            document.getElementById('pdDetails').textContent = t.additional_details || 'No details available';
+
+            // Notes
+            document.getElementById('pdNotes').textContent = t.notes || 'No escalation notes';
+            if (t.call_notes) {
+                document.getElementById('pdCallNotes').style.display = 'block';
+                document.getElementById('pdCallNotesText').textContent = t.call_notes;
+            } else {
+                document.getElementById('pdCallNotes').style.display = 'none';
+            }
+
+            // Show appropriate action form
+            document.getElementById('pdClaimForm').style.display = 'none';
+            document.getElementById('pdCompleteForm').style.display = 'none';
+            document.getElementById('pdSkipForm').style.display = 'none';
+            document.getElementById('pdStatusDisplay').style.display = 'none';
+            document.getElementById('pdActionResult').style.display = 'none';
+
+            if (t.status === 'pending') {
+                document.getElementById('pdClaimForm').style.display = 'block';
+                document.getElementById('pdSkipForm').style.display = 'block';
+                document.getElementById('pdClaimName').value = '';
+            } else if (t.status === 'claimed') {
+                document.getElementById('pdCompleteForm').style.display = 'block';
+                document.getElementById('pdSkipForm').style.display = 'block';
+                document.getElementById('pdOutcome').value = '';
+                document.getElementById('pdCompleteNotes').value = '';
+                document.getElementById('pdSkipReason').value = '';
+            } else {
+                document.getElementById('pdStatusDisplay').style.display = 'block';
+                const statusColor = t.status === 'completed' ? '#3fb950' : '#8b949e';
+                document.getElementById('pdStatusText').innerHTML = `<span style="color:${statusColor};font-weight:600;">${t.status}</span>${t.call_outcome ? ` - ${t.call_outcome}` : ''}${t.completed_by ? ` (by ${t.completed_by})` : ''}`;
+            }
+
+            // Show drawer
+            document.getElementById('phoneDrawerBackdrop').classList.add('active');
+            document.getElementById('phoneDrawer').classList.add('active');
+        }
+
+        function closePhoneDrawer() {
+            document.getElementById('phoneDrawerBackdrop').classList.remove('active');
+            document.getElementById('phoneDrawer').classList.remove('active');
+            activePhoneCallId = null;
+        }
+
+        function showPhoneActionResult(msg, isError) {
+            const el = document.getElementById('pdActionResult');
+            el.style.display = 'block';
+            el.style.color = isError ? '#f85149' : '#3fb950';
+            el.textContent = msg;
+        }
+
+        async function doClaimPhoneCall() {
+            const name = document.getElementById('pdClaimName').value.trim();
+            if (!name) { showPhoneActionResult('Please enter your name', true); return; }
             try {
-                const res = await fetch(`/api/phone-calls/${id}/claim`, {
+                const res = await fetch(`/api/phone-calls/${activePhoneCallId}/claim`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ assignedTo: name })
                 });
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error);
-                loadPhoneCalls();
+                showPhoneActionResult('Claimed successfully!', false);
+                setTimeout(() => { closePhoneDrawer(); loadPhoneCalls(); }, 600);
             } catch (err) {
-                alert('Failed to claim: ' + err.message);
+                showPhoneActionResult('Failed to claim: ' + err.message, true);
             }
         }
 
-        function showCompletePhoneCall(id) {
-            const outcomes = ['connected', 'voicemail', 'wrong_number', 'no_answer', 'transferred', 'resolved'];
-            const outcome = prompt('Call outcome:\\n' + outcomes.map((o, i) => `${i+1}. ${o}`).join('\\n') + '\\n\\nEnter number or name:');
-            if (!outcome) return;
-
-            const resolved = outcomes[parseInt(outcome) - 1] || outcome;
-            const notes = prompt('Call notes (optional):') || '';
-            const completedBy = prompt('Your name:') || 'unknown';
-
-            fetch(`/api/phone-calls/${id}/complete`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ outcome: resolved, notes, completedBy })
-            })
-            .then(r => r.json())
-            .then(data => {
+        async function doCompletePhoneCall() {
+            const outcome = document.getElementById('pdOutcome').value;
+            if (!outcome) { showPhoneActionResult('Please select an outcome', true); return; }
+            const notes = document.getElementById('pdCompleteNotes').value.trim();
+            const t = phoneCallCache.find(x => x.id === activePhoneCallId);
+            const completedBy = t?.assigned_to || 'unknown';
+            try {
+                const res = await fetch(`/api/phone-calls/${activePhoneCallId}/complete`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ outcome, notes, completedBy })
+                });
+                const data = await res.json();
                 if (!data.success) throw new Error(data.error);
-                loadPhoneCalls();
-            })
-            .catch(err => alert('Failed to complete: ' + err.message));
+                showPhoneActionResult('Marked complete!', false);
+                setTimeout(() => { closePhoneDrawer(); loadPhoneCalls(); }, 600);
+            } catch (err) {
+                showPhoneActionResult('Failed to complete: ' + err.message, true);
+            }
         }
 
-        async function skipPhoneCall(id) {
-            const notes = prompt('Reason for skipping (optional):') || '';
+        async function doSkipPhoneCall() {
+            const notes = document.getElementById('pdSkipReason').value.trim();
             try {
-                const res = await fetch(`/api/phone-calls/${id}/skip`, {
+                const res = await fetch(`/api/phone-calls/${activePhoneCallId}/skip`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ notes })
                 });
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error);
-                loadPhoneCalls();
+                showPhoneActionResult('Skipped', false);
+                setTimeout(() => { closePhoneDrawer(); loadPhoneCalls(); }, 600);
             } catch (err) {
-                alert('Failed to skip: ' + err.message);
+                showPhoneActionResult('Failed to skip: ' + err.message, true);
             }
         }
 
@@ -1690,6 +1887,9 @@
         }
 
         async function openCase(caseId) {
+            // Switch to Cases tab so the inspector is visible
+            openCasesPanel();
+
             const inspector = document.getElementById('caseInspector');
             const title = document.getElementById('caseInspectorTitle');
             const grid = document.getElementById('caseInspectorGrid');
