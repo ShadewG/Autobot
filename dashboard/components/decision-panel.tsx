@@ -429,6 +429,23 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
       { id: "retry_portal", label: "Retry Portal", description: "Attempt the portal submission again", variant: "default", recommended: true },
       { id: "send_via_email", label: "Send via Email", description: "Switch to email submission instead", variant: "outline" },
       { id: "submit_manually", label: "Submit Manually", description: "Open portal URL for manual submission", variant: "outline" },
+      { id: "mark_sent", label: "Mark as Sent", description: "Confirm this was already submitted successfully", variant: "outline" },
+      { id: "clear_portal", label: "Clear Portal URL", description: "Remove bad portal URL so case can use email instead", variant: "ghost" },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "ghost" },
+    ],
+  },
+  PORTAL_STUCK: {
+    icon: <Globe className="h-5 w-5" />,
+    color: "text-orange-700",
+    bgColor: "bg-orange-50",
+    borderColor: "border-orange-300",
+    title: "Portal Submission Timed Out",
+    question: "The portal submission was started but never completed. What happened?",
+    actions: [
+      { id: "mark_sent", label: "Mark as Sent", description: "The submission actually went through — mark as sent", variant: "default", recommended: true },
+      { id: "retry_portal", label: "Retry Portal", description: "Attempt the portal submission again", variant: "outline" },
+      { id: "submit_manually", label: "Submit Manually", description: "Open portal URL for manual submission", variant: "outline" },
+      { id: "clear_portal", label: "Clear Portal URL", description: "Remove portal URL and switch to email", variant: "ghost" },
       { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "ghost" },
     ],
   },
@@ -585,6 +602,16 @@ export function DecisionPanel({
                 Context
               </p>
               <p className="text-sm">{request.substatus}</p>
+              {request.portal_url && (request.review_reason === "PORTAL_FAILED" || request.review_reason === "PORTAL_STUCK") && (
+                <a
+                  href={request.portal_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary hover:underline mt-1 block truncate"
+                >
+                  {request.portal_url}
+                </a>
+              )}
             </div>
           )}
 

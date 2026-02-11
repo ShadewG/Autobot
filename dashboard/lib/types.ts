@@ -244,6 +244,7 @@ export type PauseReason =
 
 export type ReviewReason =
   | 'PORTAL_FAILED'
+  | 'PORTAL_STUCK'
   | 'FEE_QUOTE'
   | 'DENIAL'
   | 'MISSING_INFO'

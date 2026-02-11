@@ -179,6 +179,9 @@ function detectReviewReason(caseData) {
     const substatus = (caseData.substatus || '').toLowerCase();
     const status = (caseData.status || '').toLowerCase();
 
+    // Portal stuck/timeout indicators (swept from portal_in_progress)
+    if (substatus.includes('portal') && substatus.includes('timed out')) return 'PORTAL_STUCK';
+
     // Portal failure indicators
     if (substatus.includes('portal') && (substatus.includes('fail') || substatus.includes('error'))) return 'PORTAL_FAILED';
     if (status === 'error' && caseData.portal_url) return 'PORTAL_FAILED';
@@ -864,17 +867,33 @@ router.post('/:id/resolve-review', async (req, res) => {
         const IMMEDIATE_ACTIONS = {
             put_on_hold: { status: 'awaiting_response', substatus: 'On hold (manual)' },
             close: { status: 'completed', substatus: 'Closed by user' },
-            submit_manually: { status: 'portal_in_progress', substatus: 'Manual portal submission' }
+            submit_manually: { status: 'portal_in_progress', substatus: 'Manual portal submission' },
+            mark_sent: { status: 'sent', substatus: 'Marked as sent by user' },
+            clear_portal: { status: 'needs_human_review', substatus: 'Portal URL cleared — needs alternative submission method' }
         };
 
         if (IMMEDIATE_ACTIONS[action]) {
             const { status, substatus } = IMMEDIATE_ACTIONS[action];
-            await db.updateCase(requestId, {
+            const updates = {
                 status,
                 substatus,
                 requires_human: false,
                 pause_reason: null
-            });
+            };
+
+            // mark_sent: set send_date if not already set
+            if (action === 'mark_sent' && !caseData.send_date) {
+                updates.send_date = new Date();
+            }
+
+            // clear_portal: remove portal URL so case can proceed via email
+            if (action === 'clear_portal') {
+                updates.portal_url = null;
+                updates.portal_provider = null;
+                updates.requires_human = true; // keep in review so user can choose next step
+            }
+
+            await db.updateCase(requestId, updates);
 
             await db.logActivity('human_decision', `Review resolved: ${action}${instruction ? ` — ${instruction}` : ''}`, {
                 case_id: requestId,
@@ -1007,6 +1026,14 @@ router.patch('/:id', async (req, res) => {
 
         if (req.body.next_due_at !== undefined) {
             updates.next_due_at = req.body.next_due_at;
+        }
+
+        if (req.body.portal_url !== undefined) {
+            updates.portal_url = req.body.portal_url || null;
+        }
+
+        if (req.body.portal_provider !== undefined) {
+            updates.portal_provider = req.body.portal_provider || null;
         }
 
         if (Object.keys(updates).length === 0) {
