@@ -348,10 +348,23 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             messageData.portal_notification_type === 'submission_required';
 
         if (portalInstruction) {
+            // Don't override status if we already submitted (sent/portal_in_progress) —
+            // the email is a confirmation, not a new instruction
+            const alreadySubmitted = ['sent', 'portal_in_progress'].includes(caseData.status);
+            if (alreadySubmitted) {
+                console.log(`🌐 Portal notification for case ${caseId} but status is already '${caseData.status}' — treating as confirmation, not new instruction.`);
+                await db.logActivity('portal_confirmation_ignored', `Portal notification received but case already ${caseData.status} — skipped status override`, {
+                    case_id: caseId,
+                    message_id: messageId,
+                    portal_url: caseData.portal_url,
+                    current_status: caseData.status
+                });
+                return analysis;
+            }
+
             console.log(`🌐 Portal instruction detected for case ${caseId}; pivoting to portal workflow (no email reply).`);
             const portalStatusNote = 'Agency requested portal submission';
             await db.updateCaseStatus(caseId, 'needs_human_review', {
-                substatus: 'portal_submission_required',
                 substatus: portalStatusNote,
                 last_portal_status: portalStatusNote,
                 last_portal_status_at: new Date()

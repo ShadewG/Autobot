@@ -202,6 +202,13 @@ router.post('/inbound', upload.any(), async (req, res) => {
             }
 
             if (!alreadyProcessed && result.portal_notification) {
+                // Don't re-queue portal jobs if the case was already submitted
+                const portalCase = await db.getCaseById(result.case_id);
+                const caseAlreadySubmitted = portalCase && ['sent', 'portal_in_progress'].includes(portalCase.status);
+
+                if (caseAlreadySubmitted) {
+                    console.log(`🌐 Portal notification for case ${result.case_id} but already '${portalCase.status}' — skipping portal queue`);
+                } else {
                 const portalJobData = {
                     caseId: result.case_id,
                     portalUrl: result.portal_notification.portal_url,
@@ -236,6 +243,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
                         console.log(`🚀 Portal submission queued for case ${result.case_id} (${portalJobData.provider})`);
                     }
                 }
+                } // end caseAlreadySubmitted else
             }
 
             res.status(200).json({
