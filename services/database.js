@@ -737,6 +737,25 @@ class DatabaseService {
     /**
      * Mark a proposal as executed with the email job ID.
      */
+    /**
+     * Dismiss all pending proposals for a case (used when case reaches a terminal state like 'sent').
+     */
+    async dismissPendingProposals(caseId, reason = 'Case status advanced') {
+        const query = `
+            UPDATE proposals
+            SET status = 'DISMISSED',
+                updated_at = NOW()
+            WHERE case_id = $1
+              AND status IN ('PENDING_APPROVAL', 'DRAFT')
+            RETURNING id, action_type
+        `;
+        const result = await this.query(query, [caseId]);
+        if (result.rows.length > 0) {
+            console.log(`[DB] Dismissed ${result.rows.length} pending proposals for case ${caseId}: ${reason}`);
+        }
+        return result.rows;
+    }
+
     async markProposalExecuted(proposalId, emailJobId) {
         const query = `
             UPDATE auto_reply_queue

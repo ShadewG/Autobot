@@ -895,6 +895,11 @@ router.post('/:id/resolve-review', async (req, res) => {
 
             await db.updateCase(requestId, updates);
 
+            // When marking as sent or closing, dismiss any stale pending proposals
+            if (['mark_sent', 'close'].includes(action)) {
+                try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`); } catch (_) {}
+            }
+
             await db.logActivity('human_decision', `Review resolved: ${action}${instruction ? ` — ${instruction}` : ''}`, {
                 case_id: requestId,
                 review_action: action,

@@ -799,6 +799,10 @@ router.get('/case/:id', async (req, res) => {
             return res.status(404).json({ success: false, error: `Case ${caseId} not found` });
         }
 
+        const portalAccount = caseData.portal_url
+            ? await db.getPortalAccountByUrl(caseData.portal_url).catch(() => null)
+            : null;
+
         const [threadResult, messagesResult, runsResult, proposalsResult, portalTasksResult] = await Promise.all([
             db.query(`
                 SELECT *
@@ -854,7 +858,8 @@ router.get('/case/:id', async (req, res) => {
             messages: messagesResult.rows,
             runs: runsResult.rows,
             proposals: proposalsResult.rows,
-            portal_tasks: portalTasksResult.rows
+            portal_tasks: portalTasksResult.rows,
+            portal_account: portalAccount ? { email: portalAccount.email, password: portalAccount.password } : null
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
