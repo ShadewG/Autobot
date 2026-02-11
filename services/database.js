@@ -1600,6 +1600,16 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async updatePhoneCallBriefing(id, briefing) {
+        const result = await this.query(`
+            UPDATE phone_call_queue
+            SET ai_briefing = $2, updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+        `, [id, JSON.stringify(briefing)]);
+        return result.rows[0];
+    }
+
     async getPhoneCallQueueStats() {
         const result = await this.query(`
             SELECT

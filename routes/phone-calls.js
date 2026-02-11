@@ -190,4 +190,45 @@ router.post('/:id/skip', async (req, res) => {
     }
 });
 
+/**
+ * POST /phone-calls/:id/briefing
+ * Generate or retrieve cached AI call briefing
+ * Query: ?force=true to regenerate
+ */
+router.post('/:id/briefing', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const force = req.query.force === 'true';
+
+        const task = await db.getPhoneCallById(id);
+        if (!task) {
+            return res.status(404).json({ success: false, error: 'Phone call task not found' });
+        }
+
+        // Return cached if available and not forcing regeneration
+        if (task.ai_briefing && !force) {
+            return res.json({ success: true, briefing: task.ai_briefing, cached: true });
+        }
+
+        // Load case data and messages
+        const caseData = await db.getCaseById(task.case_id);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const messages = await db.getMessagesByCaseId(task.case_id, 20);
+
+        const aiService = require('../services/ai-service');
+        const briefing = await aiService.generatePhoneCallBriefing(task, caseData, messages);
+
+        // Cache the briefing
+        await db.updatePhoneCallBriefing(id, briefing);
+
+        res.json({ success: true, briefing, cached: false });
+    } catch (error) {
+        console.error('Error generating briefing:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

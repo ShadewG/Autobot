@@ -515,6 +515,7 @@
         .case-list-item:last-child {
             border-bottom: none;
         }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -728,6 +729,7 @@
         <div id="caseInspector" class="case-inspector" style="display:none;">
             <h3 id="caseInspectorTitle">Case Inspector</h3>
             <div id="caseInspectorGrid" class="case-grid"></div>
+            <div id="casePortalInfoPanel" style="display:none; margin-top:12px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
             <div id="caseInspectorActions" style="margin-top:10px;"></div>
             <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
             <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
@@ -900,6 +902,35 @@
             <div id="pdCallNotes" style="display:none;margin-top:8px;">
                 <div class="drawer-label">Previous Call Notes</div>
                 <div class="drawer-value" id="pdCallNotesText">-</div>
+            </div>
+        </div>
+
+        <!-- AI Call Briefing -->
+        <div class="drawer-section" id="pdBriefingSection">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div class="drawer-label">AI Call Briefing</div>
+                <button class="drawer-btn primary" id="pdBriefingBtn" onclick="generateBriefing(false)" style="font-size:11px;padding:3px 10px;">Generate Briefing</button>
+            </div>
+            <div id="pdBriefingLoading" style="display:none;text-align:center;padding:12px 0;color:#8b949e;">
+                <span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px;">&#9696;</span> Generating briefing...
+            </div>
+            <div id="pdBriefingContent" style="display:none;margin-top:8px;">
+                <div style="margin-bottom:8px;">
+                    <div class="drawer-label" style="color:#58a6ff;">Case Summary</div>
+                    <div id="pdBriefingSummary" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;"></div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div class="drawer-label" style="color:#f0883e;">Why Call Is Needed</div>
+                    <div id="pdBriefingJustification" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;"></div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <div class="drawer-label" style="color:#3fb950;">Talking Points</div>
+                    <ul id="pdBriefingTalkingPoints" style="font-size:12px;line-height:1.6;color:#c9d1d9;margin:0;padding-left:18px;"></ul>
+                </div>
+                <div>
+                    <div class="drawer-label" style="color:#8b949e;">Key Details</div>
+                    <div id="pdBriefingKeyDetails" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;white-space:pre-wrap;"></div>
+                </div>
             </div>
         </div>
 
@@ -1382,6 +1413,16 @@
                 document.getElementById('pdStatusText').innerHTML = `<span style="color:${statusColor};font-weight:600;">${t.status}</span>${t.call_outcome ? ` - ${t.call_outcome}` : ''}${t.completed_by ? ` (by ${t.completed_by})` : ''}`;
             }
 
+            // AI Briefing: show cached or reset
+            document.getElementById('pdBriefingContent').style.display = 'none';
+            document.getElementById('pdBriefingLoading').style.display = 'none';
+            document.getElementById('pdBriefingBtn').disabled = false;
+            if (t.ai_briefing) {
+                renderBriefing(t.ai_briefing);
+            } else {
+                document.getElementById('pdBriefingBtn').textContent = 'Generate Briefing';
+            }
+
             // Show drawer
             document.getElementById('phoneDrawerBackdrop').classList.add('active');
             document.getElementById('phoneDrawer').classList.add('active');
@@ -1453,6 +1494,48 @@
                 setTimeout(() => { closePhoneDrawer(); loadPhoneCalls(); }, 600);
             } catch (err) {
                 showPhoneActionResult('Failed to skip: ' + err.message, true);
+            }
+        }
+
+        function renderBriefing(briefing) {
+            document.getElementById('pdBriefingSummary').textContent = briefing.case_summary || '';
+            document.getElementById('pdBriefingJustification').textContent = briefing.call_justification || '';
+            const tpEl = document.getElementById('pdBriefingTalkingPoints');
+            tpEl.innerHTML = (briefing.talking_points || []).map(p => `<li>${p}</li>`).join('');
+            const kd = briefing.key_details;
+            let kdText = '';
+            if (kd) {
+                if (kd.dates) kdText += `Dates: incident ${kd.dates.incident_date || '?'}, sent ${kd.dates.request_sent || '?'}, waiting ${kd.dates.days_waiting || '?'} days\n`;
+                if (kd.records_requested) kdText += `Records: ${kd.records_requested.join(', ')}\n`;
+                if (kd.previous_responses?.length) kdText += `Responses: ${kd.previous_responses.join('; ')}\n`;
+                if (kd.amounts) kdText += `Amounts: ${JSON.stringify(kd.amounts)}`;
+            }
+            document.getElementById('pdBriefingKeyDetails').textContent = kdText.trim() || 'None';
+            document.getElementById('pdBriefingContent').style.display = 'block';
+            document.getElementById('pdBriefingLoading').style.display = 'none';
+            document.getElementById('pdBriefingBtn').textContent = 'Regenerate';
+        }
+
+        async function generateBriefing(force) {
+            document.getElementById('pdBriefingContent').style.display = 'none';
+            document.getElementById('pdBriefingLoading').style.display = 'block';
+            document.getElementById('pdBriefingBtn').disabled = true;
+            try {
+                const res = await fetch(`/api/phone-calls/${activePhoneCallId}/briefing?force=${force}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                renderBriefing(data.briefing);
+                // Update cache locally
+                const t = phoneCallCache.find(x => x.id === activePhoneCallId);
+                if (t) t.ai_briefing = data.briefing;
+            } catch (err) {
+                document.getElementById('pdBriefingLoading').style.display = 'none';
+                showPhoneActionResult('Briefing failed: ' + err.message, true);
+            } finally {
+                document.getElementById('pdBriefingBtn').disabled = false;
             }
         }
 
@@ -1913,6 +1996,8 @@
             const actionResult = document.getElementById('caseInspectorActionResult');
             const reviewPanel = document.getElementById('casePortalReview');
 
+            const portalInfoPanel = document.getElementById('casePortalInfoPanel');
+
             inspector.style.display = 'block';
             title.textContent = `Case #${caseId}`;
             grid.innerHTML = '<div class="cell">Loading...</div>';
@@ -1922,6 +2007,7 @@
             actions.innerHTML = '';
             actionResult.style.display = 'none';
             reviewPanel.style.display = 'none';
+            portalInfoPanel.style.display = 'none';
             currentCaseData = null;
             latestCasePortalTasks = [];
             currentCaseMessages = [];
@@ -1956,6 +2042,30 @@
                     <div class="cell"><span class="k">Skyvern Recording</span>${c.last_portal_recording_url ? `<a class="case-link" href="${c.last_portal_recording_url}" target="_blank">open recording</a>` : '-'}</div>
                     <div class="cell"><span class="k">Portal Updated</span>${formatTime(c.last_portal_status_at)}</div>
                 `;
+
+                // Portal Info panel
+                if (c.portal_url) {
+                    const pa = data.portal_account;
+                    let portalHtml = `<h3 style="margin-top:0;color:#58a6ff;">Portal Info</h3><div class="case-grid">`;
+                    portalHtml += `<div class="cell"><span class="k">Portal URL</span><a class="case-link" href="${c.portal_url}" target="_blank">${truncate(c.portal_url, 50)}</a></div>`;
+                    portalHtml += `<div class="cell"><span class="k">Provider</span>${c.portal_provider || '-'}</div>`;
+                    portalHtml += `<div class="cell"><span class="k">Account Email</span>${pa?.email || '-'}</div>`;
+                    portalHtml += `<div class="cell"><span class="k">Account Password</span>${pa?.password ? `<span id="portalPwDisplay">${pa.password}</span> <button onclick="navigator.clipboard.writeText('${pa.password.replace(/'/g, "\\'")}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})" style="margin-left:6px;padding:2px 8px;font-size:11px;cursor:pointer;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;">Copy</button>` : '-'}</div>`;
+                    portalHtml += `<div class="cell"><span class="k">Request Number</span>${c.portal_request_number || '-'}</div>`;
+                    portalHtml += `<div class="cell"><span class="k">Last Status</span>${c.last_portal_status || '-'}${c.last_portal_status_at ? ` <span class="timestamp">(${formatTime(c.last_portal_status_at)})</span>` : ''}</div>`;
+                    portalHtml += `</div>`;
+                    // Quick link buttons
+                    let links = '';
+                    if (c.portal_url) links += `<a href="${c.portal_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Open Portal</a>`;
+                    if (c.last_portal_task_url) links += `<a href="${c.last_portal_task_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Skyvern Task</a>`;
+                    if (c.last_portal_recording_url) links += `<a href="${c.last_portal_recording_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Recording</a>`;
+                    if (links) portalHtml += `<div style="margin-top:6px;">${links}</div>`;
+                    portalInfoPanel.innerHTML = portalHtml;
+                    portalInfoPanel.style.display = 'block';
+                } else {
+                    portalInfoPanel.style.display = 'none';
+                    portalInfoPanel.innerHTML = '';
+                }
 
                 // Build actions based on case status
                 const isNeedsReview = c.requires_human || c.status === 'needs_human_review';

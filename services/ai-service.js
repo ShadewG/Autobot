@@ -1068,6 +1068,71 @@ ${prompt}`
         }
     }
 
+    /**
+     * Generate a phone call briefing for a phone queue task.
+     * Produces a structured summary with talking points and key details.
+     */
+    async generatePhoneCallBriefing(phoneTask, caseData, messages = []) {
+        const emailHistory = messages
+            .slice(0, 10)
+            .map(m => `[${m.direction}] ${m.subject || ''}: ${(m.body_text || '').substring(0, 300)}`)
+            .join('\n\n');
+
+        const prompt = `You are preparing a phone call briefing for a FOIA records request follow-up.
+
+CASE INFO:
+- Case Name: ${caseData.case_name || 'Unknown'}
+- Agency: ${caseData.agency_name || phoneTask.agency_name || 'Unknown'}
+- State: ${caseData.state || phoneTask.agency_state || 'Unknown'}
+- Subject: ${caseData.subject_name || 'Unknown'}
+- Sent Date: ${caseData.send_date || 'Unknown'}
+- Records Requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : (caseData.requested_records || 'Various records')}
+
+ESCALATION CONTEXT:
+- Reason: ${phoneTask.reason || 'no_email_response'}
+- Days Since Sent: ${phoneTask.days_since_sent || 'Unknown'}
+- Notes: ${phoneTask.notes || 'None'}
+
+EMAIL HISTORY:
+${emailHistory || 'No email history available'}
+
+ADDITIONAL DETAILS:
+${(caseData.additional_details || '').substring(0, 1000)}
+
+Generate a phone call briefing as JSON:
+{
+  "case_summary": "Plain English paragraph summarizing the case, who the subject is, what happened, and what records were requested",
+  "call_justification": "Why a phone call is needed now - what happened with emails, how long we've waited, etc.",
+  "talking_points": ["Point 1 - what to say/ask", "Point 2", ...],
+  "key_details": {
+    "dates": { "incident_date": "...", "request_sent": "...", "days_waiting": ... },
+    "records_requested": ["..."],
+    "previous_responses": ["brief summary of any agency responses"],
+    "amounts": null
+  }
+}
+
+Return ONLY valid JSON.`;
+
+        try {
+            const response = await this.openai.responses.create({
+                model: 'gpt-5.2-2025-12-11',
+                reasoning: { effort: 'low' },
+                input: prompt
+            });
+
+            const raw = response.output_text?.trim();
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            throw new Error('Failed to parse briefing JSON');
+        } catch (error) {
+            console.error('Error generating phone call briefing:', error);
+            throw error;
+        }
+    }
+
     async normalizeNotionCase(rawPayload) {
         try {
             if (!rawPayload) return {};

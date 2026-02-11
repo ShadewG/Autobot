@@ -1062,6 +1062,87 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
     }
 
     /**
+     * Look up phone number from Notion Police Department relation page.
+     * @param {string} notionPageId - The case page ID in Notion
+     * @returns {string|null} - Phone number or null
+     */
+    async lookupPhoneFromNotion(notionPageId) {
+        try {
+            const page = await this.notion.pages.retrieve({ page_id: notionPageId.replace(/-/g, '') });
+            const policeDeptRelation = page.properties['Police Department'];
+            const policeDeptId = policeDeptRelation?.relation?.[0]?.id;
+            if (!policeDeptId) return null;
+
+            const deptPage = await this.notion.pages.retrieve({ page_id: policeDeptId });
+            const phone = this.extractPlainValue(deptPage.properties['Contact Phone']);
+            if (phone && String(phone).trim()) {
+                console.log(`Found phone from Notion PD page: ${phone}`);
+                return String(phone).trim();
+            }
+            return null;
+        } catch (error) {
+            console.warn('Notion phone lookup failed:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Use GPT web search to find a phone number for an agency.
+     * Follows the same pattern as searchForAgencyEmail.
+     * @param {string} agencyName
+     * @param {string} state
+     * @returns {{ phone: string|null, confidence: string, reasoning: string }}
+     */
+    async searchForAgencyPhone(agencyName, state) {
+        try {
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const response = await openai.responses.create({
+                model: 'gpt-5.2',
+                tools: [{ type: 'web_search_preview' }],
+                input: [
+                    {
+                        role: 'system',
+                        content: `You search the web to find phone numbers for submitting public records requests to US law enforcement agencies.
+Return ONLY valid JSON, nothing else. Format:
+{"phone": "+1XXXXXXXXXX", "confidence": "high|medium|low", "reasoning": "one sentence"}
+If you cannot find a phone number, return: {"phone": null, "confidence": "low", "reasoning": "..."}`
+                    },
+                    {
+                        role: 'user',
+                        content: `Find the phone number for the records division or main line of: ${agencyName}${state ? `, ${state}` : ''}.
+Look for a records division phone number, FOIA phone number, or general agency phone number.`
+                    }
+                ],
+            });
+
+            let text = '';
+            for (const item of response.output) {
+                if (item.type === 'message') {
+                    for (const c of item.content) {
+                        if (c.type === 'output_text') text += c.text;
+                    }
+                }
+            }
+
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const result = JSON.parse(jsonMatch[0]);
+                console.log(`Phone search for "${agencyName}": ${result.phone || '(none)'} [${result.confidence}] - ${result.reasoning}`);
+                if (result.phone && result.confidence !== 'low') {
+                    return result;
+                }
+            }
+
+            return { phone: null, confidence: 'low', reasoning: 'No phone found' };
+        } catch (error) {
+            console.error(`Phone search failed for "${agencyName}":`, error.message);
+            return { phone: null, confidence: 'low', reasoning: error.message };
+        }
+    }
+
+    /**
      * Use GPT web search to find a records request email for an agency.
      * Used as fallback when no portal URL or email is found.
      */

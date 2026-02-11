@@ -342,7 +342,55 @@ class FollowupScheduler {
     }
 
     logger.info('Case escalated to phone call queue', { caseId, phoneTaskId: phoneTask.id, reason });
+
+    // Fire-and-forget async phone lookup if no phone on file
+    if (!agencyPhone) {
+      this._asyncPhoneLookup(caseData, phoneTask.id).catch(err =>
+        logger.warn('Async phone lookup failed', { caseId, error: err.message })
+      );
+    }
+
     return phoneTask;
+  }
+
+  /**
+   * Async phone lookup: try Notion first, then web search fallback.
+   * Updates both phone_call_queue and agencies table if found.
+   */
+  async _asyncPhoneLookup(caseData, phoneTaskId) {
+    const notionService = require('./notion-service');
+    let phone = null;
+
+    // 1. Try Notion PD page
+    if (caseData.notion_page_id) {
+      phone = await notionService.lookupPhoneFromNotion(caseData.notion_page_id);
+    }
+
+    // 2. Fallback: web search
+    if (!phone && caseData.agency_name) {
+      const result = await notionService.searchForAgencyPhone(caseData.agency_name, caseData.state);
+      if (result?.phone) {
+        phone = result.phone;
+      }
+    }
+
+    if (phone) {
+      logger.info('Async phone lookup found number', { caseId: caseData.id, phone, phoneTaskId });
+
+      // Update phone_call_queue
+      await db.query(
+        'UPDATE phone_call_queue SET agency_phone = $1, updated_at = NOW() WHERE id = $2',
+        [phone, phoneTaskId]
+      );
+
+      // Update agencies table if linked
+      if (caseData.agency_id) {
+        await db.query(
+          'UPDATE agencies SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = \'\')',
+          [phone, caseData.agency_id]
+        );
+      }
+    }
   }
 
   /**
