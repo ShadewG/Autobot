@@ -43,19 +43,8 @@ async function classifyInboundNode(state) {
   }
 
   try {
-    // Fetch message and case data for analysis
-    const message = await db.getMessageById(latestInboundMessageId);
-    const caseData = await db.getCaseById(caseId);
-
-    if (!message) {
-      return {
-        errors: [`Message ${latestInboundMessageId} not found`],
-        classification: 'UNKNOWN',
-        classificationConfidence: 0
-      };
-    }
-
     // DETERMINISTIC MODE: Use stubbed classification if provided
+    // Check stubs BEFORE message fetch to allow testing without real data
     if (llmStubs?.classify) {
       const stub = llmStubs.classify;
       logger.info('Using stubbed classification for E2E testing', { caseId, stub });
@@ -72,21 +61,26 @@ async function classifyInboundNode(state) {
         ? stub.requires_response
         : true;
 
-      // Save stubbed analysis to DB (for consistency)
-      await db.saveResponseAnalysis({
-        messageId: latestInboundMessageId,
-        caseId,
-        intent: stub.classification?.toLowerCase().replace('_', '_') || 'unknown',
-        confidenceScore: stub.confidence || 0.95,
-        sentiment: stub.sentiment || 'neutral',
-        keyPoints: stub.key_points || [],
-        extractedDeadline: stub.deadline || null,
-        extractedFeeAmount: feeAmount,
-        requiresAction: stubRequiresResponse,
-        suggestedAction: stub.suggested_action || null,
-        portalUrl: stub.portal_url || null,
-        fullAnalysisJson: { stubbed: true, ...stub }
-      });
+      // Save stubbed analysis to DB (for consistency) — skip if message doesn't exist
+      try {
+        await db.saveResponseAnalysis({
+          messageId: latestInboundMessageId,
+          caseId,
+          intent: stub.classification?.toLowerCase().replace('_', '_') || 'unknown',
+          confidenceScore: stub.confidence || 0.95,
+          sentiment: stub.sentiment || 'neutral',
+          keyPoints: stub.key_points || [],
+          extractedDeadline: stub.deadline || null,
+          extractedFeeAmount: feeAmount,
+          requiresAction: stubRequiresResponse,
+          suggestedAction: stub.suggested_action || null,
+          portalUrl: stub.portal_url || null,
+          fullAnalysisJson: { stubbed: true, ...stub }
+        });
+      } catch (dbErr) {
+        // Non-fatal: stub data may reference non-existent message in testing
+        logger.warn('Could not save stubbed analysis to DB', { caseId, error: dbErr.message });
+      }
 
       logger.info('Stubbed classification normalized', {
         caseId,
@@ -112,6 +106,18 @@ async function classifyInboundNode(state) {
           `requires_response: ${stubRequiresResponse}, ` +
           `fee: ${feeAmount ?? 'none'}`
         ]
+      };
+    }
+
+    // Fetch message and case data for analysis (non-stubbed path)
+    const message = await db.getMessageById(latestInboundMessageId);
+    const caseData = await db.getCaseById(caseId);
+
+    if (!message) {
+      return {
+        errors: [`Message ${latestInboundMessageId} not found`],
+        classification: 'UNKNOWN',
+        classificationConfidence: 0
       };
     }
 

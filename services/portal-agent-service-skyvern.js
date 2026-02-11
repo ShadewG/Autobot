@@ -2,6 +2,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const database = require('./database');
+const notionService = require('./notion-service');
 const EmailVerificationHelper = require('../agentkit/email-helper');
 
 /**
@@ -426,7 +427,7 @@ class PortalAgentServiceSkyvern {
         const actionHistory = finalTask.actions || finalTask.action_history || [];
 
         if (finalTask.status === 'completed') {
-            await database.updateCasePortalStatus(caseData.id, {
+            const portalStatusUpdate = {
                 portal_url: portalUrl,
                 portal_provider: portalProvider,
                 last_portal_run_id: taskId,
@@ -441,7 +442,14 @@ class PortalAgentServiceSkyvern {
                     submission_timestamp: extracted.submission_timestamp || null,
                     action_history: actionHistory.slice(-50)
                 })
-            });
+            };
+
+            // Persist confirmation number for inbound email matching
+            if (extracted.confirmation_number) {
+                portalStatusUpdate.portal_request_number = extracted.confirmation_number;
+            }
+
+            await database.updateCasePortalStatus(caseData.id, portalStatusUpdate);
 
             await database.logActivity('portal_run_completed', `Skyvern portal submission completed for ${caseData.case_name}`, {
                 case_id: caseData.id || null,
@@ -750,6 +758,27 @@ class PortalAgentServiceSkyvern {
 
             if (!finalResult) {
                 console.warn('⚠️ Workflow run status unavailable; manual follow-up required.');
+                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: 'Portal submission failed (polling timeout) - requires human submission',
+                    requires_human: true
+                });
+                try {
+                    await database.upsertProposal({
+                        proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
+                        caseId: caseData.id,
+                        actionType: 'SUBMIT_PORTAL',
+                        reasoning: [{ step: 'Automated portal submission failed', detail: 'Workflow run status unavailable (polling timeout)' }],
+                        confidence: 0,
+                        requiresHuman: true,
+                        canAutoExecute: false,
+                        draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
+                        draftBodyText: `Portal: ${portalUrl}\nError: Workflow run status unavailable (polling timeout)`,
+                        status: 'PENDING_APPROVAL'
+                    });
+                } catch (proposalErr) {
+                    console.error('Failed to create proposal on portal timeout:', proposalErr.message);
+                }
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
                 return {
                     success: false,
                     status: initialStatus,
@@ -777,6 +806,13 @@ class PortalAgentServiceSkyvern {
             });
 
             if (completed && !failed) {
+                const statusText = finalResult.status || 'completed';
+                await database.updateCaseStatus(caseData.id, 'sent', {
+                    substatus: `Portal submission completed (${statusText})`,
+                    send_date: new Date()
+                });
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
                 await database.logActivity(
                     'portal_stage_completed',
                     `Skyvern workflow completed for ${caseData.case_name}`,
@@ -802,6 +838,28 @@ class PortalAgentServiceSkyvern {
             }
 
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
+                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: 'Portal submission failed - requires human submission',
+                    requires_human: true
+                });
+                try {
+                    await database.upsertProposal({
+                        proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
+                        caseId: caseData.id,
+                        actionType: 'SUBMIT_PORTAL',
+                        reasoning: [{ step: 'Automated portal submission failed', detail: failureReason }],
+                        confidence: 0,
+                        requiresHuman: true,
+                        canAutoExecute: false,
+                        draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
+                        draftBodyText: `Portal: ${portalUrl}\nError: ${failureReason}`,
+                        status: 'PENDING_APPROVAL'
+                    });
+                } catch (proposalErr) {
+                    console.error('Failed to create proposal on portal failure:', proposalErr.message);
+                }
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
                 await database.logActivity(
                     'portal_stage_failed',
                     `Skyvern workflow failed for ${caseData.case_name}: ${failureReason}`,
@@ -828,6 +886,25 @@ class PortalAgentServiceSkyvern {
         } catch (error) {
             const message = error.response?.data?.message || error.response?.data?.error || error.message;
             console.error('❌ Skyvern workflow API error:', message);
+            try {
+                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: 'Portal submission failed - requires human submission',
+                    requires_human: true
+                });
+                await database.upsertProposal({
+                    proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
+                    caseId: caseData.id,
+                    actionType: 'SUBMIT_PORTAL',
+                    reasoning: [{ step: 'Automated portal submission failed', detail: message }],
+                    confidence: 0,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
+                    draftBodyText: `Portal: ${portalUrl}\nError: ${message}`,
+                    status: 'PENDING_APPROVAL'
+                });
+                await notionService.syncStatusToNotion(caseData.id);
+            } catch (_) {}
             await database.logActivity(
                 'portal_stage_failed',
                 `Skyvern workflow crashed for ${caseData.case_name}: ${message}`,

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { extractUrls } = require('../utils/contact-utils');
 const {
     PORTAL_PROVIDERS,
+    PORTAL_EMAIL_DOMAINS,
     normalizePortalUrl,
     detectPortalProviderByUrl,
     isSupportedPortalUrl
@@ -359,6 +360,9 @@ class SendGridService {
             let caseData = await this.findCaseForInbound({
                 toEmail,
                 fromEmail,
+                fromFull: inboundData.from,
+                subject: inboundData.subject,
+                text: inboundData.text || inboundData.body_text || '',
                 inReplyToId,
                 referenceIds
             });
@@ -569,8 +573,9 @@ class SendGridService {
     /**
      * Find which case an inbound email belongs to
      */
-    async findCaseForInbound({ toEmail, fromEmail, inReplyToId, referenceIds = [] }) {
+    async findCaseForInbound({ toEmail, fromEmail, fromFull, subject, text, inReplyToId, referenceIds = [] }) {
         try {
+            // --- Tier 1: Thread matching (In-Reply-To / References) ---
             const lookupIds = Array.from(new Set(
                 [inReplyToId, ...referenceIds].filter(Boolean)
             ));
@@ -600,8 +605,32 @@ class SendGridService {
                 }
             }
 
-            // Try to match by agency email (fallback)
-            console.log(`No thread match found, trying to match by agency email: ${fromEmail}`);
+            // --- Tier 1.5: Portal email matching ---
+            const portalInfo = this.detectPortalProviderFromEmail(fromEmail);
+            if (portalInfo) {
+                console.log(`Portal email detected: provider=${portalInfo.provider}, subdomain=${portalInfo.subdomain || 'none'}`);
+                const signals = this.extractPortalMatchingSignals(portalInfo.provider, fromFull, fromEmail, subject, text);
+                console.log('Portal matching signals:', JSON.stringify(signals));
+                const portalMatch = await this.matchCaseByPortalSignals(signals);
+                if (portalMatch) {
+                    console.log(`Matched inbound email by portal signals (${portalInfo.provider}): case #${portalMatch.id}`);
+                    // Persist request number if we extracted one and case doesn't have it
+                    if (signals.requestNumber && !portalMatch.portal_request_number) {
+                        try {
+                            await db.query(
+                                'UPDATE cases SET portal_request_number = $1 WHERE id = $2',
+                                [signals.requestNumber, portalMatch.id]
+                            );
+                        } catch (e) {
+                            console.warn('Failed to save portal_request_number:', e.message);
+                        }
+                    }
+                    return portalMatch;
+                }
+            }
+
+            // --- Tier 2: Agency email matching (active cases) ---
+            console.log(`No thread/portal match found, trying to match by agency email: ${fromEmail}`);
             const activeStatuses = [
                 'sent',
                 'awaiting_response',
@@ -628,7 +657,7 @@ class SendGridService {
                 return cases.rows[0];
             }
 
-            // Final fallback: any status for that agency email
+            // --- Tier 3: Agency email fallback (any status) ---
             const fallback = await db.query(
                 `
                 SELECT *
@@ -651,6 +680,239 @@ class SendGridService {
             console.error('Error finding case for inbound email:', error);
             return null;
         }
+    }
+
+    /**
+     * Detect if an email comes from a known portal notification system.
+     * Returns { provider, subdomain } or null.
+     */
+    detectPortalProviderFromEmail(fromEmail) {
+        if (!fromEmail) return null;
+        const atIndex = fromEmail.indexOf('@');
+        if (atIndex === -1) return null;
+
+        const localPart = fromEmail.substring(0, atIndex).toLowerCase();
+        const domain = fromEmail.substring(atIndex + 1).toLowerCase();
+
+        // Check exact domain first, then parent domains
+        // e.g. "fortcollinspoliceco@request.justfoia.com" → domain "request.justfoia.com"
+        for (const [emailDomain, config] of Object.entries(PORTAL_EMAIL_DOMAINS)) {
+            if (domain === emailDomain || domain.endsWith('.' + emailDomain)) {
+                const subdomain = config.subdomainFromLocalPart ? localPart : null;
+                return { provider: config.provider, subdomain };
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract matching signals from a portal notification email.
+     * Returns an object with: { provider, subdomain, requestNumber, agencyName, bodySubdomain }
+     */
+    extractPortalMatchingSignals(provider, fromFull, fromEmail, subject, text) {
+        const signals = { provider, subdomain: null, requestNumber: null, agencyName: null, bodySubdomain: null };
+        const subjectStr = subject || '';
+        const textStr = text || '';
+
+        if (provider === 'justfoia') {
+            // Subdomain from email local part: fortcollinspoliceco@request.justfoia.com
+            const atIndex = (fromEmail || '').indexOf('@');
+            if (atIndex > 0) {
+                signals.subdomain = fromEmail.substring(0, atIndex).toLowerCase();
+            }
+            // Request number from subject: "Fort Collins Police - ... Request PD-2026-665"
+            const reqMatch = subjectStr.match(/Request\s+([A-Z]{1,5}-\d{4}-\d+)/i);
+            if (reqMatch) {
+                signals.requestNumber = reqMatch[1];
+            }
+        } else if (provider === 'govqa') {
+            // Subdomain from email local part: subdomain@mycusthelp.net
+            const atIndex = (fromEmail || '').indexOf('@');
+            if (atIndex > 0) {
+                signals.subdomain = fromEmail.substring(0, atIndex).toLowerCase();
+            }
+        } else if (provider === 'nextrequest') {
+            // Agency name from display name: "City of Austin via NextRequest"
+            const fromFullStr = fromFull || '';
+            const viaMatch = fromFullStr.match(/^["']?(.+?)\s+via\s+NextRequest/i);
+            if (viaMatch) {
+                signals.agencyName = viaMatch[1].trim().replace(/^["']|["']$/g, '');
+            }
+
+            // Agency name from subject: "Your City of Austin public records request"
+            if (!signals.agencyName) {
+                const subjAgencyMatch = subjectStr.match(/Your\s+(.+?)\s+public\s+records\s+request/i);
+                if (subjAgencyMatch) {
+                    signals.agencyName = subjAgencyMatch[1].trim();
+                }
+            }
+
+            // Request number from subject: "#XX-NNN" or "#NNNNN"
+            const reqNumMatch = subjectStr.match(/#([A-Z0-9]+-\d+|\d{3,})/i);
+            if (reqNumMatch) {
+                signals.requestNumber = reqNumMatch[1];
+            }
+
+            // Subdomain from body URLs: https://austin.nextrequest.com/...
+            const urlPattern = /https?:\/\/([a-z0-9-]+)\.nextrequest\.com/gi;
+            let urlMatch;
+            const bodyToScan = `${subjectStr}\n${textStr}`;
+            while ((urlMatch = urlPattern.exec(bodyToScan)) !== null) {
+                const sub = urlMatch[1].toLowerCase();
+                if (sub !== 'www' && sub !== 'api' && sub !== 'app' && sub !== 'messages') {
+                    signals.bodySubdomain = sub;
+                    break;
+                }
+            }
+        }
+
+        return signals;
+    }
+
+    /**
+     * Match a case using portal-specific signals with cascading priority.
+     * Returns case data or null.
+     */
+    async matchCaseByPortalSignals(signals) {
+        const activeStatuses = [
+            'sent', 'awaiting_response', 'portal_in_progress', 'needs_rebuttal',
+            'pending_fee_decision', 'needs_human_review', 'responded'
+        ];
+
+        // Priority 1: Subdomain match against portal_url (JustFOIA / GovQA)
+        if (signals.subdomain && (signals.provider === 'justfoia' || signals.provider === 'govqa')) {
+            const portalDomain = signals.provider === 'justfoia'
+                ? `${signals.subdomain}.justfoia.com`
+                : `${signals.subdomain}.`;  // GovQA subdomains vary: subdomain.mycusthelp.net, etc.
+
+            const subdomainMatch = await db.query(
+                `SELECT * FROM cases
+                 WHERE LOWER(portal_url) LIKE $1
+                   AND status = ANY($2)
+                 ORDER BY
+                   CASE WHEN portal_request_number = $3 THEN 0 ELSE 1 END,
+                   CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                   updated_at DESC
+                 LIMIT 1`,
+                [`%${portalDomain}%`, activeStatuses, signals.requestNumber || '']
+            );
+            if (subdomainMatch.rows.length > 0) {
+                console.log(`Portal match: subdomain "${signals.subdomain}" → case #${subdomainMatch.rows[0].id}`);
+                return subdomainMatch.rows[0];
+            }
+
+            // Fallback: any status
+            const subdomainFallback = await db.query(
+                `SELECT * FROM cases
+                 WHERE LOWER(portal_url) LIKE $1
+                 ORDER BY
+                   CASE WHEN portal_request_number = $2 THEN 0 ELSE 1 END,
+                   updated_at DESC
+                 LIMIT 1`,
+                [`%${portalDomain}%`, signals.requestNumber || '']
+            );
+            if (subdomainFallback.rows.length > 0) {
+                console.log(`Portal match (any-status fallback): subdomain "${signals.subdomain}" → case #${subdomainFallback.rows[0].id}`);
+                return subdomainFallback.rows[0];
+            }
+        }
+
+        // Priority 2: Request number match
+        if (signals.requestNumber) {
+            const reqMatch = await db.query(
+                `SELECT * FROM cases
+                 WHERE portal_request_number = $1
+                   AND status = ANY($2)
+                 ORDER BY updated_at DESC
+                 LIMIT 1`,
+                [signals.requestNumber, activeStatuses]
+            );
+            if (reqMatch.rows.length > 0) {
+                console.log(`Portal match: request number "${signals.requestNumber}" → case #${reqMatch.rows[0].id}`);
+                return reqMatch.rows[0];
+            }
+
+            // Fallback: any status
+            const reqFallback = await db.query(
+                `SELECT * FROM cases
+                 WHERE portal_request_number = $1
+                 ORDER BY updated_at DESC
+                 LIMIT 1`,
+                [signals.requestNumber]
+            );
+            if (reqFallback.rows.length > 0) {
+                console.log(`Portal match (any-status): request number "${signals.requestNumber}" → case #${reqFallback.rows[0].id}`);
+                return reqFallback.rows[0];
+            }
+        }
+
+        // Priority 3: Agency name match (NextRequest)
+        if (signals.agencyName) {
+            const exactMatch = await db.query(
+                `SELECT * FROM cases
+                 WHERE LOWER(agency_name) = LOWER($1)
+                   AND status = ANY($2)
+                 ORDER BY
+                   CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                   updated_at DESC
+                 LIMIT 1`,
+                [signals.agencyName, activeStatuses]
+            );
+            if (exactMatch.rows.length > 0) {
+                console.log(`Portal match: agency name "${signals.agencyName}" → case #${exactMatch.rows[0].id}`);
+                return exactMatch.rows[0];
+            }
+
+            // Fuzzy: LIKE %name%
+            const fuzzyMatch = await db.query(
+                `SELECT * FROM cases
+                 WHERE LOWER(agency_name) LIKE $1
+                   AND status = ANY($2)
+                 ORDER BY
+                   CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                   updated_at DESC
+                 LIMIT 1`,
+                [`%${signals.agencyName.toLowerCase()}%`, activeStatuses]
+            );
+            if (fuzzyMatch.rows.length > 0) {
+                console.log(`Portal match: fuzzy agency name "${signals.agencyName}" → case #${fuzzyMatch.rows[0].id}`);
+                return fuzzyMatch.rows[0];
+            }
+        }
+
+        // Priority 4: Body URL subdomain (NextRequest fallback)
+        if (signals.bodySubdomain) {
+            const bodySubMatch = await db.query(
+                `SELECT * FROM cases
+                 WHERE LOWER(portal_url) LIKE $1
+                   AND status = ANY($2)
+                 ORDER BY
+                   CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                   updated_at DESC
+                 LIMIT 1`,
+                [`%${signals.bodySubdomain}.nextrequest.com%`, activeStatuses]
+            );
+            if (bodySubMatch.rows.length > 0) {
+                console.log(`Portal match: body URL subdomain "${signals.bodySubdomain}" → case #${bodySubMatch.rows[0].id}`);
+                return bodySubMatch.rows[0];
+            }
+
+            // Fallback: any status
+            const bodySubFallback = await db.query(
+                `SELECT * FROM cases
+                 WHERE LOWER(portal_url) LIKE $1
+                 ORDER BY updated_at DESC
+                 LIMIT 1`,
+                [`%${signals.bodySubdomain}.nextrequest.com%`]
+            );
+            if (bodySubFallback.rows.length > 0) {
+                console.log(`Portal match (any-status): body URL subdomain "${signals.bodySubdomain}" → case #${bodySubFallback.rows[0].id}`);
+                return bodySubFallback.rows[0];
+            }
+        }
+
+        return null;
     }
 
     detectPortalNotification({ fromEmail, subject = '', text = '' }) {

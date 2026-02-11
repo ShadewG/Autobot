@@ -244,6 +244,7 @@ class FollowupScheduler {
 
   /**
    * Mark a follow-up as max reached (no more followups will be sent)
+   * Also escalates the case to the phone call queue.
    */
   async markMaxReached(caseId) {
     await db.query(`
@@ -254,6 +255,94 @@ class FollowupScheduler {
     `, [caseId]);
 
     logger.info('Case reached max followups', { caseId, maxFollowups: MAX_FOLLOWUPS });
+
+    // Escalate to phone call queue
+    try {
+      await this.escalateToPhoneQueue(caseId, 'followup_max_reached');
+    } catch (error) {
+      logger.error('Failed to escalate case to phone call queue', { caseId, error: error.message });
+    }
+  }
+
+  /**
+   * Escalate a case to the phone call queue
+   * @param {number} caseId
+   * @param {string} reason - 'no_email_response' | 'details_needed' | 'complex_inquiry' | 'portal_failed' | 'clarification_difficult'
+   * @param {object} opts - { notes, priority }
+   */
+  async escalateToPhoneQueue(caseId, reason = 'no_email_response', opts = {}) {
+    // Check if already in queue
+    const existing = await db.getPhoneCallByCaseId(caseId);
+    if (existing) {
+      logger.info('Case already in phone call queue, skipping', { caseId, existingId: existing.id });
+      return existing;
+    }
+
+    const caseData = await db.getCaseById(caseId);
+    if (!caseData) {
+      logger.warn('Case not found for phone escalation', { caseId });
+      return null;
+    }
+
+    // Look up agency phone number
+    let agencyPhone = null;
+    if (caseData.agency_id) {
+      const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+      if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
+    }
+
+    // Calculate days since sent
+    let daysSinceSent = null;
+    if (caseData.send_date) {
+      daysSinceSent = Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / (1000 * 60 * 60 * 24));
+    }
+
+    // Default notes based on reason
+    const defaultNotes = {
+      'no_email_response': `No email response after ${MAX_FOLLOWUPS} follow-ups`,
+      'details_needed': 'Agency needs additional details that are difficult to communicate via email',
+      'complex_inquiry': 'Complex inquiry requiring direct phone conversation',
+      'portal_failed': 'Portal submission failed - need to verify submission status by phone',
+      'clarification_difficult': 'Agency asked for clarification that requires phone discussion'
+    };
+
+    // Priority: explicit > time-based > reason-based
+    const reasonPriority = reason === 'portal_failed' ? 1 : 0;
+    const timePriority = daysSinceSent > 30 ? 2 : (daysSinceSent > 21 ? 1 : 0);
+    const priority = opts.priority ?? Math.max(timePriority, reasonPriority);
+
+    const phoneTask = await db.createPhoneCallTask({
+      case_id: caseId,
+      agency_name: caseData.agency_name,
+      agency_phone: agencyPhone,
+      agency_state: caseData.state,
+      reason,
+      priority,
+      notes: opts.notes || defaultNotes[reason] || `Phone call needed: ${reason}`,
+      days_since_sent: daysSinceSent
+    });
+
+    // Update case status
+    await db.updateCaseStatus(caseId, 'needs_phone_call', {
+      substatus: 'No email response after follow-ups'
+    });
+
+    // Log activity
+    await db.logActivity('phone_call_escalated',
+      `Case escalated to phone call queue: ${caseData.case_name} (${reason})`,
+      { case_id: caseId, phone_task_id: phoneTask.id }
+    );
+
+    // Sync to Notion
+    try {
+      const notionService = require('./notion-service');
+      await notionService.syncStatusToNotion(caseId);
+    } catch (err) {
+      logger.warn('Failed to sync phone escalation to Notion', { caseId, error: err.message });
+    }
+
+    logger.info('Case escalated to phone call queue', { caseId, phoneTaskId: phoneTask.id, reason });
+    return phoneTask;
   }
 
   /**

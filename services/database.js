@@ -140,7 +140,8 @@ class DatabaseService {
             last_portal_details: portalData.last_portal_details,
             last_portal_task_url: portalData.last_portal_task_url,
             last_portal_recording_url: portalData.last_portal_recording_url,
-            last_portal_account_email: portalData.last_portal_account_email
+            last_portal_account_email: portalData.last_portal_account_email,
+            portal_request_number: portalData.portal_request_number
         };
 
         const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
@@ -1473,6 +1474,141 @@ class DatabaseService {
             'SELECT * FROM response_analysis WHERE message_id = $1',
             [messageId]
         );
+        return result.rows[0];
+    }
+
+    // =========================================================================
+    // Phone Call Queue
+    // =========================================================================
+
+    async createPhoneCallTask(data) {
+        const result = await this.query(`
+            INSERT INTO phone_call_queue (
+                case_id, agency_name, agency_phone, agency_state,
+                reason, priority, notes, days_since_sent
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING *
+        `, [
+            data.case_id,
+            data.agency_name || null,
+            data.agency_phone || null,
+            data.agency_state || null,
+            data.reason || 'no_email_response',
+            data.priority || 0,
+            data.notes || null,
+            data.days_since_sent || null
+        ]);
+        return result.rows[0];
+    }
+
+    async getPendingPhoneCalls(limit = 50) {
+        const result = await this.query(`
+            SELECT pcq.*,
+                c.case_name, c.subject_name, c.agency_email, c.status as case_status,
+                c.send_date, c.state, c.additional_details,
+                COALESCE(pcq.agency_phone, a.phone) as agency_phone,
+                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
+            FROM phone_call_queue pcq
+            JOIN cases c ON pcq.case_id = c.id
+            LEFT JOIN agencies a ON c.agency_id = a.id
+            WHERE pcq.status IN ('pending', 'claimed')
+            ORDER BY pcq.priority DESC, pcq.days_since_sent DESC NULLS LAST, pcq.created_at ASC
+            LIMIT $1
+        `, [limit]);
+        return result.rows;
+    }
+
+    async getPhoneCallsByStatus(status, limit = 50) {
+        const result = await this.query(`
+            SELECT pcq.*,
+                c.case_name, c.subject_name, c.agency_email, c.status as case_status,
+                c.send_date, c.state, c.additional_details,
+                COALESCE(pcq.agency_phone, a.phone) as agency_phone,
+                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
+            FROM phone_call_queue pcq
+            JOIN cases c ON pcq.case_id = c.id
+            LEFT JOIN agencies a ON c.agency_id = a.id
+            WHERE pcq.status = $1
+            ORDER BY pcq.updated_at DESC
+            LIMIT $2
+        `, [status, limit]);
+        return result.rows;
+    }
+
+    async getPhoneCallById(id) {
+        const result = await this.query(`
+            SELECT pcq.*,
+                c.case_name, c.subject_name, c.agency_email, c.agency_name as case_agency_name, c.status as case_status,
+                c.send_date, c.state, c.additional_details,
+                COALESCE(pcq.agency_phone, a.phone) as agency_phone,
+                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
+            FROM phone_call_queue pcq
+            JOIN cases c ON pcq.case_id = c.id
+            LEFT JOIN agencies a ON c.agency_id = a.id
+            WHERE pcq.id = $1
+        `, [id]);
+        return result.rows[0];
+    }
+
+    async claimPhoneCall(id, assignedTo) {
+        const result = await this.query(`
+            UPDATE phone_call_queue
+            SET status = 'claimed',
+                assigned_to = $2,
+                claimed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1 AND status = 'pending'
+            RETURNING *
+        `, [id, assignedTo]);
+        return result.rows[0];
+    }
+
+    async completePhoneCall(id, outcome, notes, completedBy) {
+        const result = await this.query(`
+            UPDATE phone_call_queue
+            SET status = 'completed',
+                call_outcome = $2,
+                call_notes = $3,
+                completed_by = $4,
+                completed_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+        `, [id, outcome, notes, completedBy]);
+        return result.rows[0];
+    }
+
+    async skipPhoneCall(id, notes) {
+        const result = await this.query(`
+            UPDATE phone_call_queue
+            SET status = 'skipped',
+                call_notes = $2,
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+        `, [id, notes]);
+        return result.rows[0];
+    }
+
+    async getPhoneCallByCaseId(caseId) {
+        const result = await this.query(`
+            SELECT * FROM phone_call_queue
+            WHERE case_id = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [caseId]);
+        return result.rows[0];
+    }
+
+    async getPhoneCallQueueStats() {
+        const result = await this.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                COUNT(*) FILTER (WHERE status = 'claimed') AS claimed,
+                COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+                COUNT(*) FILTER (WHERE status = 'skipped') AS skipped
+            FROM phone_call_queue
+        `);
         return result.rows[0];
     }
 

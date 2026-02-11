@@ -126,11 +126,37 @@ class CronService {
             }
         }, 30000);
 
+        // Phone call escalation: sweep for 14-day no-response email cases (daily at 10 AM)
+        this.jobs.phoneCallSweep = new CronJob('0 10 * * *', async () => {
+            try {
+                console.log('Running phone call escalation sweep...');
+                const result = await this.sweepNoResponseCases();
+                if (result.escalated > 0) {
+                    console.log(`Escalated ${result.escalated} case(s) to phone call queue`);
+                }
+            } catch (error) {
+                console.error('Error in phone call sweep cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
+        // Stuck portal & orphaned review sweep (daily at 10:30 AM)
+        this.jobs.stuckPortalSweep = new CronJob('30 10 * * *', async () => {
+            try {
+                console.log('Running stuck portal & orphaned review sweep...');
+                const result = await this.sweepStuckPortalCases();
+                console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.followUpFixed} follow-up fixes`);
+            } catch (error) {
+                console.error('Error in stuck portal sweep cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
         console.log('✓ Agency sync: Every hour + on startup');
+        console.log('✓ Phone call sweep: Daily at 10 AM');
+        console.log('✓ Stuck portal sweep: Daily at 10:30 AM');
     }
 
     /**
@@ -175,6 +201,181 @@ class CronService {
             console.error('Error linking cases to agencies:', error);
             return { exact: 0, fuzzy: 0, error: error.message };
         }
+    }
+
+    /**
+     * Sweep for email-only cases with no response after 14 days.
+     * Creates phone call queue entries for any that slipped through followup scheduling.
+     */
+    async sweepNoResponseCases() {
+        let escalated = 0;
+        try {
+            const result = await db.query(`
+                SELECT c.*
+                FROM cases c
+                WHERE c.status IN ('sent', 'awaiting_response')
+                  AND c.send_date < NOW() - INTERVAL '14 days'
+                  AND (c.portal_url IS NULL OR c.portal_url = '')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
+                  )
+                ORDER BY c.send_date ASC
+                LIMIT 50
+            `);
+
+            for (const caseData of result.rows) {
+                try {
+                    const daysSinceSent = Math.floor(
+                        (Date.now() - new Date(caseData.send_date).getTime()) / (1000 * 60 * 60 * 24)
+                    );
+
+                    // Look up agency phone number
+                    let agencyPhone = null;
+                    if (caseData.agency_id) {
+                        const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+                        if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
+                    }
+
+                    await db.createPhoneCallTask({
+                        case_id: caseData.id,
+                        agency_name: caseData.agency_name,
+                        agency_phone: agencyPhone,
+                        agency_state: caseData.state,
+                        reason: 'no_email_response',
+                        priority: daysSinceSent > 30 ? 2 : (daysSinceSent > 21 ? 1 : 0),
+                        notes: `No response after ${daysSinceSent} days (sweep)`,
+                        days_since_sent: daysSinceSent
+                    });
+
+                    await db.updateCaseStatus(caseData.id, 'needs_phone_call', {
+                        substatus: 'No email response after 14+ days'
+                    });
+
+                    await db.logActivity('phone_call_escalated',
+                        `Case escalated to phone call queue via sweep: ${caseData.case_name}`,
+                        { case_id: caseData.id }
+                    );
+
+                    // Sync to Notion
+                    try {
+                        const notionService = require('./notion-service');
+                        await notionService.syncStatusToNotion(caseData.id);
+                    } catch (err) {
+                        console.warn('Failed to sync phone escalation to Notion:', err.message);
+                    }
+
+                    escalated++;
+                    console.log(`Phone call escalation: case ${caseData.id} (${caseData.case_name})`);
+                } catch (error) {
+                    console.error(`Error escalating case ${caseData.id}:`, error.message);
+                }
+            }
+        } catch (error) {
+            console.error('Error in sweepNoResponseCases:', error);
+        }
+
+        return { escalated };
+    }
+
+    /**
+     * Sweep for stuck portal cases, orphaned reviews, and stale follow-up records.
+     */
+    async sweepStuckPortalCases() {
+        let portalEscalated = 0;
+        let proposalsCreated = 0;
+        let followUpFixed = 0;
+
+        // Sweep 1: Stuck portal_in_progress > 24 hours
+        try {
+            const stuckPortal = await db.query(`
+                SELECT c.* FROM cases c
+                WHERE c.status = 'portal_in_progress'
+                  AND c.updated_at < NOW() - INTERVAL '24 hours'
+            `);
+
+            for (const caseData of stuckPortal.rows) {
+                try {
+                    await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                        substatus: 'Portal submission timed out — no completion after 24h',
+                        requires_human: true
+                    });
+                    await db.logActivity('portal_stuck_escalated',
+                        `Case ${caseData.case_name} stuck in portal_in_progress for >24h, escalated to human review`,
+                        { case_id: caseData.id }
+                    );
+                    try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+                    portalEscalated++;
+                    console.log(`Stuck portal escalated: case ${caseData.id} (${caseData.case_name})`);
+                } catch (err) {
+                    console.error(`Error escalating stuck portal case ${caseData.id}:`, err.message);
+                }
+            }
+        } catch (error) {
+            console.error('Error in stuck portal sweep:', error);
+        }
+
+        // Sweep 2: Orphaned needs_human_review > 48 hours with no pending proposals
+        try {
+            const orphaned = await db.query(`
+                SELECT c.* FROM cases c
+                WHERE c.status = 'needs_human_review'
+                  AND c.updated_at < NOW() - INTERVAL '48 hours'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM proposals p
+                    WHERE p.case_id = c.id AND p.status IN ('PENDING_APPROVAL', 'DRAFT')
+                  )
+            `);
+
+            for (const caseData of orphaned.rows) {
+                try {
+                    const portalUrl = caseData.portal_url || 'N/A';
+                    await db.upsertProposal({
+                        proposalKey: `${caseData.id}:sweep_orphan:SUBMIT_PORTAL:1`,
+                        caseId: caseData.id,
+                        actionType: 'SUBMIT_PORTAL',
+                        reasoning: [{ step: 'Orphaned human review detected by sweep', detail: `Case stuck in needs_human_review for >48h with no actionable proposal` }],
+                        confidence: 0,
+                        requiresHuman: true,
+                        canAutoExecute: false,
+                        draftSubject: `Manual action needed: ${caseData.case_name}`,
+                        draftBodyText: `Portal: ${portalUrl}\nCase has been in needs_human_review for over 48 hours with no pending proposal.`,
+                        status: 'PENDING_APPROVAL'
+                    });
+                    await db.logActivity('human_review_proposal_created',
+                        `Created proposal for orphaned case ${caseData.case_name} (stuck >48h with no proposals)`,
+                        { case_id: caseData.id }
+                    );
+                    proposalsCreated++;
+                    console.log(`Orphan proposal created: case ${caseData.id} (${caseData.case_name})`);
+                } catch (err) {
+                    console.error(`Error creating proposal for orphaned case ${caseData.id}:`, err.message);
+                }
+            }
+        } catch (error) {
+            console.error('Error in orphaned review sweep:', error);
+        }
+
+        // Sweep 3: Fix follow_up_schedule records with status='sent' → 'scheduled'
+        try {
+            const fixResult = await db.query(`
+                UPDATE follow_up_schedule
+                SET status = 'scheduled'
+                WHERE status = 'sent'
+                RETURNING id
+            `);
+            followUpFixed = fixResult.rowCount || 0;
+            if (followUpFixed > 0) {
+                console.log(`Fixed ${followUpFixed} follow_up_schedule records: 'sent' → 'scheduled'`);
+                await db.logActivity('followup_status_fixed',
+                    `Fixed ${followUpFixed} follow_up_schedule records from 'sent' to 'scheduled'`,
+                    {}
+                );
+            }
+        } catch (error) {
+            console.error('Error in follow-up status fix sweep:', error);
+        }
+
+        return { portalEscalated, proposalsCreated, followUpFixed };
     }
 
     /**

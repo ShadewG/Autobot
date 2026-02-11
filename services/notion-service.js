@@ -30,7 +30,8 @@ const NOTION_STATUS_MAP = {
     'needs_human_fee_approval': 'Needs Human Approval',
     'needs_human_review': 'Needs Human Review',
     'portal_in_progress': 'Portal Submission',
-    'portal_submission_failed': 'Portal Issue'
+    'portal_submission_failed': 'Portal Issue',
+    'needs_phone_call': 'Needs Phone Call'
 };
 
 const POLICE_DEPARTMENT_FIELD_SPECS = [
@@ -1500,7 +1501,8 @@ Look for a records division email, FOIA email, or general agency email that acce
             'needs_human_fee_approval': 'Needs Human Approval',
             'needs_human_review': 'Needs Human Review',
             'portal_in_progress': 'Portal Submission',
-            'portal_submission_failed': 'Portal Issue'
+            'portal_submission_failed': 'Portal Issue',
+            'needs_phone_call': 'Needs Phone Call'
         };
 
         return statusMap[internalStatus] || internalStatus;

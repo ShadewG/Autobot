@@ -971,6 +971,30 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
             portal_provider: provider,
             instructions
         });
+        // Safety net: ensure case is flagged for human review + create proposal
+        try {
+            await db.updateCaseStatus(caseId, 'needs_human_review', {
+                substatus: 'Portal submission failed - requires human submission',
+                requires_human: true
+            });
+            const caseData = await db.getCaseById(caseId);
+            const caseName = caseData?.case_name || `Case ${caseId}`;
+            await db.upsertProposal({
+                proposalKey: `${caseId}:portal_failure:SUBMIT_PORTAL:1`,
+                caseId: caseId,
+                actionType: 'SUBMIT_PORTAL',
+                reasoning: [{ step: 'Automated portal submission failed', detail: error.message }],
+                confidence: 0,
+                requiresHuman: true,
+                canAutoExecute: false,
+                draftSubject: `Manual portal submission needed: ${caseName}`,
+                draftBodyText: `Portal: ${portalUrl || 'N/A'}\nError: ${error.message}`,
+                status: 'PENDING_APPROVAL'
+            });
+            await notionService.syncStatusToNotion(caseId);
+        } catch (statusErr) {
+            console.error(`Failed to update case status/proposal after portal failure: ${statusErr.message}`);
+        }
         throw error;
     }
 }

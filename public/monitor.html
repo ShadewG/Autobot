@@ -813,7 +813,7 @@
 
     <div id="phonecalls" class="panel">
         <p style="color: #f0883e; margin-bottom: 15px;">
-            Cases that received no email response after follow-ups. A human needs to call the agency directly.
+            Cases requiring a phone call — no email response, details too complex for email, portal failures, or clarification needed.
         </p>
         <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center;">
             <select id="phoneCallFilter" onchange="loadPhoneCalls()" style="padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;">
@@ -1235,7 +1235,7 @@
                 const res = await fetch(url);
                 const data = await res.json();
 
-                if (!data.success) throw new Error(data.error);
+                if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
 
                 // Update stat box and badge
                 const pendingCount = data.stats?.pending || 0;
@@ -1269,6 +1269,18 @@
                         : `<span style="color:#f85149;font-size:13px;">No phone on file</span>`;
 
                     const daysText = t.days_since_sent != null ? `${t.days_since_sent}d` : '-';
+                    const reasonLabels = {
+                        'no_email_response': 'No Response',
+                        'details_needed': 'Details Needed',
+                        'complex_inquiry': 'Complex Inquiry',
+                        'portal_failed': 'Portal Failed',
+                        'followup_max_reached': 'Max Follow-ups',
+                        'clarification_difficult': 'Clarification Needed'
+                    };
+                    const reasonLabel = reasonLabels[t.reason] || t.reason || 'Unknown';
+                    const reasonColor = t.reason === 'no_email_response' ? '#f0883e' :
+                                       t.reason === 'details_needed' || t.reason === 'clarification_difficult' ? '#d2a8ff' :
+                                       t.reason === 'portal_failed' ? '#f85149' : '#8b949e';
 
                     let actionBtns = '';
                     if (t.status === 'pending') {
@@ -1289,6 +1301,7 @@
                                 </div>
                             </div>
                             <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+                                <span style="background:#21262d;color:${reasonColor};padding:2px 8px;border-radius:10px;font-size:11px;" title="${t.reason}">${reasonLabel}</span>
                                 <span style="background:#21262d;color:#c9d1d9;padding:2px 8px;border-radius:10px;font-size:11px;" title="Days waiting">${daysText}</span>
                                 <span style="color:${statusColor};font-weight:600;font-size:12px;">${t.status}</span>
                                 ${t.assigned_to ? `<span style="color:#8b949e;font-size:11px;">${t.assigned_to}</span>` : ''}
@@ -2039,6 +2052,7 @@
             if (sub.includes('fee') || sub.includes('quote') || sub.includes('cost')) return 'FEE_QUOTE';
             if (c.last_fee_quote_amount) return 'FEE_QUOTE';
             if (sub.includes('denial') || sub.includes('denied') || sub.includes('reject')) return 'DENIAL';
+            if (sub.includes('clarif') || sub.includes('question') || sub.includes('details needed') || sub.includes('more info')) return 'CLARIFICATION';
             if (sub.includes('missing') || sub.includes('contact') || sub.includes('info needed')) return 'MISSING_INFO';
             if (status === 'needs_contact_info') return 'MISSING_INFO';
             return 'GENERAL';
@@ -2049,27 +2063,38 @@
                 { id: 'retry_portal', label: 'Retry Portal', primary: true },
                 { id: 'send_via_email', label: 'Send via Email' },
                 { id: 'submit_manually', label: 'Submit Manually (opens portal)' },
+                { id: 'call_agency', label: 'Call Agency' },
                 { id: 'put_on_hold', label: 'Put on Hold' },
             ],
             FEE_QUOTE: [
                 { id: 'accept_fee', label: 'Accept & Proceed', primary: true },
                 { id: 'negotiate_fee', label: 'Negotiate Fee' },
+                { id: 'call_agency', label: 'Call Agency' },
                 { id: 'close', label: 'Decline & Close' },
                 { id: 'put_on_hold', label: 'Put on Hold' },
             ],
             DENIAL: [
                 { id: 'appeal', label: 'Appeal Denial', primary: true },
                 { id: 'narrow_scope', label: 'Narrow Scope & Retry' },
+                { id: 'call_agency', label: 'Call Agency' },
                 { id: 'close', label: 'Close Request' },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+            ],
+            CLARIFICATION: [
+                { id: 'narrow_scope', label: 'Reply via Email', primary: true },
+                { id: 'call_agency', label: 'Call Agency' },
+                { id: 'custom', label: 'Custom Response' },
                 { id: 'put_on_hold', label: 'Put on Hold' },
             ],
             MISSING_INFO: [
                 { id: 'reprocess', label: 'Re-process', primary: true },
+                { id: 'call_agency', label: 'Call Agency' },
                 { id: 'put_on_hold', label: 'Put on Hold' },
                 { id: 'close', label: 'Skip / Close' },
             ],
             GENERAL: [
                 { id: 'reprocess', label: 'Re-process', primary: true },
+                { id: 'call_agency', label: 'Call Agency' },
                 { id: 'put_on_hold', label: 'Put on Hold' },
                 { id: 'close', label: 'Close Request' },
             ],
@@ -2079,6 +2104,7 @@
             PORTAL_FAILED: 'Portal Failed',
             FEE_QUOTE: 'Fee Quote',
             DENIAL: 'Denial',
+            CLARIFICATION: 'Clarification Needed',
             MISSING_INFO: 'Missing Info',
             GENERAL: 'Needs Review',
         };

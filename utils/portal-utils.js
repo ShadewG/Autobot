@@ -1,3 +1,18 @@
+/**
+ * Maps email sender domains to portal providers for inbound email matching.
+ * Key = domain (or subdomain.domain), Value = { provider, subdomainFromLocalPart }
+ *   subdomainFromLocalPart: true means the subdomain is the local part of the sender
+ *   (e.g. fortcollinspoliceco@request.justfoia.com → subdomain "fortcollinspoliceco")
+ */
+const PORTAL_EMAIL_DOMAINS = {
+    'nextrequest.com':        { provider: 'nextrequest', subdomainFromLocalPart: false },
+    'request.justfoia.com':   { provider: 'justfoia',    subdomainFromLocalPart: true },
+    'mycusthelp.net':         { provider: 'govqa',       subdomainFromLocalPart: true },
+    'mycusthelp.com':         { provider: 'govqa',       subdomainFromLocalPart: true },
+    'custhelp.com':           { provider: 'govqa',       subdomainFromLocalPart: true },
+    'govqa.us':               { provider: 'govqa',       subdomainFromLocalPart: true }
+};
+
 const PORTAL_PROVIDERS = [
     {
         name: 'govqa',
@@ -82,6 +97,7 @@ function isSupportedPortalUrl(url) {
 
 module.exports = {
     PORTAL_PROVIDERS,
+    PORTAL_EMAIL_DOMAINS,
     normalizePortalUrl,
     detectPortalProviderByUrl,
     detectPortalProviderByHostname,

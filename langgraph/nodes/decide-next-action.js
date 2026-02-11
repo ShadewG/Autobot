@@ -317,6 +317,26 @@ async function decideNextActionNode(state) {
           };
         }
 
+        case 'call_agency': {
+          // Escalate to phone call queue — details too complex for email
+          reasoning.push('Escalating to phone call queue per human review');
+          const phoneReason = reviewInstruction ? 'details_needed' : 'complex_inquiry';
+          try {
+            const followupScheduler = require('../../services/followup-scheduler');
+            await followupScheduler.escalateToPhoneQueue(caseId, phoneReason, {
+              notes: reviewInstruction || 'Human reviewer requested phone call to agency'
+            });
+          } catch (phoneErr) {
+            logger.error('Failed to escalate to phone queue from review', { caseId, error: phoneErr.message });
+          }
+          return {
+            isComplete: true,
+            proposalActionType: NONE,
+            proposalReasoning: reasoning,
+            logs: [...logs, `Escalated to phone queue (${phoneReason})`]
+          };
+        }
+
         default:
           reasoning.push(`Unknown review action: ${reviewAction}`);
           return {

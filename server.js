@@ -61,6 +61,7 @@ const portalTasksRoutes = require('./routes/portal-tasks');
 const shadowModeRoutes = require('./routes/shadow-mode');
 const casesRoutes = require('./routes/cases');
 const monitorRoutes = require('./routes/monitor');
+const phoneCallRoutes = require('./routes/phone-calls');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
@@ -72,6 +73,7 @@ app.use('/api/portal-tasks', portalTasksRoutes);  // Portal Tasks (Phase 4): man
 app.use('/api/shadow', shadowModeRoutes);  // Shadow Mode (Phase 7.1): review tracking and metrics
 app.use('/api/cases', casesRoutes);  // Cases: /api/cases/import-notion
 app.use('/api/monitor', monitorRoutes);  // Monitor: /api/monitor/* for debugging
+app.use('/api/phone-calls', phoneCallRoutes);  // Phone Call Queue: escalation for unresponsive email cases
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');

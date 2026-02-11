@@ -93,11 +93,18 @@ class FollowUpService {
                     status: 'max_reached'
                 });
 
-                // Send alert (could integrate Slack here)
                 await db.logActivity('followup_max_reached',
                     `Case ${caseData.case_name} has reached max follow-ups with no response`,
                     { case_id: caseData.id }
                 );
+
+                // Escalate to phone call queue
+                try {
+                    const followupScheduler = require('./followup-scheduler');
+                    await followupScheduler.escalateToPhoneQueue(caseData.id, 'followup_max_reached');
+                } catch (err) {
+                    console.error(`Failed to escalate case ${caseData.id} to phone queue:`, err.message);
+                }
 
                 return;
             }
@@ -135,7 +142,7 @@ class FollowUpService {
                 followup_count: followupSchedule.followup_count + 1,
                 last_followup_sent_at: new Date(),
                 next_followup_date: nextDate,
-                status: 'sent'
+                status: 'scheduled'
             });
 
             // Update case status

@@ -1,0 +1,524 @@
+{
+  "timestamp": "2026-02-11T09:40:04.787Z",
+  "totalTests": 59,
+  "passed": 59,
+  "failed": 0,
+  "passRate": "100%",
+  "durationSeconds": 10.2,
+  "categories": {
+    "A: Classify-Inbound": {
+      "pass": 8,
+      "fail": 0,
+      "total": 8
+    },
+    "B: Decide-Next-Action": {
+      "pass": 15,
+      "fail": 0,
+      "total": 15
+    },
+    "C: Safety-Check": {
+      "pass": 8,
+      "fail": 0,
+      "total": 8
+    },
+    "D: Gate-Or-Execute": {
+      "pass": 6,
+      "fail": 0,
+      "total": 6
+    },
+    "E: Draft-Response": {
+      "pass": 6,
+      "fail": 0,
+      "total": 6
+    },
+    "F: Graph Routing": {
+      "pass": 4,
+      "fail": 0,
+      "total": 4
+    },
+    "G: State & Helpers": {
+      "pass": 3,
+      "fail": 0,
+      "total": 3
+    },
+    "B: Decide-Next-Action (Review)": {
+      "pass": 9,
+      "fail": 0,
+      "total": 9
+    }
+  },
+  "results": [
+    {
+      "id": "A1",
+      "name": "Portal redirect → PORTAL_REDIRECT classification",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A2",
+      "name": "Fee request → FEE_QUOTE with amount extraction",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A3",
+      "name": "Denial → DENIAL classification",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A4",
+      "name": "Acknowledgment → ACKNOWLEDGMENT (no response)",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A5",
+      "name": "Records ready → RECORDS_READY",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A6",
+      "name": "Scheduled followup trigger → NO_RESPONSE bypass",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A7",
+      "name": "Human review resolution → HUMAN_REVIEW_RESOLUTION bypass",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "A8",
+      "name": "Clarification request → CLARIFICATION_REQUEST",
+      "category": "A: Classify-Inbound",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B1",
+      "name": "requiresResponse=false + use_portal → NONE + portal update",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B2",
+      "name": "requiresResponse=false + download → NONE + completed",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B3",
+      "name": "requiresResponse=false + wait → NONE (acknowledgment)",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B4",
+      "name": "requiresResponse=false + find_correct_agency → NONE + wrong_agency",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B5",
+      "name": "FEE_QUOTE $50 AUTO → ACCEPT_FEE auto-execute",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B6",
+      "name": "FEE_QUOTE $50 SUPERVISED → ACCEPT_FEE gated",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B7",
+      "name": "FEE_QUOTE $750 → NEGOTIATE_FEE gated",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B8",
+      "name": "FEE_QUOTE $300 → ACCEPT_FEE gated (mid-range)",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B9",
+      "name": "CLARIFICATION_REQUEST AUTO non-hostile → auto-execute",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B10",
+      "name": "CLARIFICATION_REQUEST hostile → gated",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B11",
+      "name": "PARTIAL_APPROVAL → always gated",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B12",
+      "name": "HOSTILE → ESCALATE",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B13",
+      "name": "Human decision APPROVE → execute_action",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B14",
+      "name": "Human decision ADJUST → draft_response with instruction",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B15",
+      "name": "Human decision WITHDRAW → cancelled + complete",
+      "category": "B: Decide-Next-Action",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C1",
+      "name": "BWC_EXEMPT + requests body camera → REQUESTS_EXEMPT_ITEM",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C2",
+      "name": "BWC_EXEMPT + acknowledges exemption → no flag",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C3",
+      "name": "FEE_ACCEPTED + negotiation attempt → CONTRADICTS_FEE_ACCEPTANCE",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C4",
+      "name": "PII detection — SSN pattern",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C5",
+      "name": "Aggressive language in non-rebuttal",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C6",
+      "name": "Aggressive language in rebuttal → allowed",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C7",
+      "name": "INVESTIGATION_ACTIVE + rebuttal → warning (not blocking)",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "C8",
+      "name": "No draft body → NO_DRAFT flag, early return",
+      "category": "C: Safety-Check",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "D1",
+      "name": "canAutoExecute=true → routes to execute_action (no interrupt)",
+      "category": "D: Gate-Or-Execute",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "D2",
+      "name": "NONE action → skips proposal, completes",
+      "category": "D: Gate-Or-Execute",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "D3",
+      "name": "Proposal key is deterministic (idempotent)",
+      "category": "D: Gate-Or-Execute",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "D4",
+      "name": "Scheduled trigger uses \"scheduled\" in key",
+      "category": "D: Gate-Or-Execute",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "D5",
+      "name": "Missing proposalActionType recovers from state",
+      "category": "D: Gate-Or-Execute",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "D6",
+      "name": "Auto-execute with all fields → proposal created with APPROVED status",
+      "category": "D: Gate-Or-Execute",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "E1",
+      "name": "SEND_FOLLOWUP stub → draft created",
+      "category": "E: Draft-Response",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "E2",
+      "name": "SEND_REBUTTAL stub → draft created",
+      "category": "E: Draft-Response",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "E3",
+      "name": "ACCEPT_FEE stub → fee acceptance draft",
+      "category": "E: Draft-Response",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "E4",
+      "name": "NEGOTIATE_FEE stub → negotiation draft",
+      "category": "E: Draft-Response",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "E5",
+      "name": "ESCALATE → no draft needed",
+      "category": "E: Draft-Response",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "E6",
+      "name": "NONE → no draft needed",
+      "category": "E: Draft-Response",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "F1",
+      "name": "Inbound graph: routeFromDecision routes correctly",
+      "category": "F: Graph Routing",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "F2",
+      "name": "Inbound graph: routeFromGate routes correctly",
+      "category": "F: Graph Routing",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "F3",
+      "name": "Initial request graph: routeAfterDraft routes correctly",
+      "category": "F: Graph Routing",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "F4",
+      "name": "Initial request graph: routeAfterExecute routes correctly",
+      "category": "F: Graph Routing",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "G1",
+      "name": "createInitialState generates correct state",
+      "category": "G: State & Helpers",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "G2",
+      "name": "Action types module validates correctly",
+      "category": "G: State & Helpers",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "G3",
+      "name": "Default state values are safe",
+      "category": "G: State & Helpers",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B16",
+      "name": "HUMAN_REVIEW_RESOLUTION: retry_portal → NONE + portal task",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B17",
+      "name": "HUMAN_REVIEW_RESOLUTION: send_via_email → SEND_FOLLOWUP",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B18",
+      "name": "HUMAN_REVIEW_RESOLUTION: appeal → SEND_REBUTTAL",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B19",
+      "name": "HUMAN_REVIEW_RESOLUTION: narrow_scope → SEND_CLARIFICATION",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B20",
+      "name": "HUMAN_REVIEW_RESOLUTION: negotiate_fee → NEGOTIATE_FEE",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B21",
+      "name": "HUMAN_REVIEW_RESOLUTION: accept_fee → ACCEPT_FEE",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B22",
+      "name": "HUMAN_REVIEW_RESOLUTION: custom with instruction → SEND_FOLLOWUP",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B23",
+      "name": "HUMAN_REVIEW_RESOLUTION: custom without instruction → NONE",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    },
+    {
+      "id": "B24",
+      "name": "HUMAN_REVIEW_RESOLUTION: call_agency → NONE + phone escalation",
+      "category": "B: Decide-Next-Action (Review)",
+      "status": "PASS",
+      "retries": 0,
+      "error": null
+    }
+  ]
+}
