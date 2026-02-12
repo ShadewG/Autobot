@@ -1919,16 +1919,19 @@
 
             renderOpsList('opsPendingList', payload.pending_approvals, (p) => {
                 const hasPortal = p.portal_url && !p.portal_url.startsWith('http://') || (p.portal_url && p.portal_url.includes('portal'));
-                const actionLabel = (p.action_type || '').replace(/_/g, ' ');
-                const caseStatus = (p.case_status || '').replace(/_/g, ' ');
+                const actionLabel = String(p.action_type || '').replace(/_/g, ' ');
+                const caseStatus = String(p.case_status || '').replace(/_/g, ' ');
                 const msgSummary = p.inbound_count > 0
                     ? `${p.inbound_count} inbound msg${p.inbound_count > 1 ? 's' : ''}`
                     : 'No responses yet';
                 const lastMsg = p.last_inbound_preview
-                    ? truncate(p.last_inbound_preview.replace(/\s+/g, ' '), 100)
+                    ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 100)
                     : '';
-                const lastSubj = p.last_inbound_subject ? truncate(p.last_inbound_subject, 50) : '';
-                const reasoning = p.reasoning ? truncate(p.reasoning, 120) : '';
+                const lastSubj = p.last_inbound_subject ? truncate(String(p.last_inbound_subject), 50) : '';
+                const rawReasoning = typeof p.reasoning === 'object' && p.reasoning !== null
+                    ? (p.reasoning.summary || p.reasoning.text || JSON.stringify(p.reasoning))
+                    : (p.reasoning || '');
+                const reasoning = rawReasoning ? truncate(String(rawReasoning), 120) : '';
                 return `
                 <div class="ops-item" style="padding:10px;">
                     <div style="display:flex;justify-content:space-between;align-items:start;">
@@ -2935,8 +2938,8 @@
 
             let html = `<h3 style="margin-bottom:8px;">Pending Actions</h3>`;
             for (const p of pending) {
-                const actionLabel = (p.action_type || 'action').replace(/_/g, ' ');
-                const isInitial = p.action_type === 'SEND_INITIAL_REQUEST';
+                const actionLabel = String(p.action_type || 'action').replace(/_/g, ' ');
+                const isInitial = String(p.action_type) === 'SEND_INITIAL_REQUEST';
                 const isHybrid = !!p.portal_url && !!p.agency_email;
                 const showRouteApprove = isInitial && isHybrid;
 
@@ -2946,8 +2949,11 @@
                 html += `<span style="font-size:11px;color:#8b949e;">Proposal #${p.id} · Confidence: ${p.confidence || '-'}</span>`;
                 html += `</div>`;
 
-                if (p.reasoning) {
-                    html += `<div class="pac-reasoning">${truncate(p.reasoning, 200)}</div>`;
+                const reasoningText = typeof p.reasoning === 'object' && p.reasoning !== null
+                    ? (p.reasoning.summary || p.reasoning.text || JSON.stringify(p.reasoning))
+                    : (p.reasoning || '');
+                if (reasoningText) {
+                    html += `<div class="pac-reasoning">${escapeHtml(truncate(String(reasoningText), 200))}</div>`;
                 }
 
                 if (p.draft_subject || p.draft_body_text) {
