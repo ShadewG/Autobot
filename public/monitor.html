@@ -1297,6 +1297,19 @@
             return text.length > len ? text.slice(0, len) + '...' : text;
         }
 
+        // Format proposal reasoning from JSON steps into readable text
+        function formatReasoning(reasoning) {
+            if (!reasoning) return '';
+            if (typeof reasoning === 'string') return reasoning;
+            if (Array.isArray(reasoning)) {
+                return reasoning.map(r => r.detail || r.step || (typeof r === 'string' ? r : '')).filter(Boolean).join(' · ');
+            }
+            if (reasoning.summary) return reasoning.summary;
+            if (reasoning.text) return reasoning.text;
+            if (reasoning.step) return reasoning.detail || reasoning.step;
+            return '';
+        }
+
         // Badge for direction
         function directionBadge(dir) {
             return `<span class="badge ${dir}">${dir}</span>`;
@@ -1928,10 +1941,7 @@
                     ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 100)
                     : '';
                 const lastSubj = p.last_inbound_subject ? truncate(String(p.last_inbound_subject), 50) : '';
-                const rawReasoning = typeof p.reasoning === 'object' && p.reasoning !== null
-                    ? (p.reasoning.summary || p.reasoning.text || JSON.stringify(p.reasoning))
-                    : (p.reasoning || '');
-                const reasoning = rawReasoning ? truncate(String(rawReasoning), 120) : '';
+                const reasoning = truncate(formatReasoning(p.reasoning), 120);
                 return `
                 <div class="ops-item" style="padding:10px;">
                     <div style="display:flex;justify-content:space-between;align-items:start;">
@@ -2949,11 +2959,9 @@
                 html += `<span style="font-size:11px;color:#8b949e;">Proposal #${p.id} · Confidence: ${p.confidence || '-'}</span>`;
                 html += `</div>`;
 
-                const reasoningText = typeof p.reasoning === 'object' && p.reasoning !== null
-                    ? (p.reasoning.summary || p.reasoning.text || JSON.stringify(p.reasoning))
-                    : (p.reasoning || '');
+                const reasoningText = formatReasoning(p.reasoning);
                 if (reasoningText) {
-                    html += `<div class="pac-reasoning">${escapeHtml(truncate(String(reasoningText), 200))}</div>`;
+                    html += `<div class="pac-reasoning">${escapeHtml(truncate(reasoningText, 200))}</div>`;
                 }
 
                 if (p.draft_subject || p.draft_body_text) {
