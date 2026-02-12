@@ -466,6 +466,166 @@
             color: #8b949e;
             margin-top: 6px;
         }
+
+        /* Pending proposal action cards */
+        .proposal-action-card {
+            background: #0d1117;
+            border: 2px solid #1f6feb;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .proposal-action-card .pac-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .proposal-action-card .pac-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            background: #1f6feb;
+            color: #fff;
+        }
+        .proposal-action-card .pac-reasoning {
+            font-size: 12px;
+            color: #d2a8ff;
+            line-height: 1.4;
+            margin-bottom: 8px;
+        }
+        .proposal-action-card .pac-draft {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .proposal-action-card .pac-draft .pac-subject {
+            color: #58a6ff;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .proposal-action-card .pac-draft .pac-body-preview {
+            color: #8b949e;
+            white-space: pre-wrap;
+            max-height: 60px;
+            overflow: hidden;
+        }
+        .proposal-action-card .pac-draft .pac-body-full {
+            color: #c9d1d9;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .proposal-action-card .pac-actions {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+        .proposal-action-card .pac-expanded-detail {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid #30363d;
+        }
+        .proposal-action-card .pac-detail-row {
+            font-size: 11px;
+            color: #8b949e;
+            margin-bottom: 4px;
+        }
+
+        /* Contact indicator badges */
+        .contact-indicator {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            background: #21262d;
+            color: #8b949e;
+        }
+        .contact-indicator.has-portal { color: #f0883e; border: 1px solid #f0883e40; }
+        .contact-indicator.has-email { color: #1f6feb; border: 1px solid #1f6feb40; }
+        .contact-indicator.has-both { color: #8957e5; border: 1px solid #8957e540; }
+
+        /* AI case summary */
+        .ai-case-summary {
+            background: #1c2333;
+            border: 1px solid #388bfd40;
+            border-radius: 6px;
+            padding: 10px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .ai-case-summary .summary-label {
+            color: #58a6ff;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .ai-case-summary .summary-text {
+            color: #c9d1d9;
+        }
+
+        /* Inline message expansion */
+        .case-msg-item {
+            font-size: 12px;
+            padding: 8px 0;
+            border-bottom: 1px solid #21262d;
+            cursor: pointer;
+        }
+        .case-msg-item:last-child { border-bottom: none; }
+        .case-msg-item:hover { background: #161b2280; }
+        .case-msg-item.msg-expanded { background: #161b22; cursor: default; }
+        .case-msg-expanded-body {
+            margin-top: 8px;
+            padding: 10px;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+        }
+        .case-msg-expanded-body .msg-meta {
+            font-size: 11px;
+            color: #8b949e;
+            margin-bottom: 6px;
+        }
+        .case-msg-expanded-body .msg-body-text {
+            white-space: pre-wrap;
+            color: #c9d1d9;
+            font-size: 12px;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .case-msg-expanded-body .msg-collapse-btn {
+            margin-top: 6px;
+            padding: 3px 10px;
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+
+        /* Quick Actions section */
+        .quick-actions-section {
+            margin-top: 10px;
+            padding-top: 8px;
+            border-top: 1px solid #30363d;
+        }
+        .quick-actions-label {
+            font-size: 11px;
+            color: #8b949e;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
         .clickable-row { cursor: pointer; }
         .clickable-row:hover { background: #1f242b; }
         .clickable-row.expanded { background: #1c2333; }
@@ -518,15 +678,80 @@
             border-bottom: none;
         }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        /* Toast notifications */
+        #toast-container {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 10000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-width: 380px;
+        }
+        .toast {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 13px;
+            color: #c9d1d9;
+            box-shadow: 0 4px 16px rgba(0,0,0,.4);
+            animation: toastSlideIn .3s ease-out;
+            cursor: pointer;
+            border-left: 4px solid #8b949e;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            word-break: break-word;
+        }
+        .toast.success { border-left-color: #3fb950; }
+        .toast.error   { border-left-color: #f85149; }
+        .toast.warning { border-left-color: #d29922; }
+        .toast.info    { border-left-color: #58a6ff; }
+        .toast .toast-close {
+            margin-left: auto;
+            cursor: pointer;
+            color: #8b949e;
+            font-size: 16px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        .toast .toast-close:hover { color: #c9d1d9; }
+        @keyframes toastSlideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to   { transform: translateX(0);    opacity: 1; }
+        }
+
+        /* SSE connection badge */
+        .runtime-badge.sse-connected { color: #3fb950; border-color: #2f6f44; }
+        .runtime-badge.sse-disconnected { color: #f85149; border-color: #da3633; }
+
+        /* Find PD Contact button */
+        .btn-pd-contact {
+            background: #6e40c9;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+        .btn-pd-contact:hover { background: #8957e5; }
+        .btn-pd-contact:disabled { opacity: .5; cursor: not-allowed; }
     </style>
 </head>
 <body>
+    <div id="toast-container"></div>
     <div class="topline">
         <h1>System Monitor</h1>
         <div class="runtime-badges">
             <span class="runtime-badge live" id="runtimeMode">Execution: LIVE</span>
             <span class="runtime-badge" id="shadowMode">Shadow: OFF</span>
             <span class="runtime-badge" id="queueBadge">Queue: -</span>
+            <span class="runtime-badge sse-disconnected" id="sseBadge">SSE: --</span>
         </div>
     </div>
 
@@ -679,7 +904,7 @@
                         <th>Updated</th>
                         <th>Case</th>
                         <th>Agency</th>
-                        <th>Routing</th>
+                        <th>Contact</th>
                         <th>Status</th>
                         <th>Pending</th>
                         <th>Messages</th>
@@ -699,6 +924,7 @@
         </div>
         <div id="caseInspectorGrid" class="case-grid"></div>
         <div id="casePortalInfoPanel" style="display:none; margin-top:12px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
+        <div id="caseInspectorProposalCards" style="margin-top:10px;"></div>
         <div id="caseInspectorActions" style="margin-top:10px;"></div>
         <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
         <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
@@ -744,7 +970,7 @@
         <div id="caseInspectorMessages" class="case-list"></div>
         <h3 style="margin-top:10px;">Runs</h3>
         <div id="caseInspectorRuns" class="case-list"></div>
-        <h3 style="margin-top:10px;">Proposals</h3>
+        <h3 style="margin-top:10px;">Proposal History</h3>
         <div id="caseInspectorProposals" class="case-list"></div>
     </div>
 
@@ -1091,6 +1317,15 @@
             if (profile === 'PORTAL') return '<span class="badge route-portal">PORTAL</span>';
             if (profile === 'EMAIL') return '<span class="badge route-email">EMAIL</span>';
             return '<span class="badge route-none">NONE</span>';
+        }
+
+        function contactIndicator(data) {
+            const hasPortal = !!data?.portal_url;
+            const hasEmail = !!data?.agency_email;
+            if (hasPortal && hasEmail) return '<span class="contact-indicator has-both">P+E</span>';
+            if (hasPortal) return '<span class="contact-indicator has-portal">P</span>';
+            if (hasEmail) return '<span class="contact-indicator has-email">E</span>';
+            return '<span class="contact-indicator">-</span>';
         }
 
         // Badge for event type
@@ -1633,7 +1868,7 @@
                     <td class="timestamp">${relativeTime(c.updated_at)}</td>
                     <td><a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
                     <td>${truncate(c.agency_name, 30)}</td>
-                    <td>${routeBadgeForRecord(c)}</td>
+                    <td>${contactIndicator(c)}</td>
                     <td>${truncate(c.status || '-', 24)}</td>
                     <td>${c.pending_approvals || 0}</td>
                     <td>${c.total_messages || 0} (in ${c.inbound_messages || 0} / out ${c.outbound_messages || 0})</td>
@@ -2065,6 +2300,7 @@
             const msgList = document.getElementById('caseInspectorMessages');
             const runList = document.getElementById('caseInspectorRuns');
             const proposalList = document.getElementById('caseInspectorProposals');
+            const proposalCards = document.getElementById('caseInspectorProposalCards');
             const actions = document.getElementById('caseInspectorActions');
             const actionResult = document.getElementById('caseInspectorActionResult');
             const reviewPanel = document.getElementById('casePortalReview');
@@ -2091,6 +2327,7 @@
             msgList.innerHTML = '<div class="timestamp">Loading...</div>';
             runList.innerHTML = '<div class="timestamp">Loading...</div>';
             proposalList.innerHTML = '<div class="timestamp">Loading...</div>';
+            proposalCards.innerHTML = '';
             actions.innerHTML = '';
             actionResult.style.display = 'none';
             reviewPanel.style.display = 'none';
@@ -2119,7 +2356,6 @@
                     <div class="cell"><span class="k">Status</span>${c.status || '-'}</div>
                     <div class="cell"><span class="k">Substatus</span>${truncate(c.substatus || '-', 80)}</div>
                     <div class="cell"><span class="k">Agency</span>${truncate(c.agency_name || '-', 60)}</div>
-                    <div class="cell"><span class="k">Routing</span>${getRoutingProfile(c)}</div>
                     <div class="cell"><span class="k">Agency Email</span>${c.agency_email || '-'}</div>
                     <div class="cell"><span class="k">Autopilot</span>${c.autopilot_mode || '-'}</div>
                     <div class="cell"><span class="k">Updated</span>${formatTime(c.updated_at)}</div>
@@ -2149,33 +2385,62 @@
                     portalInfoPanel.innerHTML = '';
                 }
 
-                // Build actions based on case status
+                // Render pending proposal action cards
+                const proposals = data.proposals || [];
+                const pendingProposals = proposals.filter(p => p.status === 'PENDING_APPROVAL');
+                const otherProposals = proposals.filter(p => p.status !== 'PENDING_APPROVAL');
+
+                proposalCards.innerHTML = renderProposalCards(proposals, c);
+
+                // Build review actions as secondary Quick Actions
                 const isNeedsReview = c.requires_human || c.status === 'needs_human_review';
                 let actionsHtml = '';
 
-                if (isNeedsReview) {
-                    actionsHtml += buildReviewActions(c);
+                if (isNeedsReview || pendingProposals.length === 0) {
+                    if (isNeedsReview) {
+                        const label = pendingProposals.length > 0 ? 'Quick Actions' : 'Review Actions';
+                        actionsHtml += `<div class="${pendingProposals.length > 0 ? 'quick-actions-section' : ''}">`;
+                        if (pendingProposals.length > 0) {
+                            actionsHtml += `<div class="quick-actions-label">${label}</div>`;
+                        }
+                        actionsHtml += buildReviewActions(c);
+                        actionsHtml += `</div>`;
+                    }
                 }
 
-                if (c.portal_url) {
-                    actionsHtml += `<button class="send-btn" onclick="showPortalReview(${c.id})" style="margin-top:6px;">Review + Trigger Portal Submission</button>`;
-                }
-
-                if (!actionsHtml) {
+                if (!actionsHtml && pendingProposals.length === 0) {
                     actionsHtml = `<span class="timestamp">No actions available for this case.</span>`;
                 }
 
+                // Add "Find PD Contact" button
+                actionsHtml += `<button class="btn-pd-contact" id="btn-pd-lookup-${c.id}" onclick="triggerPDContactLookup(${c.id}, this)">Find PD Contact</button>`;
+
                 actions.innerHTML = actionsHtml;
 
+                // Correspondence with inline expansion
                 const messages = data.messages || [];
-                msgList.innerHTML = messages.length
-                    ? messages.map(m => `
-                        <div class="case-list-item">
-                            <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
-                            <div>${truncate(m.subject || '-', 120)}</div>
-                        </div>
-                    `).join('')
+                let msgHtml = '';
+
+                // AI Case Summary
+                const latestAnalysis = findLatestAnalysisSummary(messages, c);
+                if (latestAnalysis) {
+                    msgHtml += `<div class="ai-case-summary">
+                        <div class="summary-label">AI Case Summary</div>
+                        <div class="summary-text">${escapeHtml(latestAnalysis)}</div>
+                    </div>`;
+                }
+
+                msgHtml += messages.length
+                    ? messages.map(m => {
+                        const ts = m.received_at || m.sent_at || m.created_at;
+                        return `
+                        <div class="case-msg-item" id="msg_item_${m.id}" onclick="toggleMessageExpand(${m.id}, event)">
+                            <div>${directionBadge(m.direction)} <strong>${truncate(m.subject || '-', 100)}</strong> · <span class="timestamp">${relativeTime(ts)}</span></div>
+                            <div id="msg_expanded_${m.id}" style="display:none;"></div>
+                        </div>`;
+                    }).join('')
                     : '<div class="timestamp">No correspondence yet</div>';
+                msgList.innerHTML = msgHtml;
 
                 const runs = data.runs || [];
                 runList.innerHTML = runs.length
@@ -2187,20 +2452,21 @@
                     `).join('')
                     : '<div class="timestamp">No runs yet</div>';
 
-                const proposals = data.proposals || [];
-                proposalList.innerHTML = proposals.length
-                    ? proposals.map(p => `
+                // Only show non-pending proposals in the minimal list
+                proposalList.innerHTML = otherProposals.length
+                    ? otherProposals.map(p => `
                         <div class="case-list-item">
                             <div><a class="case-link" href="/api/proposals/${p.id}" target="_blank">Proposal #${p.id}</a> · ${p.action_type} · ${p.status}</div>
                             <div>${truncate(p.draft_subject || '-', 110)}</div>
                         </div>
                     `).join('')
-                    : '<div class="timestamp">No proposals yet</div>';
+                    : '<div class="timestamp">No past proposals</div>';
             } catch (error) {
                 grid.innerHTML = `<div class="cell">Error: ${error.message || error}</div>`;
                 msgList.innerHTML = '<div class="timestamp">-</div>';
                 runList.innerHTML = '<div class="timestamp">-</div>';
                 proposalList.innerHTML = '<div class="timestamp">-</div>';
+                proposalCards.innerHTML = '';
                 actions.innerHTML = '';
                 actionResult.style.display = 'none';
             }
@@ -2330,6 +2596,12 @@
 
         async function resolveReview(caseId, action, instruction) {
             const actionResult = document.getElementById('caseInspectorActionResult');
+
+            // For retry_portal, open the portal review panel instead of immediately resolving
+            if (action === 'retry_portal' && currentCaseData?.portal_url) {
+                showPortalReview(caseId);
+                return;
+            }
 
             // For submit_manually, also open the portal URL
             if (action === 'submit_manually' && currentCaseData?.portal_url) {
@@ -2657,6 +2929,148 @@
             return proposeDecision(proposalId, 'DISMISS');
         }
 
+        function renderProposalCards(proposals, caseData) {
+            const pending = (proposals || []).filter(p => p.status === 'PENDING_APPROVAL');
+            if (!pending.length) return '';
+
+            let html = `<h3 style="margin-bottom:8px;">Pending Actions</h3>`;
+            for (const p of pending) {
+                const actionLabel = (p.action_type || 'action').replace(/_/g, ' ');
+                const isInitial = p.action_type === 'SEND_INITIAL_REQUEST';
+                const isHybrid = !!p.portal_url && !!p.agency_email;
+                const showRouteApprove = isInitial && isHybrid;
+
+                html += `<div class="proposal-action-card" id="pac_${p.id}">`;
+                html += `<div class="pac-header">`;
+                html += `<span class="pac-badge">${actionLabel}</span>`;
+                html += `<span style="font-size:11px;color:#8b949e;">Proposal #${p.id} · Confidence: ${p.confidence || '-'}</span>`;
+                html += `</div>`;
+
+                if (p.reasoning) {
+                    html += `<div class="pac-reasoning">${truncate(p.reasoning, 200)}</div>`;
+                }
+
+                if (p.draft_subject || p.draft_body_text) {
+                    html += `<div class="pac-draft">`;
+                    if (p.draft_subject) {
+                        html += `<div class="pac-subject">${escapeHtml(p.draft_subject)}</div>`;
+                    }
+                    if (p.draft_body_text) {
+                        html += `<div class="pac-body-preview" id="pac_preview_${p.id}">${escapeHtml(truncate(p.draft_body_text, 200))}</div>`;
+                        html += `<div class="pac-body-full" id="pac_full_${p.id}" style="display:none;">${escapeHtml(p.draft_body_text)}</div>`;
+                    }
+                    html += `</div>`;
+                }
+
+                // Action buttons
+                html += `<div class="pac-actions">`;
+                html += `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Review & Confirm</button>`;
+                html += `<button class="drawer-btn" onclick="dismissProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="color:#f85149;">Dismiss</button>`;
+                html += `</div>`;
+
+                // Expanded detail (hidden by default)
+                html += `<div class="pac-expanded-detail" id="pac_detail_${p.id}" style="display:none;">`;
+                if (p.draft_body_text) {
+                    html += `<div class="pac-detail-row">Full draft body shown above</div>`;
+                }
+                if (p.agency_email) {
+                    html += `<div class="pac-detail-row">Recipient: ${escapeHtml(p.agency_email)}</div>`;
+                }
+                if (p.portal_url) {
+                    html += `<div class="pac-detail-row">Portal: <a class="case-link" href="${p.portal_url}" target="_blank">${truncate(p.portal_url, 50)}</a></div>`;
+                }
+                html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">`;
+                html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))">Approve</button>`;
+                if (showRouteApprove) {
+                    html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>openCase(${caseData.id}))">Approve Email</button>`;
+                    html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>openCase(${caseData.id}))">Approve Portal</button>`;
+                }
+                html += `<button class="drawer-btn" onclick="adjustProposal(${p.id}).then(()=>openCase(${caseData.id}))">Adjust</button>`;
+                html += `<button class="drawer-btn" onclick="collapseProposalCard(${p.id})">Cancel</button>`;
+                html += `</div>`;
+                html += `</div>`; // end pac-expanded-detail
+
+                html += `</div>`; // end proposal-action-card
+            }
+            return html;
+        }
+
+        function expandProposalCard(proposalId) {
+            const preview = document.getElementById(`pac_preview_${proposalId}`);
+            const full = document.getElementById(`pac_full_${proposalId}`);
+            const detail = document.getElementById(`pac_detail_${proposalId}`);
+            if (preview) preview.style.display = 'none';
+            if (full) full.style.display = 'block';
+            if (detail) detail.style.display = 'block';
+        }
+
+        function collapseProposalCard(proposalId) {
+            const preview = document.getElementById(`pac_preview_${proposalId}`);
+            const full = document.getElementById(`pac_full_${proposalId}`);
+            const detail = document.getElementById(`pac_detail_${proposalId}`);
+            if (preview) preview.style.display = 'block';
+            if (full) full.style.display = 'none';
+            if (detail) detail.style.display = 'none';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        function findLatestAnalysisSummary(messages, caseData) {
+            // Check case-level analysis summary first
+            if (caseData?.analysis?.summary) return caseData.analysis.summary;
+            if (caseData?.latest_analysis_summary) return caseData.latest_analysis_summary;
+
+            // Check latest inbound message for analysis
+            const inbound = (messages || []).filter(m => m.direction === 'inbound');
+            for (const m of inbound) {
+                if (m.analysis?.summary) return m.analysis.summary;
+                if (m.ai_summary) return m.ai_summary;
+            }
+            return null;
+        }
+
+        function toggleMessageExpand(msgId, event) {
+            // Don't toggle if clicking a link
+            if (event && event.target.tagName === 'A') return;
+
+            const container = document.getElementById(`msg_expanded_${msgId}`);
+            const item = document.getElementById(`msg_item_${msgId}`);
+            if (!container) return;
+
+            if (container.style.display !== 'none') {
+                // Collapse
+                container.style.display = 'none';
+                container.innerHTML = '';
+                item.classList.remove('msg-expanded');
+                return;
+            }
+
+            // Find message data from cache
+            const msg = (currentCaseMessages || []).find(m => m.id === msgId);
+            if (!msg) return;
+
+            item.classList.add('msg-expanded');
+            const ts = msg.received_at || msg.sent_at || msg.created_at;
+            const bodyText = msg.body_text || msg.body_html || '(no body)';
+
+            container.innerHTML = `
+                <div class="case-msg-expanded-body">
+                    <div class="msg-meta">
+                        ${directionBadge(msg.direction)}
+                        <span>From: ${escapeHtml(msg.from_email || '-')} &rarr; To: ${escapeHtml(msg.to_email || '-')}</span>
+                        <span style="margin-left:8px;">${formatTime(ts)}</span>
+                    </div>
+                    <div class="msg-body-text">${escapeHtml(bodyText)}</div>
+                    <button class="msg-collapse-btn" onclick="event.stopPropagation();toggleMessageExpand(${msgId}, event)">Collapse</button>
+                </div>
+            `;
+            container.style.display = 'block';
+        }
+
         async function pollRunStatus(runId) {
             if (!runId) return;
             if (runPollTimer) clearInterval(runPollTimer);
@@ -2692,9 +3106,80 @@
             // Simulation panel removed
         }
 
+        // === Toast notifications ===
+        function showToast(type, message, meta = {}) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `<span>${escapeHtml(message)}</span><span class="toast-close" onclick="this.parentElement.remove()">&times;</span>`;
+            if (meta.case_id) {
+                toast.style.cursor = 'pointer';
+                toast.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('toast-close')) return;
+                    openCase(meta.case_id);
+                    toast.remove();
+                });
+            }
+            container.appendChild(toast);
+            // Keep max 6 toasts visible
+            while (container.children.length > 6) container.firstChild.remove();
+            // Auto-dismiss after 8s
+            setTimeout(() => { if (toast.parentElement) toast.remove(); }, 8000);
+        }
+
+        // === SSE connection ===
+        let sseSource = null;
+        function connectSSE() {
+            if (sseSource) { sseSource.close(); sseSource = null; }
+            const badge = document.getElementById('sseBadge');
+            try {
+                sseSource = new EventSource('/api/monitor/events');
+                sseSource.onopen = () => {
+                    badge.textContent = 'SSE: ON';
+                    badge.className = 'runtime-badge sse-connected';
+                };
+                sseSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        showToast(data.type || 'info', data.message || 'Notification', data);
+                    } catch (_) {}
+                };
+                sseSource.onerror = () => {
+                    badge.textContent = 'SSE: OFF';
+                    badge.className = 'runtime-badge sse-disconnected';
+                    sseSource.close();
+                    sseSource = null;
+                    setTimeout(connectSSE, 5000);
+                };
+            } catch (_) {
+                badge.textContent = 'SSE: OFF';
+                badge.className = 'runtime-badge sse-disconnected';
+                setTimeout(connectSSE, 5000);
+            }
+        }
+
+        // === PD Contact Lookup ===
+        async function triggerPDContactLookup(caseId, btn) {
+            btn.disabled = true;
+            btn.textContent = 'Searching...';
+            try {
+                await fetch(`/api/monitor/case/${caseId}/lookup-contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+            } catch (err) {
+                showToast('error', `Lookup request failed: ${err.message}`, { case_id: caseId });
+            }
+            // Re-enable after 90s and refresh case data
+            setTimeout(async () => {
+                btn.disabled = false;
+                btn.textContent = 'Find PD Contact';
+                // Refresh case data in the inspector
+                try { await openCase(caseId); } catch (_) {}
+            }, 90000);
+        }
+
         // Initial load + fixed 10s auto-refresh
         loadData();
         loadConfig();
+        connectSSE();
         setInterval(loadData, 10000);
     </script>
 </body>

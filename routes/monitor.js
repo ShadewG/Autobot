@@ -5,7 +5,9 @@ const sgMail = require('@sendgrid/mail');
 const { enqueueInboundMessageJob, enqueueResumeRunJob } = require('../queues/agent-queue');
 const { portalQueue } = require('../queues/email-queue');
 const crypto = require('crypto');
-const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
+const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const { eventBus, notify } = require('../services/event-bus');
+const pdContactService = require('../services/pd-contact-service');
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
@@ -132,6 +134,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             status: 'DISMISSED'
         });
 
+        notify('info', `Proposal dismissed for case ${caseId}`, { case_id: caseId });
         return {
             success: true,
             message: 'Proposal dismissed',
@@ -158,6 +161,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         originalProposalId: proposalId
     });
 
+    notify('info', `Proposal ${action.toLowerCase()} — resume queued for case ${caseId}`, { case_id: caseId });
     return {
         success: true,
         message: 'Decision received, resume queued',
@@ -606,7 +610,16 @@ router.get('/live-overview', async (req, res) => {
                 p.confidence,
                 p.created_at,
                 p.trigger_message_id,
-                c.case_name
+                p.reasoning,
+                c.case_name,
+                c.agency_name,
+                c.status AS case_status,
+                c.portal_url,
+                (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id) AS message_count,
+                (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
+                (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview,
+                (SELECT m3.subject FROM messages m3 WHERE m3.case_id = c.id AND m3.direction = 'inbound' ORDER BY COALESCE(m3.received_at, m3.created_at) DESC LIMIT 1) AS last_inbound_subject,
+                (SELECT COALESCE(m4.received_at, m4.created_at) FROM messages m4 WHERE m4.case_id = c.id AND m4.direction = 'inbound' ORDER BY COALESCE(m4.received_at, m4.created_at) DESC LIMIT 1) AS last_inbound_date
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
             WHERE p.status = 'PENDING_APPROVAL'
@@ -928,6 +941,7 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             job_id: job?.id || null
         });
 
+        notify('info', `Portal submission queued for ${caseData.case_name}`, { case_id: caseId });
         res.json({
             success: true,
             message: 'Portal submission queued',
@@ -1486,6 +1500,106 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
         const status = error.status || 500;
         res.status(status).json({ success: false, error: error.message, ...(error.payload || {}) });
     }
+});
+
+/**
+ * GET /api/monitor/events
+ * Server-Sent Events stream for real-time notifications
+ */
+router.get('/events', (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive'
+    });
+    res.write(':\n\n'); // initial comment to flush headers
+
+    const heartbeat = setInterval(() => res.write(':\n\n'), 30000);
+
+    const onNotification = (data) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    eventBus.on('notification', onNotification);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        eventBus.off('notification', onNotification);
+    });
+});
+
+/**
+ * POST /api/monitor/case/:id/lookup-contact
+ * Trigger a pd-contact lookup in the background. Returns immediately.
+ */
+router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
+    const caseId = parseInt(req.params.id, 10);
+    if (!caseId) return res.status(400).json({ success: false, error: 'Invalid case id' });
+
+    const caseData = await db.getCaseById(caseId);
+    if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
+
+    res.json({ success: true, message: 'Contact lookup started' });
+
+    // Run in background
+    (async () => {
+        try {
+            notify('info', `Looking up contacts for ${caseData.agency_name || caseData.case_name}...`, { case_id: caseId });
+
+            const result = await pdContactService.lookupContact(
+                caseData.agency_name,
+                caseData.state || caseData.incident_location
+            );
+
+            if (!result || (!result.portal_url && !result.contact_email)) {
+                notify('warning', `No contacts found for ${caseData.agency_name || caseData.case_name}`, { case_id: caseId });
+                await db.updateCase(caseId, {
+                    last_contact_research_at: new Date(),
+                    contact_research_notes: 'pd-contact lookup returned no results'
+                });
+                return;
+            }
+
+            const updates = {
+                last_contact_research_at: new Date(),
+                contact_research_notes: [
+                    result.notes,
+                    result.records_officer ? `Records officer: ${result.records_officer}` : null,
+                    `Source: ${result.source || 'pd-contact'}`,
+                    `Confidence: ${result.confidence || 'unknown'}`
+                ].filter(Boolean).join('. ')
+            };
+
+            if (result.contact_email && result.contact_email !== caseData.agency_email) {
+                updates.alternate_agency_email = result.contact_email;
+            }
+            if (result.portal_url) {
+                const normalized = normalizePortalUrl(result.portal_url);
+                if (normalized && isSupportedPortalUrl(normalized)) {
+                    updates.portal_url = normalized;
+                    updates.portal_provider = result.portal_provider || detectPortalProviderByUrl(normalized)?.name || null;
+                }
+            }
+
+            await db.updateCase(caseId, updates);
+
+            const parts = [];
+            if (updates.portal_url) parts.push(`portal: ${updates.portal_url}`);
+            if (updates.alternate_agency_email) parts.push(`email: ${updates.alternate_agency_email}`);
+            if (result.contact_phone) parts.push(`phone: ${result.contact_phone}`);
+
+            notify('success', `Found contacts for ${caseData.agency_name || caseData.case_name}: ${parts.join(', ') || 'see research notes'}`, { case_id: caseId });
+
+            await db.logActivity('pd_contact_lookup', `PD contact lookup completed for case ${caseData.case_name}`, {
+                case_id: caseId,
+                portal_url: updates.portal_url || null,
+                email: updates.alternate_agency_email || null,
+                confidence: result.confidence
+            });
+        } catch (err) {
+            console.error(`PD contact lookup failed for case ${caseId}:`, err.message);
+            notify('error', `Contact lookup failed for ${caseData.agency_name || caseData.case_name}: ${err.message}`, { case_id: caseId });
+        }
+    })();
 });
 
 module.exports = router;

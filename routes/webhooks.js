@@ -5,6 +5,7 @@ const axios = require('axios');
 const sendgridService = require('../services/sendgrid-service');
 const db = require('../services/database');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
+const { notify } = require('../services/event-bus');
 
 /**
  * Detect verification code emails and forward to Skyvern TOTP API
@@ -175,6 +176,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
         if (result.matched) {
             console.log(`Inbound email matched to case ${result.case_id}`);
+            notify('info', `New inbound email matched to case ${result.case_id}`, { case_id: result.case_id });
             const alreadyProcessed = result.already_processed === true;
 
             // Check if this is a test mode email (instant reply)
@@ -254,30 +256,89 @@ router.post('/inbound', upload.any(), async (req, res) => {
             });
         } else {
             console.warn('Inbound email could not be matched to a case');
+            notify('warning', `Unmatched inbound email from ${inboundData.from || 'unknown'}`);
 
             // Save unmatched email to database for debugging
             try {
+                const fromRaw = inboundData.from || inboundData.sender || 'unknown';
+                const toRaw = inboundData.to || inboundData.recipient || 'unknown';
+                const subjectRaw = inboundData.subject || '(no subject)';
+                const textRaw = emailText || inboundData.text || inboundData.body_text || '';
+                const htmlRaw = emailHtml || inboundData.html || inboundData.body_html || '';
+
                 const unmatchedMsg = await db.query(`
                     INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, received_at, created_at)
                     VALUES ('inbound', $1, $2, $3, $4, $5, NOW(), NOW())
                     RETURNING id
-                `, [
-                    inboundData.from || inboundData.sender || 'unknown',
-                    inboundData.to || inboundData.recipient || 'unknown',
-                    inboundData.subject || '(no subject)',
-                    emailText || inboundData.text || inboundData.body_text || '',
-                    emailHtml || inboundData.html || inboundData.body_html || ''
-                ]);
+                `, [fromRaw, toRaw, subjectRaw, textRaw, htmlRaw]);
 
-                // Log to activity
-                await db.logActivity('webhook_unmatched', `Unmatched inbound from ${inboundData.from || 'unknown'}`, {
-                    message_id: unmatchedMsg.rows[0]?.id,
-                    from: inboundData.from || inboundData.sender,
-                    to: inboundData.to || inboundData.recipient,
-                    subject: inboundData.subject
-                });
+                const savedMsgId = unmatchedMsg.rows[0]?.id;
 
-                console.log(`Saved unmatched email with ID: ${unmatchedMsg.rows[0]?.id}`);
+                // Retry: try portal signal matching on the saved message
+                // processInboundEmail uses thread headers which aren't available here,
+                // but portal signals (subdomain, request number, agency name) may still match
+                try {
+                    const fromEmail = sendgridService.extractEmail(fromRaw);
+                    const portalInfo = sendgridService.detectPortalProviderFromEmail(fromEmail);
+
+                    if (portalInfo) {
+                        const signals = sendgridService.extractPortalMatchingSignals(
+                            portalInfo.provider, fromRaw, fromEmail, subjectRaw, textRaw
+                        );
+                        const matchedCase = await sendgridService.matchCaseByPortalSignals(signals);
+
+                        if (matchedCase) {
+                            // Find thread for this case
+                            let threadId = null;
+                            const threadResult = await db.query(
+                                'SELECT id FROM email_threads WHERE case_id = $1 ORDER BY created_at DESC LIMIT 1',
+                                [matchedCase.id]
+                            );
+                            if (threadResult.rows.length > 0) {
+                                threadId = threadResult.rows[0].id;
+                            }
+
+                            await db.query(
+                                'UPDATE messages SET case_id = $1, thread_id = $2 WHERE id = $3',
+                                [matchedCase.id, threadId, savedMsgId]
+                            );
+                            console.log(`Portal retry matched MSG #${savedMsgId} -> Case #${matchedCase.id} (thread ${threadId || 'NULL'})`);
+
+                            // Queue for AI analysis since we found a match
+                            await analysisQueue.add('analyze-response', {
+                                messageId: savedMsgId,
+                                caseId: matchedCase.id,
+                                instantReply: false
+                            }, {
+                                delay: 2000,
+                                attempts: 3,
+                                backoff: { type: 'exponential', delay: 3000 }
+                            });
+
+                            await db.logActivity('webhook_portal_retry_matched',
+                                `Portal retry matched MSG #${savedMsgId} to case #${matchedCase.id} via portal signals`,
+                                { message_id: savedMsgId, case_id: matchedCase.id, from: fromRaw, subject: subjectRaw }
+                            );
+                        } else {
+                            console.log(`Portal retry: no match for MSG #${savedMsgId} (${portalInfo.provider})`);
+                            await db.logActivity('webhook_unmatched', `Unmatched portal email from ${fromRaw}`, {
+                                message_id: savedMsgId, from: fromRaw, to: toRaw, subject: subjectRaw, provider: portalInfo.provider
+                            });
+                        }
+                    } else {
+                        // Not a portal email, log as unmatched
+                        await db.logActivity('webhook_unmatched', `Unmatched inbound from ${fromRaw}`, {
+                            message_id: savedMsgId, from: fromRaw, to: toRaw, subject: subjectRaw
+                        });
+                    }
+                } catch (retryErr) {
+                    console.error('Portal retry matching failed:', retryErr.message);
+                    await db.logActivity('webhook_unmatched', `Unmatched inbound from ${fromRaw} (portal retry failed)`, {
+                        message_id: savedMsgId, from: fromRaw, to: toRaw, subject: subjectRaw
+                    });
+                }
+
+                console.log(`Saved unmatched email with ID: ${savedMsgId}`);
             } catch (saveErr) {
                 console.error('Failed to save unmatched email:', saveErr);
             }

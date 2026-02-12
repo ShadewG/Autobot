@@ -322,6 +322,13 @@ class FollowupScheduler {
       days_since_sent: daysSinceSent
     });
 
+    // Auto-generate briefing (fire-and-forget)
+    const aiService = require('./ai-service');
+    db.getMessagesByCaseId(caseId, 20)
+      .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
+      .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
+      .catch(err => logger.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
+
     // Update case status
     await db.updateCaseStatus(caseId, 'needs_phone_call', {
       substatus: 'No email response after follow-ups'
@@ -354,42 +361,78 @@ class FollowupScheduler {
   }
 
   /**
-   * Async phone lookup: try Notion first, then web search fallback.
-   * Updates both phone_call_queue and agencies table if found.
+   * Async phone lookup: run Notion and web search in parallel.
+   * Builds phone_options JSONB with both results and auto-selects best default.
+   * Updates phone_call_queue, and agencies table if found.
    */
   async _asyncPhoneLookup(caseData, phoneTaskId) {
     const notionService = require('./notion-service');
-    let phone = null;
 
-    // 1. Try Notion PD page
-    if (caseData.notion_page_id) {
-      phone = await notionService.lookupPhoneFromNotion(caseData.notion_page_id);
-    }
+    // Run both lookups in parallel
+    const [notionResult, webResult] = await Promise.allSettled([
+      caseData.notion_page_id
+        ? notionService.lookupPhoneFromNotion(caseData.notion_page_id)
+        : Promise.resolve({ phone: null, pdPageId: null }),
+      caseData.agency_name
+        ? notionService.searchForAgencyPhone(caseData.agency_name, caseData.state)
+        : Promise.resolve({ phone: null, confidence: 'low', reasoning: 'No agency name' })
+    ]);
 
-    // 2. Fallback: web search
-    if (!phone && caseData.agency_name) {
-      const result = await notionService.searchForAgencyPhone(caseData.agency_name, caseData.state);
-      if (result?.phone) {
-        phone = result.phone;
+    const notion = notionResult.status === 'fulfilled' ? notionResult.value : { phone: null, pdPageId: null };
+    const web = webResult.status === 'fulfilled' ? webResult.value : { phone: null, confidence: 'low', reasoning: 'lookup failed' };
+
+    // Build phone_options JSONB
+    const phoneOptions = {
+      notion: {
+        phone: notion.phone || null,
+        source: 'Notion PD Card',
+        pd_page_id: notion.pdPageId || null,
+        pd_page_url: notion.pdPageId
+          ? `https://www.notion.so/${notion.pdPageId.replace(/-/g, '')}`
+          : null
+      },
+      web_search: {
+        phone: web.phone || null,
+        source: 'Web Search (GPT)',
+        confidence: web.confidence || null,
+        reasoning: web.reasoning || null
       }
+    };
+
+    // Pick best default: Notion preferred, else web search
+    const bestPhone = notion.phone || web.phone || null;
+
+    logger.info('Dual phone lookup completed', {
+      caseId: caseData.id,
+      phoneTaskId,
+      notionPhone: notion.phone,
+      webPhone: web.phone,
+      selected: bestPhone
+    });
+
+    // Update phone_call_queue with phone_options and best default
+    const setClauses = ['phone_options = $1', 'updated_at = NOW()'];
+    const values = [JSON.stringify(phoneOptions)];
+    let paramIdx = 2;
+
+    if (bestPhone) {
+      setClauses.push(`agency_phone = $${paramIdx}`);
+      values.push(bestPhone);
+      paramIdx++;
     }
 
-    if (phone) {
-      logger.info('Async phone lookup found number', { caseId: caseData.id, phone, phoneTaskId });
+    values.push(phoneTaskId);
+    await db.query(
+      `UPDATE phone_call_queue SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+      values
+    );
 
-      // Update phone_call_queue
+    // Update agencies table if linked and we found a phone
+    if (bestPhone && caseData.agency_id) {
       await db.query(
-        'UPDATE phone_call_queue SET agency_phone = $1, updated_at = NOW() WHERE id = $2',
-        [phone, phoneTaskId]
+        'UPDATE agencies SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = \'\')',
+        [bestPhone, caseData.agency_id]
       );
-
-      // Update agencies table if linked
-      if (caseData.agency_id) {
-        await db.query(
-          'UPDATE agencies SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = \'\')',
-          [phone, caseData.agency_id]
-        );
-      }
     }
   }
 

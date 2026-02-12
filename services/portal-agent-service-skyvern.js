@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const database = require('./database');
 const notionService = require('./notion-service');
 const EmailVerificationHelper = require('../agentkit/email-helper');
+const { notify } = require('./event-bus');
 
 /**
  * Portal Agent using Skyvern AI
@@ -461,6 +462,7 @@ class PortalAgentServiceSkyvern {
                 submission_status: extracted.submission_status || finalTask.status,
                 confirmation_number: extracted.confirmation_number || null
             });
+            notify('success', `Portal submission completed for ${caseData.case_name}${extracted.confirmation_number ? ` (#${extracted.confirmation_number})` : ''}`, { case_id: caseData.id });
 
             return {
                 success: true,
@@ -489,6 +491,7 @@ class PortalAgentServiceSkyvern {
             run_id: runId,
             error: finalTask.failure_reason || finalTask.status
         });
+        notify('error', `Portal submission failed for ${caseData.case_name}: ${finalTask.failure_reason || finalTask.status}`, { case_id: caseData.id });
 
         return {
             success: false,
@@ -807,7 +810,7 @@ class PortalAgentServiceSkyvern {
 
             if (completed && !failed) {
                 const statusText = finalResult.status || 'completed';
-                await database.updateCaseStatus(caseData.id, 'sent', {
+                await database.updateCaseStatus(caseData.id, 'awaiting_response', {
                     substatus: `Portal submission completed (${statusText})`,
                     send_date: new Date()
                 });

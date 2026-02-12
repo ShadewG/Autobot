@@ -1,6 +1,7 @@
 const { Client } = require('@notionhq/client');
 const db = require('./database');
 const aiService = require('./ai-service');
+const pdContactService = require('./pd-contact-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
@@ -227,8 +228,35 @@ class NotionService {
                     }
                 }
 
-                // AI web search: confirm existing portal URL or discover one
+                // pd-contact lookup: try dedicated service first
+                let pdContactHandled = false;
                 if (enrichedCase.agency_name) {
+                    try {
+                        const pdResult = await pdContactService.lookupContact(
+                            enrichedCase.agency_name,
+                            enrichedCase.state || enrichedCase.incident_location
+                        );
+                        if (pdResult) {
+                            if (pdResult.portal_url) {
+                                const normalized = normalizePortalUrl(pdResult.portal_url);
+                                if (normalized && isSupportedPortalUrl(normalized)) {
+                                    enrichedCase.portal_url = normalized;
+                                    enrichedCase.portal_provider = pdResult.portal_provider || detectPortalProviderByUrl(normalized)?.name || null;
+                                    pdContactHandled = true;
+                                }
+                            }
+                            if (pdResult.contact_email && !enrichedCase.agency_email) {
+                                enrichedCase.agency_email = pdResult.contact_email;
+                                pdContactHandled = true;
+                            }
+                        }
+                    } catch (pdErr) {
+                        console.log(`pd-contact lookup failed for "${enrichedCase.agency_name}": ${pdErr.message}`);
+                    }
+                }
+
+                // GPT web search fallback: confirm existing portal URL or discover one
+                if (!pdContactHandled && enrichedCase.agency_name) {
                     const searchResult = await this.searchForPortalUrl(
                         enrichedCase.agency_name,
                         enrichedCase.state,
@@ -1064,25 +1092,25 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
     /**
      * Look up phone number from Notion Police Department relation page.
      * @param {string} notionPageId - The case page ID in Notion
-     * @returns {string|null} - Phone number or null
+     * @returns {{ phone: string|null, pdPageId: string|null }} - Phone number and PD page ID
      */
     async lookupPhoneFromNotion(notionPageId) {
         try {
             const page = await this.notion.pages.retrieve({ page_id: notionPageId.replace(/-/g, '') });
             const policeDeptRelation = page.properties['Police Department'];
             const policeDeptId = policeDeptRelation?.relation?.[0]?.id;
-            if (!policeDeptId) return null;
+            if (!policeDeptId) return { phone: null, pdPageId: null };
 
             const deptPage = await this.notion.pages.retrieve({ page_id: policeDeptId });
             const phone = this.extractPlainValue(deptPage.properties['Contact Phone']);
             if (phone && String(phone).trim()) {
                 console.log(`Found phone from Notion PD page: ${phone}`);
-                return String(phone).trim();
+                return { phone: String(phone).trim(), pdPageId: policeDeptId };
             }
-            return null;
+            return { phone: null, pdPageId: policeDeptId };
         } catch (error) {
             console.warn('Notion phone lookup failed:', error.message);
-            return null;
+            return { phone: null, pdPageId: null };
         }
     }
 
@@ -1850,8 +1878,35 @@ Look for a records division email, FOIA email, or general agency email that acce
                 }
             }
 
-            // AI web search: confirm existing portal URL or discover one
+            // pd-contact lookup: try dedicated service first
+            let pdContactHandledSingle = false;
             if (notionCase.agency_name) {
+                try {
+                    const pdResult = await pdContactService.lookupContact(
+                        notionCase.agency_name,
+                        notionCase.state || notionCase.incident_location
+                    );
+                    if (pdResult) {
+                        if (pdResult.portal_url) {
+                            const normalized = normalizePortalUrl(pdResult.portal_url);
+                            if (normalized && isSupportedPortalUrl(normalized)) {
+                                notionCase.portal_url = normalized;
+                                notionCase.portal_provider = pdResult.portal_provider || detectPortalProviderByUrl(normalized)?.name || null;
+                                pdContactHandledSingle = true;
+                            }
+                        }
+                        if (pdResult.contact_email && !notionCase.agency_email) {
+                            notionCase.agency_email = pdResult.contact_email;
+                            pdContactHandledSingle = true;
+                        }
+                    }
+                } catch (pdErr) {
+                    console.log(`pd-contact lookup failed for "${notionCase.agency_name}": ${pdErr.message}`);
+                }
+            }
+
+            // GPT web search fallback: confirm existing portal URL or discover one
+            if (!pdContactHandledSingle && notionCase.agency_name) {
                 const searchResult = await this.searchForPortalUrl(
                     notionCase.agency_name,
                     notionCase.state,

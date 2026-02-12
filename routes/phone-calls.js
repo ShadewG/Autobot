@@ -191,6 +191,41 @@ router.post('/:id/skip', async (req, res) => {
 });
 
 /**
+ * POST /phone-calls/:id/select-phone
+ * Select a phone number from phone_options
+ * Body: { phone, source }
+ */
+router.post('/:id/select-phone', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        const { phone, source } = req.body;
+
+        if (!phone) {
+            return res.status(400).json({ success: false, error: 'Phone number is required' });
+        }
+
+        const task = await db.getPhoneCallById(id);
+        if (!task) {
+            return res.status(404).json({ success: false, error: 'Phone call task not found' });
+        }
+
+        await db.query(
+            'UPDATE phone_call_queue SET agency_phone = $1, updated_at = NOW() WHERE id = $2',
+            [phone, id]
+        );
+
+        await db.logActivity('phone_number_selected',
+            `Phone number selected for task ${id}: ${phone} (source: ${source || 'manual'})`,
+            { case_id: task.case_id }
+        );
+
+        res.json({ success: true, message: 'Phone number updated', phone });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /phone-calls/:id/briefing
  * Generate or retrieve cached AI call briefing
  * Query: ?force=true to regenerate

@@ -3,6 +3,7 @@ const db = require('./database');
 const aiService = require('./ai-service');
 const { emailQueue } = require('../queues/email-queue');
 const notionService = require('./notion-service');
+const pdContactService = require('./pd-contact-service');
 const {
     normalizePortalUrl,
     detectPortalProviderByUrl,
@@ -173,7 +174,33 @@ class FollowUpService {
 
         console.log(`🔎 Running pre-follow-up contact research for case ${caseData.id}`);
 
-        const research = await aiService.researchAlternateContacts(caseData);
+        // Try pd-contact service first (faster, more accurate)
+        let research = null;
+        try {
+            const pdResult = await pdContactService.lookupContact(
+                caseData.agency_name,
+                caseData.state || caseData.incident_location
+            );
+            if (pdResult && (pdResult.portal_url || pdResult.contact_email)) {
+                research = {
+                    portal_url: pdResult.portal_url,
+                    portal_provider: pdResult.portal_provider,
+                    contact_email: pdResult.contact_email,
+                    notes: pdResult.notes || `pd-contact lookup (${pdResult.confidence || 'unknown'} confidence)`,
+                    confidence: pdResult.confidence,
+                    source: 'pd-contact'
+                };
+                console.log(`pd-contact returned results for case ${caseData.id}`);
+            }
+        } catch (err) {
+            console.log(`pd-contact failed for case ${caseData.id}: ${err.message}`);
+        }
+
+        // Fall back to GPT web search if pd-contact returned nothing
+        if (!research) {
+            research = await aiService.researchAlternateContacts(caseData);
+        }
+
         if (!research) {
             console.log('No research result returned; marking as checked to avoid loops.');
             return await db.updateCase(caseData.id, {
@@ -212,7 +239,8 @@ class FollowUpService {
             suggested_portal: updates.portal_url || caseData.portal_url || null,
             alternate_contact: updates.alternate_agency_email || null,
             notes: research.notes || null,
-            confidence: research.confidence || null
+            confidence: research.confidence || null,
+            source: research.source || 'gpt'
         });
 
         // Ensure Notion reflects any new status info (especially if portal was added)
