@@ -1812,8 +1812,14 @@
             }
         }
 
+        let lastCasesJson = '';
         function renderCases(payload) {
             const rowsEl = document.getElementById('caseRows');
+
+            // Skip rebuild if data hasn't changed (prevents click race condition)
+            const newJson = JSON.stringify(payload?.cases?.map(c => c.id + ':' + c.status + ':' + c.updated_at) || []);
+            if (newJson === lastCasesJson && expandedCaseId) return;
+            lastCasesJson = newJson;
 
             // Detach inspector before rebuilding so innerHTML doesn't destroy it
             const inspector = document.getElementById('caseInspector');
