@@ -1607,13 +1607,24 @@
 
         function renderCases(payload) {
             const rowsEl = document.getElementById('caseRows');
+
+            // Detach inspector before rebuilding so innerHTML doesn't destroy it
+            const inspector = document.getElementById('caseInspector');
+            const wasExpanded = expandedCaseId;
+            if (inspector && inspector.parentElement) {
+                inspector.style.display = 'none';
+                document.body.appendChild(inspector);
+            }
+
             if (!payload || !payload.success) {
                 rowsEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#f85149">Failed to load cases</td></tr>';
+                expandedCaseId = null;
                 return;
             }
             caseCache = payload.cases || [];
             if (!caseCache.length) {
                 rowsEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e">No cases found</td></tr>';
+                expandedCaseId = null;
                 return;
             }
 
@@ -1629,6 +1640,27 @@
                     <td>${c.active_run_id ? `#${c.active_run_id} ${c.active_run_status}` : '-'}</td>
                 </tr>
             `).join('');
+
+            // Re-expand the previously open case after rebuild
+            if (wasExpanded) {
+                const clickedRow = document.querySelector(`tr[data-case-id="${wasExpanded}"]`);
+                if (clickedRow) {
+                    clickedRow.classList.add('expanded');
+                    const expandedRow = document.createElement('tr');
+                    expandedRow.className = 'case-expanded-row';
+                    const td = document.createElement('td');
+                    td.colSpan = 8;
+                    td.style.padding = '0';
+                    td.appendChild(inspector);
+                    expandedRow.appendChild(td);
+                    clickedRow.after(expandedRow);
+                    inspector.style.display = 'block';
+                    expandedCaseId = wasExpanded;
+                } else {
+                    // Case no longer in list
+                    expandedCaseId = null;
+                }
+            }
         }
 
         function renderOpsList(listId, items, renderer) {
