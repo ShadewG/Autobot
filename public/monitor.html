@@ -573,47 +573,6 @@
             color: #c9d1d9;
         }
 
-        /* Inline message expansion */
-        .case-msg-item {
-            font-size: 12px;
-            padding: 8px 0;
-            border-bottom: 1px solid #21262d;
-            cursor: pointer;
-        }
-        .case-msg-item:last-child { border-bottom: none; }
-        .case-msg-item:hover { background: #161b2280; }
-        .case-msg-item.msg-expanded { background: #161b22; cursor: default; }
-        .case-msg-expanded-body {
-            margin-top: 8px;
-            padding: 10px;
-            background: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-        }
-        .case-msg-expanded-body .msg-meta {
-            font-size: 11px;
-            color: #8b949e;
-            margin-bottom: 6px;
-        }
-        .case-msg-expanded-body .msg-body-text {
-            white-space: pre-wrap;
-            color: #c9d1d9;
-            font-size: 12px;
-            line-height: 1.5;
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        .case-msg-expanded-body .msg-collapse-btn {
-            margin-top: 6px;
-            padding: 3px 10px;
-            background: #21262d;
-            color: #8b949e;
-            border: 1px solid #30363d;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 11px;
-        }
-
         /* Quick Actions section */
         .quick-actions-section {
             margin-top: 10px;
@@ -2444,14 +2403,12 @@
                 }
 
                 msgHtml += messages.length
-                    ? messages.map(m => {
-                        const ts = m.received_at || m.sent_at || m.created_at;
-                        return `
-                        <div class="case-msg-item" id="msg_item_${m.id}" onclick="toggleMessageExpand(${m.id}, event)">
-                            <div>${directionBadge(m.direction)} <strong>${truncate(m.subject || '-', 100)}</strong> · <span class="timestamp">${relativeTime(ts)}</span></div>
-                            <div id="msg_expanded_${m.id}" style="display:none;"></div>
-                        </div>`;
-                    }).join('')
+                    ? messages.map(m => `
+                        <div class="case-list-item">
+                            <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
+                            <div>${truncate(m.subject || '-', 120)}</div>
+                        </div>
+                    `).join('')
                     : '<div class="timestamp">No correspondence yet</div>';
                 msgList.innerHTML = msgHtml;
 
@@ -3045,44 +3002,6 @@
                 if (m.ai_summary) return m.ai_summary;
             }
             return null;
-        }
-
-        function toggleMessageExpand(msgId, event) {
-            // Don't toggle if clicking a link
-            if (event && event.target.tagName === 'A') return;
-
-            const container = document.getElementById(`msg_expanded_${msgId}`);
-            const item = document.getElementById(`msg_item_${msgId}`);
-            if (!container) return;
-
-            if (container.style.display !== 'none') {
-                // Collapse
-                container.style.display = 'none';
-                container.innerHTML = '';
-                item.classList.remove('msg-expanded');
-                return;
-            }
-
-            // Find message data from cache
-            const msg = (currentCaseMessages || []).find(m => m.id === msgId);
-            if (!msg) return;
-
-            item.classList.add('msg-expanded');
-            const ts = msg.received_at || msg.sent_at || msg.created_at;
-            const bodyText = msg.body_text || msg.body_html || '(no body)';
-
-            container.innerHTML = `
-                <div class="case-msg-expanded-body">
-                    <div class="msg-meta">
-                        ${directionBadge(msg.direction)}
-                        <span>From: ${escapeHtml(msg.from_email || '-')} &rarr; To: ${escapeHtml(msg.to_email || '-')}</span>
-                        <span style="margin-left:8px;">${formatTime(ts)}</span>
-                    </div>
-                    <div class="msg-body-text">${escapeHtml(bodyText)}</div>
-                    <button class="msg-collapse-btn" onclick="event.stopPropagation();toggleMessageExpand(${msgId}, event)">Collapse</button>
-                </div>
-            `;
-            container.style.display = 'block';
         }
 
         async function pollRunStatus(runId) {
