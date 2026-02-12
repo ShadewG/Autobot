@@ -738,20 +738,40 @@ class DatabaseService {
      * Mark a proposal as executed with the email job ID.
      */
     /**
-     * Dismiss all pending proposals for a case (used when case reaches a terminal state like 'sent').
+     * Dismiss pending proposals for a case.
+     * @param {number} caseId
+     * @param {string} reason
+     * @param {string[]|null} actionTypes - When provided, only dismiss matching action_type values.
+     *                                       When null/omitted, dismiss ALL pending proposals.
      */
-    async dismissPendingProposals(caseId, reason = 'Case status advanced') {
-        const query = `
-            UPDATE proposals
-            SET status = 'DISMISSED',
-                updated_at = NOW()
-            WHERE case_id = $1
-              AND status IN ('PENDING_APPROVAL', 'DRAFT')
-            RETURNING id, action_type
-        `;
-        const result = await this.query(query, [caseId]);
+    async dismissPendingProposals(caseId, reason = 'Case status advanced', actionTypes = null) {
+        let query, params;
+        if (actionTypes && actionTypes.length > 0) {
+            query = `
+                UPDATE proposals
+                SET status = 'DISMISSED',
+                    updated_at = NOW()
+                WHERE case_id = $1
+                  AND status IN ('PENDING_APPROVAL', 'DRAFT')
+                  AND action_type = ANY($2)
+                RETURNING id, action_type
+            `;
+            params = [caseId, actionTypes];
+        } else {
+            query = `
+                UPDATE proposals
+                SET status = 'DISMISSED',
+                    updated_at = NOW()
+                WHERE case_id = $1
+                  AND status IN ('PENDING_APPROVAL', 'DRAFT')
+                RETURNING id, action_type
+            `;
+            params = [caseId];
+        }
+        const result = await this.query(query, params);
         if (result.rows.length > 0) {
-            console.log(`[DB] Dismissed ${result.rows.length} pending proposals for case ${caseId}: ${reason}`);
+            const types = actionTypes ? ` (types: ${actionTypes.join(', ')})` : ' (all)';
+            console.log(`[DB] Dismissed ${result.rows.length} proposals for case ${caseId}${types}: ${reason}`);
         }
         return result.rows;
     }
@@ -1524,7 +1544,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.status as case_status,
-                c.send_date, c.state, c.additional_details,
+                c.send_date, c.state, c.additional_details, c.notion_page_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
                 a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
             FROM phone_call_queue pcq
@@ -1541,7 +1561,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.status as case_status,
-                c.send_date, c.state, c.additional_details,
+                c.send_date, c.state, c.additional_details, c.notion_page_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
                 a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
             FROM phone_call_queue pcq
@@ -1558,7 +1578,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.agency_name as case_agency_name, c.status as case_status,
-                c.send_date, c.state, c.additional_details,
+                c.send_date, c.state, c.additional_details, c.notion_page_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
                 a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
             FROM phone_call_queue pcq

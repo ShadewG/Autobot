@@ -326,6 +326,11 @@ State: ${caseData.state || 'Unknown'}
 **Records We Requested:**
 ${recordsList}
 
+**Current Case Status:**
+Status: ${caseData.status}
+${caseData.portal_url ? `Portal URL on file: ${caseData.portal_url}` : 'No portal URL on file'}
+${caseData.send_date ? `Request already sent on: ${caseData.send_date}` : 'Request not yet sent'}
+
 **Response Email:**
 From: ${messageData.from_email}
 Subject: ${messageData.subject}
@@ -1130,6 +1135,92 @@ Return ONLY valid JSON.`;
         } catch (error) {
             console.error('Error generating phone call briefing:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Triage a stuck case in needs_human_review.
+     * Looks at case context, recent messages, and prior proposals to recommend the right action.
+     */
+    async triageStuckCase(caseData, messages = [], priorProposals = []) {
+        const messagesSummary = messages.slice(0, 5).map(m => {
+            const body = this.stripQuotedText(m.body_text || '');
+            return `[${m.direction}] Subject: ${m.subject || 'N/A'}\n${body.substring(0, 400)}`;
+        }).join('\n---\n') || 'No messages found.';
+
+        const proposalsSummary = priorProposals.map(p =>
+            `- ${p.action_type} (${p.status}): ${typeof p.reasoning === 'string' ? p.reasoning.substring(0, 150) : JSON.stringify(p.reasoning).substring(0, 150)}`
+        ).join('\n') || 'No prior proposals.';
+
+        const prompt = `You are triaging a FOIA case stuck in human review. Analyze the case and recommend the best next action.
+
+CASE INFO:
+- Name: ${caseData.case_name}
+- Agency: ${caseData.agency_name}
+- State: ${caseData.state || 'Unknown'}
+- Status: ${caseData.status}
+- Portal URL: ${caseData.portal_url || 'None'}
+- Send Date: ${caseData.send_date || 'Not sent'}
+- Last Updated: ${caseData.updated_at}
+
+RECENT MESSAGES (newest first):
+${messagesSummary}
+
+PRIOR PROPOSALS (newest first):
+${proposalsSummary}
+
+AVAILABLE ACTIONS:
+- SUBMIT_PORTAL: Submit/resubmit via online portal (only if portal_url exists)
+- SEND_FOLLOWUP: Send a follow-up email to the agency
+- SEND_REBUTTAL: Challenge a denial with legal arguments
+- ACCEPT_FEE: Accept a fee quote and proceed with payment
+- NEGOTIATE_FEE: Push back on an excessive fee
+- CLOSE_CASE: Case is resolved, no further action needed
+- ESCALATE: Needs human attention for a reason AI can't handle
+- NONE: No action needed right now
+
+Return a JSON object:
+{
+  "actionType": "one of the above action codes",
+  "summary": "2-3 sentence plain English summary of the case situation",
+  "recommendation": "1 sentence explaining why this action is appropriate",
+  "confidence": 0.0 to 1.0
+}
+
+Rules:
+- Only recommend SUBMIT_PORTAL if a portal_url exists
+- Recommend CLOSE_CASE if agency already provided records or said no responsive records
+- Recommend SEND_REBUTTAL if there's a denial worth challenging
+- Recommend ACCEPT_FEE or NEGOTIATE_FEE if there's an outstanding fee quote
+- Recommend ESCALATE if the situation is ambiguous or complex
+- Don't repeat an action that was already dismissed in prior proposals unless circumstances changed
+- Return ONLY valid JSON.`;
+
+        try {
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4.1-mini',
+                messages: [
+                    { role: 'system', content: 'You are a FOIA case triage specialist. Analyze cases and recommend the most appropriate next action. Return only valid JSON.' },
+                    { role: 'user', content: prompt }
+                ],
+                temperature: 0.3,
+                max_tokens: 500
+            });
+
+            const raw = response.choices[0].message.content?.trim();
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            throw new Error('Failed to parse triage JSON');
+        } catch (error) {
+            console.error('Error in triageStuckCase:', error.message);
+            return {
+                actionType: 'ESCALATE',
+                summary: `AI triage failed: ${error.message}. Case needs manual review.`,
+                recommendation: 'Review case manually — AI triage could not complete.',
+                confidence: 0
+            };
         }
     }
 

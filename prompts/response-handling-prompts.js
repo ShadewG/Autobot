@@ -52,6 +52,12 @@ CRITICAL DECISION RULES (non-negotiable):
    - → intent="portal_redirect", requires_response=false, suggested_action="use_portal"
    - Extract portal_url if URL present
 
+3b. PORTAL CONFIRMATION (case already submitted):
+   - If case status is "sent" or "portal_in_progress" and email is about the portal:
+     - Confirmation/tracking number emails → intent="acknowledgment", suggested_action="wait"
+     - Rejection or "please resubmit" emails → intent="portal_redirect", suggested_action="use_portal"
+   - Only use "portal_redirect" when a NEW submission action is required
+
 4. RECORDS READY (only when NO blocking action):
    - If they provide records or download link AND no question/fee is pending
    - → intent="records_ready", requires_response=false, suggested_action="download"

@@ -811,8 +811,8 @@ class PortalAgentServiceSkyvern {
                     substatus: `Portal submission completed (${statusText})`,
                     send_date: new Date()
                 });
-                // Dismiss any stale proposals (e.g. SUBMIT_PORTAL, SEND_FOLLOWUP) now that case is sent
-                try { await database.dismissPendingProposals(caseData.id, 'Portal submission completed'); } catch (_) {}
+                // Dismiss only submission-related proposals; keep rebuttals, fee negotiations, etc.
+                try { await database.dismissPendingProposals(caseData.id, 'Portal submission completed', ['SUBMIT_PORTAL', 'SEND_FOLLOWUP', 'SEND_INITIAL_REQUEST']); } catch (_) {}
                 try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
 
                 await database.logActivity(

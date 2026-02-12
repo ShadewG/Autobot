@@ -344,39 +344,8 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         // Notify Discord about response received
         await discordService.notifyResponseReceived(caseData, analysis);
 
-        const portalInstruction = messageData.portal_notification &&
-            messageData.portal_notification_type === 'submission_required';
-
-        if (portalInstruction) {
-            // Don't override status if we already submitted (sent/portal_in_progress) —
-            // the email is a confirmation, not a new instruction
-            const alreadySubmitted = ['sent', 'portal_in_progress'].includes(caseData.status);
-            if (alreadySubmitted) {
-                console.log(`🌐 Portal notification for case ${caseId} but status is already '${caseData.status}' — treating as confirmation, not new instruction.`);
-                await db.logActivity('portal_confirmation_ignored', `Portal notification received but case already ${caseData.status} — skipped status override`, {
-                    case_id: caseId,
-                    message_id: messageId,
-                    portal_url: caseData.portal_url,
-                    current_status: caseData.status
-                });
-                return analysis;
-            }
-
-            console.log(`🌐 Portal instruction detected for case ${caseId}; pivoting to portal workflow (no email reply).`);
-            const portalStatusNote = 'Agency requested portal submission';
-            await db.updateCaseStatus(caseId, 'needs_human_review', {
-                substatus: portalStatusNote,
-                last_portal_status: portalStatusNote,
-                last_portal_status_at: new Date()
-            });
-            await db.logActivity('portal_instruction_received', portalStatusNote, {
-                case_id: caseId,
-                message_id: messageId,
-                portal_url: caseData.portal_url
-            });
-            await notionService.syncStatusToNotion(caseId);
-            return analysis;
-        }
+        // Portal emails now flow through the AI/LangGraph agent for proper classification
+        // (confirmations vs rejections) instead of being hardcoded here.
 
         // ===== HYBRID AGENT APPROACH =====
         // Use agent for complex cases, deterministic flow for simple ones
@@ -388,10 +357,15 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             feeAmount > FEE_AUTO_APPROVE_MAX
         );
 
+        // Route portal notifications through agent for proper classification
+        const hasPortalNotification = messageData.portal_notification;
+
         // Determine if this is a complex case that should use the agent
         const isComplexCase = (
             analysis.intent === 'denial' ||
             analysis.intent === 'more_info_needed' ||
+            analysis.intent === 'portal_redirect' ||
+            hasPortalNotification ||
             needsFeeNegotiation ||
             (caseData.previous_attempts && caseData.previous_attempts >= 2) ||
             analysis.sentiment === 'hostile'

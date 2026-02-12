@@ -895,8 +895,11 @@ router.post('/:id/resolve-review', async (req, res) => {
 
             await db.updateCase(requestId, updates);
 
-            // When marking as sent or closing, dismiss any stale pending proposals
-            if (['mark_sent', 'close'].includes(action)) {
+            // When marking as sent, dismiss only submission-related proposals (keep rebuttals, fee negotiations)
+            // When closing, dismiss ALL pending proposals
+            if (action === 'mark_sent') {
+                try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`, ['SUBMIT_PORTAL', 'SEND_FOLLOWUP', 'SEND_INITIAL_REQUEST']); } catch (_) {}
+            } else if (action === 'close') {
                 try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`); } catch (_) {}
             }
 

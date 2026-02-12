@@ -468,6 +468,8 @@
         }
         .clickable-row { cursor: pointer; }
         .clickable-row:hover { background: #1f242b; }
+        .clickable-row.expanded { background: #1c2333; }
+        .case-expanded-row td { padding: 0; }
         .case-inspector {
             margin-top: 14px;
             border: 1px solid #30363d;
@@ -528,18 +530,8 @@
         </div>
     </div>
 
-    <div class="refresh-bar">
-        <div class="auto-refresh">
-            <input type="checkbox" id="autoRefresh" checked>
-            <label for="autoRefresh">Auto-refresh every</label>
-            <select id="refreshInterval">
-                <option value="5000">5s</option>
-                <option value="10000" selected>10s</option>
-                <option value="30000">30s</option>
-                <option value="60000">60s</option>
-            </select>
-            <span id="lastUpdate"></span>
-        </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
+        <span id="lastUpdate" style="color:#8b949e;font-size:12px;"></span>
         <button class="refresh-btn" onclick="loadData()">Refresh Now</button>
     </div>
 
@@ -570,31 +562,6 @@
         </div>
     </div>
 
-    <!-- Send Test Email Form -->
-    <div class="send-form">
-        <h3>Send Test Email</h3>
-        <div class="form-row">
-            <div class="form-group">
-                <label for="emailTo">To Email</label>
-                <input type="email" id="emailTo" placeholder="recipient@example.com">
-            </div>
-            <div class="form-group">
-                <label for="emailSubject">Subject</label>
-                <input type="text" id="emailSubject" placeholder="Test Email Subject" value="[TEST] Autobot Email Test">
-            </div>
-            <button class="send-btn" onclick="sendTestEmail()">Send Email</button>
-        </div>
-        <div class="form-group">
-            <label for="emailBody">Body (optional)</label>
-            <textarea id="emailBody" placeholder="This is a test email. Please reply to test inbound detection."></textarea>
-        </div>
-        <div id="sendResult" class="send-result"></div>
-        <div class="config-info">
-            From: <span id="configFrom">loading...</span> |
-            Reply to this address to test inbound webhook
-        </div>
-    </div>
-
     <div class="ops-panel">
         <h3 style="color:#58a6ff; margin-bottom:8px; font-size:14px;">Live Operations</h3>
         <div class="form-row">
@@ -602,19 +569,23 @@
                 <label for="notionUrlInput">Notion Case Link</label>
                 <input type="text" id="notionUrlInput" placeholder="https://www.notion.so/...">
             </div>
-            <div class="form-group" style="max-width: 220px;">
-                <label for="initialRouteMode">Initial Route</label>
+            <div class="form-group" style="max-width: 180px;">
+                <label for="initialRouteMode">Mode</label>
                 <select id="initialRouteMode">
-                    <option value="">Require Decision</option>
-                    <option value="email">Email Chain</option>
-                    <option value="portal">Portal Task</option>
+                    <option value="SUPERVISED" selected>Supervised</option>
+                    <option value="AUTO">Auto</option>
                 </select>
             </div>
-            <button class="send-btn" onclick="importNotionCase(true)">Import + Queue Initial (SUPERVISED)</button>
-            <button class="send-btn" onclick="importNotionCase(false)">Import Only</button>
-            <button class="send-btn" style="background:#f85149;" onclick="resetOperationalState()">Reset Active/Pending</button>
+            <button class="send-btn" id="importBtn" onclick="importNotionCase()">Import</button>
         </div>
         <div id="notionImportResult" class="send-result"></div>
+        <div id="importConfirmPanel" style="display:none; background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:12px; margin-top:8px;">
+            <div id="importConfirmDetails" style="font-size:12px; color:#c9d1d9; margin-bottom:8px;"></div>
+            <div style="display:flex;gap:8px;">
+                <button class="send-btn" onclick="confirmImportSend()">Confirm &amp; Send</button>
+                <button class="drawer-btn" onclick="cancelImportConfirm()">Cancel</button>
+            </div>
+        </div>
 
         <div class="ops-grid">
             <div class="ops-card">
@@ -628,10 +599,6 @@
             <div class="ops-card">
                 <div class="label">Unmatched Inbound</div>
                 <div class="value" id="opsUnmatchedInbound">-</div>
-            </div>
-            <div class="ops-card">
-                <div class="label">Unprocessed Inbound</div>
-                <div class="value" id="opsUnprocessedInbound">-</div>
             </div>
             <div class="ops-card">
                 <div class="label">Active Runs</div>
@@ -654,10 +621,6 @@
             <div class="ops-list">
                 <h4>Unmatched Inbound Queue</h4>
                 <div id="opsUnmatchedList"></div>
-            </div>
-            <div class="ops-list">
-                <h4>Unprocessed Inbound Queue</h4>
-                <div id="opsUnprocessedList"></div>
             </div>
         </div>
     </div>
@@ -709,7 +672,7 @@
     </div>
 
         <div id="cases" class="panel">
-            <div class="scroll-container">
+            <div class="scroll-container" style="max-height:none;">
                 <table>
                 <thead>
                     <tr>
@@ -726,58 +689,63 @@
                 <tbody id="caseRows"></tbody>
                 </table>
             </div>
-        <div id="caseInspector" class="case-inspector" style="display:none;">
+    </div>
+
+    <!-- Case Inspector Template (moved inline under clicked row via JS) -->
+    <div id="caseInspector" class="case-inspector" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
             <h3 id="caseInspectorTitle">Case Inspector</h3>
-            <div id="caseInspectorGrid" class="case-grid"></div>
-            <div id="casePortalInfoPanel" style="display:none; margin-top:12px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
-            <div id="caseInspectorActions" style="margin-top:10px;"></div>
-            <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
-            <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
-                <h3 style="margin-top:0;">Portal Submission Review</h3>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="portalReviewCase">Case</label>
-                        <input id="portalReviewCase" readonly>
-                    </div>
-                    <div class="form-group">
-                        <label for="portalReviewAgency">Agency</label>
-                        <input id="portalReviewAgency" readonly>
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="portalReviewUrl">Portal URL</label>
-                        <input id="portalReviewUrl" placeholder="https://...">
-                    </div>
-                    <div class="form-group">
-                        <label for="portalReviewProvider">Portal Provider (optional)</label>
-                        <input id="portalReviewProvider" placeholder="GovQA / NextRequest / etc">
-                    </div>
+            <button class="drawer-close" onclick="collapseCase()" title="Close">Close</button>
+        </div>
+        <div id="caseInspectorGrid" class="case-grid"></div>
+        <div id="casePortalInfoPanel" style="display:none; margin-top:12px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
+        <div id="caseInspectorActions" style="margin-top:10px;"></div>
+        <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
+        <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
+            <h3 style="margin-top:0;">Portal Submission Review</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="portalReviewCase">Case</label>
+                    <input id="portalReviewCase" readonly>
                 </div>
                 <div class="form-group">
-                    <label for="portalReviewInstructions">Instructions sent to Skyvern</label>
-                    <textarea id="portalReviewInstructions" placeholder="What to submit in the portal..."></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="portalReviewResearch">Case Research Snapshot (read-only)</label>
-                    <textarea id="portalReviewResearch" readonly></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="portalReviewRawDetails">Raw Case Text For AI/Skyvern (read-only)</label>
-                    <textarea id="portalReviewRawDetails" readonly></textarea>
-                </div>
-                <div class="proposal-actions">
-                    <button class="send-btn" onclick="confirmPortalSubmission()">Confirm + Submit Portal</button>
-                    <button class="drawer-btn" onclick="hidePortalReview()">Cancel</button>
+                    <label for="portalReviewAgency">Agency</label>
+                    <input id="portalReviewAgency" readonly>
                 </div>
             </div>
-            <h3>Correspondence</h3>
-            <div id="caseInspectorMessages" class="case-list"></div>
-            <h3 style="margin-top:10px;">Runs</h3>
-            <div id="caseInspectorRuns" class="case-list"></div>
-            <h3 style="margin-top:10px;">Proposals</h3>
-            <div id="caseInspectorProposals" class="case-list"></div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="portalReviewUrl">Portal URL</label>
+                    <input id="portalReviewUrl" placeholder="https://...">
+                </div>
+                <div class="form-group">
+                    <label for="portalReviewProvider">Portal Provider (optional)</label>
+                    <input id="portalReviewProvider" placeholder="GovQA / NextRequest / etc">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="portalReviewInstructions">Instructions sent to Skyvern</label>
+                <textarea id="portalReviewInstructions" placeholder="What to submit in the portal..."></textarea>
+            </div>
+            <div class="form-group">
+                <label for="portalReviewResearch">Case Research Snapshot (read-only)</label>
+                <textarea id="portalReviewResearch" readonly></textarea>
+            </div>
+            <div class="form-group">
+                <label for="portalReviewRawDetails">Raw Case Text For AI/Skyvern (read-only)</label>
+                <textarea id="portalReviewRawDetails" readonly></textarea>
+            </div>
+            <div class="proposal-actions">
+                <button class="send-btn" onclick="confirmPortalSubmission()">Confirm + Submit Portal</button>
+                <button class="drawer-btn" onclick="hidePortalReview()">Cancel</button>
+            </div>
         </div>
+        <h3>Correspondence</h3>
+        <div id="caseInspectorMessages" class="case-list"></div>
+        <h3 style="margin-top:10px;">Runs</h3>
+        <div id="caseInspectorRuns" class="case-list"></div>
+        <h3 style="margin-top:10px;">Proposals</h3>
+        <div id="caseInspectorProposals" class="case-list"></div>
     </div>
 
     <div id="outbound" class="panel">
@@ -838,111 +806,95 @@
             <button class="drawer-close" onclick="closePhoneDrawer()">Close</button>
         </div>
 
-        <div class="drawer-section">
-            <div class="drawer-label">Phone Number</div>
-            <div id="pdPhone" style="font-size:20px;font-weight:700;margin:4px 0 8px;"></div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                <div>
-                    <div class="drawer-label">Agency</div>
-                    <div class="drawer-value" id="pdAgency">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">State</div>
-                    <div class="drawer-value" id="pdState">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">Contact Person</div>
-                    <div class="drawer-value" id="pdContact">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">Agency Email</div>
-                    <div class="drawer-value" id="pdEmail">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">FOIA Email</div>
-                    <div class="drawer-value" id="pdFoiaEmail">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">Fax</div>
-                    <div class="drawer-value" id="pdFax">-</div>
-                </div>
-            </div>
-            <div class="drawer-label" style="margin-top:8px;">Address</div>
-            <div class="drawer-value" id="pdAddress">-</div>
+        <!-- Section 1: Header -->
+        <div class="drawer-section" style="padding-bottom:10px;">
+            <div id="pdPhone" style="font-size:22px;font-weight:700;margin-bottom:4px;"></div>
+            <div style="font-size:14px;color:#c9d1d9;"><span id="pdAgency" style="font-weight:600;">-</span> <span id="pdState" style="color:#8b949e;font-size:12px;"></span></div>
+            <div id="pdCaseName" style="margin-top:4px;font-size:13px;"></div>
         </div>
 
-        <div class="drawer-section">
-            <div class="drawer-label">Case</div>
-            <div class="drawer-value" id="pdCaseName">-</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">
-                <div>
-                    <div class="drawer-label">Subject</div>
-                    <div class="drawer-value" id="pdSubject">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">Sent Date</div>
-                    <div class="drawer-value" id="pdSendDate">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">Days Waiting</div>
-                    <div class="drawer-value" id="pdDaysWaiting">-</div>
-                </div>
-                <div>
-                    <div class="drawer-label">Escalation Reason</div>
-                    <div class="drawer-value" id="pdReason">-</div>
-                </div>
+        <!-- Section 2: Call Justification (prominent) -->
+        <div class="drawer-section" id="pdJustificationSection" style="border:1px solid #f0883e;border-radius:8px;padding:10px 12px;margin:0 0 8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div class="drawer-label" style="color:#f0883e;margin:0;font-weight:600;">Why This Call Is Needed</div>
+                <button class="drawer-btn" id="pdBriefingBtn" onclick="generateBriefing(true)" style="font-size:10px;padding:2px 8px;color:#8b949e;">Regenerate</button>
             </div>
-            <div class="drawer-label" style="margin-top:8px;">Request Details</div>
-            <div class="drawer-value" id="pdDetails" style="white-space:pre-wrap;max-height:120px;overflow-y:auto;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;font-size:12px;">-</div>
-        </div>
-
-        <div class="drawer-section">
-            <div class="drawer-label">Notes</div>
-            <div class="drawer-value" id="pdNotes" style="white-space:pre-wrap;">-</div>
-            <div id="pdCallNotes" style="display:none;margin-top:8px;">
-                <div class="drawer-label">Previous Call Notes</div>
-                <div class="drawer-value" id="pdCallNotesText">-</div>
-            </div>
-        </div>
-
-        <!-- AI Call Briefing -->
-        <div class="drawer-section" id="pdBriefingSection">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div class="drawer-label">AI Call Briefing</div>
-                <button class="drawer-btn primary" id="pdBriefingBtn" onclick="generateBriefing(false)" style="font-size:11px;padding:3px 10px;">Generate Briefing</button>
-            </div>
-            <div id="pdBriefingLoading" style="display:none;text-align:center;padding:12px 0;color:#8b949e;">
+            <div id="pdBriefingLoading" style="display:none;text-align:center;padding:8px 0;color:#8b949e;">
                 <span style="display:inline-block;animation:spin 1s linear infinite;margin-right:6px;">&#9696;</span> Generating briefing...
             </div>
+            <div id="pdJustificationText" style="font-size:13px;line-height:1.5;color:#c9d1d9;"></div>
+        </div>
+
+        <!-- Section 3: Briefing (collapsible) -->
+        <div class="drawer-section" id="pdBriefingSection" style="display:none;">
+            <div onclick="toggleBriefingDetails()" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
+                <div class="drawer-label" style="margin:0;">Briefing Details</div>
+                <span id="pdBriefingToggleIcon" style="color:#8b949e;font-size:11px;">&#9660; Show</span>
+            </div>
             <div id="pdBriefingContent" style="display:none;margin-top:8px;">
-                <div style="margin-bottom:8px;">
-                    <div class="drawer-label" style="color:#58a6ff;">Case Summary</div>
-                    <div id="pdBriefingSummary" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;"></div>
-                </div>
-                <div style="margin-bottom:8px;">
-                    <div class="drawer-label" style="color:#f0883e;">Why Call Is Needed</div>
-                    <div id="pdBriefingJustification" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;"></div>
-                </div>
                 <div style="margin-bottom:8px;">
                     <div class="drawer-label" style="color:#3fb950;">Talking Points</div>
                     <ul id="pdBriefingTalkingPoints" style="font-size:12px;line-height:1.6;color:#c9d1d9;margin:0;padding-left:18px;"></ul>
                 </div>
-                <div>
+                <div style="margin-bottom:8px;">
                     <div class="drawer-label" style="color:#8b949e;">Key Details</div>
                     <div id="pdBriefingKeyDetails" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;white-space:pre-wrap;"></div>
+                </div>
+                <div>
+                    <div class="drawer-label" style="color:#58a6ff;">Case Summary</div>
+                    <div id="pdBriefingSummary" style="font-size:12px;line-height:1.5;color:#c9d1d9;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Action forms (shown based on status) -->
+        <!-- Section 4: Quick Reference (compact grid, only populated fields) -->
+        <div class="drawer-section" id="pdQuickRef">
+            <div class="drawer-label" style="margin-bottom:6px;">Quick Reference</div>
+            <div id="pdQuickRefGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;font-size:12px;"></div>
+        </div>
+
+        <!-- Section 5: Phone Options (compact) -->
+        <div id="pdPhoneOptions" style="display:none;" class="drawer-section">
+            <div class="drawer-label" style="margin-bottom:6px;">Phone Options</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                <div id="pdPhoneOptionNotion" onclick="selectPhoneOption('notion')" style="background:#161b22;border:2px solid #30363d;border-radius:6px;padding:8px;cursor:pointer;transition:border-color 0.15s;">
+                    <div style="font-size:10px;color:#8b949e;margin-bottom:2px;font-weight:600;">Notion PD Card</div>
+                    <div id="pdNotionPhone" style="font-size:14px;font-weight:700;color:#c9d1d9;margin-bottom:4px;">-</div>
+                    <a id="pdNotionLink" href="#" target="_blank" onclick="event.stopPropagation();" style="font-size:10px;color:#58a6ff;text-decoration:none;display:none;">View PD Card &rarr;</a>
+                </div>
+                <div id="pdPhoneOptionWeb" onclick="selectPhoneOption('web_search')" style="background:#161b22;border:2px solid #30363d;border-radius:6px;padding:8px;cursor:pointer;transition:border-color 0.15s;">
+                    <div style="font-size:10px;color:#8b949e;margin-bottom:2px;font-weight:600;">Web Search</div>
+                    <div id="pdWebPhone" style="font-size:14px;font-weight:700;color:#c9d1d9;margin-bottom:4px;">-</div>
+                    <div id="pdWebReasoning" style="font-size:10px;color:#8b949e;line-height:1.3;display:none;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 6: Full Details (collapsible, hidden by default) -->
+        <div class="drawer-section" id="pdDetailsSection">
+            <div onclick="toggleFullDetails()" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
+                <div class="drawer-label" style="margin:0;">Full Details</div>
+                <span id="pdDetailsToggleIcon" style="color:#8b949e;font-size:11px;">&#9660; Show</span>
+            </div>
+            <div id="pdDetailsContent" style="display:none;margin-top:8px;">
+                <div class="drawer-label">Request Details</div>
+                <div class="drawer-value" id="pdDetails" style="white-space:pre-wrap;max-height:150px;overflow-y:auto;background:#161b22;padding:8px;border-radius:6px;border:1px solid #30363d;font-size:12px;">-</div>
+                <div class="drawer-label" style="margin-top:8px;">Escalation Notes</div>
+                <div class="drawer-value" id="pdNotes" style="white-space:pre-wrap;font-size:12px;">-</div>
+                <div id="pdCallNotes" style="display:none;margin-top:8px;">
+                    <div class="drawer-label">Previous Call Notes</div>
+                    <div class="drawer-value" id="pdCallNotesText" style="font-size:12px;">-</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section 7: Actions -->
         <div class="drawer-section" id="pdActions">
-            <!-- Claim form -->
             <div id="pdClaimForm" style="display:none;">
                 <div class="drawer-label">Claim This Call</div>
                 <input class="drawer-input" id="pdClaimName" placeholder="Your name" style="margin-bottom:8px;" />
                 <button class="drawer-btn primary" onclick="doClaimPhoneCall()" style="width:100%;">Claim This Call</button>
             </div>
-            <!-- Complete form -->
             <div id="pdCompleteForm" style="display:none;">
                 <div class="drawer-label">Mark Complete</div>
                 <select class="drawer-input" id="pdOutcome" style="margin-bottom:8px;">
@@ -957,13 +909,11 @@
                 <textarea class="drawer-textarea" id="pdCompleteNotes" placeholder="Call notes — what happened, who you spoke with, next steps..." style="margin-bottom:8px;min-height:70px;"></textarea>
                 <button class="drawer-btn primary" onclick="doCompletePhoneCall()" style="width:100%;">Mark Complete</button>
             </div>
-            <!-- Skip form -->
             <div id="pdSkipForm" style="display:none;">
                 <div class="drawer-label" style="margin-top:12px;">Skip This Call</div>
                 <textarea class="drawer-textarea" id="pdSkipReason" placeholder="Reason for skipping (optional)..." style="margin-bottom:8px;min-height:50px;"></textarea>
                 <button class="drawer-btn warn" onclick="doSkipPhoneCall()" style="width:100%;">Skip</button>
             </div>
-            <!-- Status display for completed/skipped -->
             <div id="pdStatusDisplay" style="display:none;">
                 <div class="drawer-label">Status</div>
                 <div class="drawer-value" id="pdStatusText">-</div>
@@ -1075,8 +1025,6 @@
     </div>
 
     <script>
-        let refreshTimer = null;
-
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
             tab.addEventListener('click', () => {
@@ -1356,32 +1304,93 @@
             const phone = t.agency_phone || t.agency_phone_from_db;
             document.getElementById('phoneDrawerTitle').textContent = `Call #${t.id}`;
 
-            // Phone number
+            // Section 1: Header
             const pdPhone = document.getElementById('pdPhone');
             if (phone) {
                 pdPhone.innerHTML = `<a href="tel:${phone}" style="color:#58a6ff;text-decoration:none;">${phone}</a>`;
             } else {
                 pdPhone.innerHTML = `<span style="color:#f85149;">No phone on file</span>`;
             }
-
-            // Agency info
             document.getElementById('pdAgency').textContent = t.agency_name || '-';
-            document.getElementById('pdState').textContent = t.agency_state || t.state || '-';
-            document.getElementById('pdContact').textContent = t.contact_name || '-';
-            document.getElementById('pdEmail').textContent = t.agency_email || '-';
-            document.getElementById('pdFoiaEmail').textContent = t.email_foia || '-';
-            document.getElementById('pdFax').textContent = t.fax || '-';
-            document.getElementById('pdAddress').textContent = t.address || '-';
-
-            // Case info
+            document.getElementById('pdState').textContent = t.agency_state || t.state || '';
             document.getElementById('pdCaseName').innerHTML = `<a class="case-link" href="#" onclick="openCase(${t.case_id});closePhoneDrawer();return false;" style="color:#58a6ff;">#${t.case_id}</a> ${t.case_name || ''}`;
-            document.getElementById('pdSubject').textContent = t.subject_name || '-';
-            document.getElementById('pdSendDate').textContent = t.send_date ? new Date(t.send_date).toLocaleDateString() : '-';
-            document.getElementById('pdDaysWaiting').textContent = t.days_since_sent != null ? `${t.days_since_sent} days` : '-';
-            document.getElementById('pdReason').textContent = (t.reason || '-').replace(/_/g, ' ');
-            document.getElementById('pdDetails').textContent = t.additional_details || 'No details available';
 
-            // Notes
+            // Section 2: Justification + briefing
+            document.getElementById('pdBriefingLoading').style.display = 'none';
+            document.getElementById('pdJustificationText').textContent = '';
+            document.getElementById('pdBriefingSection').style.display = 'none';
+            document.getElementById('pdBriefingContent').style.display = 'none';
+            document.getElementById('pdBriefingBtn').disabled = false;
+
+            if (t.ai_briefing) {
+                renderBriefing(t.ai_briefing);
+            } else {
+                // Auto-trigger briefing generation
+                document.getElementById('pdJustificationText').textContent = '';
+                document.getElementById('pdBriefingLoading').style.display = 'block';
+                generateBriefing(false);
+            }
+
+            // Section 4: Quick Reference (only populated fields)
+            const refItems = [];
+            if (t.contact_name) refItems.push(['Contact', t.contact_name]);
+            if (t.agency_email) refItems.push(['Email', t.agency_email]);
+            if (t.days_since_sent != null) refItems.push(['Days Waiting', `${t.days_since_sent} days`]);
+            if (t.reason) refItems.push(['Escalation', (t.reason || '').replace(/_/g, ' ')]);
+            if (t.send_date) refItems.push(['Sent Date', new Date(t.send_date).toLocaleDateString()]);
+            document.getElementById('pdQuickRefGrid').innerHTML = refItems.map(([label, val]) =>
+                `<div style="color:#8b949e;">${label}</div><div style="color:#c9d1d9;">${val}</div>`
+            ).join('');
+            document.getElementById('pdQuickRef').style.display = refItems.length ? 'block' : 'none';
+
+            // Section 5: Phone Options
+            const phoneOptionsEl = document.getElementById('pdPhoneOptions');
+            const opts = t.phone_options;
+            if (opts && (opts.notion?.phone || opts.web_search?.phone)) {
+                phoneOptionsEl.style.display = 'block';
+
+                const notionPhoneEl = document.getElementById('pdNotionPhone');
+                const notionLinkEl = document.getElementById('pdNotionLink');
+                if (opts.notion?.phone) {
+                    notionPhoneEl.innerHTML = `<a href="tel:${opts.notion.phone}" style="color:#c9d1d9;text-decoration:none;" onclick="event.stopPropagation();">${opts.notion.phone}</a>`;
+                } else {
+                    notionPhoneEl.textContent = 'Not found';
+                    notionPhoneEl.style.color = '#8b949e';
+                }
+                if (opts.notion?.pd_page_url) {
+                    notionLinkEl.href = opts.notion.pd_page_url;
+                    notionLinkEl.style.display = 'inline';
+                } else if (opts.notion?.pd_page_id) {
+                    notionLinkEl.href = `https://www.notion.so/${opts.notion.pd_page_id.replace(/-/g, '')}`;
+                    notionLinkEl.style.display = 'inline';
+                } else {
+                    notionLinkEl.style.display = 'none';
+                }
+
+                const webPhoneEl = document.getElementById('pdWebPhone');
+                const webReasoningEl = document.getElementById('pdWebReasoning');
+                if (opts.web_search?.phone) {
+                    webPhoneEl.innerHTML = `<a href="tel:${opts.web_search.phone}" style="color:#c9d1d9;text-decoration:none;" onclick="event.stopPropagation();">${opts.web_search.phone}</a>`;
+                } else {
+                    webPhoneEl.textContent = 'Not found';
+                    webPhoneEl.style.color = '#8b949e';
+                }
+                if (opts.web_search?.reasoning) {
+                    webReasoningEl.textContent = opts.web_search.reasoning;
+                    webReasoningEl.style.display = 'block';
+                } else {
+                    webReasoningEl.style.display = 'none';
+                }
+
+                highlightSelectedPhoneOption(phone, opts);
+            } else {
+                phoneOptionsEl.style.display = 'none';
+            }
+
+            // Section 6: Full Details (collapsed)
+            document.getElementById('pdDetailsContent').style.display = 'none';
+            document.getElementById('pdDetailsToggleIcon').innerHTML = '&#9660; Show';
+            document.getElementById('pdDetails').textContent = t.additional_details || 'No details available';
             document.getElementById('pdNotes').textContent = t.notes || 'No escalation notes';
             if (t.call_notes) {
                 document.getElementById('pdCallNotes').style.display = 'block';
@@ -1390,7 +1399,7 @@
                 document.getElementById('pdCallNotes').style.display = 'none';
             }
 
-            // Show appropriate action form
+            // Section 7: Actions
             document.getElementById('pdClaimForm').style.display = 'none';
             document.getElementById('pdCompleteForm').style.display = 'none';
             document.getElementById('pdSkipForm').style.display = 'none';
@@ -1411,16 +1420,6 @@
                 document.getElementById('pdStatusDisplay').style.display = 'block';
                 const statusColor = t.status === 'completed' ? '#3fb950' : '#8b949e';
                 document.getElementById('pdStatusText').innerHTML = `<span style="color:${statusColor};font-weight:600;">${t.status}</span>${t.call_outcome ? ` - ${t.call_outcome}` : ''}${t.completed_by ? ` (by ${t.completed_by})` : ''}`;
-            }
-
-            // AI Briefing: show cached or reset
-            document.getElementById('pdBriefingContent').style.display = 'none';
-            document.getElementById('pdBriefingLoading').style.display = 'none';
-            document.getElementById('pdBriefingBtn').disabled = false;
-            if (t.ai_briefing) {
-                renderBriefing(t.ai_briefing);
-            } else {
-                document.getElementById('pdBriefingBtn').textContent = 'Generate Briefing';
             }
 
             // Show drawer
@@ -1498,8 +1497,12 @@
         }
 
         function renderBriefing(briefing) {
+            // Justification (always visible in prominent section)
+            document.getElementById('pdJustificationText').textContent = briefing.call_justification || 'No justification available';
+            document.getElementById('pdBriefingLoading').style.display = 'none';
+
+            // Briefing details (collapsible)
             document.getElementById('pdBriefingSummary').textContent = briefing.case_summary || '';
-            document.getElementById('pdBriefingJustification').textContent = briefing.call_justification || '';
             const tpEl = document.getElementById('pdBriefingTalkingPoints');
             tpEl.innerHTML = (briefing.talking_points || []).map(p => `<li>${p}</li>`).join('');
             const kd = briefing.key_details;
@@ -1511,14 +1514,41 @@
                 if (kd.amounts) kdText += `Amounts: ${JSON.stringify(kd.amounts)}`;
             }
             document.getElementById('pdBriefingKeyDetails').textContent = kdText.trim() || 'None';
-            document.getElementById('pdBriefingContent').style.display = 'block';
-            document.getElementById('pdBriefingLoading').style.display = 'none';
+            document.getElementById('pdBriefingSection').style.display = 'block';
+            document.getElementById('pdBriefingContent').style.display = 'none';
+            document.getElementById('pdBriefingToggleIcon').innerHTML = '&#9660; Show';
             document.getElementById('pdBriefingBtn').textContent = 'Regenerate';
+        }
+
+        function toggleBriefingDetails() {
+            const content = document.getElementById('pdBriefingContent');
+            const icon = document.getElementById('pdBriefingToggleIcon');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.innerHTML = '&#9650; Hide';
+            } else {
+                content.style.display = 'none';
+                icon.innerHTML = '&#9660; Show';
+            }
+        }
+
+        function toggleFullDetails() {
+            const content = document.getElementById('pdDetailsContent');
+            const icon = document.getElementById('pdDetailsToggleIcon');
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                icon.innerHTML = '&#9650; Hide';
+            } else {
+                content.style.display = 'none';
+                icon.innerHTML = '&#9660; Show';
+            }
         }
 
         async function generateBriefing(force) {
             document.getElementById('pdBriefingContent').style.display = 'none';
+            document.getElementById('pdBriefingSection').style.display = 'none';
             document.getElementById('pdBriefingLoading').style.display = 'block';
+            document.getElementById('pdJustificationText').textContent = '';
             document.getElementById('pdBriefingBtn').disabled = true;
             try {
                 const res = await fetch(`/api/phone-calls/${activePhoneCallId}/briefing?force=${force}`, {
@@ -1528,14 +1558,50 @@
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error);
                 renderBriefing(data.briefing);
-                // Update cache locally
                 const t = phoneCallCache.find(x => x.id === activePhoneCallId);
                 if (t) t.ai_briefing = data.briefing;
             } catch (err) {
                 document.getElementById('pdBriefingLoading').style.display = 'none';
+                document.getElementById('pdJustificationText').textContent = 'Failed to generate briefing';
+                document.getElementById('pdJustificationText').style.color = '#f85149';
                 showPhoneActionResult('Briefing failed: ' + err.message, true);
             } finally {
                 document.getElementById('pdBriefingBtn').disabled = false;
+            }
+        }
+
+        function highlightSelectedPhoneOption(currentPhone, opts) {
+            const notionCard = document.getElementById('pdPhoneOptionNotion');
+            const webCard = document.getElementById('pdPhoneOptionWeb');
+            const isNotion = opts.notion?.phone && currentPhone === opts.notion.phone;
+            const isWeb = opts.web_search?.phone && currentPhone === opts.web_search.phone;
+            notionCard.style.borderColor = isNotion ? '#3fb950' : '#30363d';
+            webCard.style.borderColor = isWeb ? '#3fb950' : '#30363d';
+        }
+
+        async function selectPhoneOption(source) {
+            const t = phoneCallCache.find(x => x.id === activePhoneCallId);
+            if (!t || !t.phone_options) return;
+            const opts = t.phone_options;
+            const phone = source === 'notion' ? opts.notion?.phone : opts.web_search?.phone;
+            if (!phone) return;
+
+            try {
+                const res = await fetch(`/api/phone-calls/${activePhoneCallId}/select-phone`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, source })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+
+                // Update local cache and UI
+                t.agency_phone = phone;
+                const pdPhone = document.getElementById('pdPhone');
+                pdPhone.innerHTML = `<a href="tel:${phone}" style="color:#58a6ff;text-decoration:none;">${phone}</a>`;
+                highlightSelectedPhoneOption(phone, opts);
+            } catch (err) {
+                showPhoneActionResult('Failed to select phone: ' + err.message, true);
             }
         }
 
@@ -1552,9 +1618,9 @@
             }
 
             rowsEl.innerHTML = caseCache.map(c => `
-                <tr class="clickable-row" onclick="openCase(${c.id})">
+                <tr class="clickable-row" data-case-id="${c.id}" onclick="toggleCase(${c.id})">
                     <td class="timestamp">${relativeTime(c.updated_at)}</td>
-                    <td><a class="case-link" href="#" onclick="openCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
+                    <td><a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
                     <td>${truncate(c.agency_name, 30)}</td>
                     <td>${routeBadgeForRecord(c)}</td>
                     <td>${truncate(c.status || '-', 24)}</td>
@@ -1581,20 +1647,48 @@
             document.getElementById('opsInbound24h').textContent = s.inbound_24h ?? 0;
             document.getElementById('opsPendingApprovals').textContent = s.pending_approvals_total ?? 0;
             document.getElementById('opsUnmatchedInbound').textContent = s.unmatched_inbound_total ?? 0;
-            document.getElementById('opsUnprocessedInbound').textContent = s.unprocessed_inbound_total ?? 0;
             document.getElementById('opsActiveRuns').textContent = s.active_runs_total ?? 0;
             document.getElementById('opsStuckRuns').textContent = s.stuck_runs_total ?? 0;
 
-            renderOpsList('opsPendingList', payload.pending_approvals, (p) => `
-                <div class="ops-item">
-                    <div><a href="#" onclick="openCase(${p.case_id});return false;">Case #${p.case_id || '-'}</a> · Proposal #${p.id}</div>
-                    <div>${p.action_type || '-'} · ${relativeTime(p.created_at)}</div>
+            renderOpsList('opsPendingList', payload.pending_approvals, (p) => {
+                const hasPortal = p.portal_url && !p.portal_url.startsWith('http://') || (p.portal_url && p.portal_url.includes('portal'));
+                const actionLabel = (p.action_type || '').replace(/_/g, ' ');
+                const caseStatus = (p.case_status || '').replace(/_/g, ' ');
+                const msgSummary = p.inbound_count > 0
+                    ? `${p.inbound_count} inbound msg${p.inbound_count > 1 ? 's' : ''}`
+                    : 'No responses yet';
+                const lastMsg = p.last_inbound_preview
+                    ? truncate(p.last_inbound_preview.replace(/\s+/g, ' '), 100)
+                    : '';
+                const lastSubj = p.last_inbound_subject ? truncate(p.last_inbound_subject, 50) : '';
+                const reasoning = p.reasoning ? truncate(p.reasoning, 120) : '';
+                return `
+                <div class="ops-item" style="padding:10px;">
+                    <div style="display:flex;justify-content:space-between;align-items:start;">
+                        <div>
+                            <a href="#" onclick="openCase(${p.case_id});return false;" style="color:#58a6ff;font-weight:600;">Case #${p.case_id || '-'}</a>
+                            <span style="color:#c9d1d9;font-size:12px;margin-left:4px;">${truncate(p.case_name || '', 35)}</span>
+                        </div>
+                        <span style="font-size:11px;color:#8b949e;">${relativeTime(p.created_at)}</span>
+                    </div>
                     <div style="margin-top:4px;">
+                        <span class="badge agent" style="font-size:10px;">${actionLabel}</span>
+                        ${p.agency_name ? `<span style="color:#8b949e;font-size:11px;margin-left:6px;">${truncate(p.agency_name, 30)}</span>` : ''}
+                        <span style="color:#8b949e;font-size:11px;margin-left:6px;">${caseStatus}</span>
+                    </div>
+                    ${reasoning ? `<div style="margin-top:4px;font-size:11px;color:#d2a8ff;line-height:1.4;">${reasoning}</div>` : ''}
+                    <div style="margin-top:4px;font-size:11px;color:#8b949e;">
+                        ${msgSummary}${p.message_count > 0 ? ` (${p.message_count} total)` : ''}
+                        ${lastSubj ? ` · Last: "${lastSubj}"` : ''}
+                    </div>
+                    ${lastMsg ? `<div style="margin-top:3px;font-size:11px;color:#6e7681;font-style:italic;line-height:1.3;max-height:32px;overflow:hidden;">${lastMsg}</div>` : ''}
+                    <div style="margin-top:6px;display:flex;gap:6px;">
                         <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
                         <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
+                        <button class="drawer-btn" onclick="dismissProposal(${p.id})" style="color:#f85149;">Dismiss</button>
                     </div>
-                </div>
-            `);
+                </div>`;
+            });
 
             renderOpsList('opsUnmatchedList', payload.unmatched_inbound, (m) => `
                 <div class="ops-item">
@@ -1606,15 +1700,6 @@
                 </div>
             `);
 
-            renderOpsList('opsUnprocessedList', payload.unprocessed_inbound, (m) => `
-                <div class="ops-item">
-                    <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · Case #${m.case_id || '-'}</div>
-                    <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
-                    <div style="margin-top:4px;">
-                        <button class="drawer-btn warn" ${m.case_id ? '' : 'disabled'} onclick="triggerAIFromOps(${m.id})">Trigger AI</button>
-                    </div>
-                </div>
-            `);
         }
 
         async function openPendingApproval(proposalId, triggerMessageId, caseId) {
@@ -1729,39 +1814,28 @@
             }
         }
 
-        // Auto-refresh setup
-        function setupAutoRefresh() {
-            if (refreshTimer) clearInterval(refreshTimer);
-
-            if (document.getElementById('autoRefresh').checked) {
-                const interval = parseInt(document.getElementById('refreshInterval').value);
-                refreshTimer = setInterval(loadData, interval);
-            }
-        }
-
-        document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
-        document.getElementById('refreshInterval').addEventListener('change', setupAutoRefresh);
-
-        // Load email config
+        // Load runtime config
         async function loadConfig() {
             try {
                 const res = await fetch('/api/monitor/config');
                 const config = await res.json();
-                document.getElementById('configFrom').textContent = config.from_email;
                 document.getElementById('runtimeMode').textContent = `Execution: ${config.execution_mode || 'LIVE'}`;
                 document.getElementById('shadowMode').textContent = `Shadow: ${config.shadow_mode ? 'ON' : 'OFF'}`;
                 const queueGen = (config.queue?.generation?.waiting || 0) + (config.queue?.generation?.active || 0);
                 const queueEmail = (config.queue?.email?.waiting || 0) + (config.queue?.email?.active || 0);
                 document.getElementById('queueBadge').textContent = `Queue G:${queueGen} E:${queueEmail}`;
             } catch (err) {
-                document.getElementById('configFrom').textContent = 'Error loading config';
+                console.error('Config load failed:', err);
             }
         }
 
-        async function importNotionCase(runInitial) {
+        // Import: step 1 — import from Notion, show details for confirmation
+        let pendingImportCaseId = null;
+        async function importNotionCase() {
             const notionUrl = document.getElementById('notionUrlInput').value.trim();
-            const routeMode = document.getElementById('initialRouteMode').value;
             const resultDiv = document.getElementById('notionImportResult');
+            const confirmPanel = document.getElementById('importConfirmPanel');
+            confirmPanel.style.display = 'none';
             if (!notionUrl) {
                 resultDiv.className = 'send-result error';
                 resultDiv.textContent = 'Notion URL is required.';
@@ -1769,7 +1843,11 @@
                 return;
             }
 
+            const btn = document.getElementById('importBtn');
+            btn.disabled = true;
+            btn.textContent = 'Importing...';
             resultDiv.style.display = 'none';
+
             try {
                 const importRes = await fetch('/api/cases/import-notion', {
                     method: 'POST',
@@ -1782,130 +1860,70 @@
                 }
 
                 const caseId = importData.case_id || importData.case?.id;
-                if (!caseId) {
-                    throw new Error('Case import succeeded but no case_id returned');
-                }
+                if (!caseId) throw new Error('No case_id returned');
 
-                if (!runInitial) {
-                    resultDiv.className = 'send-result success';
-                    const hasPortal = !!importData.case?.portal_url;
-                    const hasEmail = !!importData.case?.agency_email;
-                    const routeHint = hasPortal && hasEmail
-                        ? ' Routing profile: HYBRID (both portal + email). Pick Initial Route before running initial.'
-                        : hasPortal
-                            ? ' Routing profile: PORTAL.'
-                            : hasEmail
-                                ? ' Routing profile: EMAIL.'
-                                : ' Routing profile: UNKNOWN (missing contact channel).';
-                    resultDiv.textContent = `Case imported: #${caseId}.${routeHint}`;
-                    resultDiv.style.display = 'block';
-                    await loadData();
-                    return;
-                }
+                pendingImportCaseId = caseId;
+                const c = importData.case || {};
+                const hasPortal = !!c.portal_url;
+                const hasEmail = !!c.agency_email;
+                const routing = hasPortal && hasEmail ? 'HYBRID' : hasPortal ? 'PORTAL' : hasEmail ? 'EMAIL' : 'UNKNOWN';
 
-                const runRes = await fetch(`/api/cases/${caseId}/run-initial`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        autopilotMode: 'SUPERVISED',
-                        route_mode: routeMode || undefined
-                    })
-                });
-                const runData = await runRes.json();
-                if (!runRes.ok || !runData.success) {
-                    if (runData.requires_route_decision) {
-                        throw new Error('Route decision required. Pick Initial Route: Email Chain or Portal Task, then run again.');
-                    }
-                    throw new Error(runData.error || `Initial run failed (${runRes.status})`);
-                }
-
+                document.getElementById('importConfirmDetails').innerHTML = `
+                    <div style="margin-bottom:6px;"><strong>Case #${caseId}</strong> ${c.case_name || ''}</div>
+                    <div>Agency: ${c.agency_name || '-'} | State: ${c.state || '-'}</div>
+                    <div>Routing: <strong>${routing}</strong>${hasPortal ? ` | Portal: ${truncate(c.portal_url, 40)}` : ''}${hasEmail ? ` | Email: ${c.agency_email}` : ''}</div>
+                    <div style="margin-top:4px;color:#8b949e;">Click <strong>Confirm & Send</strong> to queue the initial request.</div>
+                `;
+                confirmPanel.style.display = 'block';
                 resultDiv.className = 'send-result success';
-                resultDiv.textContent = `Case #${caseId} imported. Initial run queued: run #${runData.run?.id}${runData.route_mode ? ` (${runData.route_mode})` : ''}`;
+                resultDiv.textContent = `Imported case #${caseId}. Review details below and confirm to send.`;
                 resultDiv.style.display = 'block';
                 await loadData();
             } catch (err) {
                 resultDiv.className = 'send-result error';
                 resultDiv.textContent = err.message || 'Notion import failed';
                 resultDiv.style.display = 'block';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Import';
             }
         }
 
-        async function resetOperationalState() {
+        // Import: step 2 — confirm and queue initial request
+        async function confirmImportSend() {
+            if (!pendingImportCaseId) return;
+            const autopilotMode = document.getElementById('initialRouteMode').value;
             const resultDiv = document.getElementById('notionImportResult');
-            const ok = window.confirm('Reset active runs and pending approvals for clean-slate testing?');
-            if (!ok) return;
+            const confirmPanel = document.getElementById('importConfirmPanel');
 
-            resultDiv.style.display = 'none';
             try {
-                const res = await fetch('/api/monitor/reset-state', {
+                const runRes = await fetch(`/api/cases/${pendingImportCaseId}/run-initial`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({})
+                    body: JSON.stringify({ autopilotMode })
                 });
-                const data = await res.json();
-                if (!res.ok || !data.success) {
-                    throw new Error(data.error || `Reset failed (${res.status})`);
+                const runData = await runRes.json();
+                if (!runRes.ok || !runData.success) {
+                    throw new Error(runData.error || `Initial run failed (${runRes.status})`);
                 }
+
+                confirmPanel.style.display = 'none';
                 resultDiv.className = 'send-result success';
-                resultDiv.textContent = `Reset complete. Runs closed: ${data.runs_reset}. Proposals dismissed: ${data.proposals_dismissed}.`;
+                resultDiv.textContent = `Case #${pendingImportCaseId} queued (${autopilotMode}). Run #${runData.run?.id || '-'}`;
                 resultDiv.style.display = 'block';
+                pendingImportCaseId = null;
+                document.getElementById('notionUrlInput').value = '';
                 await loadData();
             } catch (err) {
                 resultDiv.className = 'send-result error';
-                resultDiv.textContent = err.message || 'Reset failed';
+                resultDiv.textContent = err.message || 'Failed to queue initial request';
                 resultDiv.style.display = 'block';
             }
         }
 
-        // Send test email
-        async function sendTestEmail() {
-            const to = document.getElementById('emailTo').value.trim();
-            const subject = document.getElementById('emailSubject').value.trim();
-            const body = document.getElementById('emailBody').value.trim();
-            const resultDiv = document.getElementById('sendResult');
-            const sendBtn = document.querySelector('.send-btn');
-
-            if (!to) {
-                resultDiv.className = 'send-result error';
-                resultDiv.textContent = 'Please enter a recipient email address';
-                return;
-            }
-
-            if (!subject) {
-                resultDiv.className = 'send-result error';
-                resultDiv.textContent = 'Please enter a subject';
-                return;
-            }
-
-            sendBtn.disabled = true;
-            sendBtn.textContent = 'Sending...';
-            resultDiv.style.display = 'none';
-
-            try {
-                const res = await fetch('/api/monitor/send-test', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ to, subject, body: body || undefined })
-                });
-
-                const data = await res.json();
-
-                if (data.success) {
-                    resultDiv.className = 'send-result success';
-                    resultDiv.textContent = `Email sent to ${to}! Message ID: ${data.message_id}. Reply to ${data.from} to test inbound.`;
-                    // Refresh data to show new outbound
-                    setTimeout(loadData, 1000);
-                } else {
-                    resultDiv.className = 'send-result error';
-                    resultDiv.textContent = `Failed: ${data.error}`;
-                }
-            } catch (err) {
-                resultDiv.className = 'send-result error';
-                resultDiv.textContent = `Error: ${err.message}`;
-            } finally {
-                sendBtn.disabled = false;
-                sendBtn.textContent = 'Send Email';
-            }
+        function cancelImportConfirm() {
+            document.getElementById('importConfirmPanel').style.display = 'none';
+            pendingImportCaseId = null;
         }
 
         let currentMessage = null;
@@ -1982,9 +2000,32 @@
             }
         }
 
+        let expandedCaseId = null;
+
+        function toggleCase(caseId) {
+            if (expandedCaseId === caseId) {
+                collapseCase();
+            } else {
+                openCase(caseId);
+            }
+        }
+
+        function collapseCase() {
+            const existing = document.querySelector('.case-expanded-row');
+            if (existing) existing.remove();
+            document.querySelectorAll('.clickable-row.expanded').forEach(r => r.classList.remove('expanded'));
+            const inspector = document.getElementById('caseInspector');
+            inspector.style.display = 'none';
+            document.body.appendChild(inspector); // park it back in body
+            expandedCaseId = null;
+        }
+
         async function openCase(caseId) {
-            // Switch to Cases tab so the inspector is visible
+            // Switch to Cases tab so the table is visible
             openCasesPanel();
+
+            // Collapse any previously expanded row
+            collapseCase();
 
             const inspector = document.getElementById('caseInspector');
             const title = document.getElementById('caseInspectorTitle');
@@ -1995,10 +2036,24 @@
             const actions = document.getElementById('caseInspectorActions');
             const actionResult = document.getElementById('caseInspectorActionResult');
             const reviewPanel = document.getElementById('casePortalReview');
-
             const portalInfoPanel = document.getElementById('casePortalInfoPanel');
 
+            // Insert inspector as expanded row under the clicked case
+            const clickedRow = document.querySelector(`tr[data-case-id="${caseId}"]`);
+            if (clickedRow) {
+                clickedRow.classList.add('expanded');
+                const expandedRow = document.createElement('tr');
+                expandedRow.className = 'case-expanded-row';
+                const td = document.createElement('td');
+                td.colSpan = 8;
+                td.style.padding = '0';
+                td.appendChild(inspector);
+                expandedRow.appendChild(td);
+                clickedRow.after(expandedRow);
+            }
+
             inspector.style.display = 'block';
+            expandedCaseId = caseId;
             title.textContent = `Case #${caseId}`;
             grid.innerHTML = '<div class="cell">Loading...</div>';
             msgList.innerHTML = '<div class="timestamp">Loading...</div>';
@@ -2034,13 +2089,9 @@
                     <div class="cell"><span class="k">Agency</span>${truncate(c.agency_name || '-', 60)}</div>
                     <div class="cell"><span class="k">Routing</span>${getRoutingProfile(c)}</div>
                     <div class="cell"><span class="k">Agency Email</span>${c.agency_email || '-'}</div>
-                    <div class="cell"><span class="k">Portal URL</span>${c.portal_url ? `<a class="case-link" href="${c.portal_url}" target="_blank">open</a>` : '-'}</div>
                     <div class="cell"><span class="k">Autopilot</span>${c.autopilot_mode || '-'}</div>
                     <div class="cell"><span class="k">Updated</span>${formatTime(c.updated_at)}</div>
-                    <div class="cell"><span class="k">Portal Status</span>${c.last_portal_status || '-'}</div>
-                    <div class="cell"><span class="k">Skyvern Task</span>${c.last_portal_task_url ? `<a class="case-link" href="${c.last_portal_task_url}" target="_blank">open task</a>` : '-'}</div>
-                    <div class="cell"><span class="k">Skyvern Recording</span>${c.last_portal_recording_url ? `<a class="case-link" href="${c.last_portal_recording_url}" target="_blank">open recording</a>` : '-'}</div>
-                    <div class="cell"><span class="k">Portal Updated</span>${formatTime(c.last_portal_status_at)}</div>
+                    <div class="cell"><span class="k">Notion</span>${c.notion_page_id ? `<a class="case-link" href="https://www.notion.so/${c.notion_page_id.replace(/-/g, '')}" target="_blank">open card</a>` : '-'}</div>
                 `;
 
                 // Portal Info panel
@@ -2058,7 +2109,6 @@
                     let links = '';
                     if (c.portal_url) links += `<a href="${c.portal_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Open Portal</a>`;
                     if (c.last_portal_task_url) links += `<a href="${c.last_portal_task_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Skyvern Task</a>`;
-                    if (c.last_portal_recording_url) links += `<a href="${c.last_portal_recording_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Recording</a>`;
                     if (links) portalHtml += `<div style="margin-top:6px;">${links}</div>`;
                     portalInfoPanel.innerHTML = portalHtml;
                     portalInfoPanel.style.display = 'block';
@@ -2610,10 +2660,10 @@
             // Simulation panel removed
         }
 
-        // Initial load
+        // Initial load + fixed 10s auto-refresh
         loadData();
         loadConfig();
-        setupAutoRefresh();
+        setInterval(loadData, 10000);
     </script>
 </body>
 </html>

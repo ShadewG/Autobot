@@ -139,8 +139,8 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        // Stuck portal & orphaned review sweep (daily at 10:30 AM)
-        this.jobs.stuckPortalSweep = new CronJob('30 10 * * *', async () => {
+        // Stuck portal & orphaned review sweep (every 30 minutes)
+        this.jobs.stuckPortalSweep = new CronJob('*/30 * * * *', async () => {
             try {
                 console.log('Running stuck portal & orphaned review sweep...');
                 const result = await this.sweepStuckPortalCases();
@@ -156,7 +156,7 @@ class CronService {
         console.log('✓ Stuck response check: Every 30 minutes');
         console.log('✓ Agency sync: Every hour + on startup');
         console.log('✓ Phone call sweep: Daily at 10 AM');
-        console.log('✓ Stuck portal sweep: Daily at 10:30 AM');
+        console.log('✓ Stuck portal sweep: Every 30 minutes');
     }
 
     /**
@@ -236,7 +236,7 @@ class CronService {
                         if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
                     }
 
-                    await db.createPhoneCallTask({
+                    const phoneTask = await db.createPhoneCallTask({
                         case_id: caseData.id,
                         agency_name: caseData.agency_name,
                         agency_phone: agencyPhone,
@@ -246,6 +246,13 @@ class CronService {
                         notes: `No response after ${daysSinceSent} days (sweep)`,
                         days_since_sent: daysSinceSent
                     });
+
+                    // Auto-generate briefing (fire-and-forget)
+                    const aiService = require('./ai-service');
+                    db.getMessagesByCaseId(caseData.id, 20)
+                        .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
+                        .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
+                        .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
 
                     await db.updateCaseStatus(caseData.id, 'needs_phone_call', {
                         substatus: 'No email response after 14+ days'
@@ -285,27 +292,58 @@ class CronService {
         let proposalsCreated = 0;
         let followUpFixed = 0;
 
-        // Sweep 1: Stuck portal_in_progress > 24 hours
+        // Sweep 1: Stuck portal_in_progress > 60 minutes
         try {
             const stuckPortal = await db.query(`
                 SELECT c.* FROM cases c
                 WHERE c.status = 'portal_in_progress'
-                  AND c.updated_at < NOW() - INTERVAL '24 hours'
+                  AND c.updated_at < NOW() - INTERVAL '60 minutes'
             `);
 
             for (const caseData of stuckPortal.rows) {
                 try {
+                    // Extract error from Skyvern response
+                    let portalError = 'Unknown';
+                    let recordingUrl = caseData.last_portal_recording_url;
+                    let taskUrl = caseData.last_portal_task_url;
+                    if (caseData.last_portal_details) {
+                        try {
+                            const d = JSON.parse(caseData.last_portal_details);
+                            portalError = d.error || d.failure_reason || d.message || `Status: ${d.status || 'unknown'}`;
+                        } catch (_) { portalError = caseData.last_portal_details.substring(0, 200); }
+                    }
+
                     await db.updateCaseStatus(caseData.id, 'needs_human_review', {
-                        substatus: 'Portal submission timed out — no completion after 24h',
+                        substatus: `Portal timed out (>60 min): ${portalError}`.substring(0, 100),
                         requires_human: true
                     });
+
+                    // Create proposal with full error context
+                    await db.upsertProposal({
+                        proposalKey: `${caseData.id}:portal_stuck_timeout:SUBMIT_PORTAL:1`,
+                        caseId: caseData.id,
+                        actionType: 'SUBMIT_PORTAL',
+                        reasoning: [
+                            { step: 'Portal submission timed out', detail: 'Stuck in portal_in_progress for >60 min' },
+                            { step: 'Skyvern error', detail: portalError }
+                        ],
+                        confidence: 0, requiresHuman: true, canAutoExecute: false,
+                        draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
+                        draftBodyText: [
+                            `Portal: ${caseData.portal_url || 'N/A'}`,
+                            `Error: ${portalError}`,
+                            recordingUrl ? `Recording: ${recordingUrl}` : null,
+                            taskUrl ? `Task: ${taskUrl}` : null
+                        ].filter(Boolean).join('\n'),
+                        status: 'PENDING_APPROVAL'
+                    });
+
                     await db.logActivity('portal_stuck_escalated',
-                        `Case ${caseData.case_name} stuck in portal_in_progress for >24h, escalated to human review`,
-                        { case_id: caseData.id }
-                    );
+                        `Case ${caseData.case_name} stuck >60min. Error: ${portalError}`,
+                        { case_id: caseData.id, portal_error: portalError, recording_url: recordingUrl });
                     try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
                     portalEscalated++;
-                    console.log(`Stuck portal escalated: case ${caseData.id} (${caseData.case_name})`);
+                    console.log(`Stuck portal escalated: case ${caseData.id} (${caseData.case_name}) — ${portalError}`);
                 } catch (err) {
                     console.error(`Error escalating stuck portal case ${caseData.id}:`, err.message);
                 }
@@ -314,7 +352,7 @@ class CronService {
             console.error('Error in stuck portal sweep:', error);
         }
 
-        // Sweep 2: Orphaned needs_human_review > 48 hours with no pending proposals
+        // Sweep 2: Orphaned needs_human_review > 48 hours with no pending proposals — AI triage
         try {
             const orphaned = await db.query(`
                 SELECT c.* FROM cases c
@@ -326,29 +364,47 @@ class CronService {
                   )
             `);
 
+            const aiService = require('./ai-service');
+            const today = new Date().toISOString().slice(0, 10);
+
             for (const caseData of orphaned.rows) {
                 try {
-                    const portalUrl = caseData.portal_url || 'N/A';
+                    // Gather context for AI triage
+                    const messages = await db.getMessagesByCaseId(caseData.id, 10);
+                    const priorProposalsResult = await db.query(
+                        `SELECT action_type, status, reasoning FROM proposals
+                         WHERE case_id = $1 ORDER BY created_at DESC LIMIT 5`,
+                        [caseData.id]
+                    );
+                    const priorProposals = priorProposalsResult.rows;
+
+                    // AI triage: determine the right action
+                    const triage = await aiService.triageStuckCase(caseData, messages, priorProposals);
+                    const actionType = triage.actionType || 'ESCALATE';
+
                     await db.upsertProposal({
-                        proposalKey: `${caseData.id}:sweep_orphan:SUBMIT_PORTAL:1`,
+                        proposalKey: `${caseData.id}:sweep_orphan:TRIAGE:${today}`,
                         caseId: caseData.id,
-                        actionType: 'SUBMIT_PORTAL',
-                        reasoning: [{ step: 'Orphaned human review detected by sweep', detail: `Case stuck in needs_human_review for >48h with no actionable proposal` }],
-                        confidence: 0,
+                        actionType: actionType,
+                        reasoning: [
+                            { step: 'AI triage summary', detail: triage.summary },
+                            { step: 'Recommendation', detail: triage.recommendation }
+                        ],
+                        confidence: triage.confidence || 0,
                         requiresHuman: true,
                         canAutoExecute: false,
-                        draftSubject: `Manual action needed: ${caseData.case_name}`,
-                        draftBodyText: `Portal: ${portalUrl}\nCase has been in needs_human_review for over 48 hours with no pending proposal.`,
+                        draftSubject: `${actionType}: ${caseData.case_name}`,
+                        draftBodyText: `${triage.summary}\n\nRecommendation: ${triage.recommendation}`,
                         status: 'PENDING_APPROVAL'
                     });
                     await db.logActivity('human_review_proposal_created',
-                        `Created proposal for orphaned case ${caseData.case_name} (stuck >48h with no proposals)`,
-                        { case_id: caseData.id }
+                        `AI triage → ${actionType} for orphaned case ${caseData.case_name} (confidence: ${triage.confidence})`,
+                        { case_id: caseData.id, triage_action: actionType }
                     );
                     proposalsCreated++;
-                    console.log(`Orphan proposal created: case ${caseData.id} (${caseData.case_name})`);
+                    console.log(`AI triage proposal: case ${caseData.id} (${caseData.case_name}) → ${actionType} (${triage.confidence})`);
                 } catch (err) {
-                    console.error(`Error creating proposal for orphaned case ${caseData.id}:`, err.message);
+                    console.error(`Error triaging orphaned case ${caseData.id}:`, err.message);
                 }
             }
         } catch (error) {
