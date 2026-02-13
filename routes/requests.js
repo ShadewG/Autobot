@@ -726,7 +726,7 @@ Be specific to ${caseData.state} law where possible.`;
         const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
         const completion = await openai.chat.completions.create({
-            model: process.env.OPENAI_MODEL || 'gpt-4o',
+            model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
             messages: [
                 {
                     role: 'system',
@@ -1351,7 +1351,7 @@ ${instruction}
 Please draft a professional email to send to the agency. Only output the email body text, no explanations.`;
 
             const completion = await openai.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-4o',
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 messages: [
                     {
                         role: 'system',
@@ -1403,7 +1403,7 @@ Context:
 Please provide the revised response following the user's instruction. Only output the revised response text, no explanations.`;
 
             const completion = await openai.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-4o',
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 messages: [
                     {
                         role: 'system',

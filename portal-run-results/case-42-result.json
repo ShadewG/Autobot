@@ -1,0 +1,145 @@
+{
+  "case_id": 42,
+  "case_name": "Jacob Daily - Odessa PD",
+  "portal_url": "https://odessatx.mycusthelp.com/WEBAPP/_rs/SupportHome.aspx",
+  "success": false,
+  "skyvern_result": {
+    "workflow_id": "wpid_461535111447599002",
+    "workflow_run_id": "wr_494076445232246290",
+    "status": "terminated",
+    "failure_reason": "navigation block terminated. Reason: The login attempt has failed and the account is now locked. The page explicitly states that an email with unlock instructions has been sent. This is an external action that cannot be completed within this session. Per the user goal, when repeated login attempts fail with clear error messages, the task should be terminated. Therefore, I am terminating the process as unsuccessful.",
+    "proxy_location": "RESIDENTIAL",
+    "webhook_callback_url": "",
+    "webhook_failure_reason": null,
+    "totp_verification_url": null,
+    "totp_identifier": "requests@foib-request.com",
+    "extra_http_headers": {},
+    "queued_at": "2026-02-10T10:28:57.016387",
+    "started_at": "2026-02-10T10:28:58.711644",
+    "finished_at": "2026-02-10T10:30:29.928702",
+    "created_at": "2026-02-10T10:28:56.742074",
+    "modified_at": "2026-02-10T10:30:29.929035",
+    "parameters": {
+      "URL": "https://odessatx.mycusthelp.com/WEBAPP/_rs/SupportHome.aspx",
+      "personal_info": {
+        "name": "Samuel Hylton",
+        "email": "requests@foib-request.com",
+        "phone": "209-800-7702",
+        "organization": "Matcher / FOIA Request Team",
+        "title": "Documentary Researcher",
+        "address": {
+          "line1": "3021 21st Ave W",
+          "line2": "Apt 202",
+          "city": "Seattle",
+          "state": "TX",
+          "zip": "98199"
+        },
+        "preferred_delivery": "electronic",
+        "fee_waiver": {
+          "requested": true,
+          "reason": "Non-commercial documentary / public interest"
+        }
+      },
+      "login": "{\"email\":\"requests@foib-request.com\",\"password\":\"bCa!ISXg@8iU2NSp\"}",
+      "case_info": {
+        "case_id": 42,
+        "notion_page_id": "29287c20-070a-80eb-bf91-e95d67a43bfe",
+        "case_name": "Jacob Daily was sentenced to 75 years in prison for the first-degree murder of his Co-Worker and friend, later attempted to stage the scene as suicide and arrested after a series of evidence, ",
+        "subject_name": "Jacob Daily",
+        "agency_name": "Odessa Police Department, Texas",
+        "agency_email": "odessapd@odessa-tx.gov",
+        "portal_url": "https://odessatx.mycusthelp.com/WEBAPP/_rs/SupportHome.aspx",
+        "state": "TX",
+        "incident_date": null,
+        "incident_location": "",
+        "requested_records": [],
+        "additional_details": "Case Summary: On May 18, 2024, Jacob Daily, then 37, shot and killed his coworker Adam Beltran, 42, in the passenger seat of Beltran's vehicle parked in the 3100 block of North Dixie Boulevard in Odessa, Ector County, Texas, during an altercation that escalated from a day of drinking and driving together. The two men, who were coworkers and friends, had been consuming alcohol and traveling around the area throughout the day, engaging in multiple verbal arguments that turned physical at various points. Around 3:47 p.m., Odessa Police Department officers responded to a medical call initially reported as a suicide at the location, finding Beltran deceased with a single gunshot wound to the left side of his face (jaw area). A 9mm handgun, bullet fragments, a wallet, and a backpack belonging to Daily were recovered at the scene, along with gunshot residue on Daily's shirt and pants. Forensic analysis by Texas Department of Public Safety crime lab scientists confirmed the residue and linked the weapon to Daily. During initial interviews on May 18, Daily—appearing highly intoxicated—provided conflicting statements, claiming Beltran had committed suicide, but evidence (including the wound trajectory, lack of stippling consistent with self-infliction, and absence of a suicide note or positioning) disproved this. On May 22, 2024, Daily was brought in for further questioning and confessed to assaulting Beltran during a physical fight and then shooting him intentionally with the 9mm handgun, stating he had retrieved the gun from his possessions. An Ector County Grand Jury indicted him on June 5, 2024. After a four-day jury trial in the 70th District Court, presided over by Judge John Shrode, Daily was convicted of first-degree murder on October 16, 2025, following testimony from law enforcement, forensic experts, and crime scene technicians who detailed the evidence contradicting self-defense or suicide claims. Jacob Daily was sentenced to 75 years in prison and a $10,000 fine for the first-degree murder of Adam Beltran.\nCharges:\n• First-degree murder (convicted)\nSuspect’s Name: Jacob Daily\nDate of Offense: May 18, 2024\nPolice Department: Odessa Police Department, Texas\nSOURCES:\nNews Articles:\n• https://www.firstalert7.com/2025/10/17/ector-county-jury-convicts-man-first-degree-murder-sentences-him-75-years/\nAdditional Details:\n• Crime Date: May 18, 2024\n• Crime Location: 3100 block of North Dixie Boulevard, Odessa, Ector County, Texas\n[FOIA Requests]\n• CCTV Footage: [If Available]\n• Request available surveillance footage from cameras at or near the 3100 block of North Dixie Boulevard, Odessa, on May 18, 2024, around 3:47 p.m., capturing movements of Jacob Daily, Adam Beltran, or the vehicle involved.\n• Call Recording: [If Available]\n• Request the 911 call recording from Odessa Police Department or Ector County Emergency Services made on May 18, 2024, around 3:47 p.m., reporting a gunshot victim or suicide.\n• Investigation Footage:\n• Request footage from Odessa Police Department Officers during the investigation of the crime scene.\n• Body Camera Footage:\n• Request Body cam footage from Odessa Police Department Officers during their response to the scene and subsequent arrest of Jacob Daily.\n• Interrogation Footage:\n• Request footage from Odessa Police Department Officers regarding Jacob Daily’s interrogation following his arrest.",
+        "status": "awaiting_response",
+        "deadline_date": "2025-11-24",
+        "last_portal_status": "Portal submission queued",
+        "dry_run": false
+      }
+    },
+    "screenshot_urls": [
+      "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A29.151955_a_494076841725397794_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=ggma7qW4vGBGRxIYWLUI3CAEp0s%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806002"
+    ],
+    "recording_url": "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/00_0_stp_494076455178341006/2026-02-10T10%3A29%3A12.846657_a_494076511012915858_recording.webm?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=%2BU2DyQrhkJbVIjVmEHNJKNu5IFk%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806002",
+    "downloaded_files": [],
+    "downloaded_file_urls": null,
+    "outputs": {
+      "block_1_output": {
+        "task_id": "tsk_494076455178341004",
+        "status": "terminated",
+        "extracted_information": null,
+        "failure_reason": "The login attempt has failed and the account is now locked. The page explicitly states that an email with unlock instructions has been sent. This is an external action that cannot be completed within this session. Per the user goal, when repeated login attempts fail with clear error messages, the task should be terminated. Therefore, I am terminating the process as unsuccessful.",
+        "errors": [],
+        "downloaded_files": [],
+        "downloaded_file_urls": null,
+        "task_screenshots": [
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/01_0_stp_494076626977032890/2026-02-10T10%3A30%3A08.244585_a_494076751531084528_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=ZzHyrt7PxugnFwvZXjj7p9%2Fil%2B0%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003",
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A27.322704_a_494076833135463198_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=VhLJC0u5Bb31HPm8OI089DtPYog%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003",
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A29.151955_a_494076841725397794_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=oder2OPBqGP9VknuXLzzpNAXzqo%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003"
+        ],
+        "workflow_screenshots": [
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A29.151955_a_494076841725397794_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=oder2OPBqGP9VknuXLzzpNAXzqo%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003"
+        ],
+        "task_screenshot_artifact_ids": [
+          "a_494076841725397794",
+          "a_494076833135463198",
+          "a_494076751531084528"
+        ],
+        "workflow_screenshot_artifact_ids": [
+          "a_494076841725397794"
+        ]
+      },
+      "extracted_information": []
+    },
+    "total_steps": 3,
+    "total_cost": 0.15000000000000002,
+    "task_v2": null,
+    "workflow_title": "Submit foia request",
+    "browser_session_id": null,
+    "browser_profile_id": null,
+    "max_screenshot_scrolls": null,
+    "browser_address": null,
+    "script_run": null,
+    "errors": []
+  },
+  "key_findings": {
+    "status": "terminated",
+    "failure_reason": "navigation block terminated. Reason: The login attempt has failed and the account is now locked. The page explicitly states that an email with unlock instructions has been sent. This is an external action that cannot be completed within this session. Per the user goal, when repeated login attempts fail with clear error messages, the task should be terminated. Therefore, I am terminating the process as unsuccessful.",
+    "total_steps": 3,
+    "total_cost": 0.15000000000000002,
+    "duration": "91s",
+    "has_recording": true,
+    "has_screenshots": 1,
+    "outputs": {
+      "block_1_output": {
+        "task_id": "tsk_494076455178341004",
+        "status": "terminated",
+        "extracted_information": null,
+        "failure_reason": "The login attempt has failed and the account is now locked. The page explicitly states that an email with unlock instructions has been sent. This is an external action that cannot be completed within this session. Per the user goal, when repeated login attempts fail with clear error messages, the task should be terminated. Therefore, I am terminating the process as unsuccessful.",
+        "errors": [],
+        "downloaded_files": [],
+        "downloaded_file_urls": null,
+        "task_screenshots": [
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/01_0_stp_494076626977032890/2026-02-10T10%3A30%3A08.244585_a_494076751531084528_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=ZzHyrt7PxugnFwvZXjj7p9%2Fil%2B0%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003",
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A27.322704_a_494076833135463198_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=VhLJC0u5Bb31HPm8OI089DtPYog%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003",
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A29.151955_a_494076841725397794_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=oder2OPBqGP9VknuXLzzpNAXzqo%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003"
+        ],
+        "workflow_screenshots": [
+          "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494076455178341004/02_0_stp_494076755826051828/2026-02-10T10%3A30%3A29.151955_a_494076841725397794_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLOE7X6NM3&Signature=oder2OPBqGP9VknuXLzzpNAXzqo%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIQCgBzEBk53si%2Benp8Jw9m4%2FjgNCrj7xmjadD16j2o4yLQIgTq5zbBE4RsEmBZJ5Z4fZQeEMdE6oerTJJ2u95tecomIqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDI1nTG%2BQMlVftOq9zirwA9DpWrux74QRnLADe80gnynDMsiOW9Seakv%2BskXuRi8pb7lmAOTdQDQBKQvznDalDJhuLiZfhHp6qVmvxw1sMRbor6C5W8%2FzW3%2FcFVtYye56YU0KE9A8ELGRqbmzW%2BWetDgGSzpQjoGqSAlV9aAlirykrk2WTSORInCSNwYmoO40e1mI2IXSKFMqHSP9VCy1cVKZTxtvNKgwXwqfcPeXVT4ISA4gOH3YcU7eP1Rsu1TLSwVmTmD%2Br1A1BdLPmIKRHnu8nzC50vo7wv9CY9ojW0zwOA8iNKTnvbq3d4Gnv2%2FyYexMrpCgSmCy5wLc3T3QDk48W%2BQFq2SOye4EXdlXfroMgwx8jf2A8oZOLz6XlyFzFnjUFLn9ZhA4wyQMVfc%2BeYHz4Srw8rohnQ6Qi635gnI0iSp3v48vzwpnFAe0ZKwHVeOkfqR9lejYq2ghiNKhXOTJyWCeFo5RxSc%2BnfUJe7BRmUw9uSsuigZybObyRwt69VEeRunIb%2FIkIMyAmSNU4rVz%2FJoVIZrIlzrYrkqNPJFwfcbGZXSTYiDpiIZLqnpsNIvD%2BSzPXygT5ltDvgvGu4a%2F6hRkOOxgkrjWm2Lz%2BQwtitlmas7Noa19EgYw1zwmbHiVWQfgiZE%2BYgZfIeeXwawPf77N1bpyw4tFgJkqT1gw7e2rzAY6pgFgGRQLtLk3zZSnX7k%2FEvAP1Z1H4ZfX74zyABBRDloznN087uDWAvEGJfdabemrye07QDjc69R%2FS2PlUmT1gdjQMS2YfoQMuZNwc7EXQ2iIMaxdblhQa7Xv3DkC7nDNDjwK5o08C6XKXDiie5KnEjNOZc9eYp%2FO6UxJsbYBb2PNcwulljFIKp%2BNf17IJCWKK%2FxaRXDWykFnw7CREhvvPbe18IpqJORv&Expires=1770806003"
+        ],
+        "task_screenshot_artifact_ids": [
+          "a_494076841725397794",
+          "a_494076833135463198",
+          "a_494076751531084528"
+        ],
+        "workflow_screenshot_artifact_ids": [
+          "a_494076841725397794"
+        ]
+      },
+      "extracted_information": []
+    }
+  }
+}

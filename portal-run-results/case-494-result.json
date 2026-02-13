@@ -1,0 +1,164 @@
+{
+  "case_id": 494,
+  "case_name": "Deadly Dealership Ambush: The Murder of Jerry Lee Over a Stolen SUV",
+  "agency_name": "Austin PD",
+  "portal_url": "https://cty-austintx.govqa.us/WEBAPP/_rs/(S(4syzwn2nthvpgb0lsv34xaor))/supporthome.aspx?sSessionID=1041010390:51409QDXJYUAVIXMNXUUVCQBUUCOB",
+  "state": "TX",
+  "subject_name": "Alberto Torres, Modesto Hernandez",
+  "started_at": "2026-02-10T10:44:49.312Z",
+  "duration_seconds": 2378.2,
+  "success": false,
+  "skyvern_result": {
+    "success": false,
+    "status": "failed",
+    "runId": "wr_494080546926014202",
+    "recording_url": "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A09.966998_a_494080624565211072_recording.webm?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=sc01x0SSt9dbojOT71fUYooJTlc%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+    "workflow_url": "https://app.skyvern.com/workflow-runs/wr_494080546926014202",
+    "error": "navigation block failed. failure reason: Reached the maximum steps (15). Possible failure reasons: Step 18: [\"The phone number field has an incorrectly formatted value. I will input the correct phone number based on the user's details.(action_type=input_text, result=success)\", \"The 'State' dropdown is currently set to 'DC', but the user's address is in 'TX'. I need to click the dropdown arrow to open the list of states to select the correct one.(action_type=click, result=success)\", \"The page displays a CAPTCHA that needs to be solved before the form can be submitted. The error message 'The submitted code is incorrect' confirms this is a required step that failed previously.(action_type=solve_captcha, result=success)\", \"After correcting all the fields and solving the CAPTCHA, I will click the 'Submit' button to proceed with creating or updating the user's information.(action_type=click, result=success)\"]",
+    "workflow_response": {
+      "workflow_id": "wpid_461535111447599002",
+      "workflow_run_id": "wr_494080546926014202",
+      "status": "failed",
+      "failure_reason": "navigation block failed. failure reason: Reached the maximum steps (15). Possible failure reasons: Step 18: [\"The phone number field has an incorrectly formatted value. I will input the correct phone number based on the user's details.(action_type=input_text, result=success)\", \"The 'State' dropdown is currently set to 'DC', but the user's address is in 'TX'. I need to click the dropdown arrow to open the list of states to select the correct one.(action_type=click, result=success)\", \"The page displays a CAPTCHA that needs to be solved before the form can be submitted. The error message 'The submitted code is incorrect' confirms this is a required step that failed previously.(action_type=solve_captcha, result=success)\", \"After correcting all the fields and solving the CAPTCHA, I will click the 'Submit' button to proceed with creating or updating the user's information.(action_type=click, result=success)\"]",
+      "proxy_location": "RESIDENTIAL",
+      "webhook_callback_url": "",
+      "webhook_failure_reason": null,
+      "totp_verification_url": null,
+      "totp_identifier": "requests@foib-request.com",
+      "extra_http_headers": {},
+      "queued_at": "2026-02-10T10:44:51.550945",
+      "started_at": "2026-02-10T10:44:53.160227",
+      "finished_at": "2026-02-10T11:24:19.593232",
+      "created_at": "2026-02-10T10:44:51.320698",
+      "modified_at": "2026-02-10T11:24:19.593927",
+      "parameters": {
+        "URL": "https://cty-austintx.govqa.us/WEBAPP/_rs/(S(4syzwn2nthvpgb0lsv34xaor))/supporthome.aspx?sSessionID=1041010390:51409QDXJYUAVIXMNXUUVCQBUUCOB",
+        "login": "{\"email\":\"requests@foib-request.com\",\"password\":\"Insanity!0M\"}",
+        "personal_info": {
+          "name": "Samuel Hylton",
+          "email": "requests@foib-request.com",
+          "phone": "209-800-7702",
+          "organization": "Matcher / FOIA Request Team",
+          "title": "Documentary Researcher",
+          "address": {
+            "line1": "3021 21st Ave W",
+            "line2": "Apt 202",
+            "city": "Seattle",
+            "state": "TX",
+            "zip": "98199"
+          },
+          "preferred_delivery": "electronic",
+          "fee_waiver": {
+            "requested": true,
+            "reason": "Non-commercial documentary / public interest"
+          }
+        },
+        "case_info": {
+          "case_id": 494,
+          "notion_page_id": "22387c20-070a-8067-84e5-c0a508e197f3",
+          "case_name": "Deadly Dealership Ambush: The Murder of Jerry Lee Over a Stolen SUV",
+          "subject_name": "Alberto Torres, Modesto Hernandez",
+          "agency_name": "Austin PD",
+          "agency_email": "null",
+          "portal_url": "https://cty-austintx.govqa.us/WEBAPP/_rs/(S(4syzwn2nthvpgb0lsv34xaor))/supporthome.aspx?sSessionID=1041010390:51409QDXJYUAVIXMNXUUVCQBUUCOB",
+          "state": "TX",
+          "incident_date": "2020-11-05",
+          "incident_location": "Apple Leasing dealership, northwest Austin, Texas",
+          "requested_records": [
+            "911 calls reporting gunfire at Apple Leasing",
+            "Surveillance footage capturing the sequence of events",
+            "Body-worn camera showing police response and on-scene arrests",
+            "Crime scene and medical examiner documentation"
+          ],
+          "additional_details": "On the quiet afternoon of November 6, 2020, the Apple Leasing dealership in northwest Austin, Texas, was preparing to wind down for the day. Like most evenings, a few customers lingered on the lot, employees wrapped up their work, and sales consultant Jerry Lee remained on the clock, known to be one of the dealership’s most experienced and respected staff members.\nThat day, two men—Alberto Torres and Modesto Hernandez—pulled into the dealership parking lot under the guise of potential buyers. Their interest: a Lincoln Navigator. But their true intent wasn’t to negotiate a sale—it was to steal the vehicle.\nAs Torres and Hernandez moved toward the SUV, something went wrong. A dealership manager became suspicious and co nfronted the men. What followed happened in a matter of seconds but changed lives forever.\nGunshots rang out across the parking lot.\nAccording to witnesses and surveillance footage, Torres pulled a firearm and exchanged shots with the manager, who was also armed and returned fire. In the chaos, bullets flew across the lot. Torres was hit multiple times, collapsing on the pavement—but not before he fatally shot Jerry Lee, who was just trying to do his job.\nLee was struck in the back. The bullet tore through vital arteries and exited near his chin. Despite desperate efforts, he died on the scene.\nTorres, injured but alive, was taken into custody. Hernandez was detained nearby after attempting to flee. Inside the Navigator they had tried to steal, police would later find a loaded pistol tucked in the door panel.\nIn the days that followed, grief consumed the Apple Leasing community. Jerry Lee wasn’t just an employee—he was a husband, a father, and a trusted figure known for his warmth and professionalism. His death, sudden and senseless, sent shockwaves through his workplace and beyond.\nWhat began as a routine day at a car dealership ended with gunfire, bloodshed, and the loss of an innocent man’s life—all because of a violent attempt to steal a vehicle. No argument, no personal dispute—just a reckless decision that turned fatal.\nAlberto Torres paid a heavy price for that moment. But for Jerry Lee’s family, no sentence could ever undo the harm or bring back the man they lost that day.\n“Exhibit list”:\n\n1. 911 CALLS REPORTING GUNFIRE AT APPLE LEASING\n\nOn November 6, 2020, two employees at Apple Leasing in Austin—Ronnie Kramer and Darrell Wayne As-Salaam—each placed separate 911 calls reporting a violent altercation at the dealership. Kramer described two men attempting to steal a vehicle and stated that one of them had attacked his coworker, Jerry Lee. He reported being shot at and said he returned fire. As-Salaam described the suspects as trying to kill the employees and informed the dispatcher that he had fled the area in fear for his safety.\n\n2. SURVEILLANCE FOOTAGE – CAPTURING THE ENTIRE SEQUENCE OF EVENTS\n\nThe dealership’s security cameras recorded the full incident from several angles. The footage begins with Torres and Hernandez arriving in a gold Toyota Camry and approaching a Lincoln Navigator. After interacting with Jerry Lee, a violent confrontation unfolds. The footage shows Lee retrieving the key fob for the Lincoln, Torres entering the vehicle, and a physical altercation erupting between the two. After separating, Torres is seen returning to the Lincoln, while Hernandez moves between vehicles, ultimately retrieving a gun from the Camry and handing it to Torres.\nThe surveillance continues with Torres running after the unarmed Lee, who is seen fleeing, tripping, and falling. Torres then approaches Lee, aims the gun, and shoots him in the back while he is on the ground. Afterward, Torres and Hernandez are seen transferring items between the Camry and the Lincoln, during which Torres briefly dances in the parking lot. The footage ends with the two entering a black Lexus SUV and attempting to flee before being intercepted by responding officers.\n\n3. BODY-WORN CAMERA – POLICE RESPONSE AND ON-SCENE ARRESTS\n\nBody-worn camera footage from the first arriving officers captured their discovery of Jerry Lee lying face-down near the office building, unresponsive and bleeding. The footage shows officers detaining Torres and Hernandez inside the Lexus SUV. During the arrest, Torres admits to having a gun and states that he was shot and had fired back. A 9mm pistol is recovered from the vehicle. The footage also documents efforts to render aid and secure the scene.=\n\n4. CRIME SCENE AND MEDICAL EXAMINER DOCUMENTATION\n\nWhile not video footage, the crime scene was visually documented through still photography and recorded walkthroughs. The materials include images of the bullet wounds, blood evidence, and shell casing locations. The Travis County Medical Examiner’s office also provided autopsy photographs showing that Jerry Lee died from a gunshot wound to the back, which exited near his chin, confirming the close-range nature of the execution-style killing.",
+          "status": "needs_human_review",
+          "deadline_date": "2025-11-26",
+          "last_portal_status": "Portal submission queued",
+          "dry_run": false
+        }
+      },
+      "screenshot_urls": [
+        "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080813543772146/14_0_stp_494089944644243138/2026-02-10T11%3A24%3A18.781212_a_494090713443389274_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=9HZ%2Bk4UXghq7EwWpu%2B%2FPjb25sic%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+        "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A51.365613_a_494080804953837548_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=W0%2FORD4sH8TzYJpAVi45dZOawjI%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065"
+      ],
+      "recording_url": "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A09.966998_a_494080624565211072_recording.webm?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=sc01x0SSt9dbojOT71fUYooJTlc%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+      "downloaded_files": [],
+      "downloaded_file_urls": null,
+      "outputs": {
+        "block_1_output": {
+          "task_id": "tsk_494080555845734330",
+          "status": "completed",
+          "extracted_information": null,
+          "failure_reason": null,
+          "errors": [],
+          "downloaded_files": [],
+          "downloaded_file_urls": null,
+          "task_screenshots": [
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A49.387870_a_494080796363902952_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=p%2FwNLTgZRkGZVVEFHf8dlF2NaH8%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A51.365613_a_494080804953837548_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=W0%2FORD4sH8TzYJpAVi45dZOawjI%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065"
+          ],
+          "workflow_screenshots": [
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A51.365613_a_494080804953837548_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=W0%2FORD4sH8TzYJpAVi45dZOawjI%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065"
+          ],
+          "task_screenshot_artifact_ids": [
+            "a_494080804953837548",
+            "a_494080796363902952"
+          ],
+          "workflow_screenshot_artifact_ids": [
+            "a_494080804953837548"
+          ]
+        },
+        "block_2_output": {
+          "task_id": "tsk_494080813543772146",
+          "status": "failed",
+          "extracted_information": null,
+          "failure_reason": "Reached the maximum steps (15). Possible failure reasons: Step 18: [\"The phone number field has an incorrectly formatted value. I will input the correct phone number based on the user's details.(action_type=input_text, result=success)\", \"The 'State' dropdown is currently set to 'DC', but the user's address is in 'TX'. I need to click the dropdown arrow to open the list of states to select the correct one.(action_type=click, result=success)\", \"The page displays a CAPTCHA that needs to be solved before the form can be submitted. The error message 'The submitted code is incorrect' confirms this is a required step that failed previously.(action_type=solve_captcha, result=success)\", \"After correcting all the fields and solving the CAPTCHA, I will click the 'Submit' button to proceed with creating or updating the user's information.(action_type=click, result=success)\"]",
+          "errors": [
+            {
+              "error_code": "REACH_MAX_STEPS",
+              "reasoning": "The agent has reached the maximum number of steps."
+            }
+          ],
+          "downloaded_files": [],
+          "downloaded_file_urls": null,
+          "task_screenshots": [
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080813543772146/14_0_stp_494089944644243138/2026-02-10T11%3A23%3A20.434597_a_494090464335286062_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=pluWSH5yhjFbrmcHNeQH2sMOwqU%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080813543772146/14_0_stp_494089944644243138/2026-02-10T11%3A23%3A41.537432_a_494090554529599284_screenshot_action.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=9k7b3T1R68tR3p2E4Uzy%2BNzv9wc%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080813543772146/14_0_stp_494089944644243138/2026-02-10T11%3A24%3A18.781212_a_494090713443389274_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=9HZ%2Bk4UXghq7EwWpu%2B%2FPjb25sic%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065"
+          ],
+          "workflow_screenshots": [
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080555845734330/00_0_stp_494080560140701628/2026-02-10T10%3A45%3A51.365613_a_494080804953837548_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=W0%2FORD4sH8TzYJpAVi45dZOawjI%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065",
+            "https://skyvern-artifacts.s3.amazonaws.com/v1/production/o_459923635214523948/tsk_494080813543772146/14_0_stp_494089944644243138/2026-02-10T11%3A24%3A18.781212_a_494090713443389274_screenshot_final.png?AWSAccessKeyId=ASIAWZTLR3KLHSAFFLCW&Signature=9HZ%2Bk4UXghq7EwWpu%2B%2FPjb25sic%3D&x-amz-security-token=IQoJb3JpZ2luX2VjENr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIHyhRuuYZEWEKNpYMuWivCqSuMOatR%2B%2Bt%2B7CaEKISEDVAiEA7Mkjdw7BM%2BsdZdeZsWBOJG9kIL11zmWhrvF7AIVBtXsqnAQIov%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FARACGgw0NjczMDMyNTg3NzQiDObuJOPwI1zS%2F%2FPCACrwA7SR2yMnV6DN3BWH360TAgnY3FxNumNWaMCFa2mi2OnoKklmqikJWfOANca0X0bnBW23ONxhJ%2Ffbt4TCHX%2BLc7E7QQX3LnAfSMuHS%2FSkBkjMRunNbJuE6wnkru%2FOMzT78UQTN%2Fc0LP4ZPYyxOrnzGUne4LBU4LRr64X2bXbHTj7hmi%2BzQlGJSmYYtqQN1iKtSwv%2FqAbMnrTkiP9Q3QTZS%2FW2NL8a5iTYuNw64avKw4wxhQMmDIMJRVc5YfDCSuWRnqdQrn82XW9rECtSR7i6FNAdoKiMS1nddOOxWmD42tNypqeveQhEug2BIJqx9HeowYuw6JPYNSsPocC5WKTKFCgDzQi8yd%2FU1ySN0Jbd5Rk%2FTSEzMlS3cNrfPiRXfeBmZHB3v0kWVbUnOSmFohFNL2iI5HQYj2fOOcf5E0%2F6FHGZptGwCfo%2F7Yut1nrurLzW6ML787manFWbT29%2BMN4mHbdhD%2B400IVtOfLuXX2C3MS2UkfpErMJ%2B15qatrRQpuB4S4EqGM%2BGICxX7QLoKXMdJ2RJggoLgqvH2wfCWTLei7YI%2FIaroB0Bf2MceczkGfnWl9vqnSRRJA8xrrgzg%2FmWIcPEh0qobLDf%2BLnDxU1euWzGYgrgkaijV4jP8L9P2ZR%2Bi6SnQHkqD1BXEg7H0Wv68EwnuurzAY6pgGk3%2BfeoXMprpJ1BD3mjn5tacElp23Z4VO6Jf5Bb1%2B%2F%2FTWgvaMdBQyAHpSKVGQ1KzB9OegwlI4oz2FIRp1ysLCsoP4oQ3bdDYVk7SVdog8pmFnB1f9jTMHR%2FkI6%2FfZRK8rsuiZwpnVNZ7QZPHBzD4XVZDFjY0HOaopyU7TrWP3tHBwA99fQ0ANrbd%2FEgw5qNNbpjuMiUMBJnDENFeXeYlasm%2FUKxPLg&Expires=1770809065"
+          ],
+          "task_screenshot_artifact_ids": [
+            "a_494090713443389274",
+            "a_494090554529599284",
+            "a_494090464335286062"
+          ],
+          "workflow_screenshot_artifact_ids": [
+            "a_494090713443389274",
+            "a_494080804953837548"
+          ]
+        },
+        "extracted_information": []
+      },
+      "total_steps": 21,
+      "total_cost": 0.8,
+      "task_v2": null,
+      "workflow_title": "Submit foia request",
+      "browser_session_id": null,
+      "browser_profile_id": null,
+      "max_screenshot_scrolls": null,
+      "browser_address": null,
+      "script_run": null,
+      "errors": [
+        {
+          "error_code": "REACH_MAX_STEPS",
+          "reasoning": "The agent has reached the maximum number of steps."
+        }
+      ]
+    },
+    "engine": "skyvern_workflow"
+  },
+  "error": null
+}

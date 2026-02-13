@@ -408,6 +408,12 @@ ${prompt}`
                 full_analysis_json: analysis
             });
 
+            // Backfill message summary from analysis
+            if (analysis.summary) {
+                await db.query('UPDATE messages SET summary = $1 WHERE id = $2 AND summary IS NULL',
+                    [analysis.summary, messageData.id]);
+            }
+
             // Record outcome for adaptive learning
             await this.recordOutcomeForLearning(caseData, analysis, messageData);
 
@@ -416,6 +422,18 @@ ${prompt}`
             console.error('Error analyzing response:', error);
             throw error;
         }
+    }
+
+    /**
+     * Generate a one-sentence summary for an outbound or unanalyzed message.
+     */
+    async generateMessageSummary(subject, bodyText) {
+        const snippet = (bodyText || '').substring(0, 500);
+        const response = await this.openai.responses.create({
+            model: 'gpt-5.2-2025-12-11',
+            input: `Summarize this email in ONE sentence (max 120 chars). Subject: ${subject}\n\n${snippet}`
+        });
+        return response.output_text.trim();
     }
 
     /**
@@ -626,9 +644,10 @@ Return concise legal citations and key statutory language with sources.`;
     /**
      * Generate strategic denial rebuttal based on denial subtype
      */
-    async generateDenialRebuttal(messageData, analysis, caseData) {
+    async generateDenialRebuttal(messageData, analysis, caseData, options = {}) {
         try {
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
+            const { adjustmentInstruction, lessonsContext } = options;
 
             const denialSubtype = analysis.denial_subtype || 'overly_broad';
 
@@ -713,7 +732,7 @@ Generate a STRONG, legally-grounded rebuttal that:
 5. Shows good faith and willingness to cooperate
 6. References relevant case law if provided in research
 7. Is under 250 words
-
+${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text, no subject line.`;
 
             // Use GPT-5 with medium reasoning for strategic rebuttal generation
@@ -805,9 +824,10 @@ Respond with JSON ONLY.`;
     /**
      * Generate a follow-up email
      */
-    async generateFollowUp(caseData, followUpCount = 0) {
+    async generateFollowUp(caseData, followUpCount = 0, options = {}) {
         try {
             console.log(`Generating follow-up #${followUpCount + 1} for case: ${caseData.case_name}`);
+            const { adjustmentInstruction, lessonsContext } = options;
 
             const tone = followUpCount === 0 ? 'polite and professional' : 'firm but professional';
             const stateDeadline = await db.getStateDeadline(caseData.state);
@@ -833,7 +853,7 @@ The email should:
 4. Request a status update
 5. Restate our interest in the records
 ${followUpCount > 0 ? '6. Note this is a follow-up and we\'re still awaiting response' : ''}
-
+${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text.`;
 
             const response = await this.openai.chat.completions.create({
@@ -899,7 +919,8 @@ Return ONLY the email body text.`;
             feeAmount,
             currency = 'USD',
             recommendedAction = 'negotiate', // accept | negotiate | decline
-            instructions = null
+            instructions = null,
+            lessonsContext = ''
         } = options;
 
         if (!feeAmount) {
@@ -934,7 +955,7 @@ Recommended action: ${recommendedAction.toUpperCase()}
 Goals:
 ${actionInstruction}
 ${customInstruction}
-
+${lessonsContext}
 Email requirements:
 1. Reference the request using the SHORT case reference ("${shortReference}") - NOT the full case name
 2. Mention the quoted fee amount explicitly
@@ -1183,6 +1204,8 @@ AVAILABLE ACTIONS:
 - SUBMIT_PORTAL: Submit/resubmit via online portal (only if portal_url exists AND no prior portal failures)
 - SEND_FOLLOWUP: Send a follow-up email to the agency
 - SEND_REBUTTAL: Challenge a denial with legal arguments citing state open records law
+- RESEARCH_AGENCY: Re-research the correct agency (use when "no records" or "wrong agency" — maybe we asked the wrong PD)
+- REFORMULATE_REQUEST: Rewrite the request from a different angle or narrower scope (use when request was too broad or targeted wrong record types)
 - ACCEPT_FEE: Accept a fee quote and proceed with payment
 - NEGOTIATE_FEE: Push back on an excessive fee
 - CLOSE_CASE: Case is resolved, no further action needed, or denial is final and not worth challenging
@@ -1209,17 +1232,13 @@ Rules:
 - Return ONLY valid JSON.`;
 
         try {
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-4.1-mini',
-                messages: [
-                    { role: 'system', content: 'You are a FOIA case triage specialist. Analyze cases and recommend the most appropriate next action. Return only valid JSON.' },
-                    { role: 'user', content: prompt }
-                ],
-                temperature: 0.3,
-                max_tokens: 500
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+                reasoning: { effort: 'low' },
+                input: `You are a FOIA case triage specialist. Analyze cases and recommend the most appropriate next action. Return only valid JSON.\n\n${prompt}`
             });
 
-            const raw = response.choices[0].message.content?.trim();
+            const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
@@ -1304,6 +1323,7 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
      */
     async generateClarificationResponse(message, analysis, caseData, options = {}) {
         const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
+        const lessonsContext = options.lessonsContext || '';
 
         const prompt = `You are responding to a public records request clarification from a government agency.
 
@@ -1318,7 +1338,7 @@ ORIGINAL REQUEST:
 - Location: ${caseData.incident_location || 'Not specified'}
 
 ${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
-
+${lessonsContext}
 Generate a professional, helpful response that:
 1. Directly addresses their specific questions or requests for clarification
 2. Provides any additional details they need
@@ -1397,6 +1417,126 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
             };
         } catch (error) {
             console.error('Error generating fee acceptance:', error);
+            throw error;
+        }
+    }
+    /**
+     * Generate an agency research brief after a denial.
+     * Analyzes which agency likely holds the records and suggests alternatives.
+     */
+    async generateAgencyResearchBrief(caseData) {
+        const prompt = `You are a FOIA research specialist. A public records request was denied or returned "no responsive records."
+Analyze which agency most likely holds these records and suggest alternatives.
+
+CASE CONTEXT:
+- Agency that denied: ${caseData.agency_name}
+- State: ${caseData.state || 'Unknown'}
+- Incident location: ${caseData.incident_location || 'Unknown'}
+- Subject: ${caseData.subject_name || 'Unknown'}
+- Records requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Various records'}
+- Incident date: ${caseData.incident_date || 'Unknown'}
+- Additional details: ${(caseData.additional_details || '').substring(0, 500)}
+
+ANALYSIS TASKS:
+1. Why might this agency have said "no records"? (wrong jurisdiction, records held by different unit, etc.)
+2. Which specific agencies likely hold these records? Consider: city vs county vs state, specialized units, multi-jurisdictional incidents
+3. What search terms or record types might yield better results?
+
+Return JSON:
+{
+  "summary": "Brief explanation of why the denial likely occurred and where records probably are",
+  "suggested_agencies": [
+    { "name": "Agency Name", "reason": "Why they might have it", "confidence": 0.0-1.0 }
+  ],
+  "research_notes": "Additional context about jurisdictional issues",
+  "next_steps": "Recommended course of action"
+}
+
+Return ONLY valid JSON.`;
+
+        try {
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+                reasoning: { effort: 'medium' },
+                tools: [{ type: 'web_search' }],
+                input: prompt
+            });
+
+            const raw = response.output_text?.trim();
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            throw new Error('Failed to parse agency research JSON');
+        } catch (error) {
+            console.error('Error generating agency research brief:', error);
+            return {
+                summary: `Research failed: ${error.message}. Manual agency lookup needed.`,
+                suggested_agencies: [],
+                research_notes: null,
+                next_steps: 'Manually research correct agency for this jurisdiction'
+            };
+        }
+    }
+
+    /**
+     * Generate a reformulated FOIA request after a denial.
+     * Creates a new request with different angle, narrower scope, or different record types.
+     */
+    async generateReformulatedRequest(caseData, denialAnalysis) {
+        const denialContext = denialAnalysis?.full_analysis_json || denialAnalysis || {};
+        const keyPoints = denialContext.key_points || [];
+
+        const prompt = `You are a FOIA request strategist. A previous request was denied. Generate a NEW, reformulated FOIA request
+that approaches the same records from a different angle or with narrower scope.
+
+ORIGINAL REQUEST CONTEXT:
+- Agency: ${caseData.agency_name}
+- State: ${caseData.state || 'Unknown'}
+- Subject: ${caseData.subject_name || 'Unknown'}
+- Records originally requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Various records'}
+- Incident date: ${caseData.incident_date || 'Unknown'}
+- Incident location: ${caseData.incident_location || 'Unknown'}
+
+DENIAL DETAILS:
+- Denial subtype: ${denialContext.denial_subtype || 'unknown'}
+- Key points: ${keyPoints.join('; ')}
+- Summary: ${denialContext.summary || 'No summary available'}
+
+REFORMULATION STRATEGY:
+- If "no CCTV/BWC records" → request incident/dispatch reports, CAD logs, or 911 calls instead
+- If "overly broad" → narrow by specific dates, times, officers, or record types
+- If "no records for that address" → try broader location description or different record category
+- Use different terminology that may match agency filing systems
+- Keep request specific enough to avoid "overly broad" but broad enough to capture relevant records
+- Cite applicable state public records law
+
+Return JSON:
+{
+  "subject": "New email subject line for the reformulated request",
+  "body_text": "Full email body text of the new FOIA request",
+  "body_html": null,
+  "strategy_notes": "Brief explanation of how this differs from the original request"
+}
+
+Return ONLY valid JSON.`;
+
+        try {
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+                reasoning: { effort: 'medium' },
+                text: { verbosity: 'medium' },
+                input: prompt
+            });
+
+            const raw = response.output_text?.trim();
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            throw new Error('Failed to parse reformulated request JSON');
+        } catch (error) {
+            console.error('Error generating reformulated request:', error);
             throw error;
         }
     }

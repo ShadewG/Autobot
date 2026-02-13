@@ -28,6 +28,11 @@ const NONE = 'NONE';                     // No action needed
 const CLOSE_CASE = 'CLOSE_CASE';
 const WITHDRAW = 'WITHDRAW';
 
+// Research/reformulation actions
+const RESEARCH_AGENCY = 'RESEARCH_AGENCY';          // Re-research correct agency/contact
+const REFORMULATE_REQUEST = 'REFORMULATE_REQUEST';  // Rewrite request differently
+const SUBMIT_PORTAL = 'SUBMIT_PORTAL';              // Submit via portal (already used in code, now canonical)
+
 /**
  * All valid action types
  */
@@ -43,7 +48,10 @@ const ACTION_TYPES = [
   ESCALATE,
   NONE,
   CLOSE_CASE,
-  WITHDRAW
+  WITHDRAW,
+  RESEARCH_AGENCY,
+  REFORMULATE_REQUEST,
+  SUBMIT_PORTAL
 ];
 
 /**
@@ -66,7 +74,10 @@ const DRAFT_REQUIRED_ACTIONS = [
 const ALWAYS_GATE_ACTIONS = [
   ESCALATE,
   CLOSE_CASE,
-  WITHDRAW
+  WITHDRAW,
+  RESEARCH_AGENCY,
+  REFORMULATE_REQUEST,
+  SUBMIT_PORTAL
 ];
 
 /**
@@ -94,7 +105,10 @@ const ACTION_LABELS = {
   [ESCALATE]: 'Escalate to Human',
   [NONE]: 'No Action Needed',
   [CLOSE_CASE]: 'Close Case',
-  [WITHDRAW]: 'Withdraw Request'
+  [WITHDRAW]: 'Withdraw Request',
+  [RESEARCH_AGENCY]: 'Research Correct Agency',
+  [REFORMULATE_REQUEST]: 'Reformulate Request',
+  [SUBMIT_PORTAL]: 'Submit via Portal'
 };
 
 /**
@@ -203,6 +217,9 @@ module.exports = {
   NONE,
   CLOSE_CASE,
   WITHDRAW,
+  RESEARCH_AGENCY,
+  REFORMULATE_REQUEST,
+  SUBMIT_PORTAL,
 
   // Lists
   ACTION_TYPES,

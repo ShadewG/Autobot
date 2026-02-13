@@ -59,7 +59,7 @@ Return ONLY valid JSON, no other text.`;
 
     try {
         const analysisResponse = await client.responses.create({
-            model: 'gpt-5',
+            model: 'gpt-5.2-2025-12-11',
             reasoning: { effort: 'medium' },
             text: { verbosity: 'low' },
             input: analysisPrompt

@@ -397,6 +397,15 @@ router.get('/inbound', async (req, res) => {
 router.get('/outbound', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 100;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
+
+        const userFilter = userId
+            ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id = ${userId})`
+            : unownedOnly
+                ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id IS NULL)`
+                : '';
 
         const result = await db.query(`
             SELECT
@@ -417,6 +426,7 @@ router.get('/outbound', async (req, res) => {
             LEFT JOIN email_threads t ON m.thread_id = t.id
             LEFT JOIN cases c ON t.case_id = c.id
             WHERE m.direction = 'outbound'
+            ${userFilter}
             ORDER BY COALESCE(m.sent_at, m.created_at) DESC
             LIMIT $1
         `, [limit]);
@@ -439,29 +449,41 @@ router.get('/activity', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 100;
         const eventType = req.query.event_type;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
 
-        let query = `
-            SELECT
-                id,
-                event_type,
-                case_id,
-                message_id,
-                description,
-                metadata,
-                created_at
-            FROM activity_log
-        `;
+        const whereParts = [];
         const params = [];
 
         if (eventType) {
-            query += ` WHERE event_type = $1`;
             params.push(eventType);
-            query += ` ORDER BY created_at DESC LIMIT $2`;
-            params.push(limit);
-        } else {
-            query += ` ORDER BY created_at DESC LIMIT $1`;
-            params.push(limit);
+            whereParts.push(`al.event_type = $${params.length}`);
         }
+
+        if (userId) {
+            whereParts.push(`(al.case_id IS NOT NULL AND EXISTS (SELECT 1 FROM cases c WHERE c.id = al.case_id AND c.user_id = ${userId}))`);
+        } else if (unownedOnly) {
+            whereParts.push(`(al.case_id IS NULL OR EXISTS (SELECT 1 FROM cases c WHERE c.id = al.case_id AND c.user_id IS NULL))`);
+        }
+
+        const whereClause = whereParts.length > 0 ? 'WHERE ' + whereParts.join(' AND ') : '';
+        params.push(limit);
+
+        const query = `
+            SELECT
+                al.id,
+                al.event_type,
+                al.case_id,
+                al.message_id,
+                al.description,
+                al.metadata,
+                al.created_at
+            FROM activity_log al
+            ${whereClause}
+            ORDER BY al.created_at DESC
+            LIMIT $${params.length}
+        `;
 
         const result = await db.query(query, params);
 
@@ -482,6 +504,22 @@ router.get('/activity', async (req, res) => {
 router.get('/unmatched', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 50;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
+
+        // Unmatched messages have no thread/case, so filter by TO email address
+        let toFilter = '';
+        const params = [limit];
+        if (userId) {
+            const user = await db.getUserById(userId);
+            if (user?.email) {
+                params.push(user.email);
+                toFilter = `AND m.to_email ILIKE '%' || $${params.length} || '%'`;
+            }
+        } else if (unownedOnly) {
+            toFilter = `AND (m.to_email ILIKE '%requests@foib-request.com%' OR m.to_email IS NULL)`;
+        }
 
         const result = await db.query(`
             SELECT
@@ -495,9 +533,10 @@ router.get('/unmatched', async (req, res) => {
             FROM messages m
             WHERE m.direction = 'inbound'
             AND m.thread_id IS NULL
+            ${toFilter}
             ORDER BY m.created_at DESC
             LIMIT $1
-        `, [limit]);
+        `, params);
 
         res.json({
             success: true,
@@ -811,6 +850,21 @@ router.get('/live-overview', async (req, res) => {
             LIMIT $1
         `, [limit]);
 
+        // Resolve user email for TO-address filtering on unmatched messages
+        let unmatchedUserEmail = null;
+        if (userId) {
+            const user = await db.getUserById(userId);
+            unmatchedUserEmail = user?.email || null;
+        }
+        const unmatchedToFilter = unmatchedUserEmail
+            ? `AND m.to_email ILIKE '%' || $2 || '%'`
+            : unownedOnly
+                ? `AND (m.to_email ILIKE '%requests@foib-request.com%' OR m.to_email IS NULL)`
+                : '';
+        const suggestedCasesUserFilter = userId ? `AND c2.user_id = ${userId}` : unownedOnly ? 'AND c2.user_id IS NULL' : '';
+        const unmatchedParams = [limit];
+        if (unmatchedUserEmail) unmatchedParams.push(unmatchedUserEmail);
+
         const unmatchedInboundResult = await db.query(`
             SELECT
                 m.id,
@@ -826,15 +880,17 @@ router.get('/live-overview', async (req, res) => {
                         FROM cases c2
                         WHERE c2.agency_email IS NOT NULL
                           AND split_part(c2.agency_email, '@', 2) = split_part(m.from_email, '@', 2)
+                          ${suggestedCasesUserFilter}
                         LIMIT 3
                     ) c
                 ) AS suggested_cases
             FROM messages m
             WHERE m.direction = 'inbound'
               AND (m.thread_id IS NULL OR m.case_id IS NULL)
+              ${unmatchedToFilter}
             ORDER BY COALESCE(m.received_at, m.created_at) DESC
             LIMIT $1
-        `, [limit]);
+        `, unmatchedParams);
 
         const unprocessedInboundResult = await db.query(`
             SELECT
@@ -1066,7 +1122,7 @@ router.get('/case/:id', async (req, res) => {
                 SELECT
                     id, direction, from_email, to_email, subject, body_text, body_html,
                     message_type, sendgrid_message_id, sent_at, received_at, created_at,
-                    processed_at, processed_run_id
+                    processed_at, processed_run_id, summary
                 FROM messages
                 WHERE case_id = $1
                 ORDER BY COALESCE(received_at, sent_at, created_at) DESC
@@ -1809,6 +1865,10 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
  * Server-Sent Events stream for real-time notifications
  */
 router.get('/events', (req, res) => {
+    const userIdParam = req.query.user_id;
+    const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+    const unownedOnly = userIdParam === 'unowned';
+
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -1818,7 +1878,27 @@ router.get('/events', (req, res) => {
 
     const heartbeat = setInterval(() => res.write(':\n\n'), 30000);
 
-    const onNotification = (data) => {
+    const onNotification = async (data) => {
+        // If no user filter (All Users), send everything
+        if (!userId && !unownedOnly) {
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+            return;
+        }
+
+        // If the event has a case_id, check ownership
+        const caseId = data.case_id || data.metadata?.case_id;
+        if (caseId) {
+            try {
+                const c = await db.getCaseById(caseId);
+                if (userId && c?.user_id !== userId) return; // skip — wrong user
+                if (unownedOnly && c?.user_id != null) return; // skip — owned
+            } catch (_) {
+                return; // skip on error
+            }
+        } else {
+            // System-level events (no case_id) — only send for "All Users"
+            return;
+        }
         res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
     eventBus.on('notification', onNotification);

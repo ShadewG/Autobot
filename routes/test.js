@@ -1727,7 +1727,7 @@ router.post('/chat', async (req, res) => {
         });
 
         const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-5.2-2025-12-11',
             messages: [
                 { role: 'system', content: systemPrompt || 'You are a helpful FOIA assistant.' },
                 ...conversationHistory

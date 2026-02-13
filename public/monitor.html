@@ -924,7 +924,6 @@
             </select>
             <span class="runtime-badge live" id="runtimeMode">Execution: LIVE</span>
             <span class="runtime-badge" id="shadowMode">Shadow: OFF</span>
-            <span class="runtime-badge" id="queueBadge">Queue: -</span>
             <span class="runtime-badge sse-disconnected" id="sseBadge">SSE: --</span>
         </div>
     </div>
@@ -936,24 +935,24 @@
 
     <div class="stats" id="stats">
         <div class="stat-box">
-            <div class="label">Total Messages</div>
-            <div class="value" id="totalMessages">-</div>
+            <div class="label">Total Cases</div>
+            <div class="value" id="totalCases">-</div>
         </div>
-        <div class="stat-box inbound">
-            <div class="label">Inbound</div>
-            <div class="value" id="inboundCount">-</div>
+        <div class="stat-box" style="border-color:#3fb950;">
+            <div class="label">Active</div>
+            <div class="value" id="activeCases" style="color:#3fb950;">-</div>
         </div>
-        <div class="stat-box outbound">
-            <div class="label">Outbound</div>
-            <div class="value" id="outboundCount">-</div>
+        <div class="stat-box" style="border-color:#f0883e;">
+            <div class="label">Awaiting Response</div>
+            <div class="value" id="awaitingCases" style="color:#f0883e;">-</div>
         </div>
-        <div class="stat-box">
-            <div class="label">Queue (Gen)</div>
-            <div class="value" id="queueGen">-</div>
+        <div class="stat-box" style="border-color:#d2a8ff;">
+            <div class="label">Needs Review</div>
+            <div class="value" id="reviewCases" style="color:#d2a8ff;">-</div>
         </div>
-        <div class="stat-box">
-            <div class="label">Queue (Email)</div>
-            <div class="value" id="queueEmail">-</div>
+        <div class="stat-box" style="border-color:#58a6ff;">
+            <div class="label">Completed</div>
+            <div class="value" id="completedCases" style="color:#58a6ff;">-</div>
         </div>
         <div class="stat-box" style="border-color:#f0883e;">
             <div class="label">Phone Queue</div>
@@ -1029,8 +1028,6 @@
         <span><span class="ds-value green" id="dsTodayApproved">0</span> approved</span>
         <span><span class="ds-value orange" id="dsTodayDismissed">0</span> dismissed</span>
         <span><span class="ds-value blue" id="dsTodayCompleted">0</span> cases completed</span>
-        <span><span class="ds-value" id="dsTodayInbound" style="color:#3fb950;">0</span> inbound</span>
-        <span><span class="ds-value" id="dsTodaySent" style="color:#f0883e;">0</span> sent</span>
     </div>
 
     <div class="tabs">
@@ -1717,14 +1714,21 @@
                 const live = await liveRes.json();
                 const casesData = await casesRes.json();
 
-                // Update stats
-                document.getElementById('totalMessages').textContent = monitor.summary.total_messages;
-                document.getElementById('inboundCount').textContent = monitor.summary.inbound_count;
-                document.getElementById('outboundCount').textContent = monitor.summary.outbound_count;
-                document.getElementById('queueGen').textContent =
-                    (monitor.queue.generation.waiting || 0) + (monitor.queue.generation.active || 0);
-                document.getElementById('queueEmail').textContent =
-                    (monitor.queue.email.waiting || 0) + (monitor.queue.email.active || 0);
+                // Update case stats
+                const caseStats = monitor.case_stats || [];
+                const statusMap = {};
+                let totalCases = 0;
+                caseStats.forEach(s => { statusMap[s.status] = parseInt(s.count) || 0; totalCases += parseInt(s.count) || 0; });
+                document.getElementById('totalCases').textContent = totalCases;
+                // Active = sent + ready_to_send + portal_in_progress + responded
+                document.getElementById('activeCases').textContent =
+                    (statusMap['sent'] || 0) + (statusMap['ready_to_send'] || 0) + (statusMap['portal_in_progress'] || 0) + (statusMap['responded'] || 0);
+                document.getElementById('awaitingCases').textContent = statusMap['awaiting_response'] || 0;
+                // Needs Review = needs_human_review + needs_contact_info + needs_human_fee_approval + error
+                document.getElementById('reviewCases').textContent =
+                    (statusMap['needs_human_review'] || 0) + (statusMap['needs_contact_info'] || 0) + (statusMap['needs_human_fee_approval'] || 0) + (statusMap['error'] || 0);
+                document.getElementById('completedCases').textContent =
+                    (statusMap['completed'] || 0) + (statusMap['records_received'] || 0) + (statusMap['closed'] || 0);
 
                 // All messages
                 document.getElementById('allMessages').innerHTML = monitor.inbound.concat(monitor.outbound)
@@ -2482,9 +2486,6 @@
                 const config = await res.json();
                 document.getElementById('runtimeMode').textContent = `Execution: ${config.execution_mode || 'LIVE'}`;
                 document.getElementById('shadowMode').textContent = `Shadow: ${config.shadow_mode ? 'ON' : 'OFF'}`;
-                const queueGen = (config.queue?.generation?.waiting || 0) + (config.queue?.generation?.active || 0);
-                const queueEmail = (config.queue?.email?.waiting || 0) + (config.queue?.email?.active || 0);
-                document.getElementById('queueBadge').textContent = `Queue G:${queueGen} E:${queueEmail}`;
             } catch (err) {
                 console.error('Config load failed:', err);
             }
@@ -2831,6 +2832,7 @@
                         <div class="case-list-item">
                             <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
                             <div>${truncate(m.subject || '-', 120)}</div>
+                            ${m.summary ? `<div style="font-size:11px;color:#8b949e;font-style:italic;">${escapeHtml(m.summary)}</div>` : ''}
                         </div>
                     `).join('')
                     : '<div class="timestamp">No correspondence yet</div>';
@@ -4213,8 +4215,6 @@
                 document.getElementById('dsTodayApproved').textContent = s.approved_today || 0;
                 document.getElementById('dsTodayDismissed').textContent = s.dismissed_today || 0;
                 document.getElementById('dsTodayCompleted').textContent = s.completed_today || 0;
-                document.getElementById('dsTodayInbound').textContent = s.inbound_today || 0;
-                document.getElementById('dsTodaySent').textContent = s.sent_today || 0;
                 document.getElementById('dailyStatsBar').style.display = 'flex';
             } catch (err) {
                 // API might not exist yet — silently fail, hide the bar

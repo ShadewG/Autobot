@@ -95,6 +95,7 @@ async function classifyInboundNode(state) {
         sentiment: stub.sentiment || 'neutral',
         extractedFeeAmount: feeAmount,
         extractedDeadline: stub.deadline || null,
+        denialSubtype: stub.denial_subtype || null,
         // NEW: Pass through requires_response and portal_url to state
         requiresResponse: stubRequiresResponse,
         portalUrl: stub.portal_url || null,
@@ -181,6 +182,7 @@ async function classifyInboundNode(state) {
       sentiment: analysis.sentiment || 'neutral',
       extractedFeeAmount: feeAmount,
       extractedDeadline: analysis.extracted_deadline || analysis.deadline,
+      denialSubtype: analysis.denial_subtype || null,
       requiresResponse,
       portalUrl,
       suggestedAction: analysis.suggested_action || null,

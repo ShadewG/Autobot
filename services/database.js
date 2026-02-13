@@ -40,6 +40,10 @@ class DatabaseService {
             const schema = fs.readFileSync(schemaPath, 'utf8');
 
             await this.query(schema);
+
+            // Migrations (idempotent)
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS summary TEXT');
+
             console.log('Database schema initialized successfully');
             return true;
         } catch (error) {
@@ -229,9 +233,10 @@ class DatabaseService {
                 thread_id, case_id, message_id, sendgrid_message_id, direction,
                 from_email, to_email, cc_emails, subject, body_text, body_html,
                 has_attachments, attachment_count, message_type, portal_notification,
-                portal_notification_type, portal_notification_provider, sent_at, received_at
+                portal_notification_type, portal_notification_provider, sent_at, received_at,
+                summary
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             ON CONFLICT (message_id) DO NOTHING
             RETURNING *
         `;
@@ -254,7 +259,8 @@ class DatabaseService {
             messageData.portal_notification_type || null,
             messageData.portal_notification_provider || null,
             messageData.sent_at || null,
-            messageData.received_at || null
+            messageData.received_at || null,
+            messageData.summary || null
         ];
         const result = await this.query(query, values);
         if (result.rows.length > 0) {
@@ -1339,6 +1345,19 @@ class DatabaseService {
         const result = await this.query(
             `SELECT * FROM proposals
              WHERE case_id = $1 AND status = 'PENDING_APPROVAL'
+             ORDER BY created_at DESC`,
+            [caseId]
+        );
+        return result.rows;
+    }
+
+    /**
+     * Get all proposals for a case (all statuses — for decision memory keyword extraction).
+     */
+    async getAllProposalsByCaseId(caseId) {
+        const result = await this.query(
+            `SELECT id, action_type, status, created_at FROM proposals
+             WHERE case_id = $1
              ORDER BY created_at DESC`,
             [caseId]
         );

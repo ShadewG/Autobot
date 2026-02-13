@@ -80,7 +80,7 @@ CASE CONTEXT:
 `;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.2-2025-12-11',
         temperature: 0,
         messages: [
             { role: 'system', content: responseHandlingPrompts.analysisSystemPrompt },
@@ -109,7 +109,7 @@ CASE:
 `;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.2-2025-12-11',
         temperature: 0.3,
         messages: [
             { role: 'system', content: responseHandlingPrompts.followUpSystemPrompt },
@@ -326,7 +326,7 @@ async function main() {
     console.log('='.repeat(80));
     console.log('STANDALONE PROMPT TESTER (No Database Required)');
     console.log('='.repeat(80));
-    console.log(`OpenAI Model: gpt-4o-mini`);
+    console.log(`OpenAI Model: gpt-5.2-2025-12-11`);
     console.log(`Fixtures: ${fixtures.fixtures.length}`);
     if (fixtureFilter) console.log(`Filter: fixture="${fixtureFilter}"`);
     if (categoryFilter) console.log(`Filter: category="${categoryFilter}"`);
@@ -404,7 +404,7 @@ async function main() {
         path.join(reportsDir, 'standalone-prompt-report.json'),
         JSON.stringify({
             timestamp: new Date().toISOString(),
-            model: 'gpt-4o-mini',
+            model: 'gpt-5.2-2025-12-11',
             summary: { passed, failed, total: results.length },
             results
         }, null, 2)

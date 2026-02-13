@@ -8,6 +8,7 @@
 const aiService = require('../../services/ai-service');
 const db = require('../../services/database');
 const logger = require('../../services/logger');
+const decisionMemory = require('../../services/decision-memory-service');
 
 /**
  * Draft the appropriate response based on proposalActionType
@@ -58,6 +59,32 @@ async function draftResponseNode(state) {
         : null;
     }
 
+    // --- Fetch decision memory lessons for AI context ---
+    let lessonsContext = '';
+    try {
+      const allMessages = await db.getMessagesByCaseId(caseId);
+      const priorProposals = await db.getAllProposalsByCaseId(caseId);
+      const followupSchedule = await db.getFollowUpScheduleByCaseId(caseId);
+
+      // Enrich caseData with followup_count (lives on follow_up_schedule table)
+      const enrichedCaseData = {
+        ...caseData,
+        followup_count: followupSchedule?.followup_count || 0
+      };
+
+      const lessons = await decisionMemory.getRelevantLessons(enrichedCaseData, {
+        messages: allMessages,
+        priorProposals
+      });
+
+      if (lessons.length > 0) {
+        lessonsContext = decisionMemory.formatLessonsForPrompt(lessons);
+        logs.push(`Injected ${lessons.length} decision lessons into draft context`);
+      }
+    } catch (lessonErr) {
+      logger.warn('Failed to fetch decision lessons for draft', { caseId, error: lessonErr.message });
+    }
+
     let draft = { subject: null, body_text: null, body_html: null };
 
     // Read adjustment instruction from state (set by decideNextActionNode on ADJUST)
@@ -77,7 +104,8 @@ async function draftResponseNode(state) {
 
         // Use existing generateFollowUp method
         draft = await aiService.generateFollowUp(caseData, attemptNumber, {
-          adjustmentInstruction
+          adjustmentInstruction,
+          lessonsContext
         });
         break;
       }
@@ -95,7 +123,8 @@ async function draftResponseNode(state) {
           {
             excludeItems: exemptItems,
             scopeItems,
-            adjustmentInstruction
+            adjustmentInstruction,
+            lessonsContext
           }
         );
         break;
@@ -110,7 +139,7 @@ async function draftResponseNode(state) {
             latestInbound,
             latestAnalysis,
             caseData,
-            { adjustmentInstruction }
+            { adjustmentInstruction, lessonsContext }
           );
         } else {
           // Fallback to generateAutoReply
@@ -137,7 +166,8 @@ async function draftResponseNode(state) {
           {
             feeAmount: extractedFeeAmount,
             recommendedAction: 'accept',
-            instructions: adjustmentInstruction
+            instructions: adjustmentInstruction,
+            lessonsContext
           }
         );
         break;
@@ -152,7 +182,8 @@ async function draftResponseNode(state) {
           {
             feeAmount: extractedFeeAmount,
             recommendedAction: 'negotiate',
-            instructions: adjustmentInstruction
+            instructions: adjustmentInstruction,
+            lessonsContext
           }
         );
         break;
@@ -167,7 +198,8 @@ async function draftResponseNode(state) {
           {
             feeAmount: extractedFeeAmount,
             recommendedAction: 'decline',
-            instructions: adjustmentInstruction
+            instructions: adjustmentInstruction,
+            lessonsContext
           }
         );
         break;
@@ -185,7 +217,8 @@ async function draftResponseNode(state) {
             caseData,
             {
               feeAmount: extractedFeeAmount,
-              adjustmentInstruction
+              adjustmentInstruction,
+              lessonsContext
             }
           );
         } else {
@@ -206,11 +239,61 @@ ${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` :
             caseData,
             {
               scopeItems,
-              adjustmentInstruction: partialApprovalInstructions
+              adjustmentInstruction: partialApprovalInstructions,
+              lessonsContext
             }
           );
         }
         break;
+      }
+
+      case 'RESEARCH_AGENCY': {
+        logs.push('Running agency research (pd-contact lookup + AI brief)');
+
+        let contactResult = null;
+        try {
+          const pdContactService = require('../../services/pd-contact-service');
+          contactResult = await pdContactService.lookupContact(
+            caseData.agency_name,
+            caseData.state || caseData.incident_location
+          );
+        } catch (e) {
+          logs.push(`PD-contact lookup unavailable: ${e.message}`);
+        }
+
+        const brief = await aiService.generateAgencyResearchBrief(caseData);
+
+        // Store research results on case
+        await db.updateCase(caseId, {
+          contact_research_notes: JSON.stringify({ contactResult, brief }),
+          last_contact_research_at: new Date()
+        });
+
+        // No email draft — proposal with research findings for human review
+        return {
+          draftSubject: null,
+          draftBodyText: null,
+          proposalReasoning: [...(state.proposalReasoning || []),
+            `Research findings: ${brief.summary}`,
+            contactResult ? `PD Contact found: ${contactResult.contact_email || contactResult.portal_url}` : 'No PD contact data found'
+          ],
+          logs: [...logs, 'Agency research complete — findings attached to proposal']
+        };
+      }
+
+      case 'REFORMULATE_REQUEST': {
+        logs.push('Generating reformulated FOIA request');
+
+        const latestAnalysisForReform = await db.getLatestResponseAnalysis(caseId);
+        const reformulated = await aiService.generateReformulatedRequest(caseData, latestAnalysisForReform);
+
+        // Draft is a new FOIA request, not a reply
+        return {
+          draftSubject: reformulated.subject,
+          draftBodyText: reformulated.body_text,
+          draftBodyHtml: reformulated.body_html || null,
+          logs: [...logs, 'Reformulated request generated']
+        };
       }
 
       case 'ESCALATE': {

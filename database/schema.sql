@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS messages (
     portal_notification_provider VARCHAR(100),
     sent_at TIMESTAMP,
     received_at TIMESTAMP,
+    summary TEXT, -- One-sentence AI-generated summary
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

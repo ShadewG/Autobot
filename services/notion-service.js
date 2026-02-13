@@ -719,7 +719,7 @@ Respond with JSON:
 }`;
 
             const response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
+                model: 'gpt-5.2-2025-12-11',
                 messages: [{ role: 'user', content: prompt }],
                 response_format: { type: 'json_object' }
             });
@@ -776,7 +776,7 @@ Respond with JSON:
 }`;
 
             const response = await openai.chat.completions.create({
-                model: 'gpt-5-mini',
+                model: 'gpt-5.2-2025-12-11',
                 messages: [{ role: 'user', content: prompt }],
                 response_format: { type: 'json_object' }
             });
@@ -1051,7 +1051,7 @@ Only return a URL you are confident is the correct records request submission pa
             }
 
             const response = await openai.responses.create({
-                model: 'gpt-5.2',
+                model: 'gpt-5.2-2025-12-11',
                 tools: [{ type: 'web_search_preview' }],
                 input: [
                     {
@@ -1129,7 +1129,7 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
             const response = await openai.responses.create({
-                model: 'gpt-5.2',
+                model: 'gpt-5.2-2025-12-11',
                 tools: [{ type: 'web_search_preview' }],
                 input: [
                     {
@@ -1182,7 +1182,7 @@ Look for a records division phone number, FOIA phone number, or general agency p
             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
             const response = await openai.responses.create({
-                model: 'gpt-5.2',
+                model: 'gpt-5.2-2025-12-11',
                 tools: [{ type: 'web_search_preview' }],
                 input: [
                     {

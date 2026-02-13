@@ -15,7 +15,7 @@ async function search(departmentName, location) {
     const res = await axios.post(`${BASE_URL}${API_PREFIX}/search`, {
         department_name: departmentName,
         location
-    }, { timeout: 120000 });
+    }, { timeout: 360000 }); // Firecrawl agent can take up to 6 minutes
     return res.data;
 }
 
@@ -44,6 +44,10 @@ async function saveToNotion(departmentName, location, contactData) {
 async function lookupContact(name, location) {
     if (!name) return null;
 
+    // Detect connection issues early so callers can show the right error
+    const isConnectionError = (err) =>
+        err.code === 'ECONNREFUSED' || err.code === 'ECONNABORTED' || err.code === 'ENOTFOUND';
+
     // Try fast cache/Notion check first
     try {
         const quick = await preCheck(name, location);
@@ -68,10 +72,12 @@ async function lookupContact(name, location) {
             };
         }
     } catch (err) {
-        // Pre-check failed or returned nothing — continue to full search
-        if (err.code !== 'ECONNREFUSED' && err.code !== 'ECONNABORTED') {
-            console.log(`pd-contact pre-check miss for "${name}": ${err.message}`);
+        if (isConnectionError(err)) {
+            const error = new Error(`pd-contact service unavailable at ${BASE_URL}`);
+            error.code = 'SERVICE_UNAVAILABLE';
+            throw error;
         }
+        console.log(`pd-contact pre-check miss for "${name}": ${err.message}`);
     }
 
     // Full Firecrawl search
@@ -94,6 +100,11 @@ async function lookupContact(name, location) {
         console.log(`pd-contact full search for "${name}": portal=${normalized.portal_url || 'none'}, email=${normalized.contact_email || 'none'}, confidence=${normalized.confidence || 'unknown'}`);
         return normalized;
     } catch (err) {
+        if (isConnectionError(err)) {
+            const error = new Error(`pd-contact service unavailable at ${BASE_URL}`);
+            error.code = 'SERVICE_UNAVAILABLE';
+            throw error;
+        }
         console.warn(`pd-contact search failed for "${name}":`, err.message);
         return null;
     }

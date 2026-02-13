@@ -393,7 +393,7 @@ Then analyze the situation and decide what action to take.`
                 console.log(`\n   🔄 Agent iteration ${iteration}/${maxIterations}`);
 
                 const response = await this.openai.chat.completions.create({
-                    model: 'gpt-5',
+                    model: 'gpt-5.2-2025-12-11',
                     messages: messages,
                     tools: this.getToolDefinitions(),
                     tool_choice: 'auto'

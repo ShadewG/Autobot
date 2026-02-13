@@ -168,6 +168,12 @@ class DecisionMemoryService {
         if (caseData.substatus) {
             caseData.substatus.toLowerCase().split(/\s+/).forEach(w => keywords.add(w));
         }
+        if (caseData.followup_count > 0) keywords.add('has_followups');
+        if (caseData.followup_count >= 2) keywords.add('multiple_followups');
+        if (caseData.last_fee_quote_amount) {
+            keywords.add('has_fee_quote');
+            if (caseData.last_fee_quote_amount > 500) keywords.add('high_fee');
+        }
 
         // From messages — detect denials, fees, etc.
         for (const m of (messages || []).slice(0, 5)) {
@@ -179,6 +185,20 @@ class DecisionMemoryService {
             if (text.includes('portal') || text.includes('nextrequest') || text.includes('govqa')) keywords.add('portal');
             if (text.includes('no responsive') || text.includes('no records')) keywords.add('no_records');
             if (text.includes('resubmit') || text.includes('submit through')) keywords.add('portal_redirect');
+            if (text.includes('too broad') || text.includes('overly broad') || text.includes('narrow your request') || text.includes('narrow the scope')) keywords.add('overly_broad');
+            if (text.includes('wrong agency') || text.includes('not our jurisdiction') || text.includes('incorrect agency') || text.includes('not our department') || text.includes('contact the')) keywords.add('wrong_agency');
+            if (text.includes('retention') || text.includes('destroyed') || text.includes('purged') || text.includes('no longer maintain')) keywords.add('retention_expired');
+            if (text.includes('hostile') || text.includes('stop contacting') || text.includes('harassment') || text.includes('cease')) keywords.add('hostile');
+            if (text.includes('partial') || text.includes('some records') || text.includes('released') || text.includes('withheld') || text.includes('redacted')) keywords.add('partial_approval');
+            if (text.includes('received your request') || text.includes('acknowledge') || text.includes('we will respond') || text.includes('working on your request')) keywords.add('acknowledgment');
+            if (text.includes('clarif') || text.includes('additional information') || text.includes('please provide') || text.includes('more details')) keywords.add('clarification_request');
+            if (text.includes('waiver') || text.includes('public interest') || text.includes('media') || text.includes('journalist') || text.includes('documentary')) keywords.add('fee_waiver_eligible');
+            if (text.includes('appeal') || text.includes('administrative review') || text.includes('attorney general')) keywords.add('appeal');
+            if (text.includes('segregab') || text.includes('non-exempt portion') || text.includes('releasable portion')) keywords.add('segregable');
+            if (text.includes('excessive') || text.includes('unreasonable') || text.includes('prohibitive')) keywords.add('excessive_fee');
+            if (text.includes('forward') || text.includes('transferred') || text.includes('refer')) keywords.add('forwarded');
+            if (text.includes('download') || text.includes('attached') || text.includes('records ready') || text.includes('available for pickup')) keywords.add('records_ready');
+            if (text.includes('duplicate') || text.includes('already submitted') || text.includes('previously received')) keywords.add('duplicate_request');
         }
 
         // From prior proposals

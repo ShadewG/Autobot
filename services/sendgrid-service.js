@@ -1264,6 +1264,12 @@ class SendGridService {
                 message_count: thread.message_count + 1
             });
 
+            // Generate and save a one-sentence summary (non-blocking)
+            try {
+                const summary = await aiService.generateMessageSummary(messageData.subject, messageData.body_text);
+                if (summary) await db.query('UPDATE messages SET summary = $1 WHERE id = $2', [summary, message.id]);
+            } catch (_) { /* non-critical */ }
+
             return message;
         } catch (error) {
             console.error('Error logging sent message:', error);
