@@ -1095,8 +1095,16 @@
 
         <div id="cases" class="panel">
             <div id="caseStatusChips" class="status-chips"></div>
-            <div style="margin-bottom:8px;">
-                <input type="text" id="caseSearchInput" placeholder="Search cases by name, agency, status..." oninput="filterCases()" style="width:100%;max-width:400px;padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;box-sizing:border-box;">
+            <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="text" id="caseSearchInput" placeholder="Search cases by name, agency, status..." oninput="filterCases()" style="flex:1;max-width:400px;padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;box-sizing:border-box;">
+                <select id="tagFilterSelect" onchange="filterCases()" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:6px 8px;border-radius:6px;font-size:12px;cursor:pointer;">
+                    <option value="">All Tags</option>
+                </select>
+                <select id="prioritySortSelect" onchange="filterCases()" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:6px 8px;border-radius:6px;font-size:12px;cursor:pointer;">
+                    <option value="">Default Sort</option>
+                    <option value="priority_desc">Priority (High First)</option>
+                    <option value="priority_asc">Priority (Low First)</option>
+                </select>
             </div>
             <div class="scroll-container" style="max-height:none;">
                 <table>
@@ -1222,6 +1230,28 @@
         </div>
         <div class="accordion-body">
             <div id="caseInspectorProposals" class="case-list"></div>
+        </div>
+
+        <!-- Fee History accordion (collapsed by default) -->
+        <div id="feeHistoryAccordion" style="display:none;">
+            <div class="accordion-toggle" onclick="toggleAccordion(this)">
+                <h3>Fee History <span class="acc-count" id="caseInspectorFeeCount"></span></h3>
+                <span class="acc-arrow">&#9654;</span>
+            </div>
+            <div class="accordion-body">
+                <div id="caseInspectorFeeHistory" class="case-list"></div>
+            </div>
+        </div>
+
+        <!-- Attachments accordion (collapsed by default) -->
+        <div id="attachmentsAccordion" style="display:none;">
+            <div class="accordion-toggle" onclick="toggleAccordion(this)">
+                <h3>Attachments <span class="acc-count" id="caseInspectorAttCount"></span></h3>
+                <span class="acc-arrow">&#9654;</span>
+            </div>
+            <div class="accordion-body">
+                <div id="caseInspectorAttachments" class="case-list"></div>
+            </div>
         </div>
     </div>
 
@@ -2258,13 +2288,10 @@
         }
 
         function filterCases() {
-            const q = (document.getElementById('caseSearchInput')?.value || '').trim().toLowerCase();
-            const rows = document.querySelectorAll('#caseRows tr.clickable-row');
-            rows.forEach(row => {
-                if (!q) { row.style.display = ''; return; }
-                const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(q) ? '' : 'none';
-            });
+            if (caseCache.length) {
+                lastCasesJson = ''; // force rebuild
+                renderCases({ success: true, cases: caseCache });
+            }
         }
 
         let lastCasesJson = '';
@@ -2296,18 +2323,42 @@
                 return;
             }
 
-            // Build status chips
+            // Build status chips + populate tag filter
             renderStatusChips(caseCache);
+            populateTagFilter(caseCache);
 
-            // Filter by active status chip
-            const filtered = activeStatusFilter
-                ? caseCache.filter(c => normalizeStatus(c.status) === activeStatusFilter)
-                : caseCache;
+            // Apply filters: status chip, text search, tag filter
+            const searchQ = (document.getElementById('caseSearchInput')?.value || '').trim().toLowerCase();
+            const tagFilter = document.getElementById('tagFilterSelect')?.value || '';
+            const prioritySort = document.getElementById('prioritySortSelect')?.value || '';
 
-            rowsEl.innerHTML = filtered.map(c => `
+            let filtered = caseCache;
+            if (activeStatusFilter) {
+                filtered = filtered.filter(c => normalizeStatus(c.status) === activeStatusFilter);
+            }
+            if (searchQ) {
+                filtered = filtered.filter(c => {
+                    const hay = [c.case_name, c.agency_name, c.status, c.user_handle, String(c.id), ...(c.tags || [])].join(' ').toLowerCase();
+                    return hay.includes(searchQ);
+                });
+            }
+            if (tagFilter) {
+                filtered = filtered.filter(c => (c.tags || []).includes(tagFilter));
+            }
+            if (prioritySort === 'priority_desc') {
+                filtered = [...filtered].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+            } else if (prioritySort === 'priority_asc') {
+                filtered = [...filtered].sort((a, b) => (a.priority || 0) - (b.priority || 0));
+            }
+
+            rowsEl.innerHTML = filtered.map(c => {
+                const priorityStars = c.priority > 0 ? '<span style="color:#f0883e;font-size:10px;" title="Priority ' + c.priority + '">' + '\u2605'.repeat(c.priority) + '</span> ' : '';
+                const outcomeBadge = c.outcome_type ? '<span style="font-size:9px;background:' + (c.outcome_type === 'full_approval' ? '#238636' : c.outcome_type === 'withdrawn' ? '#6e7681' : '#da3633') + ';color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px;">' + c.outcome_type.replace(/_/g,' ') + '</span>' : '';
+                const tagChips = (c.tags || []).slice(0, 3).map(t => '<span style="background:#21262d;color:#8b949e;font-size:9px;padding:1px 5px;border-radius:3px;margin-left:2px;">' + t + '</span>').join('');
+                return `
                 <tr class="clickable-row" data-case-id="${c.id}" onclick="toggleCase(${c.id})">
                     <td class="timestamp">${relativeTime(c.updated_at)}</td>
-                    <td><a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}${c.user_handle ? ` <span style="color:#8b949e;font-size:10px;">${c.user_handle}</span>` : ''}</td>
+                    <td>${priorityStars}<a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}${c.user_handle ? ` <span style="color:#8b949e;font-size:10px;">${c.user_handle}</span>` : ''}${outcomeBadge}${tagChips}</td>
                     <td>${truncate(c.agency_name, 30)}</td>
                     <td>${contactIndicator(c)}</td>
                     <td>${formatStatus(c.status)}</td>
@@ -2315,8 +2366,8 @@
                     <td>${c.pending_approvals || 0}</td>
                     <td>${c.total_messages || 0} (in ${c.inbound_messages || 0} / out ${c.outbound_messages || 0})</td>
                     <td>${c.active_run_id ? `#${c.active_run_id} ${c.active_run_status}` : '-'}</td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
 
             // Re-expand the previously open case after rebuild
             if (wasExpanded) {
@@ -2816,12 +2867,17 @@
                 currentCaseProposals = data.proposals || [];
                 title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
                 history.replaceState(null, '', '?case=' + c.id + window.location.hash);
+                const _priorityDisplay = c.priority > 0 ? '<span style="color:#f0883e;">' + '\u2605'.repeat(c.priority) + '\u2606'.repeat(5 - c.priority) + '</span>' : '-';
+                const _outcomeDisplay = c.outcome_type ? '<span style="background:' + (c.outcome_type === 'full_approval' ? '#238636' : c.outcome_type === 'withdrawn' ? '#6e7681' : '#da3633') + ';color:#fff;padding:2px 8px;border-radius:4px;">' + c.outcome_type.replace(/_/g, ' ') + '</span>' : '-';
+                const _tagsDisplay = (c.tags || []).length > 0 ? c.tags.map(t => '<span style="background:#21262d;color:#8b949e;padding:2px 6px;border-radius:4px;margin-right:4px;font-size:11px;">' + t + '</span>').join('') : '-';
                 grid.innerHTML = `
                     <div class="cell"><span class="k">Status</span>${formatStatus(c.status)}</div>
                     <div class="cell"><span class="k">Substatus</span>${truncate(c.substatus || '-', 80)}</div>
                     <div class="cell"><span class="k">Agency</span>${truncate(c.agency_name || '-', 60)}</div>
                     <div class="cell"><span class="k">Agency Email</span>${c.agency_email || '-'}</div>
-                    <div class="cell"><span class="k">Autopilot</span>${c.autopilot_mode || '-'}</div>
+                    <div class="cell"><span class="k">Priority</span>${_priorityDisplay}</div>
+                    <div class="cell"><span class="k">Outcome</span>${_outcomeDisplay}</div>
+                    <div class="cell"><span class="k">Tags</span>${_tagsDisplay}</div>
                     <div class="cell"><span class="k">Updated</span>${formatTime(c.updated_at)}</div>
                     <div class="cell"><span class="k">Notion</span>${c.notion_page_id ? `<a class="case-link" href="https://www.notion.so/${c.notion_page_id.replace(/-/g, '')}" target="_blank">open card</a>` : '-'}</div>
                 `;
@@ -2913,14 +2969,58 @@
 
                 // Only show non-pending proposals in the minimal list
                 proposalList.innerHTML = otherProposals.length
-                    ? otherProposals.map(p => `
+                    ? otherProposals.map(p => {
+                        const decidedBy = p.human_decision?.decidedBy;
+                        const decidedLabel = decidedBy ? ` <span style="color:#3fb950;font-size:10px;">by ${decidedBy}</span>` : '';
+                        return `
                         <div class="case-list-item">
-                            <div><a class="case-link" href="/api/proposals/${p.id}" target="_blank">Proposal #${p.id}</a> · ${p.action_type} · ${p.status}</div>
+                            <div><a class="case-link" href="/api/proposals/${p.id}" target="_blank">Proposal #${p.id}</a> · ${p.action_type} · ${p.status}${decidedLabel}</div>
                             <div>${truncate(p.draft_subject || '-', 110)}</div>
-                        </div>
-                    `).join('')
+                        </div>`;
+                    }).join('')
                     : '<div class="timestamp">No past proposals</div>';
                 document.getElementById('caseInspectorProposalCount').textContent = otherProposals.length ? `(${otherProposals.length})` : '';
+
+                // Feature 2: Fee History
+                try {
+                    const feeRes = await fetch(`/api/monitor/case/${caseId}/fee-history`);
+                    const feeData = await feeRes.json();
+                    const feeList = feeData.fee_history || [];
+                    const feeAccordion = document.getElementById('feeHistoryAccordion');
+                    const feeEl = document.getElementById('caseInspectorFeeHistory');
+                    if (feeList.length > 0) {
+                        feeAccordion.style.display = 'block';
+                        document.getElementById('caseInspectorFeeCount').textContent = `(${feeList.length})`;
+                        feeEl.innerHTML = feeList.map(f => `
+                            <div class="case-list-item">
+                                <div><span style="background:#21262d;color:#f0883e;padding:1px 5px;border-radius:3px;font-size:10px;">${f.event_type}</span> ${f.amount != null ? '$' + Number(f.amount).toFixed(2) : ''} <span class="timestamp">${relativeTime(f.created_at)}</span></div>
+                                ${f.notes ? '<div style="font-size:11px;color:#8b949e;">' + truncate(f.notes, 100) + '</div>' : ''}
+                            </div>
+                        `).join('');
+                    } else {
+                        feeAccordion.style.display = 'none';
+                    }
+                } catch (_) {}
+
+                // Feature 6: Attachments
+                try {
+                    const attRes = await fetch(`/api/monitor/case/${caseId}/attachments`);
+                    const attData = await attRes.json();
+                    const attList = attData.attachments || [];
+                    const attAccordion = document.getElementById('attachmentsAccordion');
+                    const attEl = document.getElementById('caseInspectorAttachments');
+                    if (attList.length > 0) {
+                        attAccordion.style.display = 'block';
+                        document.getElementById('caseInspectorAttCount').textContent = `(${attList.length})`;
+                        attEl.innerHTML = attList.map(a => `
+                            <div class="case-list-item">
+                                <div><a class="case-link" href="/api/monitor/attachments/${a.id}/download" target="_blank">${escapeHtml(a.filename || 'download')}</a> <span class="timestamp">${a.content_type || ''} · ${a.size_bytes ? (a.size_bytes / 1024).toFixed(1) + ' KB' : ''} · ${relativeTime(a.created_at)}</span></div>
+                            </div>
+                        `).join('');
+                    } else {
+                        attAccordion.style.display = 'none';
+                    }
+                } catch (_) {}
 
                 // Restore accordion preferences
                 const prefs = JSON.parse(localStorage.getItem('accordionPrefs') || '{}');
@@ -4251,6 +4351,18 @@
                 html += `<span class="status-chip ${active}" onclick="setStatusFilter('${normalizeStatus(s)}')">${label}<span class="chip-count">${counts[s]}</span></span>`;
             }
             chipsEl.innerHTML = html;
+        }
+
+        function populateTagFilter(cases) {
+            const sel = document.getElementById('tagFilterSelect');
+            if (!sel) return;
+            const currentVal = sel.value;
+            const allTags = new Set();
+            for (const c of cases) {
+                for (const t of (c.tags || [])) allTags.add(t);
+            }
+            const sorted = [...allTags].sort();
+            sel.innerHTML = '<option value="">All Tags</option>' + sorted.map(t => `<option value="${t}" ${t === currentVal ? 'selected' : ''}>${t}</option>`).join('');
         }
 
         function setStatusFilter(status) {

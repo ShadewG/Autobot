@@ -1035,6 +1035,9 @@ router.get('/cases', async (req, res) => {
                 c.deadline_date,
                 c.send_date,
                 c.last_contact_research_at,
+                c.tags,
+                c.priority,
+                c.outcome_type,
                 CASE
                     WHEN c.deadline_date IS NOT NULL AND c.deadline_date < CURRENT_DATE
                          AND c.status IN ('sent', 'awaiting_response')
@@ -1155,7 +1158,8 @@ router.get('/case/:id', async (req, res) => {
             db.query(`
                 SELECT
                     id, action_type, status, confidence, trigger_message_id, run_id,
-                    draft_subject, draft_body_text, created_at, updated_at, execution_key, email_job_id
+                    draft_subject, draft_body_text, created_at, updated_at, execution_key, email_job_id,
+                    human_decision
                 FROM proposals
                 WHERE case_id = $1
                 ORDER BY created_at DESC

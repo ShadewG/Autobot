@@ -358,6 +358,27 @@ async function executeActionNode(state) {
         emailJobId: emailResult.jobId || `dry_run_${executionKey}`
       });
 
+      // Feature 2: Log fee events for fee-related actions
+      if (['ACCEPT_FEE', 'APPROVE_FEE', 'NEGOTIATE_FEE', 'DECLINE_FEE'].includes(proposalActionType) && !emailResult.dryRun) {
+        try {
+          const feeEventMap = {
+            'ACCEPT_FEE': 'accepted',
+            'APPROVE_FEE': 'accepted',
+            'NEGOTIATE_FEE': 'negotiated',
+            'DECLINE_FEE': 'declined'
+          };
+          await db.logFeeEvent(
+            caseId,
+            feeEventMap[proposalActionType],
+            caseData?.last_fee_quote_amount || null,
+            `${proposalActionType} executed via proposal ${proposalId}`,
+            null
+          );
+        } catch (feeErr) {
+          logs.push(`Fee event log failed: ${feeErr.message}`);
+        }
+      }
+
       // Schedule next follow-up if this was a follow-up
       if (proposalActionType === 'SEND_FOLLOWUP' && !emailResult.dryRun) {
         const followupDays = parseInt(process.env.FOLLOWUP_DELAY_DAYS) || 7;

@@ -520,6 +520,15 @@ class NotionService {
             const deptTitleProp = Object.values(deptProps).find(p => p.type === 'title');
             caseData.agency_name = deptTitleProp?.title?.[0]?.plain_text || 'Police Department';
 
+            // Feature 4: Extract PD Rating as case priority (1-5 scale)
+            const ratingProp = deptProps['Rating'] || deptProps['rating'];
+            if (ratingProp?.type === 'number' && ratingProp.number != null) {
+                caseData.priority = Math.max(0, Math.min(5, Math.round(ratingProp.number)));
+            } else if (ratingProp?.type === 'select' && ratingProp.select?.name) {
+                const parsed = parseInt(ratingProp.select.name, 10);
+                if (!isNaN(parsed)) caseData.priority = Math.max(0, Math.min(5, parsed));
+            }
+
             console.log(`Enriched case with Police Dept: ${caseData.agency_name} (${caseData.agency_email})`);
 
         } catch (error) {
@@ -2147,6 +2156,11 @@ Look for a records division email, FOIA email, or general agency email that acce
                 updated.portal_url = portalFromAI;
                 console.log(`🤖 AI normalization provided portal URL: ${portalFromAI}`);
             }
+        }
+
+        // Feature 3: AI-generated tags
+        if (normalized.tags?.length) {
+            updated.tags = normalized.tags;
         }
 
         return updated;

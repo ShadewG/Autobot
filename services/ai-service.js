@@ -1267,7 +1267,8 @@ Rules:
   "incident_location": string,
   "records_requested": array of short strings,
   "subject_name": string,
-  "additional_details": string
+  "additional_details": string,
+  "tags": array of 3-5 lowercase kebab-case tags describing the case (e.g. "police-records", "body-camera", "use-of-force", "state-level", "small-agency", "shooting", "traffic-stop", "misconduct", "in-custody-death", "federal")
 }`;
 
             const systemPrompt = `You are a data extraction specialist. Extract ONLY information that is explicitly present in the provided Notion properties or page text. Parse and normalize the data you find. If a field is not present in the source data, leave it empty (null, empty string, or empty array). Never use your training data or world knowledge to fill in missing information. Only extract what you can directly see in the input.
@@ -1309,6 +1310,14 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
             // DO NOT extract portal_urls or contact_emails from AI - these come from direct Notion fields only
             delete parsed.portal_urls;
             delete parsed.contact_emails;
+
+            // Ensure tags is always an array of strings
+            if (parsed.tags && !Array.isArray(parsed.tags)) {
+                parsed.tags = [parsed.tags].filter(Boolean);
+            }
+            if (!Array.isArray(parsed.tags)) {
+                parsed.tags = [];
+            }
 
             return parsed;
         } catch (error) {

@@ -120,6 +120,7 @@ async function decideNextActionNode(state) {
       if (suggestedAction === 'download') {
         // Records ready - mark case as completed
         await db.updateCaseStatus(caseId, 'completed', { substatus: 'records_received' });
+        await db.updateCase(caseId, { outcome_type: 'full_approval', outcome_recorded: new Date() });
         reasoning.push('Records ready for download');
 
         return {
@@ -466,6 +467,7 @@ async function decideNextActionNode(state) {
           await db.updateCaseStatus(caseId, 'cancelled', {
             substatus: 'withdrawn_by_user'
           });
+          await db.updateCase(caseId, { outcome_type: 'withdrawn', outcome_recorded: new Date() });
           return {
             isComplete: true,
             logs: [...logs, 'Request withdrawn by user'],
@@ -706,6 +708,7 @@ async function decideNextActionNode(state) {
     if (classification === 'RECORDS_READY') {
       reasoning.push('Records are ready for pickup/download');
       await db.updateCaseStatus(caseId, 'completed', { substatus: 'records_received' });
+      await db.updateCase(caseId, { outcome_type: 'full_approval', outcome_recorded: new Date() });
       return {
         isComplete: true,
         proposalActionType: NONE,

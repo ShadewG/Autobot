@@ -176,6 +176,15 @@ async function classifyInboundNode(state) {
       fullAnalysisJson: analysis
     });
 
+    // Feature 2: Log fee quote event
+    if (feeAmount != null) {
+      try {
+        await db.logFeeEvent(caseId, 'quote_received', Number(feeAmount), `Fee quote detected in inbound message`, latestInboundMessageId);
+      } catch (feeErr) {
+        logger.warn('Failed to log fee event', { caseId, error: feeErr.message });
+      }
+    }
+
     return {
       classification,
       classificationConfidence: analysis.confidence_score || analysis.confidence || 0.8,

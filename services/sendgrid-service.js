@@ -576,6 +576,35 @@ class SendGridService {
                 caseData = await this.handleFeeQuote(caseData, feeQuote, message.id);
             }
 
+            // Feature 6: Save attachments to disk
+            if (inboundData.attachments?.length > 0 && !messageAlreadyExists) {
+                const fsPromises = require('fs').promises;
+                const path = require('path');
+                const attachmentDir = process.env.ATTACHMENT_DIR || '/data/attachments';
+
+                for (const att of inboundData.attachments) {
+                    try {
+                        const dir = path.join(attachmentDir, String(caseData.id));
+                        await fsPromises.mkdir(dir, { recursive: true });
+                        const safeFilename = (att.filename || 'unnamed').replace(/[^a-zA-Z0-9._-]/g, '_');
+                        const storagePath = path.join(dir, `${message.id}_${safeFilename}`);
+                        if (att.buffer) {
+                            await fsPromises.writeFile(storagePath, att.buffer);
+                        }
+                        await db.createAttachment({
+                            message_id: message.id,
+                            case_id: caseData.id,
+                            filename: att.filename || 'unnamed',
+                            content_type: att.mimetype || 'application/octet-stream',
+                            size_bytes: att.size || (att.buffer ? att.buffer.length : 0),
+                            storage_path: storagePath
+                        });
+                    } catch (attErr) {
+                        console.error(`Failed to save attachment ${att.filename}:`, attErr.message);
+                    }
+                }
+            }
+
             // Log activity
             await db.logActivity('email_received', `Received response for case: ${caseData.case_name}`, {
                 case_id: caseData.id,
