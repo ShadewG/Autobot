@@ -2674,7 +2674,7 @@
             inspector.style.display = 'none';
             document.body.appendChild(inspector); // park it back in body
             expandedCaseId = null;
-            history.replaceState(null, '', window.location.pathname);
+            history.replaceState(null, '', window.location.pathname + window.location.hash);
         }
 
         async function openCase(caseId) {
@@ -2745,7 +2745,7 @@
                 currentCaseMessages = data.messages || [];
                 currentCaseProposals = data.proposals || [];
                 title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
-                history.replaceState(null, '', '?case=' + c.id);
+                history.replaceState(null, '', '?case=' + c.id + window.location.hash);
                 grid.innerHTML = `
                     <div class="cell"><span class="k">Status</span>${c.status || '-'}</div>
                     <div class="cell"><span class="k">Substatus</span>${truncate(c.substatus || '-', 80)}</div>
@@ -2927,6 +2927,85 @@
                 { id: 'close', label: 'Close Request' },
             ],
         };
+
+        const PROPOSAL_ALTERNATIVES = {
+            SEND_REBUTTAL: [
+                { id: 'call_agency', label: 'Call Agency' },
+                { id: 'narrow_scope', label: 'Narrow Scope' },
+                { id: 'research_agency', label: 'Research Agency' },
+                { id: 'close', label: 'Close' },
+            ],
+            SEND_FOLLOWUP: [
+                { id: 'call_agency', label: 'Call Agency' },
+                { id: 'escalate', label: 'Escalate' },
+                { id: 'close', label: 'Close' },
+            ],
+            ACCEPT_FEE: [
+                { id: 'negotiate_fee', label: 'Negotiate Fee' },
+                { id: 'decline_fee', label: 'Decline Fee' },
+                { id: 'call_agency', label: 'Call Agency' },
+            ],
+            NEGOTIATE_FEE: [
+                { id: 'accept_fee', label: 'Accept Fee' },
+                { id: 'decline_fee', label: 'Decline Fee' },
+                { id: 'call_agency', label: 'Call Agency' },
+            ],
+            DECLINE_FEE: [
+                { id: 'accept_fee', label: 'Accept Fee' },
+                { id: 'negotiate_fee', label: 'Negotiate Fee' },
+                { id: 'call_agency', label: 'Call Agency' },
+            ],
+            RESEARCH_AGENCY: [
+                { id: 'appeal', label: 'Appeal Denial' },
+                { id: 'reformulate_request', label: 'Reformulate Request' },
+                { id: 'escalate', label: 'Escalate' },
+            ],
+            REFORMULATE_REQUEST: [
+                { id: 'appeal', label: 'Appeal Denial' },
+                { id: 'research_agency', label: 'Research Agency' },
+                { id: 'escalate', label: 'Escalate' },
+            ],
+            SEND_CLARIFICATION: [
+                { id: 'call_agency', label: 'Call Agency' },
+                { id: 'close', label: 'Close' },
+            ],
+            RESPOND_PARTIAL_APPROVAL: [
+                { id: 'call_agency', label: 'Call Agency' },
+                { id: 'accept_fee', label: 'Accept Fee' },
+                { id: 'close', label: 'Close' },
+            ],
+        };
+
+        async function chooseAlternative(proposalId, caseId, action) {
+            // 1. Dismiss the current proposal
+            await fetch(`/api/monitor/proposals/${proposalId}/decision`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'DISMISS', dismiss_reason: `Replaced by: ${action}` })
+            });
+            // 2. Trigger the alternative via resolve-review (full pipeline: decide -> draft -> gate)
+            const res = await fetch(`/api/requests/${caseId}/resolve-review`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            const data = await res.json();
+            showToast(data.success ? 'success' : 'error', data.message || 'Action triggered');
+            setTimeout(() => openCase(caseId), 1500);
+        }
+
+        function renderAlternativeButtons(actionType, proposalId, caseId) {
+            const alts = PROPOSAL_ALTERNATIVES[actionType];
+            if (!alts || !alts.length) return '';
+            let html = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #21262d;">`;
+            html += `<div style="font-size:11px;color:#8b949e;margin-bottom:6px;">Or choose a different action:</div>`;
+            html += `<div style="display:flex;flex-wrap:wrap;gap:4px;">`;
+            for (const alt of alts) {
+                html += `<button class="drawer-btn" onclick="chooseAlternative(${proposalId},${caseId},'${alt.id}')" style="font-size:11px;padding:4px 10px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;cursor:pointer;">${alt.label}</button>`;
+            }
+            html += `</div></div>`;
+            return html;
+        }
 
         const REVIEW_LABELS = {
             PORTAL_FAILED: 'Portal Failed',
@@ -3204,6 +3283,7 @@
                                     ` : ''}
                                     <button class="drawer-btn" onclick="dismissProposal(${p.id})" style="color:#f85149;">Dismiss</button>
                                 </div>
+                                ${renderAlternativeButtons(p.action_type, p.id, p.case_id)}
                             </div>
                         `;
                     }).join('');
@@ -3573,6 +3653,7 @@
                 }
                 html += `<button class="drawer-btn" onclick="collapseProposalCard(${p.id})">Cancel</button>`;
                 html += `</div>`;
+                html += renderAlternativeButtons(p.action_type, p.id, caseData.id);
                 html += `</div>`; // end pac-expanded-detail
 
                 html += `</div>`; // end proposal-action-card
@@ -4063,6 +4144,7 @@
             // Escape: close drawers/inspectors
             if (e.key === 'Escape') {
                 if (document.querySelector('#messageDrawer.active')) { closeDrawer(); return; }
+                if (document.querySelector('#corrDrawer.active')) { closeCorrespondenceDrawer(); return; }
                 if (document.querySelector('#phoneDrawer.active')) { closePhoneDrawer(); return; }
                 if (document.querySelector('#caseMatchModal.active')) { closeMatchModal(); return; }
                 if (expandedCaseId) { collapseCase(); return; }
