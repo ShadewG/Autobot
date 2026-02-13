@@ -1802,7 +1802,7 @@
         async function loadPhoneCalls() {
             try {
                 const filter = document.getElementById('phoneCallFilter')?.value || '';
-                const url = filter ? `/api/phone-calls?status=${filter}&limit=100` : '/api/phone-calls?limit=100';
+                const url = (filter ? `/api/phone-calls?status=${filter}&limit=100` : '/api/phone-calls?limit=100') + userParam();
                 const res = await fetch(url);
                 const data = await res.json();
 

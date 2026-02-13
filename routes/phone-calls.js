@@ -18,6 +18,9 @@ router.get('/', async (req, res) => {
     try {
         const status = req.query.status;
         const limit = parseInt(req.query.limit) || 50;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
 
         let tasks;
         if (status) {
@@ -26,7 +29,24 @@ router.get('/', async (req, res) => {
             tasks = await db.getPendingPhoneCalls(limit);
         }
 
-        const stats = await db.getPhoneCallQueueStats();
+        let stats = await db.getPhoneCallQueueStats();
+
+        // Filter by user if specified
+        if (userId || unownedOnly) {
+            tasks = tasks.filter(t => {
+                const caseUserId = t.user_id;
+                if (userId) return caseUserId === userId;
+                if (unownedOnly) return caseUserId == null;
+                return true;
+            });
+            // Recompute stats from filtered tasks
+            stats = {
+                pending: tasks.filter(t => t.status === 'pending').length,
+                claimed: tasks.filter(t => t.status === 'claimed').length,
+                completed: 0,
+                skipped: 0
+            };
+        }
 
         res.json({
             success: true,

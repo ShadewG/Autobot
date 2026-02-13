@@ -1606,7 +1606,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.status as case_status,
-                c.send_date, c.state, c.additional_details, c.notion_page_id,
+                c.send_date, c.state, c.additional_details, c.notion_page_id, c.user_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
                 a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
             FROM phone_call_queue pcq
@@ -1623,7 +1623,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.status as case_status,
-                c.send_date, c.state, c.additional_details, c.notion_page_id,
+                c.send_date, c.state, c.additional_details, c.notion_page_id, c.user_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
                 a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
             FROM phone_call_queue pcq
