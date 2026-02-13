@@ -622,6 +622,63 @@
             transition: max-height 0.3s ease-in;
         }
 
+        /* Correspondence Thread Drawer */
+        .thread-message {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 6px;
+            background: #161b22;
+            border-left: 3px solid #30363d;
+        }
+        .thread-inbound {
+            border-left-color: #3fb950;
+        }
+        .thread-outbound {
+            border-left-color: #1f6feb;
+            margin-left: 32px;
+        }
+        .thread-msg-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 11px;
+            color: #8b949e;
+        }
+        .thread-msg-header .badge {
+            font-size: 10px;
+            margin-right: 6px;
+        }
+        .thread-msg-subject {
+            font-weight: 600;
+            font-size: 13px;
+            color: #c9d1d9;
+            margin-bottom: 6px;
+        }
+        .thread-msg-body {
+            white-space: pre-wrap;
+            font-size: 12px;
+            line-height: 1.5;
+            color: #b1bac4;
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 8px;
+            background: #0d1117;
+            border-radius: 4px;
+            border: 1px solid #21262d;
+        }
+        .thread-msg-footer {
+            margin-top: 6px;
+            font-size: 11px;
+        }
+        .thread-msg-footer a {
+            color: #58a6ff;
+            text-decoration: none;
+        }
+        .thread-msg-footer a:hover {
+            text-decoration: underline;
+        }
+
         /* Password mask */
         .pw-masked {
             font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -1123,13 +1180,10 @@
             </div>
         </div>
 
-        <!-- Correspondence accordion (open by default) -->
-        <div class="accordion-toggle open" onclick="toggleAccordion(this)">
-            <h3>Correspondence <span class="acc-count" id="caseInspectorMsgCount"></span></h3>
-            <span class="acc-arrow">&#9654;</span>
-        </div>
-        <div class="accordion-body open">
-            <div id="caseInspectorMessages" class="case-list"></div>
+        <!-- Correspondence button (opens thread drawer) -->
+        <div class="accordion-toggle" onclick="openCorrespondenceDrawer()" style="cursor:pointer;">
+            <h3>View Correspondence <span class="acc-count" id="caseInspectorMsgCount"></span></h3>
+            <span class="acc-arrow" style="transform:none;">&#9654;</span>
         </div>
 
         <!-- Runs accordion (collapsed by default) -->
@@ -1436,6 +1490,16 @@
         </div>
     </div>
 
+    <!-- Correspondence Thread Drawer -->
+    <div id="corrBackdrop" class="drawer-backdrop" onclick="closeCorrespondenceDrawer()"></div>
+    <div id="corrDrawer" class="drawer" style="width:min(700px, 90vw);">
+        <div class="drawer-header">
+            <div class="drawer-title" id="corrDrawerTitle">Correspondence</div>
+            <button class="drawer-close" onclick="closeCorrespondenceDrawer()">Close</button>
+        </div>
+        <div id="corrDrawerContent"></div>
+    </div>
+
     <script>
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
@@ -1557,7 +1621,30 @@
         // =========================================================================
         // User filter
         // =========================================================================
-        let currentUserId = localStorage.getItem('monitorUserFilter') || '';
+        // Read user from URL hash first, fall back to localStorage
+        let currentUserId = '';
+        (function initUserFromUrl() {
+            const hash = window.location.hash.replace('#', '');
+            const params = new URLSearchParams(hash);
+            if (params.has('user')) {
+                currentUserId = params.get('user');
+                localStorage.setItem('monitorUserFilter', currentUserId);
+            } else {
+                currentUserId = localStorage.getItem('monitorUserFilter') || '';
+            }
+        })();
+
+        function userParam() {
+            return currentUserId ? `&user_id=${encodeURIComponent(currentUserId)}` : '';
+        }
+
+        function updateUrlHash() {
+            if (currentUserId) {
+                window.location.hash = `user=${encodeURIComponent(currentUserId)}`;
+            } else {
+                history.replaceState(null, '', window.location.pathname);
+            }
+        }
 
         async function loadUserFilterOptions() {
             try {
@@ -1582,24 +1669,38 @@
             const select = document.getElementById('userFilter');
             currentUserId = select.value;
             localStorage.setItem('monitorUserFilter', currentUserId);
+            updateUrlHash();
+            collapseCase();
             loadData();
+            loadDailyStats();
         }
 
-        function buildCasesUrl() {
-            let url = '/api/monitor/cases?limit=300';
-            if (currentUserId) url += `&user_id=${encodeURIComponent(currentUserId)}`;
-            return url;
-        }
+        // Listen for hash changes (browser back/forward)
+        window.addEventListener('hashchange', () => {
+            const hash = window.location.hash.replace('#', '');
+            const params = new URLSearchParams(hash);
+            const newUser = params.get('user') || '';
+            if (newUser !== currentUserId) {
+                currentUserId = newUser;
+                localStorage.setItem('monitorUserFilter', currentUserId);
+                const select = document.getElementById('userFilter');
+                if (select) select.value = currentUserId;
+                collapseCase();
+                loadData();
+                loadDailyStats();
+            }
+        });
 
         // Load all data
         async function loadData() {
             try {
+                const up = userParam();
                 const [monitorRes, inboundRes, unmatchedRes, liveRes, casesRes] = await Promise.all([
-                    fetch('/api/monitor?limit=100'),
-                    fetch('/api/monitor/inbound?limit=100'),
-                    fetch('/api/monitor/unmatched?limit=50'),
-                    fetch('/api/monitor/live-overview?limit=25'),
-                    fetch(buildCasesUrl())
+                    fetch('/api/monitor?limit=100' + up),
+                    fetch('/api/monitor/inbound?limit=100' + up),
+                    fetch('/api/monitor/unmatched?limit=50' + up),
+                    fetch('/api/monitor/live-overview?limit=25' + up),
+                    fetch('/api/monitor/cases?limit=300' + up)
                 ]);
 
                 const monitor = await monitorRes.json();
@@ -2573,6 +2674,7 @@
             inspector.style.display = 'none';
             document.body.appendChild(inspector); // park it back in body
             expandedCaseId = null;
+            history.replaceState(null, '', window.location.pathname);
         }
 
         async function openCase(caseId) {
@@ -2587,7 +2689,7 @@
             const inspector = document.getElementById('caseInspector');
             const title = document.getElementById('caseInspectorTitle');
             const grid = document.getElementById('caseInspectorGrid');
-            const msgList = document.getElementById('caseInspectorMessages');
+            // caseInspectorMessages removed — correspondence now in thread drawer
             const runList = document.getElementById('caseInspectorRuns');
             const proposalList = document.getElementById('caseInspectorProposals');
             const proposalCards = document.getElementById('caseInspectorProposalCards');
@@ -2614,7 +2716,6 @@
             expandedCaseId = caseId;
             title.textContent = `Case #${caseId}`;
             grid.innerHTML = '<div class="cell">Loading...</div>';
-            msgList.innerHTML = '<div class="timestamp">Loading...</div>';
             runList.innerHTML = '<div class="timestamp">Loading...</div>';
             proposalList.innerHTML = '<div class="timestamp">Loading...</div>';
             proposalCards.innerHTML = '';
@@ -2644,6 +2745,7 @@
                 currentCaseMessages = data.messages || [];
                 currentCaseProposals = data.proposals || [];
                 title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
+                history.replaceState(null, '', '?case=' + c.id);
                 grid.innerHTML = `
                     <div class="cell"><span class="k">Status</span>${c.status || '-'}</div>
                     <div class="cell"><span class="k">Substatus</span>${truncate(c.substatus || '-', 80)}</div>
@@ -2705,28 +2807,8 @@
 
                 actions.innerHTML = actionsHtml;
 
-                // Correspondence with inline expansion
+                // Correspondence count (thread view opens in drawer)
                 const messages = data.messages || [];
-                let msgHtml = '';
-
-                // AI Case Summary
-                const latestAnalysis = findLatestAnalysisSummary(messages, c);
-                if (latestAnalysis) {
-                    msgHtml += `<div class="ai-case-summary">
-                        <div class="summary-label">AI Case Summary</div>
-                        <div class="summary-text">${escapeHtml(latestAnalysis)}</div>
-                    </div>`;
-                }
-
-                msgHtml += messages.length
-                    ? messages.map(m => `
-                        <div class="case-list-item">
-                            <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
-                            <div>${truncate(m.subject || '-', 120)}</div>
-                        </div>
-                    `).join('')
-                    : '<div class="timestamp">No correspondence yet</div>';
-                msgList.innerHTML = msgHtml;
                 document.getElementById('caseInspectorMsgCount').textContent = messages.length ? `(${messages.length})` : '';
 
                 const runs = data.runs || [];
@@ -2752,7 +2834,6 @@
                 document.getElementById('caseInspectorProposalCount').textContent = otherProposals.length ? `(${otherProposals.length})` : '';
             } catch (error) {
                 grid.innerHTML = `<div class="cell">Error: ${error.message || error}</div>`;
-                msgList.innerHTML = '<div class="timestamp">-</div>';
                 runList.innerHTML = '<div class="timestamp">-</div>';
                 proposalList.innerHTML = '<div class="timestamp">-</div>';
                 proposalCards.innerHTML = '';
@@ -3177,6 +3258,58 @@
                 clearInterval(runPollTimer);
                 runPollTimer = null;
             }
+        }
+
+        // =====================================================================
+        // Correspondence Thread Drawer
+        // =====================================================================
+        function openCorrespondenceDrawer() {
+            const messages = currentCaseMessages || [];
+            const c = currentCaseData;
+            let html = '';
+
+            // AI Case Summary at top
+            const latestAnalysis = findLatestAnalysisSummary(messages, c);
+            if (latestAnalysis) {
+                html += `<div class="ai-case-summary" style="margin-bottom:16px;">
+                    <div class="summary-label">AI Case Summary</div>
+                    <div class="summary-text">${escapeHtml(latestAnalysis)}</div>
+                </div>`;
+            }
+
+            if (!messages.length) {
+                html += '<div class="timestamp" style="padding:20px;">No correspondence yet</div>';
+            } else {
+                // Sort chronologically (oldest first) for conversation flow
+                const sorted = [...messages].sort((a, b) =>
+                    new Date(a.received_at || a.sent_at || a.created_at) - new Date(b.received_at || b.sent_at || b.created_at)
+                );
+                sorted.forEach(m => {
+                    const isInbound = m.direction === 'inbound';
+                    const dirClass = isInbound ? 'thread-inbound' : 'thread-outbound';
+                    const ts = m.received_at || m.sent_at || m.created_at;
+                    html += `<div class="thread-message ${dirClass}">
+                        <div class="thread-msg-header">
+                            <span>${directionBadge(m.direction)} <strong>${escapeHtml(m.from_email || '-')}</strong> → ${escapeHtml(m.to_email || '-')}</span>
+                            <span>${formatTime(ts)}</span>
+                        </div>
+                        <div class="thread-msg-subject">${escapeHtml(m.subject || '(no subject)')}</div>
+                        <div class="thread-msg-body">${escapeHtml(m.body_text || '(no body)')}</div>
+                        <div class="thread-msg-footer"><a href="#" onclick="openMessage(${m.id});return false;">Open details</a></div>
+                    </div>`;
+                });
+            }
+
+            const title = c ? `Correspondence — Case #${c.id}` : 'Correspondence';
+            document.getElementById('corrDrawerTitle').textContent = title;
+            document.getElementById('corrDrawerContent').innerHTML = html;
+            document.getElementById('corrBackdrop').classList.add('active');
+            document.getElementById('corrDrawer').classList.add('active');
+        }
+
+        function closeCorrespondenceDrawer() {
+            document.getElementById('corrBackdrop').classList.remove('active');
+            document.getElementById('corrDrawer').classList.remove('active');
         }
 
         function toggleDrawerDetails() {
@@ -3906,7 +4039,7 @@
         // === #9: Daily summary stats ===
         async function loadDailyStats() {
             try {
-                const res = await fetch('/api/monitor/daily-stats');
+                const res = await fetch('/api/monitor/daily-stats?' + userParam().replace('&', ''));
                 const data = await res.json();
                 if (!res.ok || !data.success) return;
                 const s = data.stats || {};
@@ -4015,6 +4148,13 @@
         startAutoRefresh();
         // Reload daily stats every 5 minutes
         setInterval(loadDailyStats, 300000);
+
+        // Shareable case URLs — open case from ?case=N param
+        const _urlParams = new URLSearchParams(window.location.search);
+        const _caseParam = _urlParams.get('case');
+        if (_caseParam) {
+            setTimeout(() => openCase(parseInt(_caseParam)), 500);
+        }
     </script>
 </body>
 </html>

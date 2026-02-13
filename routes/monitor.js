@@ -196,6 +196,16 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 router.get('/', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 50;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
+
+        // Build user filter clause for messages (via cases)
+        const userJoin = (userId || unownedOnly)
+            ? 'INNER JOIN email_threads t2 ON m.thread_id = t2.id INNER JOIN cases c2 ON t2.case_id = c2.id'
+            : '';
+        const userWhere = userId ? `AND c2.user_id = ${userId}`
+            : unownedOnly ? 'AND c2.user_id IS NULL' : '';
 
         // Get all messages (inbound and outbound)
         const messagesResult = await db.query(`
@@ -219,6 +229,7 @@ router.get('/', async (req, res) => {
             FROM messages m
             LEFT JOIN email_threads t ON m.thread_id = t.id
             LEFT JOIN cases c ON t.case_id = c.id
+            ${userId || unownedOnly ? `WHERE EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id ${userWhere})` : ''}
             ORDER BY COALESCE(m.received_at, m.sent_at, m.created_at) DESC
             LIMIT $1
         `, [limit]);
@@ -231,24 +242,26 @@ router.get('/', async (req, res) => {
         const countsResult = await db.query(`
             SELECT
                 COUNT(*) as total,
-                COUNT(*) FILTER (WHERE direction = 'inbound') as inbound_total,
-                COUNT(*) FILTER (WHERE direction = 'outbound') as outbound_total
-            FROM messages
+                COUNT(*) FILTER (WHERE m.direction = 'inbound') as inbound_total,
+                COUNT(*) FILTER (WHERE m.direction = 'outbound') as outbound_total
+            FROM messages m
+            ${userId || unownedOnly ? `WHERE EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id ${userWhere})` : ''}
         `);
         const counts = countsResult.rows[0];
 
         // Get recent activity logs
         const activityResult = await db.query(`
             SELECT
-                id,
-                event_type,
-                case_id,
-                message_id,
-                description,
-                metadata,
-                created_at
-            FROM activity_log
-            ORDER BY created_at DESC
+                al.id,
+                al.event_type,
+                al.case_id,
+                al.message_id,
+                al.description,
+                al.metadata,
+                al.created_at
+            FROM activity_log al
+            ${userId || unownedOnly ? `LEFT JOIN cases c3 ON al.case_id = c3.id WHERE (al.case_id IS NULL OR ${userId ? `c3.user_id = ${userId}` : 'c3.user_id IS NULL'})` : ''}
+            ORDER BY al.created_at DESC
             LIMIT $1
         `, [limit]);
 
@@ -290,11 +303,13 @@ router.get('/', async (req, res) => {
         }
 
         // Get case stats
+        const caseUserWhere = userId ? `WHERE user_id = ${userId}` : unownedOnly ? 'WHERE user_id IS NULL' : '';
         const statsResult = await db.query(`
             SELECT
                 status,
                 COUNT(*) as count
             FROM cases
+            ${caseUserWhere}
             GROUP BY status
         `);
 
@@ -328,6 +343,15 @@ router.get('/', async (req, res) => {
 router.get('/inbound', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit) || 100;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
+
+        const userFilter = userId
+            ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id = ${userId})`
+            : unownedOnly
+                ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id IS NULL)`
+                : '';
 
         const result = await db.query(`
             SELECT
@@ -351,6 +375,7 @@ router.get('/inbound', async (req, res) => {
             LEFT JOIN cases c ON t.case_id = c.id
             LEFT JOIN response_analysis ra ON ra.message_id = m.id
             WHERE m.direction = 'inbound'
+            ${userFilter}
             ORDER BY COALESCE(m.received_at, m.created_at) DESC
             LIMIT $1
         `, [limit]);
@@ -714,22 +739,33 @@ router.get('/config', async (req, res) => {
 router.get('/live-overview', async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit, 10) || 25, 100);
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
+
+        const msgUserFilter = userId
+            ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id = ${userId})`
+            : unownedOnly
+                ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id IS NULL)`
+                : '';
+        const caseUserFilter = userId ? `AND c.user_id = ${userId}` : unownedOnly ? 'AND c.user_id IS NULL' : '';
 
         const summaryResult = await db.query(`
             SELECT
                 COUNT(*) FILTER (
-                    WHERE direction = 'inbound'
-                      AND COALESCE(received_at, created_at) >= NOW() - INTERVAL '24 hours'
+                    WHERE m.direction = 'inbound'
+                      AND COALESCE(m.received_at, m.created_at) >= NOW() - INTERVAL '24 hours'
                 ) AS inbound_24h,
                 COUNT(*) FILTER (
-                    WHERE direction = 'inbound'
-                      AND (thread_id IS NULL OR case_id IS NULL)
+                    WHERE m.direction = 'inbound'
+                      AND (m.thread_id IS NULL OR m.case_id IS NULL)
                 ) AS unmatched_inbound_total,
                 COUNT(*) FILTER (
-                    WHERE direction = 'inbound'
-                      AND processed_at IS NULL
+                    WHERE m.direction = 'inbound'
+                      AND m.processed_at IS NULL
                 ) AS unprocessed_inbound_total
-            FROM messages
+            FROM messages m
+            ${userId || unownedOnly ? `WHERE EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id ${userId ? `AND c2.user_id = ${userId}` : 'AND c2.user_id IS NULL'})` : ''}
         `);
 
         const pendingApprovalsResult = await db.query(`
@@ -753,6 +789,7 @@ router.get('/live-overview', async (req, res) => {
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
             WHERE p.status = 'PENDING_APPROVAL'
+            ${caseUserFilter}
             ORDER BY p.created_at DESC
             LIMIT $1
         `, [limit]);
@@ -769,6 +806,7 @@ router.get('/live-overview', async (req, res) => {
             FROM agent_runs r
             LEFT JOIN cases c ON c.id = r.case_id
             WHERE r.status IN ('queued', 'running', 'paused')
+            ${caseUserFilter}
             ORDER BY r.started_at DESC
             LIMIT $1
         `, [limit]);
@@ -811,22 +849,25 @@ router.get('/live-overview', async (req, res) => {
             LEFT JOIN cases c ON c.id = m.case_id
             WHERE m.direction = 'inbound'
               AND m.processed_at IS NULL
+              ${caseUserFilter}
             ORDER BY COALESCE(m.received_at, m.created_at) DESC
             LIMIT $1
         `, [limit]);
 
         const stuckRunsResult = await db.query(`
             SELECT
-                id,
-                case_id,
-                trigger_type,
-                status,
-                started_at,
-                metadata
-            FROM agent_runs
-            WHERE status = 'running'
-              AND started_at < NOW() - INTERVAL '2 minutes'
-            ORDER BY started_at ASC
+                r.id,
+                r.case_id,
+                r.trigger_type,
+                r.status,
+                r.started_at,
+                r.metadata
+            FROM agent_runs r
+            ${userId || unownedOnly ? 'LEFT JOIN cases c ON c.id = r.case_id' : ''}
+            WHERE r.status = 'running'
+              AND r.started_at < NOW() - INTERVAL '2 minutes'
+              ${userId || unownedOnly ? (userId ? `AND c.user_id = ${userId}` : 'AND c.user_id IS NULL') : ''}
+            ORDER BY r.started_at ASC
             LIMIT $1
         `, [limit]);
 
@@ -857,14 +898,25 @@ router.get('/live-overview', async (req, res) => {
  */
 router.get('/daily-stats', async (req, res) => {
     try {
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
+
+        const userFilter = userId
+            ? `WHERE EXISTS (SELECT 1 FROM cases c WHERE c.id = al.case_id AND c.user_id = ${userId})`
+            : unownedOnly
+                ? 'WHERE EXISTS (SELECT 1 FROM cases c WHERE c.id = al.case_id AND c.user_id IS NULL)'
+                : '';
+
         const result = await db.query(`
             SELECT
-                COUNT(*) FILTER (WHERE event_type = 'proposal_approved' AND created_at >= CURRENT_DATE) AS approved_today,
-                COUNT(*) FILTER (WHERE event_type = 'proposal_dismissed' AND created_at >= CURRENT_DATE) AS dismissed_today,
-                COUNT(*) FILTER (WHERE event_type IN ('status_change') AND created_at >= CURRENT_DATE AND metadata->>'new_status' IN ('completed', 'records_received', 'closed')) AS completed_today,
-                COUNT(*) FILTER (WHERE event_type = 'inbound_received' AND created_at >= CURRENT_DATE) AS inbound_today,
-                COUNT(*) FILTER (WHERE event_type = 'outbound_sent' AND created_at >= CURRENT_DATE) AS sent_today
-            FROM activity_log
+                COUNT(*) FILTER (WHERE event_type = 'proposal_approved' AND al.created_at >= CURRENT_DATE) AS approved_today,
+                COUNT(*) FILTER (WHERE event_type = 'proposal_dismissed' AND al.created_at >= CURRENT_DATE) AS dismissed_today,
+                COUNT(*) FILTER (WHERE event_type IN ('status_change') AND al.created_at >= CURRENT_DATE AND al.metadata->>'new_status' IN ('completed', 'records_received', 'closed')) AS completed_today,
+                COUNT(*) FILTER (WHERE event_type = 'inbound_received' AND al.created_at >= CURRENT_DATE) AS inbound_today,
+                COUNT(*) FILTER (WHERE event_type = 'outbound_sent' AND al.created_at >= CURRENT_DATE) AS sent_today
+            FROM activity_log al
+            ${userFilter}
         `);
         const row = result.rows[0] || {};
         res.json({
