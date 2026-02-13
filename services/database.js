@@ -44,6 +44,34 @@ class DatabaseService {
             // Migrations (idempotent)
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS summary TEXT');
 
+            // Feature 2: Fee History table
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS fee_history (
+                    id SERIAL PRIMARY KEY,
+                    case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE,
+                    event_type TEXT NOT NULL,
+                    amount NUMERIC(10,2),
+                    notes TEXT,
+                    source_message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await this.query('CREATE INDEX IF NOT EXISTS idx_fee_history_case ON fee_history(case_id)');
+
+            // Feature 3: Tags column on cases
+            await this.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS tags TEXT[] DEFAULT \'{}\'');
+
+            // Feature 4: Priority column on cases
+            await this.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 0');
+
+            // Feature 5: User tracking on activity_log
+            await this.query('ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS user_id TEXT');
+
+            // Feature 6: Attachment persistence columns
+            await this.query('ALTER TABLE attachments ADD COLUMN IF NOT EXISTS case_id INTEGER REFERENCES cases(id) ON DELETE CASCADE');
+            await this.query('ALTER TABLE attachments ADD COLUMN IF NOT EXISTS storage_path TEXT');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_attachments_case ON attachments(case_id)');
+
             console.log('Database schema initialized successfully');
             return true;
         } catch (error) {
@@ -86,8 +114,9 @@ class DatabaseService {
                 notion_page_id, case_name, subject_name, agency_name, agency_email,
                 state, incident_date, incident_location, requested_records,
                 additional_details, status, deadline_date, agency_id, scope_items_jsonb,
-                portal_url, portal_provider, alternate_agency_email
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                portal_url, portal_provider, alternate_agency_email,
+                tags, priority
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             RETURNING *
         `;
         const values = [
@@ -107,7 +136,9 @@ class DatabaseService {
             scopeItemsJsonb,
             caseData.portal_url || null,
             caseData.portal_provider || null,
-            caseData.alternate_agency_email || null
+            caseData.alternate_agency_email || null,
+            caseData.tags || '{}',
+            caseData.priority || 0
         ];
         const result = await this.query(query, values);
         return result.rows[0];
@@ -544,8 +575,8 @@ class DatabaseService {
     // Activity Log
     async logActivity(eventType, description, metadata = {}) {
         const query = `
-            INSERT INTO activity_log (event_type, case_id, message_id, description, metadata)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO activity_log (event_type, case_id, message_id, description, metadata, user_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
             RETURNING *
         `;
         const values = [
@@ -553,7 +584,8 @@ class DatabaseService {
             metadata.case_id || null,
             metadata.message_id || null,
             description,
-            metadata
+            metadata,
+            metadata.user_id || null
         ];
         const result = await this.query(query, values);
         return result.rows[0];
@@ -2306,6 +2338,91 @@ class DatabaseService {
             ORDER BY created_at DESC
         `, [runId]);
         return result.rows;
+    }
+
+    // =========================================================================
+    // Feature 1: Outcome Tracking
+    // =========================================================================
+
+    async getOutcomeSummary() {
+        const result = await this.query(`
+            SELECT
+                outcome_type,
+                COUNT(*) as count
+            FROM cases
+            WHERE outcome_type IS NOT NULL
+            GROUP BY outcome_type
+            ORDER BY count DESC
+        `);
+        return result.rows;
+    }
+
+    // =========================================================================
+    // Feature 2: Fee History
+    // =========================================================================
+
+    async logFeeEvent(caseId, eventType, amount = null, notes = null, sourceMessageId = null) {
+        const result = await this.query(`
+            INSERT INTO fee_history (case_id, event_type, amount, notes, source_message_id)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+        `, [caseId, eventType, amount, notes, sourceMessageId]);
+        return result.rows[0];
+    }
+
+    async getFeeHistoryByCaseId(caseId) {
+        const result = await this.query(`
+            SELECT * FROM fee_history
+            WHERE case_id = $1
+            ORDER BY created_at ASC
+        `, [caseId]);
+        return result.rows;
+    }
+
+    // =========================================================================
+    // Feature 3: Tags
+    // =========================================================================
+
+    async updateCaseTags(caseId, tags) {
+        const result = await this.query(`
+            UPDATE cases SET tags = $2, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+            RETURNING *
+        `, [caseId, tags]);
+        return result.rows[0];
+    }
+
+    // =========================================================================
+    // Feature 6: Attachments
+    // =========================================================================
+
+    async createAttachment(data) {
+        const result = await this.query(`
+            INSERT INTO attachments (message_id, case_id, filename, content_type, size_bytes, storage_path)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING *
+        `, [data.message_id, data.case_id, data.filename, data.content_type, data.size_bytes, data.storage_path]);
+        return result.rows[0];
+    }
+
+    async getAttachmentsByCaseId(caseId) {
+        const result = await this.query(`
+            SELECT a.*, m.subject AS message_subject, m.direction AS message_direction
+            FROM attachments a
+            LEFT JOIN messages m ON a.message_id = m.id
+            WHERE a.case_id = $1
+            ORDER BY a.created_at DESC
+        `, [caseId]);
+        return result.rows;
+    }
+
+    async getAttachmentById(id) {
+        const result = await this.query('SELECT * FROM attachments WHERE id = $1', [id]);
+        return result.rows[0];
+    }
+
+    async dismissMessage(messageId) {
+        await this.query('DELETE FROM messages WHERE id = $1 AND case_id IS NULL', [messageId]);
     }
 }
 

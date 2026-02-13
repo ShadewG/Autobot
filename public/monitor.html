@@ -701,6 +701,15 @@
             font-size: 14px;
             margin-bottom: 8px;
         }
+        .case-inspector-header {
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            background: #161b22;
+            padding: 12px;
+            margin: -12px -12px 8px -12px;
+            border-bottom: 1px solid #30363d;
+        }
         .case-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -840,7 +849,7 @@
         .age-badge.fresh { background: #23863620; color: #3fb950; border: 1px solid #23863640; }
         .age-badge.aging { background: #d2992220; color: #d29922; border: 1px solid #d2992240; }
         .age-badge.stale { background: #f8514920; color: #f85149; border: 1px solid #f8514940; }
-        .age-badge.researched { margin-left: 3px; background: #388bfd20; color: #58a6ff; border: 1px solid #388bfd40; font-size: 9px; }
+        .age-badge.researched { margin-left: 3px; background: #388bfd20; color: #58a6ff; border: 1px solid #388bfd40; font-size: 11px; }
 
         /* Daily summary stats bar */
         .daily-stats-bar {
@@ -919,6 +928,11 @@
     <div class="topline">
         <h1>System Monitor</h1>
         <div class="runtime-badges">
+            <select id="activeUserSwitcher" onchange="onActiveUserChange()" title="Acting as (who did what)" style="background:#161b22;border:1px solid #3fb950;color:#3fb950;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;margin-right:4px;">
+                <option value="Sam">Sam</option>
+                <option value="System">System</option>
+                <option value="AI">AI</option>
+            </select>
             <select id="userFilter" onchange="onUserFilterChange()" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;">
                 <option value="">All Users</option>
                 <option value="unowned">Unowned</option>
@@ -962,7 +976,8 @@
     </div>
 
     <div class="ops-panel">
-        <h3 style="color:#58a6ff; margin-bottom:8px; font-size:14px;">Live Operations</h3>
+        <h3 style="color:#58a6ff; margin-bottom:8px; font-size:14px; display:flex; align-items:center; gap:8px;">Live Operations <button id="opsToggle" onclick="toggleOpsPanel()" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;padding:2px 4px;">&#9660;</button></h3>
+        <div id="opsContent">
         <div class="form-row">
             <div class="form-group">
                 <label for="notionUrlInput">Notion Case Link</label>
@@ -1021,6 +1036,7 @@
                 <h4>Unmatched Inbound Queue</h4>
                 <div id="opsUnmatchedList"></div>
             </div>
+        </div>
         </div>
     </div>
 
@@ -1104,7 +1120,7 @@
 
     <!-- Case Inspector Template (moved inline under clicked row via JS) -->
     <div id="caseInspector" class="case-inspector" style="display:none;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="case-inspector-header" style="display:flex;justify-content:space-between;align-items:center;">
             <h3 id="caseInspectorTitle">Case Inspector</h3>
             <button class="drawer-close" onclick="collapseCase()" title="Close">Close</button>
         </div>
@@ -1586,13 +1602,32 @@
             return '<span class="badge route-none">NONE</span>';
         }
 
+        function formatStatus(raw) {
+            const map = {
+                'awaiting_response': 'Awaiting Response',
+                'needs_human_review': 'Needs Review',
+                'needs_phone_call': 'Phone Call Needed',
+                'needs_contact_info': 'Needs Contact',
+                'needs_human_fee_approval': 'Fee Approval',
+                'sent': 'Sent',
+                'ready_to_send': 'Ready to Send',
+                'portal_in_progress': 'Portal In Progress',
+                'responded': 'Responded',
+                'completed': 'Completed',
+                'records_received': 'Records Received',
+                'closed': 'Closed',
+                'error': 'Error'
+            };
+            return map[raw] || raw?.replace(/_/g, ' ') || '-';
+        }
+
         function contactIndicator(data) {
             const hasPortal = !!data?.portal_url;
             const hasEmail = !!data?.agency_email;
-            if (hasPortal && hasEmail) return '<span class="contact-indicator has-both">P+E</span>';
-            if (hasPortal) return '<span class="contact-indicator has-portal">P</span>';
-            if (hasEmail) return '<span class="contact-indicator has-email">E</span>';
-            return '<span class="contact-indicator">-</span>';
+            if (hasPortal && hasEmail) return '<span class="contact-indicator has-both" title="Portal + Email">P+E</span>';
+            if (hasPortal) return '<span class="contact-indicator has-portal" title="Portal only">P</span>';
+            if (hasEmail) return '<span class="contact-indicator has-email" title="Email only">E</span>';
+            return '<span class="contact-indicator" title="No contact info">-</span>';
         }
 
         // Badge for event type
@@ -1640,6 +1675,17 @@
 
         function userParam() {
             return currentUserId ? `&user_id=${encodeURIComponent(currentUserId)}` : '';
+        }
+
+        // Feature 5: Active user identity (who is performing actions)
+        let activeUserName = localStorage.getItem('monitorActiveUser') || 'Sam';
+        function getActiveUserHeaders() {
+            return activeUserName ? { 'X-User-Id': activeUserName } : {};
+        }
+        function onActiveUserChange() {
+            const sel = document.getElementById('activeUserSwitcher');
+            activeUserName = sel.value;
+            localStorage.setItem('monitorActiveUser', activeUserName);
         }
 
         function updateUrlHash() {
@@ -1791,7 +1837,7 @@
                             <td>${truncate(m.to_email, 30)}</td>
                             <td class="email-subject">${truncate(m.subject, 40)}</td>
                             <td class="email-body">${truncate(m.body_text, 50)}</td>
-                            <td><button class="drawer-btn" onclick="event.stopPropagation();openMatchModal(${m.id});">Match to Case</button></td>
+                            <td><button class="drawer-btn" onclick="event.stopPropagation();openMatchModal(${m.id});">Match to Case</button> <button class="drawer-btn" onclick="event.stopPropagation();dismissMessage(${m.id});" style="color:#f85149;">Dismiss</button></td>
                         </tr>
                     `).join('') :
                     '<tr><td colspan="6" style="text-align:center;color:#8b949e">No unmatched emails</td></tr>';
@@ -2264,7 +2310,7 @@
                     <td><a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}${c.user_handle ? ` <span style="color:#8b949e;font-size:10px;">${c.user_handle}</span>` : ''}</td>
                     <td>${truncate(c.agency_name, 30)}</td>
                     <td>${contactIndicator(c)}</td>
-                    <td>${truncate(c.status || '-', 24)}</td>
+                    <td>${formatStatus(c.status)}</td>
                     <td>${caseAgeBadge(c)}</td>
                     <td>${c.pending_approvals || 0}</td>
                     <td>${c.total_messages || 0} (in ${c.inbound_messages || 0} / out ${c.outbound_messages || 0})</td>
@@ -2362,6 +2408,7 @@
                     <div style="margin-top:6px;display:flex;gap:6px;">
                         <button class="drawer-btn" onclick="openMessage(${m.id})">View</button>
                         <button class="drawer-btn primary" onclick="openMatchModal(${m.id})">Match to Case</button>
+                        <button class="drawer-btn" onclick="dismissMessage(${m.id})" style="color:#f85149;">Dismiss</button>
                     </div>
                 </div>`;
             });
@@ -2392,6 +2439,16 @@
                 await loadData();
             } catch (err) {
                 alert(`Failed to trigger AI: ${err.message || err}`);
+            }
+        }
+
+        async function dismissMessage(msgId) {
+            if (!confirm('Dismiss this message?')) return;
+            try {
+                await fetch(`/api/monitor/message/${msgId}/dismiss`, { method: 'POST' });
+                loadData();
+            } catch (err) {
+                alert('Failed to dismiss: ' + err.message);
             }
         }
 
@@ -2760,7 +2817,7 @@
                 title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
                 history.replaceState(null, '', '?case=' + c.id + window.location.hash);
                 grid.innerHTML = `
-                    <div class="cell"><span class="k">Status</span>${c.status || '-'}</div>
+                    <div class="cell"><span class="k">Status</span>${formatStatus(c.status)}</div>
                     <div class="cell"><span class="k">Substatus</span>${truncate(c.substatus || '-', 80)}</div>
                     <div class="cell"><span class="k">Agency</span>${truncate(c.agency_name || '-', 60)}</div>
                     <div class="cell"><span class="k">Agency Email</span>${c.agency_email || '-'}</div>
@@ -2864,6 +2921,20 @@
                     `).join('')
                     : '<div class="timestamp">No past proposals</div>';
                 document.getElementById('caseInspectorProposalCount').textContent = otherProposals.length ? `(${otherProposals.length})` : '';
+
+                // Restore accordion preferences
+                const prefs = JSON.parse(localStorage.getItem('accordionPrefs') || '{}');
+                document.querySelectorAll('.case-inspector .accordion-toggle').forEach(toggle => {
+                    const section = toggle.querySelector('h3')?.textContent?.trim()?.split('(')[0]?.trim();
+                    if (section && section in prefs) {
+                        const shouldBeOpen = prefs[section];
+                        const isOpen = toggle.classList.contains('open');
+                        if (shouldBeOpen !== isOpen) {
+                            toggle.classList.toggle('open');
+                            toggle.nextElementSibling?.classList?.toggle('open');
+                        }
+                    }
+                });
             } catch (error) {
                 grid.innerHTML = `<div class="cell">Error: ${error.message || error}</div>`;
                 document.getElementById('caseInspectorMessages').innerHTML = '<div class="timestamp">-</div>';
@@ -3013,7 +3084,7 @@
             // 1. Dismiss the current proposal
             await fetch(`/api/monitor/proposals/${proposalId}/decision`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...getActiveUserHeaders() },
                 body: JSON.stringify({ action: 'DISMISS', dismiss_reason: `Replaced by: ${action}` })
             });
             // 2. Trigger the alternative via resolve-review (full pipeline: decide -> draft -> gate)
@@ -3573,7 +3644,7 @@
                 }
                 const res = await fetch(`/api/monitor/proposals/${proposalId}/decision`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...getActiveUserHeaders() },
                     body: JSON.stringify(payload)
                 });
                 const data = await res.json();
@@ -3614,7 +3685,7 @@
                     const payload = { action: 'DISMISS', dismiss_reason: reason };
                     const res = await fetch(`/api/monitor/proposals/${proposalId}/decision`, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'application/json', ...getActiveUserHeaders() },
                         body: JSON.stringify(payload)
                     });
                     const data = await res.json();
@@ -3958,11 +4029,38 @@
             return div.innerHTML;
         }
 
+        function toggleOpsPanel() {
+            const content = document.getElementById('opsContent');
+            const btn = document.getElementById('opsToggle');
+            if (!content || !btn) return;
+            const collapsed = content.style.display === 'none';
+            content.style.display = collapsed ? '' : 'none';
+            btn.innerHTML = collapsed ? '&#9660;' : '&#9654;';
+            localStorage.setItem('opsCollapsed', collapsed ? '' : '1');
+        }
+
+        // Restore ops panel collapse state on load
+        (function() {
+            if (localStorage.getItem('opsCollapsed') === '1') {
+                const content = document.getElementById('opsContent');
+                const btn = document.getElementById('opsToggle');
+                if (content) content.style.display = 'none';
+                if (btn) btn.innerHTML = '&#9654;';
+            }
+        })();
+
         function toggleAccordion(toggleEl) {
             toggleEl.classList.toggle('open');
             const body = toggleEl.nextElementSibling;
             if (body && body.classList.contains('accordion-body')) {
                 body.classList.toggle('open');
+            }
+            // Save preference
+            const section = toggleEl.querySelector('h3')?.textContent?.trim()?.split('(')[0]?.trim();
+            if (section) {
+                const prefs = JSON.parse(localStorage.getItem('accordionPrefs') || '{}');
+                prefs[section] = toggleEl.classList.contains('open');
+                localStorage.setItem('accordionPrefs', JSON.stringify(prefs));
             }
         }
 
@@ -4149,7 +4247,7 @@
             let html = `<span class="status-chip ${!activeStatusFilter ? 'active' : ''}" onclick="setStatusFilter('')">All<span class="chip-count">${cases.length}</span></span>`;
             for (const s of statuses) {
                 const active = activeStatusFilter === normalizeStatus(s) ? 'active' : '';
-                const label = s.replace(/_/g, ' ');
+                const label = formatStatus(s);
                 html += `<span class="status-chip ${active}" onclick="setStatusFilter('${normalizeStatus(s)}')">${label}<span class="chip-count">${counts[s]}</span></span>`;
             }
             chipsEl.innerHTML = html;
@@ -4181,18 +4279,26 @@
                     badge = `<span class="age-badge fresh" title="Deadline: ${deadlineStr}">${c.days_remaining}d left</span>`;
                 }
             } else {
-                // Fallback: show update age for non-awaiting cases
+                // Fallback: show contextual age for non-awaiting cases
                 const updated = c.updated_at || c.created_at;
                 if (!updated) return '-';
                 const days = Math.floor((Date.now() - new Date(updated).getTime()) / 86400000);
-                if (days < 2) badge = `<span class="age-badge fresh">${days}d</span>`;
-                else if (days <= 5) badge = `<span class="age-badge aging">${days}d</span>`;
-                else badge = `<span class="age-badge stale">${days}d</span>`;
+                if (c.status === 'needs_human_review') {
+                    badge = `<span class="age-badge aging" title="In review since ${new Date(updated).toLocaleDateString()}">${days}d in review</span>`;
+                } else if (c.status === 'needs_phone_call') {
+                    badge = `<span class="age-badge aging" title="In queue since ${new Date(updated).toLocaleDateString()}">${days}d in queue</span>`;
+                } else if (days < 2) {
+                    badge = `<span class="age-badge fresh">${days}d</span>`;
+                } else if (days <= 5) {
+                    badge = `<span class="age-badge aging">${days}d</span>`;
+                } else {
+                    badge = `<span class="age-badge stale">${days}d</span>`;
+                }
             }
 
-            // Show researched indicator
+            // Show researched indicator (checkmark instead of "R")
             if (c.last_contact_research_at) {
-                badge += `<span class="age-badge researched" title="Contact researched ${new Date(c.last_contact_research_at).toLocaleDateString()}">R</span>`;
+                badge += `<span class="age-badge researched" title="Contact verified ${new Date(c.last_contact_research_at).toLocaleDateString()}">&#10003;</span>`;
             }
 
             return badge;
@@ -4357,6 +4463,9 @@
         // Initial load + managed auto-refresh
         isManualRefresh = true; // First load should always happen
         loadUserFilterOptions();
+        // Initialize active user switcher from localStorage
+        const _aus = document.getElementById('activeUserSwitcher');
+        if (_aus && activeUserName) _aus.value = activeUserName;
         loadData();
         loadConfig();
         loadDailyStats();

@@ -74,7 +74,7 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
     };
 }
 
-async function processProposalDecision(proposalId, action, { instruction = null, reason = null, route_mode = null, decidedBy = 'monitor' } = {}) {
+async function processProposalDecision(proposalId, action, { instruction = null, reason = null, route_mode = null, decidedBy = 'monitor', userId = null } = {}) {
     const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS'];
     if (!allowedActions.includes(action)) {
         const err = new Error(`action must be one of: ${allowedActions.join(', ')}`);
@@ -125,7 +125,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         route_mode,
         reason,
         decidedAt: new Date().toISOString(),
-        decidedBy
+        decidedBy: userId || decidedBy
     };
 
     if (action === 'DISMISS') {
@@ -1379,7 +1379,8 @@ router.get('/message/:id/proposals', async (req, res) => {
 router.post('/proposals/:id/approve', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
-        const result = await processProposalDecision(proposalId, 'APPROVE');
+        const userId = req.headers['x-user-id'] || null;
+        const result = await processProposalDecision(proposalId, 'APPROVE', { userId });
         res.status(202).json(result);
     } catch (error) {
         const status = error.status || 500;
@@ -1395,7 +1396,8 @@ router.post('/proposals/:id/decision', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
         const { action, instruction = null, reason = null, dismiss_reason = null, route_mode = null } = req.body || {};
-        const result = await processProposalDecision(proposalId, action, { instruction, reason: reason || dismiss_reason, route_mode });
+        const userId = req.headers['x-user-id'] || null;
+        const result = await processProposalDecision(proposalId, action, { instruction, reason: reason || dismiss_reason, route_mode, userId });
         res.status(action === 'DISMISS' ? 200 : 202).json(result);
     } catch (error) {
         const status = error.status || 500;
@@ -1726,6 +1728,20 @@ router.post('/message/:id/match-case', express.json(), async (req, res) => {
 });
 
 /**
+ * POST /api/monitor/message/:id/dismiss
+ * Dismiss (delete) an unmatched message (spam cleanup)
+ */
+router.post('/message/:id/dismiss', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        await db.dismissMessage(id);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /api/monitor/message/:id/trigger-ai
  * Trigger AI processing for the selected inbound message
  */
@@ -2023,6 +2039,62 @@ router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
             notify('error', `Contact lookup failed for ${caseData.agency_name || caseData.case_name}: ${err.message}`, { case_id: caseId });
         }
     })();
+});
+
+// =========================================================================
+// Feature 2: Fee History
+// =========================================================================
+
+router.get('/case/:id/fee-history', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        if (!caseId) return res.status(400).json({ success: false, error: 'Invalid case id' });
+        const history = await db.getFeeHistoryByCaseId(caseId);
+        res.json({ success: true, fee_history: history });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// =========================================================================
+// Feature 6: Attachment Download
+// =========================================================================
+
+router.get('/attachments/:id/download', async (req, res) => {
+    try {
+        const attachmentId = parseInt(req.params.id, 10);
+        if (!attachmentId) return res.status(400).json({ success: false, error: 'Invalid attachment id' });
+
+        const attachment = await db.getAttachmentById(attachmentId);
+        if (!attachment) return res.status(404).json({ success: false, error: 'Attachment not found' });
+        if (!attachment.storage_path) return res.status(404).json({ success: false, error: 'No file on disk' });
+
+        const fsSync = require('fs');
+        if (!fsSync.existsSync(attachment.storage_path)) {
+            return res.status(404).json({ success: false, error: 'File not found on disk' });
+        }
+
+        res.setHeader('Content-Disposition', `attachment; filename="${attachment.filename || 'download'}"`);
+        res.setHeader('Content-Type', attachment.content_type || 'application/octet-stream');
+        fsSync.createReadStream(attachment.storage_path).pipe(res);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// =========================================================================
+// Feature 6: Attachments list for a case
+// =========================================================================
+
+router.get('/case/:id/attachments', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        if (!caseId) return res.status(400).json({ success: false, error: 'Invalid case id' });
+        const attachments = await db.getAttachmentsByCaseId(caseId);
+        res.json({ success: true, attachments });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 module.exports = router;
