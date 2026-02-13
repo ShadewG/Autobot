@@ -3070,7 +3070,7 @@
 
                 list.innerHTML = `<div class="proposal-meta">${headerNote}</div>` + proposals.map(p => {
                     const status = p.status || 'UNKNOWN';
-                    const body = truncate(p.draft_body_text || '', 140);
+                    const bodyPreview = truncate(p.draft_body_text || '', 140);
                     const canApprove = status === 'PENDING_APPROVAL';
                     const isInitial = p.action_type === 'SEND_INITIAL_REQUEST';
                     const isHybrid = !!p.portal_url && !!p.agency_email;
@@ -3091,6 +3091,7 @@
                             verdict = 'Not sent (no outbound evidence)';
                         }
                     }
+                    const hasFullDraft = p.draft_subject || p.draft_body_text;
                     return `
                         <div class="proposal-card">
                             <div class="proposal-title">${p.action_type || 'Action'} #${p.id}</div>
@@ -3099,14 +3100,18 @@
                             <div class="proposal-meta">Execution Status: ${p.execution_status || '-'}</div>
                             <div class="proposal-meta">Routing: ${isHybrid ? 'HYBRID' : (p.portal_url ? 'PORTAL' : (p.agency_email ? 'EMAIL' : 'UNKNOWN'))}</div>
                             <div class="proposal-meta">Send Verdict: ${verdict}</div>
-                            <div class="proposal-meta">${body || '-'}</div>
+                            <div class="proposal-meta" id="proposal_preview_${p.id}">${bodyPreview || '-'}</div>
+                            <div id="proposal_full_${p.id}" style="display:none; margin:8px 0; padding:10px; background:#0d1117; border:1px solid #30363d; border-radius:6px; font-size:13px; white-space:pre-wrap; line-height:1.5;">
+                                ${p.draft_subject ? `<div style="font-weight:600; color:#58a6ff; margin-bottom:8px; font-size:12px;">Subject: ${escapeHtml(p.draft_subject)}</div>` : ''}
+                                <div style="color:#c9d1d9;">${escapeHtml(p.draft_body_text || 'No draft body')}</div>
+                            </div>
                             <div class="proposal-actions">
                                 <button class="drawer-btn primary" ${canApprove ? '' : 'disabled'} onclick="approveProposal(${p.id})">Approve</button>
                                 <button class="drawer-btn warn" ${showRouteApprove ? '' : 'disabled'} onclick="approveProposalWithRoute(${p.id}, 'email')">Approve Email</button>
                                 <button class="drawer-btn warn" ${showRouteApprove ? '' : 'disabled'} onclick="approveProposalWithRoute(${p.id}, 'portal')">Approve Portal</button>
                                 <button class="drawer-btn" ${canApprove ? '' : 'disabled'} onclick="adjustProposal(${p.id})">Adjust</button>
                                 <button class="drawer-btn" ${canApprove ? '' : 'disabled'} onclick="dismissProposal(${p.id})">Dismiss</button>
-                                <a class="drawer-btn" href="/api/proposals/${p.id}" target="_blank">View</a>
+                                ${hasFullDraft ? `<button class="drawer-btn" onclick="toggleProposalDraft(${p.id})" id="proposal_toggle_${p.id}">View Full Draft</button>` : ''}
                             </div>
                             <div class="proposal-decision-note">Run: ${p.run_id || '-'} | Trigger Message: ${p.trigger_message_id || '-'}</div>
                         </div>
@@ -3115,6 +3120,17 @@
             } catch (err) {
                 list.innerHTML = `<div class="timestamp">Error loading proposals: ${err.message}</div>`;
             }
+        }
+
+        function toggleProposalDraft(proposalId) {
+            const fullDiv = document.getElementById(`proposal_full_${proposalId}`);
+            const previewDiv = document.getElementById(`proposal_preview_${proposalId}`);
+            const btn = document.getElementById(`proposal_toggle_${proposalId}`);
+            if (!fullDiv || !btn) return;
+            const isHidden = fullDiv.style.display === 'none';
+            fullDiv.style.display = isHidden ? 'block' : 'none';
+            if (previewDiv) previewDiv.style.display = isHidden ? 'none' : 'block';
+            btn.textContent = isHidden ? 'Hide Draft' : 'View Full Draft';
         }
 
         function closeDrawer() {
