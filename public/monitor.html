@@ -2688,20 +2688,12 @@
 
                 proposalCards.innerHTML = renderProposalCards(proposals, c);
 
-                // Build review actions as secondary Quick Actions
+                // Only show review actions when there are NO pending proposals
                 const isNeedsReview = c.requires_human || c.status === 'needs_human_review';
                 let actionsHtml = '';
 
-                if (isNeedsReview || pendingProposals.length === 0) {
-                    if (isNeedsReview) {
-                        const label = pendingProposals.length > 0 ? 'Quick Actions' : 'Review Actions';
-                        actionsHtml += `<div class="${pendingProposals.length > 0 ? 'quick-actions-section' : ''}">`;
-                        if (pendingProposals.length > 0) {
-                            actionsHtml += `<div class="quick-actions-label">${label}</div>`;
-                        }
-                        actionsHtml += buildReviewActions(c);
-                        actionsHtml += `</div>`;
-                    }
+                if (pendingProposals.length === 0 && isNeedsReview) {
+                    actionsHtml += buildReviewActions(c);
                 }
 
                 if (!actionsHtml && pendingProposals.length === 0) {
