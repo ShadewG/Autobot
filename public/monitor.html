@@ -2544,7 +2544,7 @@
                 document.getElementById('replyResult').style.display = 'none';
                 resetLog();
                 currentRunId = null;
-                await loadProposals(id);
+                await loadProposals(id, null, data.case?.id);
 
                 updateMessageNav(data.message.id);
                 document.getElementById('drawerBackdrop').classList.add('active');
@@ -3045,7 +3045,7 @@
             }, 3000);
         }
 
-        async function loadProposals(messageId, runId = null) {
+        async function loadProposals(messageId, runId = null, caseId = null) {
             const list = document.getElementById('proposalList');
             list.innerHTML = '<div class="timestamp">Loading proposals...</div>';
 
@@ -3067,60 +3067,96 @@
                     headerNote = 'Showing proposals for this message';
                 }
 
+                // Also fetch pending proposals for the case (they may be tied to a different message)
+                if (caseId) {
+                    try {
+                        const caseRes = await fetch(`/api/monitor/case/${caseId}`);
+                        const caseData = await caseRes.json();
+                        if (caseData.success && caseData.proposals) {
+                            const existingIds = new Set(proposals.map(p => p.id));
+                            const casePending = caseData.proposals.filter(p =>
+                                p.status === 'PENDING_APPROVAL' && !existingIds.has(p.id)
+                            );
+                            if (casePending.length > 0) {
+                                proposals = [...casePending, ...proposals];
+                                headerNote += ` + ${casePending.length} pending for this case`;
+                            }
+                        }
+                    } catch (_) {}
+                }
+
                 if (!proposals || proposals.length === 0) {
                     list.innerHTML = `<div class="timestamp">${headerNote}. No proposals yet.</div>`;
                     return;
                 }
 
-                list.innerHTML = `<div class="proposal-meta">${headerNote}</div>` + proposals.map(p => {
-                    const status = p.status || 'UNKNOWN';
-                    const bodyPreview = truncate(p.draft_body_text || '', 140);
-                    const canApprove = status === 'PENDING_APPROVAL';
-                    const isInitial = p.action_type === 'SEND_INITIAL_REQUEST';
-                    const isHybrid = !!p.portal_url && !!p.agency_email;
-                    const showRouteApprove = canApprove && isInitial && isHybrid;
-                    let verdict = 'Pending decision';
-                    if (p.status === 'EXECUTED') {
-                        if (p.outbound_message_id && p.outbound_sendgrid_message_id) {
-                            verdict = `Sent live (message #${p.outbound_message_id})`;
-                        } else if (p.execution_status === 'FAILED') {
-                            verdict = 'Not sent (execution failed)';
-                        } else if (p.execution_status === 'SKIPPED') {
-                            verdict = 'Not sent (execution skipped)';
-                        } else if (p.execution_status === 'QUEUED') {
-                            verdict = 'Queued (awaiting send worker)';
-                        } else if (p.execution_status === 'SENT' && !p.outbound_message_id) {
-                            verdict = 'Sent by executor, awaiting outbound row';
-                        } else {
-                            verdict = 'Not sent (no outbound evidence)';
+                // Separate pending vs past proposals
+                const pending = proposals.filter(p => p.status === 'PENDING_APPROVAL');
+                const past = proposals.filter(p => p.status !== 'PENDING_APPROVAL');
+
+                let html = `<div class="proposal-meta" style="margin-bottom:8px;">${headerNote}</div>`;
+
+                // Render pending proposals with full review
+                if (pending.length > 0) {
+                    html += pending.map(p => {
+                        const isInitial = p.action_type === 'SEND_INITIAL_REQUEST';
+                        const isHybrid = !!p.portal_url && !!p.agency_email;
+                        const showRouteApprove = isInitial && isHybrid;
+                        const actionLabel = String(p.action_type || 'action').replace(/_/g, ' ');
+                        return `
+                            <div class="proposal-card" style="border:2px solid #1f6feb;margin-bottom:10px;">
+                                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                                    <span style="display:inline-block;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;background:#1f6feb;color:#fff;">${actionLabel}</span>
+                                    <span class="proposal-meta" style="margin:0;">Proposal #${p.id} · Confidence: ${p.confidence || '-'}</span>
+                                </div>
+                                ${p.agency_email ? `<div style="font-size:12px;color:#8b949e;margin-bottom:4px;">To: <span style="color:#c9d1d9;">${escapeHtml(p.agency_email)}</span></div>` : ''}
+                                ${p.portal_url ? `<div style="font-size:12px;color:#8b949e;margin-bottom:4px;">Portal: <a class="case-link" href="${p.portal_url}" target="_blank">${escapeHtml(truncate(p.portal_url, 50))}</a></div>` : ''}
+                                ${(p.draft_subject || p.draft_body_text) ? `
+                                    <div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;margin:8px 0;max-height:300px;overflow-y:auto;">
+                                        ${p.draft_subject ? `<div style="font-weight:600;color:#58a6ff;font-size:12px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #21262d;">Subject: ${escapeHtml(p.draft_subject)}</div>` : ''}
+                                        <div style="color:#c9d1d9;font-size:12px;white-space:pre-wrap;line-height:1.5;">${escapeHtml(p.draft_body_text || 'No draft body')}</div>
+                                    </div>
+                                ` : '<div style="color:#f85149;font-size:12px;margin:8px 0;">No draft content.</div>'}
+                                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+                                    <button class="send-btn" onclick="approveProposal(${p.id})" style="padding:8px 20px;">Approve &amp; Send</button>
+                                    ${showRouteApprove ? `
+                                        <button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id}, 'email')">Approve Email</button>
+                                        <button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id}, 'portal')">Approve Portal</button>
+                                    ` : ''}
+                                    <button class="drawer-btn" onclick="adjustProposal(${p.id})">Adjust</button>
+                                    <button class="drawer-btn" onclick="dismissProposal(${p.id})" style="color:#f85149;">Dismiss</button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                // Render past proposals compactly
+                if (past.length > 0) {
+                    if (pending.length > 0) html += `<div style="margin-top:12px;padding-top:8px;border-top:1px solid #21262d;font-size:11px;color:#8b949e;margin-bottom:6px;">Past proposals</div>`;
+                    html += past.map(p => {
+                        const status = p.status || 'UNKNOWN';
+                        let verdict = status;
+                        if (p.status === 'EXECUTED') {
+                            if (p.outbound_message_id && p.outbound_sendgrid_message_id) verdict = `Sent`;
+                            else if (p.execution_status === 'FAILED') verdict = 'Failed';
+                            else if (p.execution_status === 'SKIPPED') verdict = 'Skipped';
+                            else if (p.execution_status === 'QUEUED') verdict = 'Queued';
+                            else verdict = 'Executed';
                         }
-                    }
-                    const hasFullDraft = p.draft_subject || p.draft_body_text;
-                    return `
-                        <div class="proposal-card">
-                            <div class="proposal-title">${p.action_type || 'Action'} #${p.id}</div>
-                            <div class="proposal-meta">Status: ${status} · Confidence: ${p.confidence || '-'}</div>
-                            <div class="proposal-meta">Execution: ${p.execution_key || '-'} | Email Job: ${p.email_job_id || '-'}</div>
-                            <div class="proposal-meta">Execution Status: ${p.execution_status || '-'}</div>
-                            <div class="proposal-meta">Routing: ${isHybrid ? 'HYBRID' : (p.portal_url ? 'PORTAL' : (p.agency_email ? 'EMAIL' : 'UNKNOWN'))}</div>
-                            <div class="proposal-meta">Send Verdict: ${verdict}</div>
-                            <div class="proposal-meta" id="proposal_preview_${p.id}">${bodyPreview || '-'}</div>
-                            <div id="proposal_full_${p.id}" style="display:none; margin:8px 0; padding:10px; background:#0d1117; border:1px solid #30363d; border-radius:6px; font-size:13px; white-space:pre-wrap; line-height:1.5;">
-                                ${p.draft_subject ? `<div style="font-weight:600; color:#58a6ff; margin-bottom:8px; font-size:12px;">Subject: ${escapeHtml(p.draft_subject)}</div>` : ''}
-                                <div style="color:#c9d1d9;">${escapeHtml(p.draft_body_text || 'No draft body')}</div>
+                        return `
+                            <div class="proposal-card" style="opacity:0.7;margin-bottom:6px;padding:8px;">
+                                <div style="display:flex;justify-content:space-between;align-items:center;">
+                                    <span class="proposal-title" style="font-size:12px;">${p.action_type || 'Action'} #${p.id}</span>
+                                    <span style="font-size:11px;color:${verdict === 'Sent' ? '#3fb950' : '#8b949e'};">${verdict}</span>
+                                </div>
+                                <div class="proposal-meta" style="font-size:11px;">${truncate(p.draft_subject || p.draft_body_text || '-', 100)}</div>
                             </div>
-                            <div class="proposal-actions">
-                                <button class="drawer-btn primary" ${canApprove ? '' : 'disabled'} onclick="approveProposal(${p.id})">Approve</button>
-                                <button class="drawer-btn warn" ${showRouteApprove ? '' : 'disabled'} onclick="approveProposalWithRoute(${p.id}, 'email')">Approve Email</button>
-                                <button class="drawer-btn warn" ${showRouteApprove ? '' : 'disabled'} onclick="approveProposalWithRoute(${p.id}, 'portal')">Approve Portal</button>
-                                <button class="drawer-btn" ${canApprove ? '' : 'disabled'} onclick="adjustProposal(${p.id})">Adjust</button>
-                                <button class="drawer-btn" ${canApprove ? '' : 'disabled'} onclick="dismissProposal(${p.id})">Dismiss</button>
-                                ${hasFullDraft ? `<button class="drawer-btn" onclick="toggleProposalDraft(${p.id})" id="proposal_toggle_${p.id}">View Full Draft</button>` : ''}
-                            </div>
-                            <div class="proposal-decision-note">Run: ${p.run_id || '-'} | Trigger Message: ${p.trigger_message_id || '-'}</div>
-                        </div>
-                    `;
-                }).join('');
+                        `;
+                    }).join('');
+                }
+
+                list.innerHTML = html;
             } catch (err) {
                 list.innerHTML = `<div class="timestamp">Error loading proposals: ${err.message}</div>`;
             }
@@ -3366,19 +3402,29 @@
                 html += `</div></div>`;
                 html += `</div>`;
 
-                // Expanded detail (hidden by default)
+                // Expanded review panel (hidden by default)
                 html += `<div class="pac-expanded-detail" id="pac_detail_${p.id}" style="display:none;">`;
-                if (p.draft_body_text) {
-                    html += `<div class="pac-detail-row">Full draft body shown above</div>`;
-                }
+                html += `<div style="font-size:11px;font-weight:600;color:#f0883e;text-transform:uppercase;margin-bottom:8px;">Review what will be sent:</div>`;
                 if (p.agency_email) {
-                    html += `<div class="pac-detail-row">Recipient: ${escapeHtml(p.agency_email)}</div>`;
+                    html += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;">To: <span style="color:#c9d1d9;">${escapeHtml(p.agency_email)}</span></div>`;
                 }
                 if (p.portal_url) {
-                    html += `<div class="pac-detail-row">Portal: <a class="case-link" href="${p.portal_url}" target="_blank">${truncate(p.portal_url, 50)}</a></div>`;
+                    html += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;">Portal: <a class="case-link" href="${p.portal_url}" target="_blank">${escapeHtml(truncate(p.portal_url, 60))}</a></div>`;
                 }
-                html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">`;
-                html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))">Approve</button>`;
+                if (p.draft_subject || p.draft_body_text) {
+                    html += `<div style="background:#0d1117;border:2px solid #1f6feb;border-radius:8px;padding:12px;margin:8px 0;max-height:400px;overflow-y:auto;">`;
+                    if (p.draft_subject) {
+                        html += `<div style="font-weight:600;color:#58a6ff;font-size:13px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #30363d;">Subject: ${escapeHtml(p.draft_subject)}</div>`;
+                    }
+                    if (p.draft_body_text) {
+                        html += `<div style="color:#c9d1d9;font-size:12px;white-space:pre-wrap;line-height:1.5;">${escapeHtml(p.draft_body_text)}</div>`;
+                    }
+                    html += `</div>`;
+                } else {
+                    html += `<div style="color:#f85149;font-size:12px;margin:8px 0;">No draft content available for this proposal.</div>`;
+                }
+                html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">`;
+                html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="padding:10px 24px;font-size:13px;">Approve &amp; Send</button>`;
                 if (showRouteApprove) {
                     html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>openCase(${caseData.id}))">Approve Email</button>`;
                     html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>openCase(${caseData.id}))">Approve Portal</button>`;
