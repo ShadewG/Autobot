@@ -1691,6 +1691,68 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
 });
 
 /**
+ * POST /api/monitor/proposals/:id/generate-draft
+ * Generate draft content for a proposal that has no draft (e.g., from reprocessing)
+ */
+router.post('/proposals/:id/generate-draft', express.json(), async (req, res) => {
+    try {
+        const proposalId = parseInt(req.params.id);
+        const proposal = await db.query('SELECT * FROM proposals WHERE id = $1', [proposalId]);
+        if (!proposal.rows[0]) {
+            return res.status(404).json({ success: false, error: 'Proposal not found' });
+        }
+        const p = proposal.rows[0];
+
+        if (p.draft_body_text) {
+            return res.status(400).json({ success: false, error: 'Proposal already has draft content' });
+        }
+
+        const { draftResponseNode } = require('../langgraph/nodes/draft-response');
+
+        // Build minimal state for the draft node
+        const state = {
+            caseId: p.case_id,
+            proposalActionType: p.action_type,
+            constraints: p.metadata?.constraints || [],
+            scopeItems: p.metadata?.scope_items || [],
+            extractedFeeAmount: p.metadata?.fee_amount || null,
+            latestInboundMessageId: p.trigger_message_id || null,
+            adjustmentInstruction: null,
+            llmStubs: null
+        };
+
+        const result = await draftResponseNode(state);
+
+        if (result.errors && result.errors.length > 0) {
+            return res.status(500).json({ success: false, error: result.errors.join('; ') });
+        }
+
+        if (!result.draftBodyText && !result.draftSubject) {
+            return res.status(500).json({ success: false, error: 'Draft generation returned empty content' });
+        }
+
+        // Update the proposal with the generated draft
+        await db.query(`
+            UPDATE proposals
+            SET draft_subject = $1, draft_body_text = $2, draft_body_html = $3, updated_at = NOW()
+            WHERE id = $4
+        `, [result.draftSubject || null, result.draftBodyText || null, result.draftBodyHtml || null, proposalId]);
+
+        res.json({
+            success: true,
+            draft: {
+                subject: result.draftSubject,
+                body_text: result.draftBodyText,
+                body_html: result.draftBodyHtml
+            }
+        });
+    } catch (error) {
+        logger.error('Generate draft error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /api/monitor/events
  * Server-Sent Events stream for real-time notifications
  */

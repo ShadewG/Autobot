@@ -3108,14 +3108,19 @@
                                         ${p.draft_subject ? `<div style="font-weight:600;color:#58a6ff;font-size:12px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #21262d;">Subject: ${escapeHtml(p.draft_subject)}</div>` : ''}
                                         <div style="color:#c9d1d9;font-size:12px;white-space:pre-wrap;line-height:1.5;">${escapeHtml(p.draft_body_text || 'No draft body')}</div>
                                     </div>
-                                ` : '<div style="color:#f85149;font-size:12px;margin:8px 0;">No draft content.</div>'}
+                                ` : `<div style="background:#0d1117;border:2px dashed #f0883e;border-radius:6px;padding:10px;margin:8px 0;text-align:center;">
+                                        <div style="color:#f0883e;font-size:12px;margin-bottom:6px;">No draft content — needs generation before sending.</div>
+                                        <button class="send-btn" onclick="generateDraft(${p.id}, ${p.case_id})" id="drawer_gen_btn_${p.id}" style="background:#f0883e;font-size:12px;">Generate Draft</button>
+                                    </div>`}
                                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-                                    <button class="send-btn" onclick="approveProposal(${p.id})" style="padding:8px 20px;">Approve &amp; Send</button>
-                                    ${showRouteApprove ? `
-                                        <button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id}, 'email')">Approve Email</button>
-                                        <button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id}, 'portal')">Approve Portal</button>
+                                    ${(p.draft_subject || p.draft_body_text) ? `
+                                        <button class="send-btn" onclick="approveProposal(${p.id})" style="padding:8px 20px;">Approve &amp; Send</button>
+                                        ${showRouteApprove ? `
+                                            <button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id}, 'email')">Approve Email</button>
+                                            <button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id}, 'portal')">Approve Portal</button>
+                                        ` : ''}
+                                        <button class="drawer-btn" onclick="adjustProposal(${p.id})">Adjust</button>
                                     ` : ''}
-                                    <button class="drawer-btn" onclick="adjustProposal(${p.id})">Adjust</button>
                                     <button class="drawer-btn" onclick="dismissProposal(${p.id})" style="color:#f85149;">Dismiss</button>
                                 </div>
                             </div>
@@ -3370,7 +3375,8 @@
                     html += `<div class="pac-reasoning">${escapeHtml(truncate(reasoningText, 200))}</div>`;
                 }
 
-                if (p.draft_subject || p.draft_body_text) {
+                const hasDraftContent = !!(p.draft_subject || p.draft_body_text);
+                if (hasDraftContent) {
                     html += `<div class="pac-draft">`;
                     if (p.draft_subject) {
                         html += `<div class="pac-subject">${escapeHtml(p.draft_subject)}</div>`;
@@ -3380,11 +3386,15 @@
                         html += `<div class="pac-body-full" id="pac_full_${p.id}" style="display:none;">${escapeHtml(p.draft_body_text)}</div>`;
                     }
                     html += `</div>`;
+                } else {
+                    html += `<div style="color:#f0883e;font-size:12px;padding:6px 0;">Draft not yet generated</div>`;
                 }
 
                 // Action buttons
                 html += `<div class="pac-actions">`;
-                html += `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Review & Confirm</button>`;
+                html += hasDraftContent
+                    ? `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Review & Confirm</button>`
+                    : `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Generate Draft & Review</button>`;
                 html += `<div class="dismiss-dropdown" style="display:inline-block;">`;
                 html += `<button class="drawer-btn" onclick="showDismissMenu(${p.id}, this)" style="color:#f85149;">Dismiss &#9662;</button>`;
                 html += `<div class="dismiss-dropdown-menu" id="dismiss-menu-${p.id}">`;
@@ -3413,15 +3423,21 @@
                     }
                     html += `</div>`;
                 } else {
-                    html += `<div style="color:#f85149;font-size:12px;margin:8px 0;">No draft content available for this proposal.</div>`;
+                    html += `<div id="pac_no_draft_${p.id}" style="background:#0d1117;border:2px dashed #f0883e;border-radius:8px;padding:12px;margin:8px 0;text-align:center;">`;
+                    html += `<div style="color:#f0883e;font-size:12px;margin-bottom:8px;">No draft content — this proposal needs a draft before it can be sent.</div>`;
+                    html += `<button class="send-btn" onclick="generateDraft(${p.id}, ${caseData.id})" id="pac_gen_btn_${p.id}" style="background:#f0883e;">Generate Draft</button>`;
+                    html += `</div>`;
                 }
+                const hasDraft = !!(p.draft_subject || p.draft_body_text);
                 html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">`;
-                html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="padding:10px 24px;font-size:13px;">Approve &amp; Send</button>`;
-                if (showRouteApprove) {
-                    html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>openCase(${caseData.id}))">Approve Email</button>`;
-                    html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>openCase(${caseData.id}))">Approve Portal</button>`;
+                if (hasDraft) {
+                    html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="padding:10px 24px;font-size:13px;">Approve &amp; Send</button>`;
+                    if (showRouteApprove) {
+                        html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>openCase(${caseData.id}))">Approve Email</button>`;
+                        html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>openCase(${caseData.id}))">Approve Portal</button>`;
+                    }
+                    html += `<button class="drawer-btn" onclick="adjustProposal(${p.id}).then(()=>openCase(${caseData.id}))">Adjust</button>`;
                 }
-                html += `<button class="drawer-btn" onclick="adjustProposal(${p.id}).then(()=>openCase(${caseData.id}))">Adjust</button>`;
                 html += `<button class="drawer-btn" onclick="collapseProposalCard(${p.id})">Cancel</button>`;
                 html += `</div>`;
                 html += `</div>`; // end pac-expanded-detail
@@ -3429,6 +3445,28 @@
                 html += `</div>`; // end proposal-action-card
             }
             return html;
+        }
+
+        async function generateDraft(proposalId, caseId) {
+            const pacBtn = document.getElementById(`pac_gen_btn_${proposalId}`);
+            const drawerBtn = document.getElementById(`drawer_gen_btn_${proposalId}`);
+            const btn = pacBtn || drawerBtn;
+            if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+            try {
+                const res = await fetch(`/api/monitor/proposals/${proposalId}/generate-draft`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Draft generation failed');
+                showToast('success', `Draft generated for proposal #${proposalId}`);
+                // Reload case inspector and drawer proposals if open
+                if (caseId) await openCase(caseId);
+                if (currentMessage) await loadProposals(currentMessage.id, null, caseId);
+            } catch (err) {
+                showToast('error', `Draft generation failed: ${err.message}`);
+                if (btn) { btn.disabled = false; btn.textContent = 'Generate Draft'; }
+            }
         }
 
         function expandProposalCard(proposalId) {
@@ -3457,14 +3495,12 @@
             const panel = document.getElementById('caseAgenciesPanel');
             const countEl = document.getElementById('caseAgenciesCount');
 
-            if (!agencies || agencies.length === 0) {
-                accordion.style.display = 'none';
-                panel.innerHTML = '';
-                return;
-            }
-
             accordion.style.display = 'block';
-            countEl.textContent = `(${agencies.length})`;
+            if (!agencies || agencies.length === 0) {
+                countEl.textContent = '(0)';
+            } else {
+                countEl.textContent = `(${agencies.length})`;
+            }
 
             let html = `<table style="width:100%;border-collapse:collapse;font-size:12px;">`;
             html += `<tr style="border-bottom:1px solid #30363d;">
@@ -3483,12 +3519,17 @@
                         ? `<a class="case-link" href="${escapeHtml(a.portal_url)}" target="_blank">Portal</a>`
                         : '<span style="color:#8b949e;">none</span>';
 
+                const notionId = a.agency_notion_page_id;
+                const notionLink = notionId
+                    ? ` <a href="https://www.notion.so/${notionId.replace(/-/g, '')}" target="_blank" title="Open in Notion" style="color:#8b949e;font-size:10px;text-decoration:none;">&#x24C3;</a>`
+                    : '';
+
                 html += `<tr style="border-bottom:1px solid #21262d;">
                     <td style="padding:4px 6px;">
                         <input type="radio" name="primaryAgency_${caseData.id}" ${a.is_primary ? 'checked' : ''}
                             onchange="switchPrimaryAgency(${caseData.id}, ${a.id})" title="Set as primary">
                     </td>
-                    <td style="padding:4px 6px;">${escapeHtml(a.agency_name)}</td>
+                    <td style="padding:4px 6px;">${escapeHtml(a.agency_name)}${notionLink}</td>
                     <td style="padding:4px 6px;">${contact}</td>
                     <td style="padding:4px 6px;">${escapeHtml(a.status || 'pending')}</td>
                     <td style="padding:4px 6px;color:#8b949e;">${escapeHtml(a.added_source || '-')}</td>
@@ -3499,12 +3540,18 @@
             }
             html += `</table>`;
 
-            // Add Agency inline form
+            // Add Agency — manual form
             html += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
                 <input id="addAgencyName_${caseData.id}" placeholder="Agency name" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;width:180px;">
                 <input id="addAgencyEmail_${caseData.id}" placeholder="Email (optional)" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;width:180px;">
                 <input id="addAgencyPortal_${caseData.id}" placeholder="Portal URL (optional)" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;width:200px;">
-                <button onclick="addCaseAgency(${caseData.id})" style="padding:4px 12px;font-size:12px;background:#238636;color:#fff;border:none;border-radius:4px;cursor:pointer;">Add Agency</button>
+                <button onclick="addCaseAgency(${caseData.id})" style="padding:4px 12px;font-size:12px;background:#238636;color:#fff;border:none;border-radius:4px;cursor:pointer;">Add</button>
+            </div>`;
+
+            // Add Agency — from Notion
+            html += `<div style="margin-top:6px;display:flex;gap:6px;align-items:center;">
+                <input id="addAgencyNotion_${caseData.id}" placeholder="Paste Notion agency page URL or ID" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;flex:1;min-width:250px;">
+                <button onclick="addCaseAgencyFromNotion(${caseData.id})" style="padding:4px 12px;font-size:12px;background:#30363d;color:#c9d1d9;border:1px solid #484f58;border-radius:4px;cursor:pointer;">Add from Notion</button>
             </div>`;
 
             panel.innerHTML = html;
@@ -3527,6 +3574,29 @@
                 openCase(caseId);
             } catch (err) {
                 alert('Failed to add agency: ' + err.message);
+            }
+        }
+
+        async function addCaseAgencyFromNotion(caseId) {
+            const notionUrl = document.getElementById(`addAgencyNotion_${caseId}`)?.value?.trim();
+            if (!notionUrl) return alert('Paste a Notion page URL or ID');
+
+            const btn = event?.target;
+            if (btn) { btn.disabled = true; btn.textContent = 'Loading...'; }
+
+            try {
+                const res = await fetch(`/api/cases/${caseId}/agencies/from-notion`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ notion_url: notionUrl })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                openCase(caseId);
+            } catch (err) {
+                alert('Failed to add from Notion: ' + err.message);
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Add from Notion'; }
             }
         }
 
