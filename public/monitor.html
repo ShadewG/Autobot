@@ -1470,7 +1470,7 @@
             if (!ts) return '-';
             const now = new Date();
             const then = new Date(ts);
-            const diff = (now - then) / 1000;
+            const diff = Math.abs(now - then) / 1000;
             if (diff < 60) return Math.floor(diff) + 's ago';
             if (diff < 3600) return Math.floor(diff/60) + 'm ago';
             if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
@@ -3725,6 +3725,7 @@
         }
 
         function isInteracting() {
+            if (expandedCaseId) return true;
             const active = document.activeElement;
             if (active && active.matches('input, textarea, select')) return true;
             if (document.querySelector('.drawer.active')) return true;
