@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Users - Autobot</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
+        h1 { font-size: 18px; margin-bottom: 16px; color: #58a6ff; }
+        button { background: #238636; border: none; color: #fff; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        button:hover { background: #2ea043; }
+        button.danger { background: #da3633; }
+        button.danger:hover { background: #f85149; }
+        button.secondary { background: #30363d; }
+        button.secondary:hover { background: #484f58; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; padding: 8px; border-bottom: 2px solid #30363d; color: #8b949e; font-weight: 600; }
+        td { padding: 8px; border-bottom: 1px solid #21262d; vertical-align: top; }
+        tr:hover { background: #161b22; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+        .badge.active { background: #23863633; color: #3fb950; }
+        .badge.inactive { background: #da363333; color: #f85149; }
+        .add-form { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+        .add-form .row { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-end; }
+        .add-form label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+        .add-form input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; font-size: 13px; font-family: inherit; }
+        .email-preview { color: #8b949e; font-size: 12px; margin-top: 4px; }
+        .email-preview strong { color: #58a6ff; }
+        .stats { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+        #toast { position: fixed; bottom: 20px; right: 20px; background: #238636; color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 13px; display: none; z-index: 100; }
+        #toast.error { background: #da3633; }
+        a { color: #58a6ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .nav { margin-bottom: 16px; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="nav"><a href="/monitor.html">Monitor</a> / Users</div>
+    <h1>User Management</h1>
+
+    <div class="add-form">
+        <div class="row">
+            <div style="flex:1">
+                <label for="userName">Name</label>
+                <input type="text" id="userName" placeholder="e.g. Sam Hylton">
+            </div>
+            <div style="flex:1">
+                <label for="userHandle">Email Handle</label>
+                <input type="text" id="userHandle" placeholder="e.g. sam" oninput="updatePreview()">
+            </div>
+            <div>
+                <button onclick="createUser()">Create User</button>
+            </div>
+        </div>
+        <div class="email-preview" id="emailPreview">Email will be: <strong>handle@foib-request.com</strong></div>
+    </div>
+
+    <div class="stats" id="userStats"></div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Cases</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="usersTable">
+            <tr><td colspan="7" style="text-align:center;color:#8b949e;">Loading...</td></tr>
+        </tbody>
+    </table>
+
+    <div id="toast"></div>
+
+    <script>
+        function showToast(msg, isError = false) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = isError ? 'error' : '';
+            t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+
+        function updatePreview() {
+            const handle = document.getElementById('userHandle').value.toLowerCase().trim();
+            const preview = document.getElementById('emailPreview');
+            if (handle) {
+                preview.innerHTML = `Email will be: <strong>${handle}@foib-request.com</strong>`;
+            } else {
+                preview.innerHTML = `Email will be: <strong>handle@foib-request.com</strong>`;
+            }
+        }
+
+        function relativeTime(dateStr) {
+            if (!dateStr) return '-';
+            const d = new Date(dateStr);
+            const now = new Date();
+            const diff = now - d;
+            if (diff < 60000) return 'just now';
+            if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+            return Math.floor(diff / 86400000) + 'd ago';
+        }
+
+        async function loadUsers() {
+            try {
+                const res = await fetch('/api/users?active=false');
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+
+                const users = data.users || [];
+                const activeCount = users.filter(u => u.active).length;
+                document.getElementById('userStats').textContent =
+                    `${users.length} user(s), ${activeCount} active`;
+
+                if (users.length === 0) {
+                    document.getElementById('usersTable').innerHTML =
+                        '<tr><td colspan="7" style="text-align:center;color:#8b949e;">No users yet. Create one above.</td></tr>';
+                    return;
+                }
+
+                document.getElementById('usersTable').innerHTML = users.map(u => `
+                    <tr>
+                        <td>${u.id}</td>
+                        <td>${u.name}</td>
+                        <td style="font-family:monospace;font-size:12px;">${u.email}</td>
+                        <td><span class="badge ${u.active ? 'active' : 'inactive'}">${u.active ? 'Active' : 'Inactive'}</span></td>
+                        <td>${u.case_count || 0}</td>
+                        <td style="font-size:12px;color:#8b949e;">${relativeTime(u.created_at)}</td>
+                        <td>
+                            ${u.active
+                                ? `<button class="danger" onclick="toggleUser(${u.id}, false)" style="font-size:11px;padding:3px 8px;">Deactivate</button>`
+                                : `<button class="secondary" onclick="toggleUser(${u.id}, true)" style="font-size:11px;padding:3px 8px;">Activate</button>`
+                            }
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                showToast('Failed to load users: ' + err.message, true);
+            }
+        }
+
+        async function createUser() {
+            const name = document.getElementById('userName').value.trim();
+            const handle = document.getElementById('userHandle').value.toLowerCase().trim();
+
+            if (!name) return showToast('Name is required', true);
+            if (!handle) return showToast('Email handle is required', true);
+
+            try {
+                const res = await fetch('/api/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, email_handle: handle })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error);
+
+                showToast(`Created ${data.user.email}`);
+                document.getElementById('userName').value = '';
+                document.getElementById('userHandle').value = '';
+                updatePreview();
+                loadUsers();
+            } catch (err) {
+                showToast(err.message, true);
+            }
+        }
+
+        async function toggleUser(id, activate) {
+            try {
+                if (!activate) {
+                    const res = await fetch(`/api/users/${id}`, { method: 'DELETE' });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error);
+                    showToast('User deactivated');
+                } else {
+                    const res = await fetch(`/api/users/${id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ active: true })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error);
+                    showToast('User activated');
+                }
+                loadUsers();
+            } catch (err) {
+                showToast(err.message, true);
+            }
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>

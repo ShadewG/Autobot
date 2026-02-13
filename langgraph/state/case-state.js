@@ -66,6 +66,10 @@ const FOIACaseStateAnnotation = Annotation.Root({
     reducer: (prev, v) => v !== undefined ? v : prev,  // Preserve if not explicitly set
     default: () => null
   }),
+  denialSubtype: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // no_records | ongoing_investigation | privacy_exemption | overly_broad | excessive_fees | wrong_agency | retention_expired | format_issue
+  }),
 
   // === NEW: Prompt Tuning Fields (requires_response logic) ===
   requiresResponse: Annotation({
@@ -213,6 +217,12 @@ const FOIACaseStateAnnotation = Annotation.Root({
     default: () => null  // Human instruction text from resolve-review
   }),
 
+  // === Target Agency (multi-agency support) ===
+  caseAgencyId: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // case_agencies.id — which agency this run targets
+  }),
+
   // === Testing/Deterministic Mode ===
   llmStubs: Annotation({
     reducer: (prev, v) => v !== undefined ? v : prev,
@@ -248,7 +258,8 @@ function createInitialState(caseId, triggerType, options = {}) {
     errors: [],
     llmStubs: options.llmStubs || null,  // For deterministic E2E testing
     reviewAction: options.reviewAction || null,
-    reviewInstruction: options.reviewInstruction || null
+    reviewInstruction: options.reviewInstruction || null,
+    caseAgencyId: options.caseAgencyId || null
   };
 }
 

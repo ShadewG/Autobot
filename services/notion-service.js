@@ -346,9 +346,10 @@ class NotionService {
         const portalUrl = this.getProperty(props, 'Portal', 'url') ||
                           this.findPortalInProperties(props);
 
-        // Get Police Department relation ID
+        // Get Police Department relation IDs (may have multiple)
         const policeDeptRelation = props['Police Department'];
-        const policeDeptId = policeDeptRelation?.relation?.[0]?.id || null;
+        const policeDeptIds = (policeDeptRelation?.relation || []).map(r => r.id).filter(Boolean);
+        const policeDeptId = policeDeptIds[0] || null;
 
         const statusValue =
             this.getPropertyWithFallback(props, this.liveStatusProperty, 'status') ||
@@ -360,6 +361,7 @@ class NotionService {
             // Email will be fetched from related Police Department page
             agency_email: null, // Will be populated by enrichWithPoliceDepartment()
             police_dept_id: policeDeptId, // Store relation ID for fetching
+            additional_police_dept_ids: policeDeptIds.slice(1), // Additional PDs beyond the primary
             // ACTUAL NOTION FIELD: "Suspect" (not "Subject Name")
             subject_name: this.getProperty(props, 'Suspect', 'rich_text') ||
                          this.getProperty(props, 'Victim', 'rich_text') ||
@@ -1948,6 +1950,37 @@ Look for a records division email, FOIA email, or general agency email that acce
             // Create case
             const newCase = await db.createCase(notionCase);
             console.log(`Created case from Notion page: ${newCase.case_name}`);
+
+            // Import additional Police Departments as case_agencies
+            const additionalPDIds = notionCase.additional_police_dept_ids || [];
+            if (additionalPDIds.length > 0) {
+                for (const pdId of additionalPDIds) {
+                    try {
+                        const deptPage = await this.notion.pages.retrieve({ page_id: pdId });
+                        const deptProps = deptPage.properties;
+                        const titleProp = Object.values(deptProps).find(p => p.type === 'title');
+                        const pdName = titleProp?.title?.[0]?.plain_text || 'Unknown PD';
+
+                        // Extract email from the PD page
+                        let pdEmail = null;
+                        let pdPortalUrl = null;
+                        for (const [, prop] of Object.entries(deptProps)) {
+                            if (prop.type === 'email' && prop.email) pdEmail = prop.email;
+                            if (prop.type === 'url' && prop.url) pdPortalUrl = prop.url;
+                        }
+
+                        await db.addCaseAgency(newCase.id, {
+                            agency_name: pdName,
+                            agency_email: pdEmail,
+                            portal_url: pdPortalUrl,
+                            added_source: 'notion_import'
+                        });
+                        console.log(`Added additional agency "${pdName}" to case ${newCase.id}`);
+                    } catch (pdErr) {
+                        console.warn(`Failed to import additional PD ${pdId}: ${pdErr.message}`);
+                    }
+                }
+            }
 
             // Update Notion: set Status to "Auto" and Live Status to current state
             try {

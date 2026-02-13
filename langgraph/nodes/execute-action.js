@@ -102,15 +102,28 @@ async function executeActionNode(state) {
   logs.push(`Claimed execution with key: ${executionKey}`);
 
   const caseData = await db.getCaseById(caseId);
+
+  // Resolve target agency from case_agencies when caseAgencyId is set
+  let targetEmail = caseData?.agency_email;
+  let targetPortalUrl = caseData?.portal_url;
+  if (state.caseAgencyId) {
+    const targetAgency = await db.getCaseAgencyById(state.caseAgencyId);
+    if (targetAgency) {
+      targetEmail = targetAgency.agency_email || targetEmail;
+      targetPortalUrl = targetAgency.portal_url || targetPortalUrl;
+      logs.push(`Using target agency #${state.caseAgencyId}: ${targetAgency.agency_name}`);
+    }
+  }
+
   const runData = runId ? await db.getAgentRunById(runId) : null;
   const routeMode = runData?.metadata?.route_mode || existingProposal?.human_decision?.route_mode || null;
-  const hasPortal = portalExecutor.requiresPortal(caseData);
-  const hasEmail = !!caseData?.agency_email;
+  const hasPortal = portalExecutor.requiresPortal({ ...caseData, portal_url: targetPortalUrl });
+  const hasEmail = !!targetEmail;
 
   logs.push(`Route mode: ${routeMode || 'auto'}`);
 
   // For initial requests with both channels available, force explicit routing.
-  if (proposalActionType === 'SEND_INITIAL_REQUEST' && hasPortal && hasEmail && !routeMode) {
+  if (proposalActionType === 'SEND_INITIAL_REQUEST' && hasPortal && hasEmail && !routeMode && !state.caseAgencyId) {
     const pauseReason = 'Route decision required: choose email or portal for initial request';
     logs.push(`BLOCKED: ${pauseReason}`);
 
@@ -164,7 +177,7 @@ async function executeActionNode(state) {
     if (portalQueue) {
       const portalJob = await portalQueue.add('portal-submit', {
         caseId,
-        portalUrl: caseData.portal_url,
+        portalUrl: targetPortalUrl,
         provider: caseData.portal_provider || null,
         instructions: draftBodyText || draftBodyHtml || null
       }, {
@@ -207,7 +220,7 @@ async function executeActionNode(state) {
       const missingFields = [];
 
       // Check delivery method
-      if (!hasEmail && !hasPortal) {
+      if (!targetEmail && !hasPortal) {
         missingFields.push('agency_email or portal_url');
       }
 
@@ -251,7 +264,7 @@ async function executeActionNode(state) {
       // =========================================================================
       // ROUTING - Portal vs Email
       // =========================================================================
-      if (!hasEmail && hasPortal) {
+      if (!targetEmail && hasPortal) {
         logs.push('No agency_email but portal_url exists - routing to portal executor');
 
         const portalResult = await portalExecutor.createPortalTask({
@@ -292,7 +305,7 @@ async function executeActionNode(state) {
 
       // Use email executor (handles DRY vs LIVE mode)
       const emailResult = await emailExecutor.sendEmail({
-        to: caseData.agency_email,
+        to: targetEmail,
         subject: draftSubject,
         bodyHtml: draftBodyHtml,
         bodyText: draftBodyText,
@@ -315,7 +328,7 @@ async function executeActionNode(state) {
       };
 
       if (emailResult.dryRun) {
-        logs.push(`[DRY_RUN] Would have sent email to ${caseData.agency_email}`);
+        logs.push(`[DRY_RUN] Would have sent email to ${targetEmail}`);
       } else {
         logs.push(`Email queued (job ${emailResult.jobId}), scheduled in ${delayMinutes} minutes`);
       }
@@ -330,7 +343,7 @@ async function executeActionNode(state) {
         status: emailResult.dryRun ? 'DRY_RUN' : 'QUEUED',
         provider: emailResult.dryRun ? 'dry_run' : 'email',
         providerPayload: {
-          to: caseData.agency_email,
+          to: targetEmail,
           subject: draftSubject,
           jobId: emailResult.jobId,
           delayMinutes,
@@ -415,6 +428,156 @@ async function executeActionNode(state) {
       });
 
       logs.push(`Case escalated (escalation ${escalation.id}, new=${escalation.wasInserted})`);
+      break;
+    }
+
+    case 'RESEARCH_AGENCY': {
+      // No email to send. Update case status for human review with research findings.
+      await db.updateCaseStatus(caseId, 'needs_human_review', {
+        substatus: 'agency_research_complete',
+        requires_human: true
+      });
+
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: 'RESEARCH_AGENCY',
+        status: 'SENT',
+        provider: 'none',
+        providerPayload: { reason: 'Agency research complete — awaiting human review' }
+      });
+
+      executionResult = { action: 'research_complete' };
+      await db.updateProposal(proposalId, {
+        status: 'EXECUTED',
+        executedAt: new Date()
+      });
+      logs.push('Agency research executed — case set to needs_human_review');
+      break;
+    }
+
+    case 'REFORMULATE_REQUEST': {
+      // Treat like SEND_INITIAL_REQUEST — route through email or portal executor
+      // The draft is a fresh request, not a follow-up
+      if (!draftSubject || (!draftBodyText && !draftBodyHtml)) {
+        logs.push('BLOCKED: Reformulated request has no draft content');
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null
+        });
+        return {
+          actionExecuted: false,
+          errors: ['Reformulated request missing draft content'],
+          logs
+        };
+      }
+
+      const thread = await db.getThreadByCaseId(caseId);
+      const delayMinutes = Math.floor(Math.random() * 480) + 120;
+      const delayMs = delayMinutes * 60 * 1000;
+
+      const emailResult = await emailExecutor.sendEmail({
+        to: targetEmail,
+        subject: draftSubject,
+        bodyHtml: draftBodyHtml,
+        bodyText: draftBodyText,
+        caseId,
+        proposalId,
+        runId,
+        actionType: 'REFORMULATE_REQUEST',
+        delayMs,
+        threadId: thread?.id
+      });
+
+      executionResult = {
+        action: emailResult.dryRun ? 'dry_run_skipped' : 'email_queued',
+        ...emailResult
+      };
+
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: 'REFORMULATE_REQUEST',
+        status: emailResult.dryRun ? 'DRY_RUN' : 'QUEUED',
+        provider: emailResult.dryRun ? 'dry_run' : 'email',
+        providerPayload: {
+          to: targetEmail,
+          subject: draftSubject,
+          jobId: emailResult.jobId,
+          delayMinutes,
+          dryRun: emailResult.dryRun
+        }
+      });
+
+      await db.updateProposal(proposalId, {
+        status: 'EXECUTED',
+        executedAt: new Date(),
+        emailJobId: emailResult.jobId || `dry_run_${executionKey}`
+      });
+
+      await db.updateCaseStatus(caseId, 'awaiting_response', {
+        requires_human: false,
+        pause_reason: null
+      });
+
+      logs.push(emailResult.dryRun
+        ? `[DRY_RUN] Would have sent reformulated request to ${targetEmail}`
+        : `Reformulated request queued (job ${emailResult.jobId}), scheduled in ${delayMinutes} minutes`
+      );
+      break;
+    }
+
+    case 'SUBMIT_PORTAL': {
+      // Portal submission — route to portal executor
+      logs.push('SUBMIT_PORTAL — routing to portal executor');
+
+      const portalResult = await portalExecutor.createPortalTask({
+        caseId,
+        caseData,
+        proposalId,
+        runId,
+        actionType: 'SUBMIT_PORTAL',
+        subject: draftSubject,
+        bodyText: draftBodyText,
+        bodyHtml: draftBodyHtml
+      });
+
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: 'SUBMIT_PORTAL',
+        status: 'PENDING_PORTAL',
+        provider: 'portal',
+        providerPayload: { portalTaskId: portalResult.taskId }
+      });
+
+      await db.updateProposal(proposalId, {
+        status: 'PENDING_PORTAL',
+        portalTaskId: portalResult.taskId
+      });
+
+      if (portalQueue) {
+        const portalJob = await portalQueue.add('portal-submit', {
+          caseId,
+          portalUrl: targetPortalUrl,
+          provider: caseData.portal_provider || null,
+          instructions: draftBodyText || draftBodyHtml || null
+        }, {
+          attempts: 1,
+          removeOnComplete: 100,
+          removeOnFail: 100
+        });
+        logs.push(`Portal submission queued: ${portalJob.id}`);
+      }
+
+      executionResult = { action: 'portal_task_created', ...portalResult };
+      logs.push(`Portal task created: ${portalResult.taskId}`);
       break;
     }
 

@@ -935,7 +935,7 @@ router.get('/case/:id', async (req, res) => {
             ? await db.getPortalAccountByUrl(caseData.portal_url).catch(() => null)
             : null;
 
-        const [threadResult, messagesResult, runsResult, proposalsResult, portalTasksResult] = await Promise.all([
+        const [threadResult, messagesResult, runsResult, proposalsResult, portalTasksResult, caseAgencies] = await Promise.all([
             db.query(`
                 SELECT *
                 FROM email_threads
@@ -980,7 +980,8 @@ router.get('/case/:id', async (req, res) => {
                 WHERE case_id = $1
                 ORDER BY created_at DESC
                 LIMIT 100
-            `, [caseId]).catch(() => ({ rows: [] }))
+            `, [caseId]).catch(() => ({ rows: [] })),
+            db.getCaseAgencies(caseId).catch(() => [])
         ]);
 
         res.json({
@@ -991,7 +992,8 @@ router.get('/case/:id', async (req, res) => {
             runs: runsResult.rows,
             proposals: proposalsResult.rows,
             portal_tasks: portalTasksResult.rows,
-            portal_account: portalAccount ? { email: portalAccount.email, password: portalAccount.password } : null
+            portal_account: portalAccount ? { email: portalAccount.email, password: portalAccount.password } : null,
+            case_agencies: caseAgencies
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -1710,6 +1712,22 @@ router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
             }
 
             await db.updateCase(caseId, updates);
+
+            // Create a case_agency row if research found an alternative email/portal
+            if (result.contact_email && result.contact_email !== caseData.agency_email) {
+                try {
+                    await db.addCaseAgency(caseId, {
+                        agency_name: result.agency_name || caseData.agency_name || 'Researched Agency',
+                        agency_email: result.contact_email,
+                        portal_url: updates.portal_url || null,
+                        portal_provider: updates.portal_provider || null,
+                        added_source: 'research',
+                        notes: updates.contact_research_notes || null
+                    });
+                } catch (caErr) {
+                    console.warn(`Failed to create case_agency from research: ${caErr.message}`);
+                }
+            }
 
             const parts = [];
             if (updates.portal_url) parts.push(`portal: ${updates.portal_url}`);

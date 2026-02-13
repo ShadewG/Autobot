@@ -22,11 +22,12 @@ const logger = require('../../services/logger');
 function generateProposalKey(state) {
   const {
     caseId, latestInboundMessageId, proposalActionType,
-    adjustmentCount
+    adjustmentCount, caseAgencyId
   } = state;
 
-  // Format: {case}:{message}:{action}:{attempt}
-  return `${caseId}:${latestInboundMessageId || 'scheduled'}:${proposalActionType}:${adjustmentCount || 0}`;
+  // Include caseAgencyId when targeting a specific agency
+  const agencyPart = caseAgencyId ? `:ca${caseAgencyId}` : '';
+  return `${caseId}:${latestInboundMessageId || 'scheduled'}${agencyPart}:${proposalActionType}:${adjustmentCount || 0}`;
 }
 
 /**

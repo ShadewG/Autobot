@@ -717,6 +717,63 @@ class DatabaseService {
     }
 
     // =========================================================================
+    // Users
+    // =========================================================================
+
+    async createUser({ name, email_handle }) {
+        const result = await this.query(
+            `INSERT INTO users (name, email_handle)
+             VALUES ($1, $2)
+             RETURNING *`,
+            [name, email_handle]
+        );
+        return result.rows[0];
+    }
+
+    async getUserById(id) {
+        const result = await this.query('SELECT * FROM users WHERE id = $1', [id]);
+        return result.rows[0];
+    }
+
+    async getUserByHandle(handle) {
+        const result = await this.query('SELECT * FROM users WHERE email_handle = $1', [handle]);
+        return result.rows[0];
+    }
+
+    async getUserByEmail(email) {
+        const result = await this.query('SELECT * FROM users WHERE email = $1', [email]);
+        return result.rows[0];
+    }
+
+    async listUsers(activeOnly = true) {
+        const query = activeOnly
+            ? 'SELECT * FROM users WHERE active = true ORDER BY created_at DESC'
+            : 'SELECT * FROM users ORDER BY created_at DESC';
+        const result = await this.query(query);
+        return result.rows;
+    }
+
+    async updateUser(id, updates) {
+        const allowed = ['name', 'email_handle', 'active'];
+        const entries = Object.entries(updates).filter(([key]) => allowed.includes(key));
+        if (entries.length === 0) return this.getUserById(id);
+
+        const setClauses = entries.map(([key], i) => `${key} = $${i + 2}`);
+        setClauses.push('updated_at = CURRENT_TIMESTAMP');
+        const values = [id, ...entries.map(([, v]) => v)];
+
+        const result = await this.query(
+            `UPDATE users SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
+            values
+        );
+        return result.rows[0];
+    }
+
+    async deactivateUser(id) {
+        return this.updateUser(id, { active: false });
+    }
+
+    // =========================================================================
     // Execution Idempotency (Deliverable 1)
     // =========================================================================
 
@@ -1664,6 +1721,168 @@ class DatabaseService {
             FROM phone_call_queue
         `);
         return result.rows[0];
+    }
+
+    // =========================================================================
+    // Case Agencies (Multi-agency support)
+    // =========================================================================
+
+    async addCaseAgency(caseId, agencyData) {
+        // Check if this is the first agency for this case
+        const existing = await this.query(
+            'SELECT COUNT(*) as cnt FROM case_agencies WHERE case_id = $1 AND is_active = true',
+            [caseId]
+        );
+        const isFirst = parseInt(existing.rows[0].cnt) === 0;
+        const isPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : isFirst;
+
+        const result = await this.query(`
+            INSERT INTO case_agencies (
+                case_id, agency_id, agency_name, agency_email, portal_url, portal_provider,
+                is_primary, is_active, added_source, status, notes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, $10)
+            RETURNING *
+        `, [
+            caseId,
+            agencyData.agency_id || null,
+            agencyData.agency_name,
+            agencyData.agency_email || null,
+            agencyData.portal_url || null,
+            agencyData.portal_provider || null,
+            isPrimary,
+            agencyData.added_source || 'manual',
+            agencyData.status || 'pending',
+            agencyData.notes || null
+        ]);
+
+        const caseAgency = result.rows[0];
+
+        // Sync to cases table if this is the primary
+        if (isPrimary) {
+            await this.syncPrimaryAgencyToCase(caseId, caseAgency);
+        }
+
+        return caseAgency;
+    }
+
+    async getCaseAgencies(caseId, includeInactive = false) {
+        const whereClause = includeInactive
+            ? 'WHERE case_id = $1'
+            : 'WHERE case_id = $1 AND is_active = true';
+        const result = await this.query(
+            `SELECT * FROM case_agencies ${whereClause} ORDER BY is_primary DESC, created_at ASC`,
+            [caseId]
+        );
+        return result.rows;
+    }
+
+    async getPrimaryCaseAgency(caseId) {
+        const result = await this.query(
+            'SELECT * FROM case_agencies WHERE case_id = $1 AND is_primary = true AND is_active = true LIMIT 1',
+            [caseId]
+        );
+        return result.rows[0] || null;
+    }
+
+    async getCaseAgencyById(caseAgencyId) {
+        const result = await this.query(
+            'SELECT * FROM case_agencies WHERE id = $1',
+            [caseAgencyId]
+        );
+        return result.rows[0] || null;
+    }
+
+    async switchPrimaryAgency(caseId, newPrimaryCaseAgencyId) {
+        // Transactional: clear old primary, set new, sync to cases
+        await this.query(
+            'UPDATE case_agencies SET is_primary = false, updated_at = NOW() WHERE case_id = $1 AND is_primary = true',
+            [caseId]
+        );
+        const result = await this.query(
+            'UPDATE case_agencies SET is_primary = true, updated_at = NOW() WHERE id = $1 AND case_id = $2 RETURNING *',
+            [newPrimaryCaseAgencyId, caseId]
+        );
+        const newPrimary = result.rows[0];
+        if (newPrimary) {
+            await this.syncPrimaryAgencyToCase(caseId, newPrimary);
+        }
+        return newPrimary;
+    }
+
+    async removeCaseAgency(caseAgencyId) {
+        const ca = await this.getCaseAgencyById(caseAgencyId);
+        if (!ca) return null;
+
+        // Deactivate
+        await this.query(
+            'UPDATE case_agencies SET is_active = false, updated_at = NOW() WHERE id = $1',
+            [caseAgencyId]
+        );
+
+        // If removing primary, auto-promote next active agency
+        if (ca.is_primary) {
+            const nextResult = await this.query(
+                'SELECT id FROM case_agencies WHERE case_id = $1 AND is_active = true AND id != $2 ORDER BY created_at ASC LIMIT 1',
+                [ca.case_id, caseAgencyId]
+            );
+            if (nextResult.rows[0]) {
+                await this.switchPrimaryAgency(ca.case_id, nextResult.rows[0].id);
+            }
+        }
+
+        return ca;
+    }
+
+    async updateCaseAgency(caseAgencyId, updates) {
+        if (!updates || Object.keys(updates).length === 0) {
+            return this.getCaseAgencyById(caseAgencyId);
+        }
+
+        const entries = Object.entries(updates).filter(([, v]) => v !== undefined);
+        if (entries.length === 0) return this.getCaseAgencyById(caseAgencyId);
+
+        const setClauses = entries.map(([key], i) => `${key} = $${i + 2}`);
+        setClauses.push('updated_at = NOW()');
+        const values = [caseAgencyId, ...entries.map(([, v]) => v)];
+
+        const result = await this.query(
+            `UPDATE case_agencies SET ${setClauses.join(', ')} WHERE id = $1 RETURNING *`,
+            values
+        );
+
+        // If this is the primary, sync changes to cases table
+        const updated = result.rows[0];
+        if (updated?.is_primary) {
+            await this.syncPrimaryAgencyToCase(updated.case_id, updated);
+        }
+
+        return updated;
+    }
+
+    async syncPrimaryAgencyToCase(caseId, primaryCaseAgency) {
+        await this.query(`
+            UPDATE cases SET
+                agency_name = $2,
+                agency_email = $3,
+                portal_url = $4,
+                portal_provider = $5,
+                updated_at = NOW()
+            WHERE id = $1
+        `, [
+            caseId,
+            primaryCaseAgency.agency_name,
+            primaryCaseAgency.agency_email,
+            primaryCaseAgency.portal_url,
+            primaryCaseAgency.portal_provider
+        ]);
+    }
+
+    async getThreadByCaseAgencyId(caseAgencyId) {
+        const result = await this.query(
+            'SELECT * FROM email_threads WHERE case_agency_id = $1 ORDER BY created_at DESC LIMIT 1',
+            [caseAgencyId]
+        );
+        return result.rows[0] || null;
     }
 
     // Utility

@@ -18,8 +18,30 @@ class SendGridService {
             sgMail.setApiKey(process.env.SENDGRID_API_KEY);
         }
         // Use the clean root domain (authenticated via em7571.foib-request.com)
-        this.fromEmail = 'requests@foib-request.com';
+        this.defaultFromEmail = 'requests@foib-request.com';
         this.fromName = 'FOIA Request Team';
+    }
+
+    /**
+     * Resolve the FROM email for a case.
+     * If the case has a user_id, use that user's email; otherwise fall back to default.
+     */
+    async getFromEmail(caseId) {
+        if (caseId) {
+            try {
+                const caseData = await db.query('SELECT user_id FROM cases WHERE id = $1', [caseId]);
+                const userId = caseData.rows[0]?.user_id;
+                if (userId) {
+                    const user = await db.getUserById(userId);
+                    if (user?.email && user.active) {
+                        return user.email;
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to resolve user email for case', caseId, err.message);
+            }
+        }
+        return this.defaultFromEmail;
     }
 
     /**
@@ -46,13 +68,15 @@ class SendGridService {
                 headers['X-Test-Mode'] = 'true';
             }
 
+            const fromEmail = await this.getFromEmail(caseId);
+
             const msg = {
                 to: toEmail,
                 from: {
-                    email: this.fromEmail,
+                    email: fromEmail,
                     name: this.fromName
                 },
-                replyTo: this.fromEmail,
+                replyTo: fromEmail,
                 subject: subject,
                 text: requestText,
                 html: this.formatEmailHtml(requestText),
@@ -107,13 +131,15 @@ class SendGridService {
             const messageId = this.generateMessageId();
             const threadId = originalMessageId || this.generateThreadId(caseId);
 
+            const fromEmail = await this.getFromEmail(caseId);
+
             const msg = {
                 to: toEmail,
                 from: {
-                    email: this.fromEmail,
+                    email: fromEmail,
                     name: this.fromName
                 },
-                replyTo: this.fromEmail,
+                replyTo: fromEmail,
                 subject: `Re: ${subject}`,
                 text: followUpText,
                 html: this.formatEmailHtml(followUpText),
@@ -176,13 +202,15 @@ class SendGridService {
                 referencesHeader = `${thread.rows[0].initial_message_id} ${inReplyToMessageId}`;
             }
 
+            const fromEmail = await this.getFromEmail(caseId);
+
             const msg = {
                 to: toEmail,
                 from: {
-                    email: this.fromEmail,
+                    email: fromEmail,
                     name: this.fromName
                 },
-                replyTo: this.fromEmail,
+                replyTo: fromEmail,
                 subject: replySubject,
                 text: replyText,
                 html: this.formatEmailHtml(replyText),
@@ -575,6 +603,13 @@ class SendGridService {
      */
     async findCaseForInbound({ toEmail, fromEmail, fromFull, subject, text, inReplyToId, referenceIds = [] }) {
         try {
+            // Resolve recipient user from TO address for user-scoped routing
+            const recipientUser = await db.getUserByEmail(toEmail);
+            const userId = recipientUser?.id || null;
+            if (userId) {
+                console.log(`Inbound TO ${toEmail} resolved to user #${userId} (${recipientUser.name})`);
+            }
+
             // --- Tier 1: Thread matching (In-Reply-To / References) ---
             const lookupIds = Array.from(new Set(
                 [inReplyToId, ...referenceIds].filter(Boolean)
@@ -591,8 +626,12 @@ class SendGridService {
                     [trimmedId]
                 );
                 if (messageMatch.rows.length > 0) {
+                    const matchedCase = await db.getCaseById(messageMatch.rows[0].case_id);
+                    if (userId && matchedCase && matchedCase.user_id && matchedCase.user_id !== userId) {
+                        console.warn(`Thread match case #${matchedCase.id} belongs to user ${matchedCase.user_id}, but inbound is for user ${userId} — returning match anyway (strong signal)`);
+                    }
                     console.log(`Matched inbound email by message reference: ${trimmedId}`);
-                    return await db.getCaseById(messageMatch.rows[0].case_id);
+                    return matchedCase;
                 }
 
                 const threadMatch = await db.query(
@@ -600,8 +639,12 @@ class SendGridService {
                     [trimmedId]
                 );
                 if (threadMatch.rows.length > 0) {
+                    const matchedCase = await db.getCaseById(threadMatch.rows[0].case_id);
+                    if (userId && matchedCase && matchedCase.user_id && matchedCase.user_id !== userId) {
+                        console.warn(`Thread match case #${matchedCase.id} belongs to user ${matchedCase.user_id}, but inbound is for user ${userId} — returning match anyway (strong signal)`);
+                    }
                     console.log(`Matched inbound email by thread reference: ${trimmedId}`);
-                    return await db.getCaseById(threadMatch.rows[0].case_id);
+                    return matchedCase;
                 }
             }
 
@@ -646,10 +689,13 @@ class SendGridService {
                 FROM cases
                 WHERE LOWER(agency_email) = LOWER($1)
                   AND status = ANY($2)
-                ORDER BY updated_at DESC, created_at DESC
+                  AND ($3::int IS NULL OR user_id = $3 OR user_id IS NULL)
+                ORDER BY
+                  CASE WHEN user_id = $3 THEN 0 ELSE 1 END,
+                  updated_at DESC, created_at DESC
                 LIMIT 1
                 `,
-                [fromEmail, activeStatuses]
+                [fromEmail, activeStatuses, userId]
             );
 
             if (cases.rows.length > 0) {
@@ -663,10 +709,13 @@ class SendGridService {
                 SELECT *
                 FROM cases
                 WHERE LOWER(agency_email) = LOWER($1)
-                ORDER BY updated_at DESC, created_at DESC
+                  AND ($2::int IS NULL OR user_id = $2 OR user_id IS NULL)
+                ORDER BY
+                  CASE WHEN user_id = $2 THEN 0 ELSE 1 END,
+                  updated_at DESC, created_at DESC
                 LIMIT 1
                 `,
-                [fromEmail]
+                [fromEmail, userId]
             );
 
             if (fallback.rows.length > 0) {
@@ -1192,14 +1241,15 @@ class SendGridService {
                 });
             }
 
-            // Create message record
+            // Create message record — use per-case user email if available
+            const resolvedFrom = await this.getFromEmail(messageData.case_id);
             const message = await db.createMessage({
                 thread_id: thread.id,
                 case_id: messageData.case_id,
                 message_id: messageData.message_id,
                 sendgrid_message_id: messageData.sendgrid_message_id,
                 direction: 'outbound',
-                from_email: this.fromEmail,
+                from_email: resolvedFrom,
                 to_email: messageData.to_email,
                 subject: messageData.subject,
                 body_text: messageData.body_text,
@@ -1287,14 +1337,15 @@ class SendGridService {
 
         try {
             const messageId = this.generateMessageId();
+            const fromEmail = await this.getFromEmail(caseId);
 
             const msg = {
                 to,
                 from: {
-                    email: this.fromEmail,
+                    email: fromEmail,
                     name: this.fromName
                 },
-                replyTo: this.fromEmail,
+                replyTo: fromEmail,
                 subject,
                 text,
                 html: html || this.formatEmailHtml(text),

@@ -62,6 +62,8 @@ const shadowModeRoutes = require('./routes/shadow-mode');
 const casesRoutes = require('./routes/cases');
 const monitorRoutes = require('./routes/monitor');
 const phoneCallRoutes = require('./routes/phone-calls');
+const userRoutes = require('./routes/users');
+const caseAgenciesRoutes = require('./routes/case-agencies');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
@@ -74,6 +76,8 @@ app.use('/api/shadow', shadowModeRoutes);  // Shadow Mode (Phase 7.1): review tr
 app.use('/api/cases', casesRoutes);  // Cases: /api/cases/import-notion
 app.use('/api/monitor', monitorRoutes);  // Monitor: /api/monitor/* for debugging
 app.use('/api/phone-calls', phoneCallRoutes);  // Phone Call Queue: escalation for unresponsive email cases
+app.use('/api/users', userRoutes);  // Users: multi-user email routing
+app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency support per case
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');

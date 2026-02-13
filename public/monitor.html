@@ -1071,6 +1071,17 @@
             </div>
         </div>
 
+        <!-- Agencies accordion -->
+        <div id="caseAgenciesAccordion" style="display:none;">
+            <div class="accordion-toggle" onclick="toggleAccordion(this)">
+                <h3>Agencies <span id="caseAgenciesCount" style="font-size:12px;color:#8b949e;"></span></h3>
+                <span class="acc-arrow">&#9654;</span>
+            </div>
+            <div class="accordion-body">
+                <div id="caseAgenciesPanel" style="margin-top:4px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
+            </div>
+        </div>
+
         <!-- Portal Review form (shown/hidden by JS, not an accordion) -->
         <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
             <h3 style="margin-top:0;">Portal Submission Review</h3>
@@ -2608,6 +2619,7 @@
             actionResult.style.display = 'none';
             reviewPanel.style.display = 'none';
             document.getElementById('casePortalInfoAccordion').style.display = 'none';
+            document.getElementById('caseAgenciesAccordion').style.display = 'none';
             currentCaseData = null;
             latestCasePortalTasks = [];
             currentCaseMessages = [];
@@ -2661,6 +2673,9 @@
                     portalAccordion.style.display = 'none';
                     portalInfoPanel.innerHTML = '';
                 }
+
+                // Agencies panel
+                renderAgenciesPanel(data.case_agencies || [], c);
 
                 // Render pending proposal action cards
                 const proposals = data.proposals || [];
@@ -3374,6 +3389,110 @@
             if (preview) preview.style.display = 'block';
             if (full) full.style.display = 'none';
             if (detail) detail.style.display = 'none';
+        }
+
+        // =====================================================================
+        // Agencies Panel
+        // =====================================================================
+        function renderAgenciesPanel(agencies, caseData) {
+            const accordion = document.getElementById('caseAgenciesAccordion');
+            const panel = document.getElementById('caseAgenciesPanel');
+            const countEl = document.getElementById('caseAgenciesCount');
+
+            if (!agencies || agencies.length === 0) {
+                accordion.style.display = 'none';
+                panel.innerHTML = '';
+                return;
+            }
+
+            accordion.style.display = 'block';
+            countEl.textContent = `(${agencies.length})`;
+
+            let html = `<table style="width:100%;border-collapse:collapse;font-size:12px;">`;
+            html += `<tr style="border-bottom:1px solid #30363d;">
+                <th style="text-align:left;padding:4px 6px;">Primary</th>
+                <th style="text-align:left;padding:4px 6px;">Agency</th>
+                <th style="text-align:left;padding:4px 6px;">Contact</th>
+                <th style="text-align:left;padding:4px 6px;">Status</th>
+                <th style="text-align:left;padding:4px 6px;">Source</th>
+                <th style="text-align:left;padding:4px 6px;">Actions</th>
+            </tr>`;
+
+            for (const a of agencies) {
+                const contact = a.agency_email
+                    ? `<span style="color:#58a6ff;">${escapeHtml(a.agency_email)}</span>`
+                    : a.portal_url
+                        ? `<a class="case-link" href="${escapeHtml(a.portal_url)}" target="_blank">Portal</a>`
+                        : '<span style="color:#8b949e;">none</span>';
+
+                html += `<tr style="border-bottom:1px solid #21262d;">
+                    <td style="padding:4px 6px;">
+                        <input type="radio" name="primaryAgency_${caseData.id}" ${a.is_primary ? 'checked' : ''}
+                            onchange="switchPrimaryAgency(${caseData.id}, ${a.id})" title="Set as primary">
+                    </td>
+                    <td style="padding:4px 6px;">${escapeHtml(a.agency_name)}</td>
+                    <td style="padding:4px 6px;">${contact}</td>
+                    <td style="padding:4px 6px;">${escapeHtml(a.status || 'pending')}</td>
+                    <td style="padding:4px 6px;color:#8b949e;">${escapeHtml(a.added_source || '-')}</td>
+                    <td style="padding:4px 6px;">
+                        ${!a.is_primary ? `<a href="#" onclick="removeCaseAgency(${caseData.id},${a.id});return false;" style="color:#f85149;font-size:11px;">remove</a>` : ''}
+                    </td>
+                </tr>`;
+            }
+            html += `</table>`;
+
+            // Add Agency inline form
+            html += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+                <input id="addAgencyName_${caseData.id}" placeholder="Agency name" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;width:180px;">
+                <input id="addAgencyEmail_${caseData.id}" placeholder="Email (optional)" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;width:180px;">
+                <input id="addAgencyPortal_${caseData.id}" placeholder="Portal URL (optional)" style="padding:4px 8px;font-size:12px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;width:200px;">
+                <button onclick="addCaseAgency(${caseData.id})" style="padding:4px 12px;font-size:12px;background:#238636;color:#fff;border:none;border-radius:4px;cursor:pointer;">Add Agency</button>
+            </div>`;
+
+            panel.innerHTML = html;
+        }
+
+        async function addCaseAgency(caseId) {
+            const name = document.getElementById(`addAgencyName_${caseId}`)?.value?.trim();
+            const email = document.getElementById(`addAgencyEmail_${caseId}`)?.value?.trim();
+            const portal = document.getElementById(`addAgencyPortal_${caseId}`)?.value?.trim();
+            if (!name) return alert('Agency name is required');
+
+            try {
+                const res = await fetch(`/api/cases/${caseId}/agencies`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ agency_name: name, agency_email: email || null, portal_url: portal || null })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                openCase(caseId);
+            } catch (err) {
+                alert('Failed to add agency: ' + err.message);
+            }
+        }
+
+        async function switchPrimaryAgency(caseId, caseAgencyId) {
+            try {
+                const res = await fetch(`/api/cases/${caseId}/agencies/${caseAgencyId}/set-primary`, { method: 'POST' });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                openCase(caseId);
+            } catch (err) {
+                alert('Failed to switch primary: ' + err.message);
+            }
+        }
+
+        async function removeCaseAgency(caseId, caseAgencyId) {
+            if (!confirm('Remove this agency from the case?')) return;
+            try {
+                const res = await fetch(`/api/cases/${caseId}/agencies/${caseAgencyId}`, { method: 'DELETE' });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+                openCase(caseId);
+            } catch (err) {
+                alert('Failed to remove agency: ' + err.message);
+            }
         }
 
         function escapeHtml(text) {
