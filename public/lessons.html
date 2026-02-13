@@ -5,16 +5,19 @@
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, monospace; background: #0d1117; color: #c9d1d9; padding: 20px; }
-        h1 { font-size: 18px; margin-bottom: 16px; color: #58a6ff; }
-        .controls { display: flex; gap: 10px; margin-bottom: 16px; align-items: center; }
+        h1 { font-size: 18px; margin-bottom: 4px; color: #58a6ff; }
+        .subtitle { font-size: 12px; color: #8b949e; margin-bottom: 16px; }
+        .controls { display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
         .controls select, .controls input { background: #161b22; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; font-size: 13px; }
-        .controls input { flex: 1; }
+        .controls input { flex: 1; min-width: 150px; }
         button { background: #238636; border: none; color: #fff; padding: 6px 14px; border-radius: 4px; cursor: pointer; font-size: 13px; }
         button:hover { background: #2ea043; }
         button.danger { background: #da3633; }
         button.danger:hover { background: #f85149; }
-        button.secondary { background: #30363d; }
+        button.secondary { background: #30363d; color: #c9d1d9; }
         button.secondary:hover { background: #484f58; }
+        button.ai { background: #8b5cf6; }
+        button.ai:hover { background: #a78bfa; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th { text-align: left; padding: 8px; border-bottom: 2px solid #30363d; color: #8b949e; font-weight: 600; }
         td { padding: 8px; border-bottom: 1px solid #21262d; vertical-align: top; }
@@ -28,6 +31,7 @@
         .badge.general { background: #30363d; color: #8b949e; }
         .badge.followup { background: #1f6feb33; color: #58a6ff; }
         .badge.agency { background: #23863633; color: #3fb950; }
+        .action-badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; background: #1c2128; color: #79c0ff; border: 1px solid #30363d; }
         .editable { cursor: text; min-height: 20px; padding: 4px; border-radius: 3px; }
         .editable:hover { background: #1c2128; }
         .editable:focus { background: #1c2128; outline: 1px solid #58a6ff; }
@@ -36,64 +40,181 @@
         .source-cell { width: 70px; }
         .category-cell { width: 90px; }
         .applied-cell { width: 50px; text-align: center; color: #8b949e; }
+
+        /* Add form */
         .add-form { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 16px; display: none; }
         .add-form .row { display: flex; gap: 10px; margin-bottom: 10px; }
         .add-form label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
         .add-form input, .add-form select, .add-form textarea { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; font-size: 13px; font-family: inherit; }
         .add-form textarea { resize: vertical; min-height: 60px; }
+        .help { font-size: 11px; color: #6e7681; margin-top: 2px; }
         .stats { color: #8b949e; font-size: 12px; }
         #toast { position: fixed; bottom: 20px; right: 20px; background: #238636; color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 13px; display: none; z-index: 100; }
+        #toast.error { background: #da3633; }
+
+        /* AI smart add */
+        .smart-add { background: #161b22; border: 1px solid #8b5cf6; border-radius: 6px; padding: 16px; margin-bottom: 16px; display: none; }
+        .smart-add textarea { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 10px; border-radius: 4px; font-size: 14px; font-family: inherit; resize: vertical; min-height: 70px; }
+        .smart-add textarea::placeholder { color: #484f58; }
+        .smart-add .parsed-preview { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 12px; margin-top: 10px; display: none; }
+        .smart-add .parsed-preview .field { margin-bottom: 8px; }
+        .smart-add .parsed-preview .field-label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+        .smart-add .parsed-preview .field-value { font-size: 13px; color: #c9d1d9; margin-top: 2px; }
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #484f58; border-top-color: #8b5cf6; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Trigger chip helpers */
+        .chip-row { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+        .chip { display: inline-block; padding: 2px 8px; font-size: 11px; background: #21262d; color: #8b949e; border: 1px solid #30363d; border-radius: 10px; cursor: pointer; user-select: none; }
+        .chip:hover { background: #30363d; color: #c9d1d9; }
+
+        /* Templates dropdown */
+        .template-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+        .template-bar select { background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 4px 8px; border-radius: 4px; font-size: 12px; }
+
+        /* Reference panel */
+        .ref-panel { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 16px; overflow: hidden; }
+        .ref-toggle { padding: 10px 14px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #8b949e; }
+        .ref-toggle:hover { background: #1c2128; }
+        .ref-body { display: none; padding: 0 14px 14px; }
+        .ref-body.open { display: block; }
+        .ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+        .ref-item { background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 8px 10px; }
+        .ref-item .code { font-size: 11px; color: #79c0ff; font-family: monospace; }
+        .ref-item .desc { font-size: 12px; color: #8b949e; margin-top: 2px; }
     </style>
 </head>
 <body>
     <h1>AI Decision Lessons</h1>
+    <div class="subtitle">Teach the AI how to handle specific situations. Lessons are matched by keywords and injected into decision-making.</div>
 
     <div class="controls">
-        <button onclick="toggleAddForm()">+ Add Lesson</button>
+        <button class="ai" onclick="toggleSmartAdd()">AI Smart Add</button>
+        <button class="secondary" onclick="toggleAddForm()">+ Manual Add</button>
         <select id="filterCategory" onchange="render()">
             <option value="">All categories</option>
-            <option value="denial">denial</option>
-            <option value="portal">portal</option>
-            <option value="fee">fee</option>
-            <option value="followup">followup</option>
-            <option value="agency">agency</option>
-            <option value="general">general</option>
+            <option value="denial">Denial</option>
+            <option value="portal">Portal</option>
+            <option value="fee">Fee</option>
+            <option value="followup">Follow-up</option>
+            <option value="agency">Agency</option>
+            <option value="general">General</option>
         </select>
         <select id="filterSource" onchange="render()">
             <option value="">All sources</option>
-            <option value="manual">manual</option>
-            <option value="auto">auto</option>
+            <option value="manual">Manual</option>
+            <option value="auto">Auto-learned</option>
         </select>
         <input type="text" id="searchBox" placeholder="Search lessons..." oninput="render()">
         <span class="stats" id="stats"></span>
     </div>
 
+    <!-- AI Smart Add -->
+    <div class="smart-add" id="smartAdd">
+        <label style="font-size:13px; color:#d2a8ff; font-weight:600; margin-bottom:8px; display:block;">Describe what the AI should learn (plain English)</label>
+        <textarea id="smartInput" placeholder="e.g. When an agency says they don't have the records, the AI should look up the correct agency to send to instead.&#10;&#10;e.g. If the fee is under $25, just pay it automatically.&#10;&#10;e.g. Never send more than 3 follow-ups to the same agency."></textarea>
+        <div style="display:flex; gap:8px; margin-top:10px; align-items:center;">
+            <button class="ai" onclick="parseWithAI()" id="smartParseBtn">Translate to Lesson</button>
+            <button class="secondary" onclick="toggleSmartAdd()">Cancel</button>
+            <span id="smartStatus" style="font-size:12px; color:#8b949e;"></span>
+        </div>
+        <div class="parsed-preview" id="parsedPreview">
+            <div style="font-size:12px; color:#3fb950; margin-bottom:8px; font-weight:600;">AI parsed your instruction into:</div>
+            <div class="field">
+                <div class="field-label">Category</div>
+                <div class="field-value" id="previewCategory"></div>
+            </div>
+            <div class="field">
+                <div class="field-label">Recommended Action</div>
+                <div class="field-value" id="previewAction"></div>
+            </div>
+            <div class="field">
+                <div class="field-label">Trigger Keywords</div>
+                <div class="field-value" id="previewTrigger"></div>
+            </div>
+            <div class="field">
+                <div class="field-label">Lesson (system instruction)</div>
+                <div class="field-value" id="previewLesson" style="font-style:italic;"></div>
+            </div>
+            <div class="field">
+                <div class="field-label">Priority</div>
+                <div class="field-value" id="previewPriority"></div>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:12px;">
+                <button onclick="saveParsedLesson()">Save This Lesson</button>
+                <button class="secondary" onclick="editParsedLesson()">Edit Before Saving</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Add Form -->
     <div class="add-form" id="addForm">
+        <div class="template-bar">
+            <label style="font-size:12px; color:#8b949e;">Quick start:</label>
+            <select id="templateSelect" onchange="loadTemplate()">
+                <option value="">Load a template...</option>
+                <option value="wrong_agency">Wrong agency denial -> Research correct agency</option>
+                <option value="fee_low">Low fee quote -> Auto-accept</option>
+                <option value="fee_high">High fee quote -> Negotiate</option>
+                <option value="no_response">No response -> Send follow-up</option>
+                <option value="ongoing_inv">Ongoing investigation denial -> Rebuttal</option>
+                <option value="privacy">Privacy exemption denial -> Rebuttal</option>
+                <option value="partial">Partial approval -> Accept + challenge withheld</option>
+                <option value="portal_redirect">Agency redirects to portal -> Submit via portal</option>
+                <option value="broad_request">Overly broad denial -> Reformulate</option>
+            </select>
+        </div>
         <div class="row">
-            <div style="width:120px">
+            <div style="width:130px">
                 <label>Category</label>
-                <select id="newCategory">
-                    <option value="denial">denial</option>
-                    <option value="portal">portal</option>
-                    <option value="fee">fee</option>
-                    <option value="followup">followup</option>
-                    <option value="agency">agency</option>
-                    <option value="general" selected>general</option>
+                <select id="newCategory" onchange="updateChips()">
+                    <option value="denial">Denial</option>
+                    <option value="portal">Portal</option>
+                    <option value="fee">Fee</option>
+                    <option value="followup">Follow-up</option>
+                    <option value="agency">Agency</option>
+                    <option value="general" selected>General</option>
                 </select>
+            </div>
+            <div style="width:200px">
+                <label>Recommended Action</label>
+                <select id="newAction">
+                    <option value="">-- none --</option>
+                    <option value="SEND_INITIAL_REQUEST">Send Initial Request</option>
+                    <option value="SEND_FOLLOWUP">Send Follow-up</option>
+                    <option value="SEND_REBUTTAL">Send Denial Rebuttal</option>
+                    <option value="SEND_CLARIFICATION">Send Clarification</option>
+                    <option value="RESPOND_PARTIAL_APPROVAL">Respond to Partial Approval</option>
+                    <option value="ACCEPT_FEE">Accept Fee</option>
+                    <option value="NEGOTIATE_FEE">Negotiate Fee</option>
+                    <option value="DECLINE_FEE">Decline Fee</option>
+                    <option value="ESCALATE">Escalate to Human</option>
+                    <option value="RESEARCH_AGENCY">Research Correct Agency</option>
+                    <option value="REFORMULATE_REQUEST">Reformulate Request</option>
+                    <option value="SUBMIT_PORTAL">Submit via Portal</option>
+                    <option value="CLOSE_CASE">Close Case</option>
+                    <option value="WITHDRAW">Withdraw Request</option>
+                    <option value="NONE">No Action Needed</option>
+                </select>
+                <div class="help">The action the AI should propose</div>
             </div>
             <div style="width:80px">
                 <label>Priority</label>
                 <input type="number" id="newPriority" value="7" min="1" max="10">
-            </div>
-            <div style="flex:1">
-                <label>Trigger Pattern (keywords that activate this lesson)</label>
-                <input type="text" id="newTrigger" placeholder="e.g. denial ongoing investigation privacy">
+                <div class="help">1-10 (10=highest)</div>
             </div>
         </div>
         <div class="row">
             <div style="flex:1">
-                <label>Lesson (what the AI should do)</label>
-                <textarea id="newLesson" placeholder="e.g. When agency cites ongoing investigation, propose SEND_REBUTTAL requesting segregable portions."></textarea>
+                <label>Trigger Keywords <span style="color:#6e7681">(space-separated words that activate this lesson)</span></label>
+                <input type="text" id="newTrigger" placeholder="e.g. denial ongoing investigation exempt">
+                <div class="chip-row" id="chipRow"></div>
+            </div>
+        </div>
+        <div class="row">
+            <div style="flex:1">
+                <label>Lesson <span style="color:#6e7681">(instruction for the AI — use action codes like SEND_REBUTTAL)</span></label>
+                <textarea id="newLesson" placeholder="e.g. When the agency cites an ongoing investigation exemption, propose SEND_REBUTTAL arguing for segregable non-exempt portions under state FOIA law."></textarea>
             </div>
         </div>
         <div style="display:flex;gap:8px;">
@@ -102,12 +223,38 @@
         </div>
     </div>
 
+    <!-- Action Reference Panel -->
+    <div class="ref-panel" id="refPanel">
+        <div class="ref-toggle" onclick="toggleRef()">
+            <span>Action Reference Guide</span>
+            <span id="refArrow" style="font-size:10px;">&#9654;</span>
+        </div>
+        <div class="ref-body" id="refBody">
+            <div class="ref-grid">
+                <div class="ref-item"><div class="code">SEND_REBUTTAL</div><div class="desc">Challenge a denial with legal arguments citing FOIA law</div></div>
+                <div class="ref-item"><div class="code">SEND_FOLLOWUP</div><div class="desc">Follow up when no response received within deadline</div></div>
+                <div class="ref-item"><div class="code">SEND_CLARIFICATION</div><div class="desc">Respond to agency asking for more information</div></div>
+                <div class="ref-item"><div class="code">ACCEPT_FEE</div><div class="desc">Agree to pay a quoted processing/search fee</div></div>
+                <div class="ref-item"><div class="code">NEGOTIATE_FEE</div><div class="desc">Counter-offer, request fee waiver, or narrow scope to reduce fee</div></div>
+                <div class="ref-item"><div class="code">DECLINE_FEE</div><div class="desc">Reject fee as excessive and explain reasoning</div></div>
+                <div class="ref-item"><div class="code">RESEARCH_AGENCY</div><div class="desc">Look up the correct agency/contact when sent to wrong one</div></div>
+                <div class="ref-item"><div class="code">REFORMULATE_REQUEST</div><div class="desc">Rewrite the request to be more specific or differently worded</div></div>
+                <div class="ref-item"><div class="code">RESPOND_PARTIAL_APPROVAL</div><div class="desc">Accept released records and challenge any withheld portions</div></div>
+                <div class="ref-item"><div class="code">SUBMIT_PORTAL</div><div class="desc">Submit the request through an online portal instead of email</div></div>
+                <div class="ref-item"><div class="code">ESCALATE</div><div class="desc">Flag case for human review (complex/unusual situation)</div></div>
+                <div class="ref-item"><div class="code">SEND_INITIAL_REQUEST</div><div class="desc">Send the first FOIA request to an agency</div></div>
+                <div class="ref-item"><div class="code">CLOSE_CASE</div><div class="desc">Mark case as completed / no further action needed</div></div>
+                <div class="ref-item"><div class="code">WITHDRAW</div><div class="desc">Cancel or withdraw the FOIA request</div></div>
+            </div>
+        </div>
+    </div>
+
     <table>
         <thead>
             <tr>
                 <th class="priority-cell">Pri</th>
                 <th class="category-cell">Category</th>
-                <th style="width:25%">Trigger Pattern</th>
+                <th style="width:22%">Trigger Keywords</th>
                 <th>Lesson</th>
                 <th class="source-cell">Source</th>
                 <th class="applied-cell">Used</th>
@@ -121,7 +268,59 @@
 
     <script>
         let lessons = [];
+        let parsedData = null; // Holds AI-parsed lesson before save
 
+        // =====================================================================
+        // Action labels for display
+        // =====================================================================
+        const ACTION_LABELS = {
+            'SEND_INITIAL_REQUEST': 'Send Initial Request',
+            'SEND_FOLLOWUP': 'Send Follow-up',
+            'SEND_REBUTTAL': 'Send Denial Rebuttal',
+            'SEND_CLARIFICATION': 'Send Clarification',
+            'RESPOND_PARTIAL_APPROVAL': 'Respond to Partial Approval',
+            'ACCEPT_FEE': 'Accept Fee',
+            'NEGOTIATE_FEE': 'Negotiate Fee',
+            'DECLINE_FEE': 'Decline Fee',
+            'ESCALATE': 'Escalate to Human',
+            'NONE': 'No Action',
+            'CLOSE_CASE': 'Close Case',
+            'WITHDRAW': 'Withdraw Request',
+            'RESEARCH_AGENCY': 'Research Agency',
+            'REFORMULATE_REQUEST': 'Reformulate Request',
+            'SUBMIT_PORTAL': 'Submit via Portal'
+        };
+
+        // =====================================================================
+        // Keyword chip suggestions per category
+        // =====================================================================
+        const CATEGORY_CHIPS = {
+            denial: ['no records', 'exempt', 'ongoing investigation', 'privacy', 'overly broad', 'wrong agency', 'retention expired', 'redacted', 'denied', 'not subject to'],
+            fee: ['fee quote', 'cost estimate', 'payment required', 'waiver', 'processing fee', 'search fee', 'duplication'],
+            portal: ['portal', 'online submission', 'web form', 'GovQA', 'NextRequest', 'JustFOIA'],
+            followup: ['no response', 'overdue', 'deadline', 'days since', 'reminder', 'unanswered'],
+            agency: ['wrong department', 'transferred', 'not our records', 'refer to', 'jurisdiction', 'contact instead'],
+            general: []
+        };
+
+        // =====================================================================
+        // Templates
+        // =====================================================================
+        const TEMPLATES = {
+            wrong_agency: { category: 'denial', action: 'RESEARCH_AGENCY', priority: 8, trigger: 'denial wrong agency not our records refer', lesson: 'When agency says records belong to a different department or jurisdiction, propose RESEARCH_AGENCY to find and add the correct agency contact.' },
+            fee_low: { category: 'fee', action: 'ACCEPT_FEE', priority: 7, trigger: 'fee quote low amount small', lesson: 'When fee quote is under $25, propose ACCEPT_FEE automatically. Low fees are not worth negotiating.' },
+            fee_high: { category: 'fee', action: 'NEGOTIATE_FEE', priority: 7, trigger: 'fee quote high amount large excessive', lesson: 'When fee quote exceeds $50, propose NEGOTIATE_FEE requesting fee waiver for media/public interest or narrowing scope to reduce costs.' },
+            no_response: { category: 'followup', action: 'SEND_FOLLOWUP', priority: 6, trigger: 'no response overdue deadline unanswered', lesson: 'When no response received within statutory deadline, propose SEND_FOLLOWUP citing the state FOIA response deadline and requesting status update.' },
+            ongoing_inv: { category: 'denial', action: 'SEND_REBUTTAL', priority: 8, trigger: 'denial ongoing investigation law enforcement', lesson: 'When agency cites ongoing investigation exemption, propose SEND_REBUTTAL arguing that investigation exemptions apply narrowly and requesting segregable non-exempt portions.' },
+            privacy: { category: 'denial', action: 'SEND_REBUTTAL', priority: 8, trigger: 'denial privacy exemption personal information', lesson: 'When agency cites privacy exemption, propose SEND_REBUTTAL arguing for redacted release of non-exempt portions rather than full denial.' },
+            partial: { category: 'denial', action: 'RESPOND_PARTIAL_APPROVAL', priority: 7, trigger: 'partial approval some records withheld redacted', lesson: 'When agency releases some records but withholds others, propose RESPOND_PARTIAL_APPROVAL to acknowledge receipt and challenge the specific exemptions cited for withheld portions.' },
+            portal_redirect: { category: 'portal', action: 'SUBMIT_PORTAL', priority: 7, trigger: 'portal online submission web form required', lesson: 'When agency requires submission through their online portal, propose SUBMIT_PORTAL to submit the request through the portal system.' },
+            broad_request: { category: 'denial', action: 'REFORMULATE_REQUEST', priority: 7, trigger: 'denial overly broad too vague not specific', lesson: 'When agency says request is overly broad or vague, propose REFORMULATE_REQUEST to narrow the scope with more specific date ranges, record types, or identifiers.' }
+        };
+
+        // =====================================================================
+        // Data loading
+        // =====================================================================
         async function load() {
             const res = await fetch('/api/monitor/lessons?active=false');
             const data = await res.json();
@@ -138,14 +337,22 @@
             if (cat) filtered = filtered.filter(l => l.category === cat);
             if (src) filtered = filtered.filter(l => l.source === src);
             if (q) filtered = filtered.filter(l =>
-                l.lesson.toLowerCase().includes(q) ||
-                l.trigger_pattern.toLowerCase().includes(q) ||
-                l.category.toLowerCase().includes(q)
+                (l.lesson || '').toLowerCase().includes(q) ||
+                (l.trigger_pattern || '').toLowerCase().includes(q) ||
+                (l.category || '').toLowerCase().includes(q)
             );
 
             document.getElementById('stats').textContent = `${filtered.length} of ${lessons.length} lessons`;
 
-            document.getElementById('rows').innerHTML = filtered.map(l => `
+            document.getElementById('rows').innerHTML = filtered.map(l => {
+                // Extract action code from lesson text
+                const actionMatch = (l.lesson || '').match(/\b(SEND_REBUTTAL|SEND_FOLLOWUP|SEND_CLARIFICATION|SEND_INITIAL_REQUEST|RESPOND_PARTIAL_APPROVAL|ACCEPT_FEE|NEGOTIATE_FEE|DECLINE_FEE|ESCALATE|RESEARCH_AGENCY|REFORMULATE_REQUEST|SUBMIT_PORTAL|CLOSE_CASE|WITHDRAW|NONE)\b/);
+                const actionCode = actionMatch ? actionMatch[1] : null;
+                const actionBadge = actionCode
+                    ? `<span class="action-badge" title="${actionCode}">${ACTION_LABELS[actionCode] || actionCode}</span> `
+                    : '';
+
+                return `
                 <tr style="${l.active ? '' : 'opacity:0.4;'}">
                     <td class="priority-cell">
                         <span class="editable" contenteditable="true"
@@ -160,6 +367,7 @@
                             onblur="save(${l.id}, 'trigger_pattern', this.textContent)">${esc(l.trigger_pattern)}</span>
                     </td>
                     <td>
+                        ${actionBadge}
                         <span class="editable" contenteditable="true"
                             onblur="save(${l.id}, 'lesson', this.textContent)">${esc(l.lesson)}</span>
                     </td>
@@ -169,8 +377,8 @@
                         <button class="secondary" style="padding:3px 8px;font-size:11px;" onclick="toggleActive(${l.id}, ${l.active})">${l.active ? 'Disable' : 'Enable'}</button>
                         <button class="danger" style="padding:3px 8px;font-size:11px;" onclick="del(${l.id})">Del</button>
                     </td>
-                </tr>
-            `).join('');
+                </tr>`;
+            }).join('');
         }
 
         function esc(s) {
@@ -179,6 +387,9 @@
             return d.innerHTML;
         }
 
+        // =====================================================================
+        // CRUD
+        // =====================================================================
         async function save(id, field, value) {
             const body = {};
             body[field] = value;
@@ -187,7 +398,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             });
-            // Update local cache
             const l = lessons.find(x => x.id === id);
             if (l) l[field] = value;
             toast('Saved');
@@ -205,9 +415,32 @@
             await load();
         }
 
+        // =====================================================================
+        // Manual add form
+        // =====================================================================
         function toggleAddForm() {
             const f = document.getElementById('addForm');
+            const s = document.getElementById('smartAdd');
+            s.style.display = 'none';
             f.style.display = f.style.display === 'none' ? 'block' : 'none';
+            if (f.style.display === 'block') updateChips();
+        }
+
+        function updateChips() {
+            const cat = document.getElementById('newCategory').value;
+            const chips = CATEGORY_CHIPS[cat] || [];
+            const row = document.getElementById('chipRow');
+            row.innerHTML = chips.map(c =>
+                `<span class="chip" onclick="appendChip('${c}')">${c}</span>`
+            ).join('');
+        }
+
+        function appendChip(text) {
+            const input = document.getElementById('newTrigger');
+            const current = input.value.trim();
+            if (!current.includes(text)) {
+                input.value = current ? current + ' ' + text : text;
+            }
         }
 
         async function addLesson() {
@@ -218,7 +451,7 @@
                 priority: parseInt(document.getElementById('newPriority').value) || 7
             };
             if (!body.trigger_pattern || !body.lesson) {
-                alert('Trigger pattern and lesson are required');
+                alert('Trigger keywords and lesson are required');
                 return;
             }
             await fetch('/api/monitor/lessons', {
@@ -228,16 +461,141 @@
             });
             document.getElementById('newTrigger').value = '';
             document.getElementById('newLesson').value = '';
-            toggleAddForm();
+            document.getElementById('addForm').style.display = 'none';
             toast('Lesson added');
             await load();
         }
 
-        function toast(msg) {
+        // =====================================================================
+        // Templates
+        // =====================================================================
+        function loadTemplate() {
+            const sel = document.getElementById('templateSelect');
+            const key = sel.value;
+            if (!key || !TEMPLATES[key]) return;
+
+            const t = TEMPLATES[key];
+            document.getElementById('newCategory').value = t.category;
+            document.getElementById('newAction').value = t.action;
+            document.getElementById('newPriority').value = t.priority;
+            document.getElementById('newTrigger').value = t.trigger;
+            document.getElementById('newLesson').value = t.lesson;
+            updateChips();
+            sel.value = '';
+
+            // Ensure manual form is visible
+            document.getElementById('addForm').style.display = 'block';
+            document.getElementById('smartAdd').style.display = 'none';
+        }
+
+        // =====================================================================
+        // AI Smart Add
+        // =====================================================================
+        function toggleSmartAdd() {
+            const s = document.getElementById('smartAdd');
+            const f = document.getElementById('addForm');
+            f.style.display = 'none';
+            s.style.display = s.style.display === 'none' ? 'block' : 'none';
+            if (s.style.display === 'block') {
+                document.getElementById('smartInput').focus();
+                document.getElementById('parsedPreview').style.display = 'none';
+            }
+        }
+
+        async function parseWithAI() {
+            const text = document.getElementById('smartInput').value.trim();
+            if (!text) { toast('Type a description first', true); return; }
+
+            const btn = document.getElementById('smartParseBtn');
+            const status = document.getElementById('smartStatus');
+            btn.disabled = true;
+            status.innerHTML = '<span class="spinner"></span> Translating...';
+
+            try {
+                const res = await fetch('/api/monitor/lessons/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error);
+
+                parsedData = data.parsed;
+
+                // Show preview
+                document.getElementById('previewCategory').innerHTML = `<span class="badge ${parsedData.category}">${parsedData.category}</span>`;
+                const actionCode = parsedData.recommended_action || '';
+                document.getElementById('previewAction').innerHTML = actionCode
+                    ? `<span class="action-badge">${ACTION_LABELS[actionCode] || actionCode}</span> <span style="color:#6e7681;font-size:11px;">(${actionCode})</span>`
+                    : '<span style="color:#6e7681;">none</span>';
+                document.getElementById('previewTrigger').textContent = parsedData.trigger_pattern || '';
+                document.getElementById('previewLesson').textContent = parsedData.lesson || '';
+                document.getElementById('previewPriority').textContent = parsedData.priority || 7;
+                document.getElementById('parsedPreview').style.display = 'block';
+                status.textContent = '';
+            } catch (err) {
+                status.textContent = '';
+                toast('AI parse failed: ' + err.message, true);
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function saveParsedLesson() {
+            if (!parsedData) return;
+            const body = {
+                category: parsedData.category,
+                trigger_pattern: parsedData.trigger_pattern,
+                lesson: parsedData.lesson,
+                priority: parsedData.priority || 7
+            };
+            await fetch('/api/monitor/lessons', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            document.getElementById('smartInput').value = '';
+            document.getElementById('parsedPreview').style.display = 'none';
+            document.getElementById('smartAdd').style.display = 'none';
+            parsedData = null;
+            toast('Lesson saved');
+            await load();
+        }
+
+        function editParsedLesson() {
+            if (!parsedData) return;
+            // Transfer to manual form
+            document.getElementById('newCategory').value = parsedData.category || 'general';
+            document.getElementById('newAction').value = parsedData.recommended_action || '';
+            document.getElementById('newPriority').value = parsedData.priority || 7;
+            document.getElementById('newTrigger').value = parsedData.trigger_pattern || '';
+            document.getElementById('newLesson').value = parsedData.lesson || '';
+            updateChips();
+
+            document.getElementById('smartAdd').style.display = 'none';
+            document.getElementById('addForm').style.display = 'block';
+            parsedData = null;
+        }
+
+        // =====================================================================
+        // Reference panel
+        // =====================================================================
+        function toggleRef() {
+            const body = document.getElementById('refBody');
+            const arrow = document.getElementById('refArrow');
+            body.classList.toggle('open');
+            arrow.textContent = body.classList.contains('open') ? '\u25BC' : '\u25B6';
+        }
+
+        // =====================================================================
+        // Toast
+        // =====================================================================
+        function toast(msg, isError = false) {
             const t = document.getElementById('toast');
             t.textContent = msg;
+            t.className = isError ? 'error' : '';
             t.style.display = 'block';
-            setTimeout(() => t.style.display = 'none', 2000);
+            setTimeout(() => t.style.display = 'none', 2500);
         }
 
         load();
