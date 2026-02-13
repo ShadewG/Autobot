@@ -1180,10 +1180,16 @@
             </div>
         </div>
 
-        <!-- Correspondence button (opens thread drawer) -->
-        <div class="accordion-toggle" onclick="openCorrespondenceDrawer()" style="cursor:pointer;">
-            <h3>View Correspondence <span class="acc-count" id="caseInspectorMsgCount"></span></h3>
-            <span class="acc-arrow" style="transform:none;">&#9654;</span>
+        <!-- Correspondence section: recent messages + button to open full thread -->
+        <div class="accordion-toggle open" onclick="toggleAccordion(this)">
+            <h3>Correspondence <span class="acc-count" id="caseInspectorMsgCount"></span></h3>
+            <span class="acc-arrow">&#9654;</span>
+        </div>
+        <div class="accordion-body open">
+            <div id="caseInspectorMessages" class="case-list"></div>
+            <div style="padding:6px 0;">
+                <button class="drawer-btn primary" onclick="openCorrespondenceDrawer()" style="width:100%;text-align:center;padding:8px;">View Full Thread</button>
+            </div>
         </div>
 
         <!-- Runs accordion (collapsed by default) -->
@@ -2689,7 +2695,6 @@
             const inspector = document.getElementById('caseInspector');
             const title = document.getElementById('caseInspectorTitle');
             const grid = document.getElementById('caseInspectorGrid');
-            // caseInspectorMessages removed — correspondence now in thread drawer
             const runList = document.getElementById('caseInspectorRuns');
             const proposalList = document.getElementById('caseInspectorProposals');
             const proposalCards = document.getElementById('caseInspectorProposalCards');
@@ -2716,6 +2721,7 @@
             expandedCaseId = caseId;
             title.textContent = `Case #${caseId}`;
             grid.innerHTML = '<div class="cell">Loading...</div>';
+            document.getElementById('caseInspectorMessages').innerHTML = '<div class="timestamp">Loading...</div>';
             runList.innerHTML = '<div class="timestamp">Loading...</div>';
             proposalList.innerHTML = '<div class="timestamp">Loading...</div>';
             proposalCards.innerHTML = '';
@@ -2807,8 +2813,26 @@
 
                 actions.innerHTML = actionsHtml;
 
-                // Correspondence count (thread view opens in drawer)
+                // Correspondence inline list + count
                 const messages = data.messages || [];
+                const msgList = document.getElementById('caseInspectorMessages');
+                let msgHtml = '';
+                const latestAnalysis = findLatestAnalysisSummary(messages, c);
+                if (latestAnalysis) {
+                    msgHtml += `<div class="ai-case-summary">
+                        <div class="summary-label">AI Case Summary</div>
+                        <div class="summary-text">${escapeHtml(latestAnalysis)}</div>
+                    </div>`;
+                }
+                msgHtml += messages.length
+                    ? messages.map(m => `
+                        <div class="case-list-item">
+                            <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
+                            <div>${truncate(m.subject || '-', 120)}</div>
+                        </div>
+                    `).join('')
+                    : '<div class="timestamp">No correspondence yet</div>';
+                msgList.innerHTML = msgHtml;
                 document.getElementById('caseInspectorMsgCount').textContent = messages.length ? `(${messages.length})` : '';
 
                 const runs = data.runs || [];
@@ -2834,6 +2858,7 @@
                 document.getElementById('caseInspectorProposalCount').textContent = otherProposals.length ? `(${otherProposals.length})` : '';
             } catch (error) {
                 grid.innerHTML = `<div class="cell">Error: ${error.message || error}</div>`;
+                document.getElementById('caseInspectorMessages').innerHTML = '<div class="timestamp">-</div>';
                 runList.innerHTML = '<div class="timestamp">-</div>';
                 proposalList.innerHTML = '<div class="timestamp">-</div>';
                 proposalCards.innerHTML = '';
@@ -3345,6 +3370,7 @@
         // =====================================================================
         function openCorrespondenceDrawer() {
             const messages = currentCaseMessages || [];
+            const proposals = currentCaseProposals || [];
             const c = currentCaseData;
             let html = '';
 
@@ -3357,6 +3383,63 @@
                 </div>`;
             }
 
+            // Pending proposals — proposed response with action buttons
+            const pending = proposals.filter(p => p.status === 'PENDING_APPROVAL');
+            if (pending.length) {
+                html += `<div style="margin-bottom:16px;">`;
+                for (const p of pending) {
+                    const actionLabel = String(p.action_type || 'action').replace(/_/g, ' ');
+                    const isInitial = String(p.action_type) === 'SEND_INITIAL_REQUEST';
+                    const isHybrid = !!p.portal_url && !!p.agency_email;
+                    const showRouteApprove = isInitial && isHybrid;
+                    const hasDraft = !!(p.draft_subject || p.draft_body_text);
+                    const reasoningText = formatReasoning(p.reasoning);
+
+                    html += `<div class="thread-message thread-outbound" style="border-left-color:#f0883e;background:#1a1e2a;">`;
+                    html += `<div class="thread-msg-header">`;
+                    html += `<span><span class="badge agent">proposed</span> <span class="pac-badge" style="font-size:10px;">${actionLabel}</span> · Proposal #${p.id}</span>`;
+                    html += `<span>Confidence: ${p.confidence || '-'}</span>`;
+                    html += `</div>`;
+
+                    if (reasoningText) {
+                        html += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;font-style:italic;">${escapeHtml(truncate(reasoningText, 300))}</div>`;
+                    }
+
+                    if (hasDraft) {
+                        if (p.draft_subject) {
+                            html += `<div class="thread-msg-subject">${escapeHtml(p.draft_subject)}</div>`;
+                        }
+                        if (p.draft_body_text) {
+                            html += `<div class="thread-msg-body">${escapeHtml(p.draft_body_text)}</div>`;
+                        }
+                    } else {
+                        html += `<div style="color:#f0883e;font-size:12px;padding:8px 0;">Draft not yet generated</div>`;
+                    }
+
+                    // Action buttons
+                    html += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">`;
+                    if (hasDraft) {
+                        html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>{closeCorrespondenceDrawer();openCase(${c.id})})" style="padding:6px 16px;font-size:12px;">Approve & Send</button>`;
+                        if (showRouteApprove) {
+                            html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>{closeCorrespondenceDrawer();openCase(${c.id})})" style="font-size:11px;">Approve Email</button>`;
+                            html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>{closeCorrespondenceDrawer();openCase(${c.id})})" style="font-size:11px;">Approve Portal</button>`;
+                        }
+                        html += `<button class="drawer-btn" onclick="adjustProposal(${p.id}).then(()=>{closeCorrespondenceDrawer();openCase(${c.id})})" style="font-size:11px;">Adjust</button>`;
+                    } else {
+                        html += `<button class="drawer-btn primary" onclick="generateDraft(${p.id},${c.id}).then(()=>{closeCorrespondenceDrawer();openCase(${c.id})})" style="font-size:11px;">Generate Draft</button>`;
+                    }
+                    html += `<button class="drawer-btn" onclick="dismissProposal(${p.id}).then(()=>{closeCorrespondenceDrawer();openCase(${c.id})})" style="font-size:11px;color:#f85149;">Dismiss</button>`;
+                    html += `</div>`;
+
+                    // Alternative actions
+                    if (c) html += renderAlternativeButtons(p.action_type, p.id, c.id);
+
+                    html += `</div>`;
+                }
+                html += `</div>`;
+            }
+
+            // Message thread
             if (!messages.length) {
                 html += '<div class="timestamp" style="padding:20px;">No correspondence yet</div>';
             } else {
