@@ -2827,7 +2827,7 @@
                     </div>`;
                 }
                 msgHtml += messages.length
-                    ? messages.map(m => `
+                    ? [...messages].reverse().map(m => `
                         <div class="case-list-item">
                             <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
                             <div>${truncate(m.subject || '-', 120)}</div>
