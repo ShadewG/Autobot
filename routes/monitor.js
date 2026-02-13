@@ -785,6 +785,37 @@ router.get('/live-overview', async (req, res) => {
 });
 
 /**
+ * GET /api/monitor/daily-stats
+ * Today's activity summary for the daily stats bar.
+ */
+router.get('/daily-stats', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE event_type = 'proposal_approved' AND created_at >= CURRENT_DATE) AS approved_today,
+                COUNT(*) FILTER (WHERE event_type = 'proposal_dismissed' AND created_at >= CURRENT_DATE) AS dismissed_today,
+                COUNT(*) FILTER (WHERE event_type IN ('status_change') AND created_at >= CURRENT_DATE AND metadata->>'new_status' IN ('completed', 'records_received', 'closed')) AS completed_today,
+                COUNT(*) FILTER (WHERE event_type = 'inbound_received' AND created_at >= CURRENT_DATE) AS inbound_today,
+                COUNT(*) FILTER (WHERE event_type = 'outbound_sent' AND created_at >= CURRENT_DATE) AS sent_today
+            FROM activity_log
+        `);
+        const row = result.rows[0] || {};
+        res.json({
+            success: true,
+            stats: {
+                approved_today: parseInt(row.approved_today || 0, 10),
+                dismissed_today: parseInt(row.dismissed_today || 0, 10),
+                completed_today: parseInt(row.completed_today || 0, 10),
+                inbound_today: parseInt(row.inbound_today || 0, 10),
+                sent_today: parseInt(row.sent_today || 0, 10)
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /api/monitor/cases
  * Case-centric monitoring list with progress signals.
  */
@@ -792,13 +823,23 @@ router.get('/cases', async (req, res) => {
     try {
         const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
         const status = req.query.status || null;
+        const userIdParam = req.query.user_id;
         const params = [];
-        let whereClause = '';
+        const whereParts = [];
 
         if (status) {
             params.push(status);
-            whereClause = `WHERE c.status = $1`;
+            whereParts.push(`c.status = $${params.length}`);
         }
+
+        if (userIdParam === 'unowned') {
+            whereParts.push('c.user_id IS NULL');
+        } else if (userIdParam && !isNaN(parseInt(userIdParam))) {
+            params.push(parseInt(userIdParam));
+            whereParts.push(`c.user_id = $${params.length}`);
+        }
+
+        const whereClause = whereParts.length > 0 ? 'WHERE ' + whereParts.join(' AND ') : '';
 
         params.push(limit);
         const limitParam = `$${params.length}`;
@@ -815,6 +856,9 @@ router.get('/cases', async (req, res) => {
                 c.portal_url,
                 c.created_at,
                 c.updated_at,
+                c.user_id,
+                u.name AS user_name,
+                u.email_handle AS user_handle,
                 msg_counts.total_messages,
                 msg_counts.inbound_messages,
                 msg_counts.outbound_messages,
@@ -825,6 +869,7 @@ router.get('/cases', async (req, res) => {
                 active_run.status AS active_run_status,
                 active_run.trigger_type AS active_run_trigger_type
             FROM cases c
+            LEFT JOIN users u ON c.user_id = u.id
             LEFT JOIN LATERAL (
                 SELECT
                     COUNT(*)::int AS total_messages,
@@ -1157,8 +1202,8 @@ router.post('/proposals/:id/approve', express.json(), async (req, res) => {
 router.post('/proposals/:id/decision', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
-        const { action, instruction = null, reason = null, route_mode = null } = req.body || {};
-        const result = await processProposalDecision(proposalId, action, { instruction, reason, route_mode });
+        const { action, instruction = null, reason = null, dismiss_reason = null, route_mode = null } = req.body || {};
+        const result = await processProposalDecision(proposalId, action, { instruction, reason: reason || dismiss_reason, route_mode });
         res.status(action === 'DISMISS' ? 200 : 202).json(result);
     } catch (error) {
         const status = error.status || 500;

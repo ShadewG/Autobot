@@ -743,6 +743,117 @@
         }
         .btn-pd-contact:hover { background: #8957e5; }
         .btn-pd-contact:disabled { opacity: .5; cursor: not-allowed; }
+
+        /* Status filter chips */
+        .status-chips {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-bottom: 8px;
+        }
+        .status-chip {
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #8b949e;
+            transition: all 0.15s;
+        }
+        .status-chip:hover { border-color: #58a6ff; color: #c9d1d9; }
+        .status-chip.active { background: #1f6feb; color: white; border-color: #1f6feb; }
+        .status-chip .chip-count {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 0 5px;
+            border-radius: 8px;
+            font-size: 10px;
+            background: rgba(255,255,255,.15);
+        }
+
+        /* Case age badges */
+        .age-badge {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        .age-badge.fresh { background: #23863620; color: #3fb950; border: 1px solid #23863640; }
+        .age-badge.aging { background: #d2992220; color: #d29922; border: 1px solid #d2992240; }
+        .age-badge.stale { background: #f8514920; color: #f85149; border: 1px solid #f8514940; }
+
+        /* Daily summary stats bar */
+        .daily-stats-bar {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 8px 16px;
+            margin-bottom: 12px;
+            font-size: 12px;
+            color: #8b949e;
+            flex-wrap: wrap;
+        }
+        .daily-stats-bar .ds-label { font-weight: 600; color: #58a6ff; }
+        .daily-stats-bar .ds-value { font-weight: 700; }
+        .daily-stats-bar .ds-value.green { color: #3fb950; }
+        .daily-stats-bar .ds-value.orange { color: #f0883e; }
+        .daily-stats-bar .ds-value.red { color: #f85149; }
+        .daily-stats-bar .ds-value.blue { color: #58a6ff; }
+
+        /* Quick dismiss dropdown */
+        .dismiss-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .dismiss-dropdown-menu {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 4px 0;
+            min-width: 200px;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,.4);
+            display: none;
+        }
+        .dismiss-dropdown-menu.open { display: block; }
+        .dismiss-dropdown-item {
+            padding: 6px 12px;
+            font-size: 12px;
+            color: #c9d1d9;
+            cursor: pointer;
+            border: none;
+            background: none;
+            width: 100%;
+            text-align: left;
+        }
+        .dismiss-dropdown-item:hover { background: #21262d; color: #f85149; }
+
+        /* Keyboard shortcut hint */
+        .kbd-hint {
+            display: inline-block;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 10px;
+            background: #21262d;
+            color: #8b949e;
+            border: 1px solid #30363d;
+            font-family: ui-monospace, monospace;
+            margin-left: 4px;
+        }
+
+        /* Refresh paused indicator */
+        .refresh-paused {
+            color: #d29922 !important;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -750,6 +861,10 @@
     <div class="topline">
         <h1>System Monitor</h1>
         <div class="runtime-badges">
+            <select id="userFilter" onchange="onUserFilterChange()" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;">
+                <option value="">All Users</option>
+                <option value="unowned">Unowned</option>
+            </select>
             <span class="runtime-badge live" id="runtimeMode">Execution: LIVE</span>
             <span class="runtime-badge" id="shadowMode">Shadow: OFF</span>
             <span class="runtime-badge" id="queueBadge">Queue: -</span>
@@ -852,6 +967,15 @@
         </div>
     </div>
 
+    <div class="daily-stats-bar" id="dailyStatsBar" style="display:none;">
+        <span class="ds-label">Today:</span>
+        <span><span class="ds-value green" id="dsTodayApproved">0</span> approved</span>
+        <span><span class="ds-value orange" id="dsTodayDismissed">0</span> dismissed</span>
+        <span><span class="ds-value blue" id="dsTodayCompleted">0</span> cases completed</span>
+        <span><span class="ds-value" id="dsTodayInbound" style="color:#3fb950;">0</span> inbound</span>
+        <span><span class="ds-value" id="dsTodaySent" style="color:#f0883e;">0</span> sent</span>
+    </div>
+
     <div class="tabs">
         <div class="tab active" data-panel="all">All Messages</div>
         <div class="tab" data-panel="cases">All Cases</div>
@@ -899,6 +1023,7 @@
     </div>
 
         <div id="cases" class="panel">
+            <div id="caseStatusChips" class="status-chips"></div>
             <div style="margin-bottom:8px;">
                 <input type="text" id="caseSearchInput" placeholder="Search cases by name, agency, status..." oninput="filterCases()" style="width:100%;max-width:400px;padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;box-sizing:border-box;">
             </div>
@@ -911,6 +1036,7 @@
                         <th>Agency</th>
                         <th>Contact</th>
                         <th>Status</th>
+                        <th>Age</th>
                         <th>Pending</th>
                         <th>Messages</th>
                         <th>Active Run</th>
@@ -1417,6 +1543,43 @@
 
         let caseCache = [];
 
+        // =========================================================================
+        // User filter
+        // =========================================================================
+        let currentUserId = localStorage.getItem('monitorUserFilter') || '';
+
+        async function loadUserFilterOptions() {
+            try {
+                const res = await fetch('/api/users');
+                const data = await res.json();
+                if (!data.success) return;
+                const select = document.getElementById('userFilter');
+                // Remove old user options (keep All + Unowned)
+                while (select.options.length > 2) select.remove(2);
+                (data.users || []).forEach(u => {
+                    const opt = document.createElement('option');
+                    opt.value = String(u.id);
+                    opt.textContent = u.name;
+                    select.appendChild(opt);
+                });
+                // Restore saved selection
+                if (currentUserId) select.value = currentUserId;
+            } catch (_) {}
+        }
+
+        function onUserFilterChange() {
+            const select = document.getElementById('userFilter');
+            currentUserId = select.value;
+            localStorage.setItem('monitorUserFilter', currentUserId);
+            loadData();
+        }
+
+        function buildCasesUrl() {
+            let url = '/api/monitor/cases?limit=300';
+            if (currentUserId) url += `&user_id=${encodeURIComponent(currentUserId)}`;
+            return url;
+        }
+
         // Load all data
         async function loadData() {
             try {
@@ -1425,7 +1588,7 @@
                     fetch('/api/monitor/inbound?limit=100'),
                     fetch('/api/monitor/unmatched?limit=50'),
                     fetch('/api/monitor/live-overview?limit=25'),
-                    fetch('/api/monitor/cases?limit=300')
+                    fetch(buildCasesUrl())
                 ]);
 
                 const monitor = await monitorRes.json();
@@ -1951,24 +2114,33 @@
             }
 
             if (!payload || !payload.success) {
-                rowsEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#f85149">Failed to load cases</td></tr>';
+                rowsEl.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#f85149">Failed to load cases</td></tr>';
                 expandedCaseId = null;
                 return;
             }
             caseCache = payload.cases || [];
             if (!caseCache.length) {
-                rowsEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#8b949e">No cases found</td></tr>';
+                rowsEl.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#8b949e">No cases found</td></tr>';
                 expandedCaseId = null;
                 return;
             }
 
-            rowsEl.innerHTML = caseCache.map(c => `
+            // Build status chips
+            renderStatusChips(caseCache);
+
+            // Filter by active status chip
+            const filtered = activeStatusFilter
+                ? caseCache.filter(c => normalizeStatus(c.status) === activeStatusFilter)
+                : caseCache;
+
+            rowsEl.innerHTML = filtered.map(c => `
                 <tr class="clickable-row" data-case-id="${c.id}" onclick="toggleCase(${c.id})">
                     <td class="timestamp">${relativeTime(c.updated_at)}</td>
-                    <td><a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}</td>
+                    <td><a class="case-link" href="#" onclick="event.stopPropagation();toggleCase(${c.id});return false;">#${c.id}</a> ${truncate(c.case_name, 40)}${c.user_handle ? ` <span style="color:#8b949e;font-size:10px;">${c.user_handle}</span>` : ''}</td>
                     <td>${truncate(c.agency_name, 30)}</td>
                     <td>${contactIndicator(c)}</td>
                     <td>${truncate(c.status || '-', 24)}</td>
+                    <td>${caseAgeBadge(c)}</td>
                     <td>${c.pending_approvals || 0}</td>
                     <td>${c.total_messages || 0} (in ${c.inbound_messages || 0} / out ${c.outbound_messages || 0})</td>
                     <td>${c.active_run_id ? `#${c.active_run_id} ${c.active_run_status}` : '-'}</td>
@@ -2039,7 +2211,7 @@
                     <div style="margin-top:6px;display:flex;gap:6px;">
                         <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
                         <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
-                        <button class="drawer-btn" onclick="dismissProposal(${p.id})" style="color:#f85149;">Dismiss</button>
+                        <button class="drawer-btn" onclick="quickDismissFromOps(event, ${p.id})" style="color:#f85149;">Dismiss &#9662;</button>
                     </div>
                 </div>`;
             });
@@ -3038,6 +3210,8 @@
                 }
                 appendLog(`${action} accepted for proposal ${proposalId} (HTTP ${res.status}).`);
                 if (data.message) appendLog(`Decision response: ${data.message}`);
+                const toastType = action === 'APPROVE' ? 'success' : action === 'DISMISS' ? 'warning' : 'info';
+                showToast(toastType, `${action} proposal #${proposalId}${data.message ? ': ' + data.message : ''}`);
                 if (data.run?.id) {
                     currentRunId = data.run.id;
                     pollRunStatus(currentRunId);
@@ -3061,9 +3235,55 @@
             return proposeDecision(proposalId, 'ADJUST');
         }
 
-        async function dismissProposal(proposalId) {
+        async function dismissProposal(proposalId, reason) {
+            if (reason) {
+                appendLog(`DISMISS proposal ${proposalId} (reason: ${reason})...`);
+                try {
+                    const payload = { action: 'DISMISS', dismiss_reason: reason };
+                    const res = await fetch(`/api/monitor/proposals/${proposalId}/decision`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) throw new Error(data.error || `Decision failed (${res.status})`);
+                    appendLog(`DISMISS accepted for proposal ${proposalId}.`);
+                    showToast('warning', `Dismissed proposal #${proposalId}: ${reason}`);
+                    if (currentMessage) await loadProposals(currentMessage.id);
+                    setTimeout(loadData, 1000);
+                } catch (err) {
+                    appendLog(`Decision error: ${err.message || err}`);
+                    showToast('error', `Dismiss failed: ${err.message}`);
+                }
+                return;
+            }
             return proposeDecision(proposalId, 'DISMISS');
         }
+
+        function showDismissMenu(proposalId, btnEl) {
+            // Close any existing menus
+            document.querySelectorAll('.dismiss-dropdown-menu.open').forEach(m => m.classList.remove('open'));
+            const menu = document.getElementById(`dismiss-menu-${proposalId}`);
+            if (menu) {
+                menu.classList.toggle('open');
+                // Close on outside click
+                const closeHandler = (e) => {
+                    if (!menu.contains(e.target) && e.target !== btnEl) {
+                        menu.classList.remove('open');
+                        document.removeEventListener('click', closeHandler);
+                    }
+                };
+                setTimeout(() => document.addEventListener('click', closeHandler), 0);
+            }
+        }
+
+        const DISMISS_REASONS = [
+            'Wrong action',
+            'Already handled',
+            'Duplicate',
+            'Bad timing',
+            'Other'
+        ];
 
         function renderProposalCards(proposals, caseData) {
             const pending = (proposals || []).filter(p => p.status === 'PENDING_APPROVAL');
@@ -3102,7 +3322,13 @@
                 // Action buttons
                 html += `<div class="pac-actions">`;
                 html += `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Review & Confirm</button>`;
-                html += `<button class="drawer-btn" onclick="dismissProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="color:#f85149;">Dismiss</button>`;
+                html += `<div class="dismiss-dropdown" style="display:inline-block;">`;
+                html += `<button class="drawer-btn" onclick="showDismissMenu(${p.id}, this)" style="color:#f85149;">Dismiss &#9662;</button>`;
+                html += `<div class="dismiss-dropdown-menu" id="dismiss-menu-${p.id}">`;
+                for (const reason of DISMISS_REASONS) {
+                    html += `<button class="dismiss-dropdown-item" onclick="dismissProposal(${p.id},'${reason}').then(()=>openCase(${caseData.id}))">${reason}</button>`;
+                }
+                html += `</div></div>`;
                 html += `</div>`;
 
                 // Expanded detail (hidden by default)
@@ -3296,11 +3522,250 @@
             }, 90000);
         }
 
-        // Initial load + fixed 10s auto-refresh
+        // === Quick dismiss from ops panel ===
+        function quickDismissFromOps(event, proposalId) {
+            event.stopPropagation();
+            // Create a small popup menu near the button
+            const existing = document.getElementById('ops-dismiss-menu');
+            if (existing) existing.remove();
+            const menu = document.createElement('div');
+            menu.id = 'ops-dismiss-menu';
+            menu.className = 'dismiss-dropdown-menu open';
+            menu.style.position = 'fixed';
+            menu.style.left = event.clientX + 'px';
+            menu.style.top = (event.clientY - 10) + 'px';
+            menu.style.bottom = 'auto';
+            menu.innerHTML = DISMISS_REASONS.map(r =>
+                `<button class="dismiss-dropdown-item" onclick="dismissProposal(${proposalId},'${r}').then(()=>loadData());this.closest('.dismiss-dropdown-menu').remove();">${r}</button>`
+            ).join('');
+            document.body.appendChild(menu);
+            setTimeout(() => {
+                const handler = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', handler); } };
+                document.addEventListener('click', handler);
+            }, 0);
+        }
+
+        // === #1: Status filter chips ===
+        let activeStatusFilter = '';
+
+        function normalizeStatus(status) {
+            return (status || '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        }
+
+        function renderStatusChips(cases) {
+            const chipsEl = document.getElementById('caseStatusChips');
+            if (!chipsEl) return;
+
+            const counts = {};
+            for (const c of cases) {
+                const s = c.status || 'unknown';
+                counts[s] = (counts[s] || 0) + 1;
+            }
+
+            // Sort by count descending, keep "needs_human_review" first if present
+            const statuses = Object.keys(counts).sort((a, b) => {
+                if (a === 'needs_human_review') return -1;
+                if (b === 'needs_human_review') return 1;
+                return counts[b] - counts[a];
+            });
+
+            let html = `<span class="status-chip ${!activeStatusFilter ? 'active' : ''}" onclick="setStatusFilter('')">All<span class="chip-count">${cases.length}</span></span>`;
+            for (const s of statuses) {
+                const active = activeStatusFilter === normalizeStatus(s) ? 'active' : '';
+                const label = s.replace(/_/g, ' ');
+                html += `<span class="status-chip ${active}" onclick="setStatusFilter('${normalizeStatus(s)}')">${label}<span class="chip-count">${counts[s]}</span></span>`;
+            }
+            chipsEl.innerHTML = html;
+        }
+
+        function setStatusFilter(status) {
+            activeStatusFilter = activeStatusFilter === status ? '' : status;
+            // Re-render cases with current cache
+            if (caseCache.length) {
+                lastCasesJson = ''; // force rebuild
+                renderCases({ success: true, cases: caseCache });
+            }
+        }
+
+        // === #5: Case age badges ===
+        function caseAgeBadge(c) {
+            const updated = c.updated_at || c.created_at;
+            if (!updated) return '-';
+            const days = Math.floor((Date.now() - new Date(updated).getTime()) / 86400000);
+            if (days < 2) return `<span class="age-badge fresh">${days}d</span>`;
+            if (days <= 5) return `<span class="age-badge aging">${days}d</span>`;
+            return `<span class="age-badge stale">${days}d</span>`;
+        }
+
+        // === #8: Auto-pause refresh during interaction ===
+        let refreshTimer = null;
+
+        function startAutoRefresh() {
+            if (refreshTimer) clearInterval(refreshTimer);
+            refreshTimer = setInterval(loadData, 10000);
+        }
+
+        function isInteracting() {
+            const active = document.activeElement;
+            if (active && active.matches('input, textarea, select')) return true;
+            if (document.querySelector('.drawer.active')) return true;
+            if (document.querySelector('.drawer-backdrop.active')) return true;
+            return false;
+        }
+
+        function updateRefreshIndicator() {
+            const el = document.getElementById('lastUpdate');
+            if (!el) return;
+            if (isInteracting()) {
+                if (!el.querySelector('.refresh-paused')) {
+                    el.insertAdjacentHTML('beforeend', ' <span class="refresh-paused">(auto-refresh paused)</span>');
+                }
+            } else {
+                const paused = el.querySelector('.refresh-paused');
+                if (paused) paused.remove();
+            }
+        }
+
+        // === #3: Browser notifications for new approvals ===
+        let lastPendingApprovalCount = -1;
+
+        function requestNotificationPermission() {
+            if ('Notification' in window && Notification.permission === 'default') {
+                Notification.requestPermission();
+            }
+        }
+
+        function checkForNewApprovals(count) {
+            if (lastPendingApprovalCount === -1) {
+                lastPendingApprovalCount = count;
+                return;
+            }
+            if (count > lastPendingApprovalCount) {
+                const diff = count - lastPendingApprovalCount;
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('Autobot: New Pending Approvals', {
+                        body: `${diff} new proposal${diff > 1 ? 's' : ''} need${diff === 1 ? 's' : ''} your review`,
+                        icon: '/favicon.ico',
+                        tag: 'pending-approvals'
+                    });
+                }
+                showToast('info', `${diff} new proposal${diff > 1 ? 's' : ''} pending approval`);
+            }
+            lastPendingApprovalCount = count;
+        }
+
+        // === #9: Daily summary stats ===
+        async function loadDailyStats() {
+            try {
+                const res = await fetch('/api/monitor/daily-stats');
+                const data = await res.json();
+                if (!res.ok || !data.success) return;
+                const s = data.stats || {};
+                document.getElementById('dsTodayApproved').textContent = s.approved_today || 0;
+                document.getElementById('dsTodayDismissed').textContent = s.dismissed_today || 0;
+                document.getElementById('dsTodayCompleted').textContent = s.completed_today || 0;
+                document.getElementById('dsTodayInbound').textContent = s.inbound_today || 0;
+                document.getElementById('dsTodaySent').textContent = s.sent_today || 0;
+                document.getElementById('dailyStatsBar').style.display = 'flex';
+            } catch (err) {
+                // API might not exist yet — silently fail, hide the bar
+                document.getElementById('dailyStatsBar').style.display = 'none';
+            }
+        }
+
+        // === #2: Keyboard shortcuts ===
+        document.addEventListener('keydown', (e) => {
+            // Don't trigger when typing in inputs
+            if (e.target.matches('input, textarea, select')) return;
+
+            // Escape: close drawers/inspectors
+            if (e.key === 'Escape') {
+                if (document.querySelector('#messageDrawer.active')) { closeDrawer(); return; }
+                if (document.querySelector('#phoneDrawer.active')) { closePhoneDrawer(); return; }
+                if (document.querySelector('#caseMatchModal.active')) { closeMatchModal(); return; }
+                if (expandedCaseId) { collapseCase(); return; }
+            }
+
+            // A: approve first pending proposal in open inspector
+            if (e.key === 'a' || e.key === 'A') {
+                const firstApprove = document.querySelector('#caseInspectorProposalCards .send-btn, #caseInspectorProposalCards .drawer-btn.primary');
+                if (firstApprove && expandedCaseId) {
+                    firstApprove.click();
+                    return;
+                }
+            }
+
+            // D: dismiss first pending proposal in open inspector
+            if (e.key === 'd' || e.key === 'D') {
+                const firstDismiss = document.querySelector('#caseInspectorProposalCards .dismiss-dropdown > .drawer-btn');
+                if (firstDismiss && expandedCaseId) {
+                    firstDismiss.click();
+                    return;
+                }
+            }
+
+            // J/K: navigate cases in case list
+            if (e.key === 'j' || e.key === 'k') {
+                const caseRows = Array.from(document.querySelectorAll('#caseRows tr.clickable-row')).filter(r => r.style.display !== 'none');
+                if (!caseRows.length) return;
+                const currentIdx = caseRows.findIndex(r => parseInt(r.dataset.caseId) === expandedCaseId);
+                let nextIdx;
+                if (e.key === 'j') {
+                    nextIdx = currentIdx < caseRows.length - 1 ? currentIdx + 1 : currentIdx;
+                } else {
+                    nextIdx = currentIdx > 0 ? currentIdx - 1 : 0;
+                }
+                if (nextIdx !== currentIdx || currentIdx === -1) {
+                    const caseId = parseInt(caseRows[nextIdx === -1 ? 0 : nextIdx].dataset.caseId);
+                    openCase(caseId);
+                    caseRows[nextIdx === -1 ? 0 : nextIdx].scrollIntoView({ block: 'nearest' });
+                }
+            }
+
+            // R: refresh
+            if (e.key === 'r' || e.key === 'R') {
+                if (!e.metaKey && !e.ctrlKey) {
+                    loadData();
+                }
+            }
+        });
+
+        // Wrap loadData to add auto-pause and notification checks
+        const _origLoadData = loadData;
+        let isManualRefresh = false;
+        loadData = async function() {
+            // Skip auto-refresh if user is interacting (but allow manual refreshes)
+            if (!isManualRefresh && isInteracting()) {
+                updateRefreshIndicator();
+                return;
+            }
+            isManualRefresh = false;
+            await _origLoadData();
+            // Check pending approval count after data loads
+            const countEl = document.getElementById('opsPendingApprovals');
+            if (countEl) {
+                const count = parseInt(countEl.textContent) || 0;
+                checkForNewApprovals(count);
+            }
+        };
+
+        // Override refresh button to force manual refresh
+        const refreshBtn = document.querySelector('.refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.onclick = () => { isManualRefresh = true; loadData(); };
+        }
+
+        // Initial load + managed auto-refresh
+        isManualRefresh = true; // First load should always happen
+        loadUserFilterOptions();
         loadData();
         loadConfig();
+        loadDailyStats();
         connectSSE();
-        setInterval(loadData, 10000);
+        requestNotificationPermission();
+        startAutoRefresh();
+        // Reload daily stats every 5 minutes
+        setInterval(loadDailyStats, 300000);
     </script>
 </body>
 </html>
