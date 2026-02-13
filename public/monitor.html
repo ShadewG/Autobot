@@ -1679,6 +1679,7 @@
             collapseCase();
             loadData();
             loadDailyStats();
+            connectSSE(); // Reconnect SSE with new user filter
         }
 
         // Listen for hash changes (browser back/forward)
@@ -1694,6 +1695,7 @@
                 collapseCase();
                 loadData();
                 loadDailyStats();
+                connectSSE(); // Reconnect SSE with new user filter
             }
         });
 
@@ -3771,7 +3773,7 @@
             const full = document.getElementById(`pac_full_${proposalId}`);
             const detail = document.getElementById(`pac_detail_${proposalId}`);
             if (preview) preview.style.display = 'none';
-            if (full) full.style.display = 'block';
+            if (full) full.style.display = 'none';
             if (detail) detail.style.display = 'block';
         }
 
@@ -4026,7 +4028,8 @@
             if (sseSource) { sseSource.close(); sseSource = null; }
             const badge = document.getElementById('sseBadge');
             try {
-                sseSource = new EventSource('/api/monitor/events');
+                const sseUrl = '/api/monitor/events' + (currentUserId ? '?user_id=' + encodeURIComponent(currentUserId) : '');
+                sseSource = new EventSource(sseUrl);
                 sseSource.onopen = () => {
                     badge.textContent = 'SSE: ON';
                     badge.className = 'runtime-badge sse-connected';
@@ -4315,10 +4318,33 @@
         setInterval(loadDailyStats, 300000);
 
         // Shareable case URLs — open case from ?case=N param
+        // Auto-switch user filter to match the case's owner so the case appears in the list
         const _urlParams = new URLSearchParams(window.location.search);
         const _caseParam = _urlParams.get('case');
         if (_caseParam) {
-            setTimeout(() => openCase(parseInt(_caseParam)), 500);
+            (async () => {
+                try {
+                    const res = await fetch(`/api/monitor/case/${parseInt(_caseParam)}`);
+                    const data = await res.json();
+                    if (data.success && data.case) {
+                        const caseUserId = data.case.user_id;
+                        const neededFilter = caseUserId ? String(caseUserId) : 'unowned';
+                        if (currentUserId && currentUserId !== neededFilter) {
+                            // Switch filter to the case's owner so it shows in the list
+                            currentUserId = neededFilter;
+                            localStorage.setItem('monitorUserFilter', currentUserId);
+                            updateUrlHash();
+                            const select = document.getElementById('userFilter');
+                            if (select) select.value = currentUserId;
+                            await loadData();
+                            loadDailyStats();
+                            connectSSE();
+                        }
+                    }
+                } catch (_) {}
+                // Small delay to ensure case rows are rendered
+                setTimeout(() => openCase(parseInt(_caseParam)), 300);
+            })();
         }
     </script>
 </body>
