@@ -3502,7 +3502,9 @@
                 countEl.textContent = `(${agencies.length})`;
             }
 
-            let html = `<table style="width:100%;border-collapse:collapse;font-size:12px;">`;
+            let html = '';
+            if (agencies && agencies.length > 0) {
+            html += `<table style="width:100%;border-collapse:collapse;font-size:12px;">`;
             html += `<tr style="border-bottom:1px solid #30363d;">
                 <th style="text-align:left;padding:4px 6px;">Primary</th>
                 <th style="text-align:left;padding:4px 6px;">Agency</th>
@@ -3539,6 +3541,7 @@
                 </tr>`;
             }
             html += `</table>`;
+            } // end if agencies.length > 0
 
             // Add Agency — manual form
             html += `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">

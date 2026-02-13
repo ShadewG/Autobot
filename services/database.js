@@ -1767,10 +1767,14 @@ class DatabaseService {
 
     async getCaseAgencies(caseId, includeInactive = false) {
         const whereClause = includeInactive
-            ? 'WHERE case_id = $1'
-            : 'WHERE case_id = $1 AND is_active = true';
+            ? 'WHERE ca.case_id = $1'
+            : 'WHERE ca.case_id = $1 AND ca.is_active = true';
         const result = await this.query(
-            `SELECT * FROM case_agencies ${whereClause} ORDER BY is_primary DESC, created_at ASC`,
+            `SELECT ca.*, a.notion_page_id as agency_notion_page_id
+             FROM case_agencies ca
+             LEFT JOIN agencies a ON ca.agency_id = a.id
+             ${whereClause}
+             ORDER BY ca.is_primary DESC, ca.created_at ASC`,
             [caseId]
         );
         return result.rows;

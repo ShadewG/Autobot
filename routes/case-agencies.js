@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const notionService = require('../services/notion-service');
 
 /**
  * GET /api/cases/:id/agencies
@@ -125,6 +126,106 @@ router.post('/:id/agencies/:caId/set-primary', async (req, res) => {
         });
 
         res.json({ success: true, primary: newPrimary });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/cases/:id/agencies/from-notion
+ * Add an agency from a Notion page URL or ID
+ */
+router.post('/:id/agencies/from-notion', express.json(), async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        if (!caseId) return res.status(400).json({ success: false, error: 'Invalid case id' });
+
+        let { notion_url } = req.body;
+        if (!notion_url) return res.status(400).json({ success: false, error: 'notion_url is required' });
+
+        // Extract page ID from Notion URL or raw ID
+        let pageId = notion_url.trim();
+        // Handle full URLs like https://www.notion.so/Page-Title-abc123def456...
+        const urlMatch = pageId.match(/([a-f0-9]{32}|[a-f0-9-]{36})(?:\?|$)/i);
+        if (urlMatch) {
+            pageId = urlMatch[1];
+        }
+        // Remove dashes for consistent format
+        pageId = pageId.replace(/-/g, '');
+
+        if (!/^[a-f0-9]{32}$/i.test(pageId)) {
+            return res.status(400).json({ success: false, error: 'Could not extract a valid Notion page ID from the URL' });
+        }
+
+        // Format as UUID
+        const formattedId = `${pageId.slice(0,8)}-${pageId.slice(8,12)}-${pageId.slice(12,16)}-${pageId.slice(16,20)}-${pageId.slice(20)}`;
+
+        // Check if this agency already exists in agencies table
+        let agency = await db.query(
+            'SELECT * FROM agencies WHERE notion_page_id = $1 OR notion_page_id = $2',
+            [pageId, formattedId]
+        );
+        agency = agency.rows[0];
+
+        if (!agency) {
+            // Fetch from Notion and create the agency record
+            try {
+                const page = await notionService.notion.pages.retrieve({ page_id: formattedId });
+                const props = page.properties;
+
+                // Extract title
+                const titleProp = Object.values(props).find(p => p.type === 'title');
+                const agencyName = titleProp?.title?.[0]?.plain_text || 'Unknown Agency';
+
+                // Extract key fields
+                const getText = (name) => {
+                    const p = props[name];
+                    if (!p) return null;
+                    if (p.type === 'rich_text') return p.rich_text?.[0]?.plain_text || null;
+                    if (p.type === 'email') return p.email || null;
+                    if (p.type === 'phone_number') return p.phone_number || null;
+                    if (p.type === 'url') return p.url || null;
+                    if (p.type === 'select') return p.select?.name || null;
+                    return null;
+                };
+
+                // Try common Notion field names for agency data
+                const emailFoia = getText('FOIA Email') || getText('Email FOIA') || getText('Records Email') || getText('Email');
+                const emailMain = getText('Email Main') || getText('General Email') || emailFoia;
+                const portalUrl = getText('Portal URL') || getText('Portal') || getText('Online Portal');
+                const state = getText('State');
+                const phone = getText('Phone') || getText('Phone Number');
+
+                // Insert into agencies table
+                const insertResult = await db.query(`
+                    INSERT INTO agencies (notion_page_id, name, state, email_main, email_foia, phone, portal_url, sync_status)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, 'synced')
+                    RETURNING *
+                `, [formattedId, agencyName, state, emailMain, emailFoia, phone, portalUrl]);
+                agency = insertResult.rows[0];
+            } catch (notionErr) {
+                return res.status(400).json({ success: false, error: 'Failed to fetch Notion page: ' + notionErr.message });
+            }
+        }
+
+        // Add as case agency
+        const caseAgency = await db.addCaseAgency(caseId, {
+            agency_name: agency.name,
+            agency_email: agency.email_foia || agency.email_main || null,
+            portal_url: agency.portal_url || null,
+            portal_provider: agency.portal_provider || null,
+            agency_id: agency.id,
+            added_source: 'notion_import'
+        });
+
+        await db.logActivity('case_agency_added', `Added agency "${agency.name}" from Notion to case ${caseId}`, {
+            case_id: caseId,
+            case_agency_id: caseAgency.id,
+            notion_page_id: formattedId,
+            added_source: 'notion_import'
+        });
+
+        res.json({ success: true, case_agency: caseAgency, agency });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
