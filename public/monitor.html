@@ -3741,9 +3741,7 @@
         }
 
         function isInteracting() {
-            if (expandedCaseId) return true;
-            const active = document.activeElement;
-            if (active && active.matches('input, textarea, select')) return true;
+            // Only pause for open drawers/modals — not for input focus or case inspector
             if (document.querySelector('.drawer.active')) return true;
             if (document.querySelector('.drawer-backdrop.active')) return true;
             return false;
