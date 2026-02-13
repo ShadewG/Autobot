@@ -38,7 +38,7 @@ async function gateOrExecuteNode(state) {
     caseId, runId, canAutoExecute, requiresHuman,
     pauseReason, draftSubject, draftBodyText, draftBodyHtml,
     proposalReasoning, proposalConfidence, riskFlags, warnings,
-    gateOptions, adjustmentCount
+    gateOptions, adjustmentCount, lessonsApplied
   } = state;
 
   // Get proposalActionType with fallback - it may be lost during resume
@@ -95,7 +95,8 @@ async function gateOrExecuteNode(state) {
     requiresHuman,
     status: canAutoExecute ? 'APPROVED' : 'PENDING_APPROVAL',
     langgraphThreadId: state.threadId,
-    adjustmentCount: adjustmentCount || 0
+    adjustmentCount: adjustmentCount || 0,
+    lessonsApplied: lessonsApplied || null
   });
 
   logs.push(`Upserted proposal ${proposal.id} (key: ${proposalKey})`);

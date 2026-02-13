@@ -3673,7 +3673,11 @@
 
                 const reasoningText = formatReasoning(p.reasoning);
                 if (reasoningText) {
-                    html += `<div class="pac-reasoning">${escapeHtml(truncate(reasoningText, 200))}</div>`;
+                    html += `<div class="pac-reasoning">${escapeHtml(truncate(reasoningText, 200))}`;
+                    if (p.lessons_applied && p.lessons_applied.length > 0) {
+                        html += ` <span style="color:#7ee787;font-size:10px;" title="${p.lessons_applied.map(l=>l.category).join(', ')}">&#x1F4DA; ${p.lessons_applied.length} lessons</span>`;
+                    }
+                    html += `</div>`;
                 }
 
                 const hasDraftContent = !!(p.draft_subject || p.draft_body_text);
@@ -3729,6 +3733,23 @@
                     html += `<button class="send-btn" onclick="generateDraft(${p.id}, ${caseData.id})" id="pac_gen_btn_${p.id}" style="background:#f0883e;">Generate Draft</button>`;
                     html += `</div>`;
                 }
+                // Lessons Applied section
+                const lessons = p.lessons_applied;
+                if (lessons && lessons.length > 0) {
+                    html += `<div style="margin-top:10px;">`;
+                    html += `<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="cursor:pointer;font-size:11px;font-weight:600;color:#7ee787;text-transform:uppercase;margin-bottom:4px;">`;
+                    html += `&#9662; Lessons Applied (${lessons.length})</div>`;
+                    html += `<div style="display:none;background:#0d1117;border:1px solid #238636;border-radius:6px;padding:8px;margin-bottom:8px;max-height:200px;overflow-y:auto;">`;
+                    for (const l of lessons) {
+                        html += `<div style="font-size:11px;color:#c9d1d9;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #21262d;">`;
+                        html += `<span style="color:#7ee787;font-weight:600;">[${escapeHtml(l.category)}]</span> `;
+                        html += `<span style="color:#8b949e;">score:${l.score} pri:${l.priority}</span><br>`;
+                        html += `${escapeHtml(l.lesson)}`;
+                        html += `</div>`;
+                    }
+                    html += `</div></div>`;
+                }
+
                 const hasDraft = !!(p.draft_subject || p.draft_body_text);
                 html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">`;
                 if (hasDraft) {

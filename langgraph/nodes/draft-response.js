@@ -61,6 +61,7 @@ async function draftResponseNode(state) {
 
     // --- Fetch decision memory lessons for AI context ---
     let lessonsContext = '';
+    let lessonsApplied = [];
     try {
       const allMessages = await db.getMessagesByCaseId(caseId);
       const priorProposals = await db.getAllProposalsByCaseId(caseId);
@@ -79,6 +80,14 @@ async function draftResponseNode(state) {
 
       if (lessons.length > 0) {
         lessonsContext = decisionMemory.formatLessonsForPrompt(lessons);
+        lessonsApplied = lessons.map(l => ({
+          id: l.id,
+          category: l.category,
+          trigger: l.trigger_pattern,
+          lesson: l.lesson,
+          score: l.relevance_score,
+          priority: l.priority
+        }));
         logs.push(`Injected ${lessons.length} decision lessons into draft context`);
       }
     } catch (lessonErr) {
@@ -273,6 +282,7 @@ ${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` :
         return {
           draftSubject: null,
           draftBodyText: null,
+          lessonsApplied,
           proposalReasoning: [...(state.proposalReasoning || []),
             `Research findings: ${brief.summary}`,
             contactResult ? `PD Contact found: ${contactResult.contact_email || contactResult.portal_url}` : 'No PD contact data found'
@@ -292,6 +302,7 @@ ${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` :
           draftSubject: reformulated.subject,
           draftBodyText: reformulated.body_text,
           draftBodyHtml: reformulated.body_html || null,
+          lessonsApplied,
           logs: [...logs, 'Reformulated request generated']
         };
       }
@@ -325,6 +336,7 @@ ${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` :
       draftSubject: draft.subject,
       draftBodyText: draft.body_text,
       draftBodyHtml: draft.body_html,
+      lessonsApplied,
       logs: [...logs, `Draft created: "${(draft.subject || '').substring(0, 50)}..."`]
     };
 

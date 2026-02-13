@@ -1170,8 +1170,8 @@ class DatabaseService {
                 draft_subject, draft_body_text, draft_body_html,
                 reasoning, confidence, risk_flags, warnings,
                 can_auto_execute, requires_human, status,
-                langgraph_thread_id, adjustment_count
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                langgraph_thread_id, adjustment_count, lessons_applied
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update run_id if provided (link to the run that created/updated this)
                 run_id = COALESCE(EXCLUDED.run_id, proposals.run_id),
@@ -1217,6 +1217,7 @@ class DatabaseService {
                 END,
                 langgraph_thread_id = COALESCE(EXCLUDED.langgraph_thread_id, proposals.langgraph_thread_id),
                 adjustment_count = COALESCE(EXCLUDED.adjustment_count, proposals.adjustment_count),
+                lessons_applied = COALESCE(EXCLUDED.lessons_applied, proposals.lessons_applied),
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *
         `;
@@ -1243,7 +1244,8 @@ class DatabaseService {
             proposalData.requiresHuman || true,
             proposalData.status || 'PENDING_APPROVAL',
             proposalData.langgraphThreadId || null,
-            proposalData.adjustmentCount || 0
+            proposalData.adjustmentCount || 0,
+            proposalData.lessonsApplied ? JSON.stringify(proposalData.lessonsApplied) : null
         ];
 
         const result = await this.query(query, values);
