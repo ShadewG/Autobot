@@ -899,6 +899,9 @@
     </div>
 
         <div id="cases" class="panel">
+            <div style="margin-bottom:8px;">
+                <input type="text" id="caseSearchInput" placeholder="Search cases by name, agency, status..." oninput="filterCases()" style="width:100%;max-width:400px;padding:6px 10px;background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:12px;box-sizing:border-box;">
+            </div>
             <div class="scroll-container" style="max-height:none;">
                 <table>
                 <thead>
@@ -1232,43 +1235,52 @@
     <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
     <div id="messageDrawer" class="drawer">
         <div class="drawer-header">
-            <div class="drawer-title">Message Details</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <button class="drawer-btn" onclick="navigateMessage(-1)" id="msgPrevBtn" title="Previous message" style="padding:4px 8px;">&#9664;</button>
+                <div class="drawer-title">Message Details</div>
+                <button class="drawer-btn" onclick="navigateMessage(1)" id="msgNextBtn" title="Next message" style="padding:4px 8px;">&#9654;</button>
+            </div>
             <button class="drawer-close" onclick="closeDrawer()">Close</button>
         </div>
 
         <div class="drawer-section">
             <div class="drawer-label">Subject</div>
-            <div class="drawer-value" id="drawerSubject">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Message ID</div>
-            <div class="drawer-value" id="drawerMessageId">-</div>
+            <div class="drawer-value" id="drawerSubject" style="font-size:14px;font-weight:600;">-</div>
         </div>
 
         <div class="drawer-section">
-            <div class="drawer-label">From</div>
-            <div class="drawer-value" id="drawerFrom">-</div>
-            <div class="drawer-label" style="margin-top:8px;">To</div>
-            <div class="drawer-value" id="drawerTo">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Direction</div>
-            <div class="drawer-value" id="drawerDirection">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Case</div>
-            <div class="drawer-value" id="drawerCase">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Routing Profile</div>
-            <div class="drawer-value" id="drawerRoutingProfile">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Received/Sent</div>
-            <div class="drawer-value" id="drawerTimestamp">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Source</div>
-            <div class="drawer-value" id="drawerSource">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Message Type</div>
-            <div class="drawer-value" id="drawerMessageType">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Processed At</div>
-            <div class="drawer-value" id="drawerProcessedAt">-</div>
-            <div class="drawer-label" style="margin-top:8px;">Processed Run</div>
-            <div class="drawer-value" id="drawerProcessedRun">-</div>
+            <div style="display:flex;gap:16px;">
+                <div style="flex:1;"><div class="drawer-label">From</div><div class="drawer-value" id="drawerFrom">-</div></div>
+                <div style="flex:1;"><div class="drawer-label">To</div><div class="drawer-value" id="drawerTo">-</div></div>
+            </div>
+            <div style="display:flex;gap:16px;margin-top:8px;">
+                <div style="flex:1;"><div class="drawer-label">Case</div><div class="drawer-value" id="drawerCase">-</div></div>
+                <div style="flex:1;"><div class="drawer-label">Received/Sent</div><div class="drawer-value" id="drawerTimestamp">-</div></div>
+            </div>
+            <div style="margin-top:8px;">
+                <span onclick="toggleDrawerDetails()" style="cursor:pointer;font-size:11px;color:#58a6ff;">Show details &#9660;</span>
+                <div id="drawerDetailsCollapsed" style="display:none;margin-top:6px;padding-top:6px;border-top:1px solid #21262d;">
+                    <div class="drawer-label">Message ID</div>
+                    <div class="drawer-value" id="drawerMessageId">-</div>
+                    <div class="drawer-label" style="margin-top:6px;">Direction</div>
+                    <div class="drawer-value" id="drawerDirection">-</div>
+                    <div class="drawer-label" style="margin-top:6px;">Routing Profile</div>
+                    <div class="drawer-value" id="drawerRoutingProfile">-</div>
+                    <div class="drawer-label" style="margin-top:6px;">Source</div>
+                    <div class="drawer-value" id="drawerSource">-</div>
+                    <div class="drawer-label" style="margin-top:6px;">Message Type</div>
+                    <div class="drawer-value" id="drawerMessageType">-</div>
+                    <div class="drawer-label" style="margin-top:6px;">Processed At</div>
+                    <div class="drawer-value" id="drawerProcessedAt">-</div>
+                    <div class="drawer-label" style="margin-top:6px;">Processed Run</div>
+                    <div class="drawer-value" id="drawerProcessedRun">-</div>
+                </div>
+            </div>
         </div>
 
         <div class="drawer-section">
             <div class="drawer-label">Body</div>
-            <div class="drawer-body" id="drawerBody">-</div>
+            <div class="drawer-body" id="drawerBody" style="max-height:350px;overflow-y:auto;">-</div>
         </div>
 
         <div class="drawer-section" id="replySection" style="display:none;">
@@ -1386,6 +1398,23 @@
             return `<span class="badge ${cls}">${type}</span>`;
         }
 
+        function formatActivityDetail(metadata, eventType) {
+            if (!metadata || typeof metadata !== 'object') return '-';
+            const parts = [];
+            if (metadata.status) parts.push(`Status: ${metadata.status}`);
+            if (metadata.old_status && metadata.new_status) parts.push(`${metadata.old_status} → ${metadata.new_status}`);
+            if (metadata.action) parts.push(`Action: ${metadata.action}`);
+            if (metadata.run_id) parts.push(`Run #${metadata.run_id}`);
+            if (metadata.proposal_id) parts.push(`Proposal #${metadata.proposal_id}`);
+            if (metadata.message_id) parts.push(`Msg #${metadata.message_id}`);
+            if (metadata.error) parts.push(`Error: ${truncate(String(metadata.error), 60)}`);
+            if (metadata.result) parts.push(truncate(String(metadata.result), 60));
+            if (parts.length > 0) return parts.join(' · ');
+            const keys = Object.keys(metadata).slice(0, 3);
+            if (keys.length === 0) return '-';
+            return keys.map(k => `${k}: ${truncate(String(metadata[k]), 30)}`).join(' · ');
+        }
+
         let caseCache = [];
 
         // Load all data
@@ -1452,15 +1481,18 @@
                 `).join('');
 
                 // Activity log
-                document.getElementById('activityLog').innerHTML = monitor.activity.map(a => `
-                    <tr>
-                        <td class="timestamp">${relativeTime(a.created_at)}</td>
-                        <td>${eventBadge(a.event_type)}</td>
-                        <td>${truncate(a.description, 50)}</td>
-                        <td>${a.case_id ? `<a class="case-link" href="#" onclick="openCase(${a.case_id});return false;">#${a.case_id}</a>` : '-'}</td>
-                        <td class="expandable" onclick="this.innerHTML = this.innerHTML.includes('...') ? JSON.stringify(${JSON.stringify(a.metadata).replace(/"/g, '&quot;')}, null, 2) : '${truncate(JSON.stringify(a.metadata), 30)}'">${truncate(JSON.stringify(a.metadata), 30)}</td>
-                    </tr>
-                `).join('');
+                document.getElementById('activityLog').innerHTML = monitor.activity.map(a => {
+                    const detail = formatActivityDetail(a.metadata, a.event_type);
+                    return `
+                        <tr>
+                            <td class="timestamp">${relativeTime(a.created_at)}</td>
+                            <td>${eventBadge(a.event_type)}</td>
+                            <td>${truncate(a.description, 60)}</td>
+                            <td>${a.case_id ? `<a class="case-link" href="#" onclick="openCase(${a.case_id});return false;">#${a.case_id}</a>` : '-'}</td>
+                            <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;">${detail}</td>
+                        </tr>
+                    `;
+                }).join('');
 
                 // Unmatched
                 document.getElementById('unmatchedMessages').innerHTML = unmatchedData.unmatched.length ?
@@ -1694,7 +1726,7 @@
             if (t.status === 'pending') {
                 document.getElementById('pdClaimForm').style.display = 'block';
                 document.getElementById('pdSkipForm').style.display = 'block';
-                document.getElementById('pdClaimName').value = '';
+                document.getElementById('pdClaimName').value = localStorage.getItem('autobot_claim_name') || '';
             } else if (t.status === 'claimed') {
                 document.getElementById('pdCompleteForm').style.display = 'block';
                 document.getElementById('pdSkipForm').style.display = 'block';
@@ -1737,6 +1769,7 @@
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error);
                 showPhoneActionResult('Claimed successfully!', false);
+                localStorage.setItem('autobot_claim_name', name);
                 setTimeout(() => { closePhoneDrawer(); loadPhoneCalls(); }, 600);
             } catch (err) {
                 showPhoneActionResult('Failed to claim: ' + err.message, true);
@@ -1888,6 +1921,16 @@
             } catch (err) {
                 showPhoneActionResult('Failed to select phone: ' + err.message, true);
             }
+        }
+
+        function filterCases() {
+            const q = (document.getElementById('caseSearchInput')?.value || '').trim().toLowerCase();
+            const rows = document.querySelectorAll('#caseRows tr.clickable-row');
+            rows.forEach(row => {
+                if (!q) { row.style.display = ''; return; }
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(q) ? '' : 'none';
+            });
         }
 
         let lastCasesJson = '';
@@ -2281,6 +2324,7 @@
 
         async function openMessage(id) {
             try {
+                document.getElementById('drawerDetailsCollapsed').style.display = 'none';
                 const res = await fetch(`/api/monitor/message/${id}`);
                 const data = await res.json();
                 if (!data.success) throw new Error(data.error || 'Failed to load message');
@@ -2319,6 +2363,7 @@
                 currentRunId = null;
                 await loadProposals(id);
 
+                updateMessageNav(data.message.id);
                 document.getElementById('drawerBackdrop').classList.add('active');
                 document.getElementById('messageDrawer').classList.add('active');
             } catch (err) {
@@ -2892,6 +2937,36 @@
                 clearInterval(runPollTimer);
                 runPollTimer = null;
             }
+        }
+
+        function toggleDrawerDetails() {
+            const el = document.getElementById('drawerDetailsCollapsed');
+            const isOpen = el.style.display !== 'none';
+            el.style.display = isOpen ? 'none' : 'block';
+            el.previousElementSibling.innerHTML = isOpen ? 'Show details &#9660;' : 'Hide details &#9650;';
+        }
+
+        let messageNavList = [];
+        let messageNavIndex = -1;
+
+        function navigateMessage(dir) {
+            const newIndex = messageNavIndex + dir;
+            if (newIndex < 0 || newIndex >= messageNavList.length) return;
+            messageNavIndex = newIndex;
+            openMessage(messageNavList[messageNavIndex]);
+        }
+
+        function updateMessageNav(messageId) {
+            // Build nav list from visible message rows
+            const rows = document.querySelectorAll('tr[data-message-id]');
+            if (rows.length > 0) {
+                messageNavList = Array.from(rows).map(r => parseInt(r.dataset.messageId));
+                messageNavIndex = messageNavList.indexOf(messageId);
+            }
+            const prevBtn = document.getElementById('msgPrevBtn');
+            const nextBtn = document.getElementById('msgNextBtn');
+            if (prevBtn) prevBtn.disabled = messageNavIndex <= 0;
+            if (nextBtn) nextBtn.disabled = messageNavIndex >= messageNavList.length - 1 || messageNavIndex === -1;
         }
 
         async function sendReply() {
