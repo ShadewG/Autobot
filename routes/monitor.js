@@ -134,6 +134,19 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             status: 'DISMISSED'
         });
 
+        // Auto-learn from dismissal so AI doesn't repeat the same mistake
+        try {
+            const decisionMemory = require('../services/decision-memory-service');
+            const caseData = await db.getCaseById(caseId);
+            await decisionMemory.learnFromOutcome({
+                category: 'general',
+                triggerPattern: `dismissed ${proposal.action_type} for ${caseData?.agency_name || 'unknown agency'}`,
+                lesson: `Do not propose ${proposal.action_type} for case #${caseId} (${caseData?.case_name || 'unknown'}) — it was dismissed by human reviewer.${reason ? ' Reason: ' + reason : ''}`,
+                sourceCaseId: caseId,
+                priority: 6
+            });
+        } catch (_) {}
+
         notify('info', `Proposal dismissed for case ${caseId}`, { case_id: caseId });
         return {
             success: true,
@@ -539,6 +552,56 @@ router.post('/send-test', express.json(), async (req, res) => {
  * GET /api/monitor/config
  * Get current email configuration
  */
+// =========================================================================
+// AI Decision Lessons (experience memory)
+// =========================================================================
+
+router.get('/lessons', async (req, res) => {
+    try {
+        const decisionMemory = require('../services/decision-memory-service');
+        const lessons = await decisionMemory.listLessons({ activeOnly: req.query.active !== 'false' });
+        res.json({ success: true, lessons });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.post('/lessons', async (req, res) => {
+    try {
+        const decisionMemory = require('../services/decision-memory-service');
+        const { category, trigger_pattern, lesson, priority } = req.body;
+        if (!category || !trigger_pattern || !lesson) {
+            return res.status(400).json({ success: false, error: 'category, trigger_pattern, and lesson are required' });
+        }
+        const created = await decisionMemory.addManualLesson({
+            category, triggerPattern: trigger_pattern, lesson, priority: priority || 7
+        });
+        res.json({ success: true, lesson: created });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.put('/lessons/:id', async (req, res) => {
+    try {
+        const decisionMemory = require('../services/decision-memory-service');
+        const updated = await decisionMemory.updateLesson(parseInt(req.params.id), req.body);
+        res.json({ success: true, lesson: updated });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.delete('/lessons/:id', async (req, res) => {
+    try {
+        const decisionMemory = require('../services/decision-memory-service');
+        await decisionMemory.deleteLesson(parseInt(req.params.id));
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 router.get('/config', async (req, res) => {
     let queue = { generation: {}, email: {} };
     try {
@@ -649,7 +712,18 @@ router.get('/live-overview', async (req, res) => {
                 m.from_email,
                 m.subject,
                 m.received_at,
-                m.created_at
+                m.created_at,
+                LEFT(m.body_text, 200) AS body_preview,
+                (
+                    SELECT json_agg(json_build_object('id', c.id, 'case_name', c.case_name, 'agency_name', c.agency_name))
+                    FROM (
+                        SELECT DISTINCT c2.id, c2.case_name, c2.agency_name
+                        FROM cases c2
+                        WHERE c2.agency_email IS NOT NULL
+                          AND split_part(c2.agency_email, '@', 2) = split_part(m.from_email, '@', 2)
+                        LIMIT 3
+                    ) c
+                ) AS suggested_cases
             FROM messages m
             WHERE m.direction = 'inbound'
               AND (m.thread_id IS NULL OR m.case_id IS NULL)
@@ -1545,10 +1619,20 @@ router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
         try {
             notify('info', `Looking up contacts for ${caseData.agency_name || caseData.case_name}...`, { case_id: caseId });
 
-            const result = await pdContactService.lookupContact(
-                caseData.agency_name,
-                caseData.state || caseData.incident_location
-            );
+            let result;
+            try {
+                result = await pdContactService.lookupContact(
+                    caseData.agency_name,
+                    caseData.state || caseData.incident_location
+                );
+            } catch (lookupErr) {
+                if (lookupErr.code === 'SERVICE_UNAVAILABLE') {
+                    notify('error', `PD Contact service not reachable — is PD_CONTACT_API_URL set and the foia-researcher running?`, { case_id: caseId });
+                } else {
+                    notify('error', `Contact lookup failed: ${lookupErr.message}`, { case_id: caseId });
+                }
+                return;
+            }
 
             if (!result || (!result.portal_url && !result.contact_email)) {
                 notify('warning', `No contacts found for ${caseData.agency_name || caseData.case_name}`, { case_id: caseId });

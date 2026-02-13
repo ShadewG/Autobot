@@ -1152,6 +1152,16 @@ Return ONLY valid JSON.`;
             `- ${p.action_type} (${p.status}): ${typeof p.reasoning === 'string' ? p.reasoning.substring(0, 150) : JSON.stringify(p.reasoning).substring(0, 150)}`
         ).join('\n') || 'No prior proposals.';
 
+        // Query decision memory for relevant lessons
+        let lessonsBlock = '';
+        try {
+            const decisionMemory = require('./decision-memory-service');
+            const lessons = await decisionMemory.getRelevantLessons(caseData, { messages, priorProposals });
+            lessonsBlock = decisionMemory.formatLessonsForPrompt(lessons);
+        } catch (e) {
+            console.warn('Decision memory unavailable:', e.message);
+        }
+
         const prompt = `You are triaging a FOIA case stuck in human review. Analyze the case and recommend the best next action.
 
 CASE INFO:
@@ -1168,14 +1178,14 @@ ${messagesSummary}
 
 PRIOR PROPOSALS (newest first):
 ${proposalsSummary}
-
+${lessonsBlock}
 AVAILABLE ACTIONS:
-- SUBMIT_PORTAL: Submit/resubmit via online portal (only if portal_url exists)
+- SUBMIT_PORTAL: Submit/resubmit via online portal (only if portal_url exists AND no prior portal failures)
 - SEND_FOLLOWUP: Send a follow-up email to the agency
-- SEND_REBUTTAL: Challenge a denial with legal arguments
+- SEND_REBUTTAL: Challenge a denial with legal arguments citing state open records law
 - ACCEPT_FEE: Accept a fee quote and proceed with payment
 - NEGOTIATE_FEE: Push back on an excessive fee
-- CLOSE_CASE: Case is resolved, no further action needed
+- CLOSE_CASE: Case is resolved, no further action needed, or denial is final and not worth challenging
 - ESCALATE: Needs human attention for a reason AI can't handle
 - NONE: No action needed right now
 
@@ -1188,12 +1198,14 @@ Return a JSON object:
 }
 
 Rules:
-- Only recommend SUBMIT_PORTAL if a portal_url exists
-- Recommend CLOSE_CASE if agency already provided records or said no responsive records
-- Recommend SEND_REBUTTAL if there's a denial worth challenging
-- Recommend ACCEPT_FEE or NEGOTIATE_FEE if there's an outstanding fee quote
-- Recommend ESCALATE if the situation is ambiguous or complex
-- Don't repeat an action that was already dismissed in prior proposals unless circumstances changed
+- READ THE MESSAGES CAREFULLY. If the agency denied the request, recommend SEND_REBUTTAL or CLOSE_CASE — NOT SUBMIT_PORTAL.
+- Only recommend SUBMIT_PORTAL if a portal_url exists AND the agency is asking for a portal submission (not a denial).
+- Recommend CLOSE_CASE if agency already provided records or said no responsive records.
+- Recommend SEND_REBUTTAL if there's a denial worth challenging (most denials are worth at least one rebuttal).
+- Recommend ACCEPT_FEE or NEGOTIATE_FEE if there's an outstanding fee quote.
+- Recommend ESCALATE if the situation is ambiguous or complex.
+- NEVER repeat an action that was already dismissed in prior proposals.
+- If a prior SUBMIT_PORTAL proposal was dismissed or portal submission failed, do NOT recommend SUBMIT_PORTAL again.
 - Return ONLY valid JSON.`;
 
         try {
