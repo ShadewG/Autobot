@@ -2677,12 +2677,15 @@
         }
 
         function collapseCase() {
+            // Detach inspector BEFORE removing expanded row (inspector is a child of it)
+            const inspector = document.getElementById('caseInspector');
+            if (inspector) {
+                inspector.style.display = 'none';
+                document.body.appendChild(inspector); // park it back in body
+            }
             const existing = document.querySelector('.case-expanded-row');
             if (existing) existing.remove();
             document.querySelectorAll('.clickable-row.expanded').forEach(r => r.classList.remove('expanded'));
-            const inspector = document.getElementById('caseInspector');
-            inspector.style.display = 'none';
-            document.body.appendChild(inspector); // park it back in body
             expandedCaseId = null;
             history.replaceState(null, '', window.location.pathname + window.location.hash);
         }
