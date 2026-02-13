@@ -935,6 +935,10 @@ router.post('/:id/resolve-review', async (req, res) => {
             negotiate_fee: 'Negotiate the quoted fee',
             accept_fee: 'Accept fee and proceed',
             reprocess: 'Re-analyze and determine best action',
+            decline_fee: 'Decline the quoted fee',
+            escalate: 'Escalate to human oversight',
+            research_agency: 'Research the correct agency for this request',
+            reformulate_request: 'Reformulate the request with a different approach',
             custom: instruction || 'Follow custom instructions'
         };
 

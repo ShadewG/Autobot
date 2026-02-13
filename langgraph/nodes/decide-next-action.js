@@ -17,8 +17,11 @@ const {
   RESPOND_PARTIAL_APPROVAL,
   ACCEPT_FEE,
   NEGOTIATE_FEE,
+  DECLINE_FEE,
   ESCALATE,
   NONE,
+  RESEARCH_AGENCY,
+  REFORMULATE_REQUEST,
   validateActionType
 } = require('../../constants/action-types');
 
@@ -59,7 +62,7 @@ async function decideNextActionNode(state) {
   const {
     caseId, classification, extractedFeeAmount, sentiment,
     constraints, triggerType, autopilotMode,
-    humanDecision,
+    humanDecision, denialSubtype,
     // NEW: Prompt tuning fields
     requiresResponse, portalUrl, suggestedAction, reasonNoResponse,
     // Human review resolution fields
@@ -279,6 +282,61 @@ async function decideNextActionNode(state) {
           };
         }
 
+        case 'decline_fee': {
+          reasoning.push('Declining fee per human review');
+          return {
+            proposalActionType: DECLINE_FEE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Decline the quoted fee and explain why',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Declining fee per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'escalate': {
+          reasoning.push('Escalating to human oversight per review');
+          return {
+            proposalActionType: ESCALATE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Escalating per human review'],
+            nextNode: 'gate_or_execute'
+          };
+        }
+
+        case 'research_agency': {
+          reasoning.push('Researching correct agency per human review');
+          return {
+            proposalActionType: RESEARCH_AGENCY,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Research the correct agency for this request',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Researching agency per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'reformulate_request': {
+          reasoning.push('Reformulating request per human review');
+          return {
+            proposalActionType: REFORMULATE_REQUEST,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: null,
+            adjustmentInstruction: reviewInstruction || 'Reformulate the request with a different approach',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Reformulating request per human review'],
+            nextNode: 'draft_response'
+          };
+        }
+
         case 'reprocess': {
           // Re-analyze — escalate to gate for human to review fresh
           reasoning.push('Reprocessing case per human review');
@@ -467,36 +525,146 @@ async function decideNextActionNode(state) {
       }
     }
 
-    // 2. DENIAL handling
+    // 2. DENIAL handling — subtype-aware routing
     if (classification === 'DENIAL') {
       reasoning.push('Denial received from agency');
 
-      // Check if denial is challengeable
       const caseData = await db.getCaseById(caseId);
-      const denialStrength = await assessDenialStrength(caseData);
-      reasoning.push(`Denial strength assessed as: ${denialStrength}`);
 
-      if (denialStrength === 'weak' && autopilotMode === 'AUTO') {
-        reasoning.push('Weak denial, preparing rebuttal');
-        return {
-          proposalActionType: SEND_REBUTTAL,
-          canAutoExecute: true,
-          requiresHuman: false,
-          proposalReasoning: reasoning,
-          logs: [...logs, 'Drafting rebuttal for weak denial'],
-          nextNode: 'draft_response'
-        };
-      } else {
-        reasoning.push('Strong/medium denial or supervised mode, gating for human review');
-        return {
-          proposalActionType: SEND_REBUTTAL,
-          canAutoExecute: false,
-          requiresHuman: true,
-          pauseReason: 'DENIAL',
-          proposalReasoning: reasoning,
-          logs: [...logs, 'Gating denial response for human review'],
-          nextNode: 'draft_response'
-        };
+      // Resolve denial subtype: prefer state, fallback to latest analysis
+      let resolvedSubtype = denialSubtype;
+      if (!resolvedSubtype) {
+        const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
+        resolvedSubtype = latestAnalysis?.full_analysis_json?.denial_subtype || null;
+      }
+      reasoning.push(`Denial subtype: ${resolvedSubtype || 'unknown'}`);
+
+      switch (resolvedSubtype) {
+        case 'no_records': {
+          // "No responsive records" — may be wrong agency or request needs reformulation
+          if (!caseData.contact_research_notes) {
+            reasoning.push('No prior agency research — proposing RESEARCH_AGENCY (may be wrong PD)');
+            return {
+              proposalActionType: RESEARCH_AGENCY,
+              canAutoExecute: false,
+              requiresHuman: true,
+              pauseReason: 'DENIAL',
+              proposalReasoning: reasoning,
+              logs: [...logs, 'No records denial — researching correct agency'],
+              nextNode: 'draft_response'
+            };
+          } else {
+            reasoning.push('Agency already researched — proposing REFORMULATE_REQUEST (narrow/different angle)');
+            return {
+              proposalActionType: REFORMULATE_REQUEST,
+              canAutoExecute: false,
+              requiresHuman: true,
+              pauseReason: 'DENIAL',
+              proposalReasoning: reasoning,
+              logs: [...logs, 'No records denial — reformulating request'],
+              nextNode: 'draft_response'
+            };
+          }
+        }
+
+        case 'wrong_agency': {
+          reasoning.push('Agency explicitly said "not us" — proposing RESEARCH_AGENCY');
+          return {
+            proposalActionType: RESEARCH_AGENCY,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: 'DENIAL',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Wrong agency denial — researching correct agency'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'overly_broad': {
+          reasoning.push('Request too broad — proposing REFORMULATE_REQUEST (narrow scope)');
+          return {
+            proposalActionType: REFORMULATE_REQUEST,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: 'DENIAL',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Overly broad denial — reformulating with narrower scope'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'ongoing_investigation':
+        case 'privacy_exemption': {
+          // Challenge the exemption with legal arguments
+          const denialStrength = await assessDenialStrength(caseData);
+          reasoning.push(`Exemption-based denial (${resolvedSubtype}), strength: ${denialStrength}`);
+
+          const canAuto = autopilotMode === 'AUTO' && denialStrength === 'weak';
+          return {
+            proposalActionType: SEND_REBUTTAL,
+            canAutoExecute: canAuto,
+            requiresHuman: !canAuto,
+            pauseReason: canAuto ? null : 'DENIAL',
+            proposalReasoning: reasoning,
+            logs: [...logs, `Exemption denial (${resolvedSubtype}) — drafting rebuttal`],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'excessive_fees': {
+          reasoning.push('Excessive fees cited as denial — proposing NEGOTIATE_FEE');
+          return {
+            proposalActionType: NEGOTIATE_FEE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: 'FEE_QUOTE',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Fee-based denial — negotiating fees'],
+            nextNode: 'draft_response'
+          };
+        }
+
+        case 'retention_expired': {
+          reasoning.push('Records retention expired — nothing to retrieve, escalating to human');
+          return {
+            proposalActionType: ESCALATE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: 'DENIAL',
+            proposalReasoning: reasoning,
+            logs: [...logs, 'Retention expired — escalating for human decision'],
+            nextNode: 'gate_or_execute'
+          };
+        }
+
+        default: {
+          // Unknown or null subtype — fall back to existing denial strength logic
+          const denialStrength = await assessDenialStrength(caseData);
+          reasoning.push(`Unknown subtype, denial strength: ${denialStrength} — using legacy routing`);
+
+          if (denialStrength === 'weak' && autopilotMode === 'AUTO') {
+            reasoning.push('Weak denial, preparing rebuttal');
+            return {
+              proposalActionType: SEND_REBUTTAL,
+              canAutoExecute: true,
+              requiresHuman: false,
+              proposalReasoning: reasoning,
+              logs: [...logs, 'Drafting rebuttal for weak denial'],
+              nextNode: 'draft_response'
+            };
+          } else {
+            reasoning.push('Strong/medium denial or supervised mode, gating for human review');
+            return {
+              proposalActionType: SEND_REBUTTAL,
+              canAutoExecute: false,
+              requiresHuman: true,
+              pauseReason: 'DENIAL',
+              proposalReasoning: reasoning,
+              logs: [...logs, 'Gating denial response for human review'],
+              nextNode: 'draft_response'
+            };
+          }
+        }
       }
     }
 
@@ -591,8 +759,20 @@ async function decideNextActionNode(state) {
       };
     }
 
-    // NEW: Wrong agency - no email, find correct agency
+    // NEW: Wrong agency — route to RESEARCH_AGENCY if response suggests where to go
     if (classification === 'WRONG_AGENCY') {
+      if (requiresResponse) {
+        reasoning.push('Wrong agency with redirect info — proposing RESEARCH_AGENCY to find correct custodian');
+        return {
+          proposalActionType: RESEARCH_AGENCY,
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: 'DENIAL',
+          proposalReasoning: reasoning,
+          logs: [...logs, 'Wrong agency — researching correct agency'],
+          nextNode: 'draft_response'
+        };
+      }
       reasoning.push('Wrong agency - needs redirect to correct custodian');
       await db.updateCaseStatus(caseId, 'pending', { substatus: 'wrong_agency' });
       return {
