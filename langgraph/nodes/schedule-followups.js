@@ -10,19 +10,17 @@
 const db = require('../../services/database');
 const logger = require('../../services/logger');
 
-// Default follow-up interval in business days
-const DEFAULT_FOLLOWUP_DAYS = parseInt(process.env.DEFAULT_FOLLOWUP_DAYS) || 7;
+// Default response days for unknown states
+const DEFAULT_RESPONSE_DAYS = parseInt(process.env.DEFAULT_RESPONSE_DAYS) || 10;
 
 /**
- * Calculate next follow-up date based on state deadlines
+ * Get the statutory response days for a state
  *
  * @param {string} state - State code (e.g., 'CA', 'NY')
- * @param {Date} sendDate - When the request was sent
- * @returns {Date} - Next follow-up date
+ * @returns {number} - Response days for that state
  */
-async function calculateNextFollowupDate(state, sendDate = new Date()) {
-  // Try to get state-specific deadline
-  let responseDays = DEFAULT_FOLLOWUP_DAYS;
+async function getStateResponseDays(state) {
+  let responseDays = DEFAULT_RESPONSE_DAYS;
 
   if (state) {
     try {
@@ -37,6 +35,19 @@ async function calculateNextFollowupDate(state, sendDate = new Date()) {
       logger.warn('Could not fetch state deadline', { state, error: err.message });
     }
   }
+
+  return responseDays;
+}
+
+/**
+ * Calculate next follow-up date based on state deadlines
+ *
+ * @param {string} state - State code (e.g., 'CA', 'NY')
+ * @param {Date} sendDate - When the request was sent
+ * @returns {Date} - Next follow-up date
+ */
+async function calculateNextFollowupDate(state, sendDate = new Date()) {
+  const responseDays = await getStateResponseDays(state);
 
   // Add buffer days (follow up after deadline + grace period)
   const bufferDays = 2;
@@ -82,27 +93,34 @@ async function scheduleFollowupsNode(state) {
     // Get or create email thread
     const thread = await db.getThreadByCaseId(caseId);
 
-    // Calculate next follow-up date
+    // Calculate next follow-up date and statutory deadline
     const sendDate = executionResult?.sentAt ? new Date(executionResult.sentAt) : new Date();
+    const responseDays = await getStateResponseDays(caseData.state);
     const nextFollowupDate = await calculateNextFollowupDate(caseData.state, sendDate);
 
-    // Create or update follow-up schedule
+    // Calculate the statutory deadline (no buffer — the actual legal deadline)
+    const deadlineDate = new Date(sendDate);
+    deadlineDate.setDate(deadlineDate.getDate() + responseDays);
+
+    // Create or update follow-up schedule (auto_send disabled — deadline escalation handles it)
     const schedule = await db.upsertFollowUpSchedule(caseId, {
       threadId: thread?.id || null,
       nextFollowupDate: nextFollowupDate,
       followupCount: 0,
-      autoSend: caseData.autopilot_mode === 'AUTO',
+      autoSend: false,
       status: 'scheduled',
       lastFollowupSentAt: null
     });
 
     logs.push(`Follow-up scheduled for ${nextFollowupDate.toISOString().split('T')[0]}`);
+    logs.push(`Statutory deadline: ${deadlineDate.toISOString().split('T')[0]} (${responseDays} days)`);
     logs.push(`Auto-send: ${schedule.auto_send}`);
 
-    // Update case status to awaiting_response
+    // Update case status to awaiting_response with deadline
     await db.updateCase(caseId, {
       status: 'awaiting_response',
-      send_date: sendDate
+      send_date: sendDate,
+      deadline_date: deadlineDate
     });
 
     logs.push('Case status updated to awaiting_response');
@@ -120,4 +138,4 @@ async function scheduleFollowupsNode(state) {
   }
 }
 
-module.exports = { scheduleFollowupsNode, calculateNextFollowupDate };
+module.exports = { scheduleFollowupsNode, calculateNextFollowupDate, getStateResponseDays };

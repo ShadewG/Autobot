@@ -1032,6 +1032,21 @@ router.get('/cases', async (req, res) => {
                 c.created_at,
                 c.updated_at,
                 c.user_id,
+                c.deadline_date,
+                c.send_date,
+                c.last_contact_research_at,
+                CASE
+                    WHEN c.deadline_date IS NOT NULL AND c.deadline_date < CURRENT_DATE
+                         AND c.status IN ('sent', 'awaiting_response')
+                    THEN (CURRENT_DATE - c.deadline_date::date)
+                    ELSE 0
+                END AS days_overdue,
+                CASE
+                    WHEN c.deadline_date IS NOT NULL AND c.deadline_date >= CURRENT_DATE
+                         AND c.status IN ('sent', 'awaiting_response')
+                    THEN (c.deadline_date::date - CURRENT_DATE)
+                    ELSE NULL
+                END AS days_remaining,
                 u.name AS user_name,
                 u.email_handle AS user_handle,
                 msg_counts.total_messages,

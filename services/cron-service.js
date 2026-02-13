@@ -5,6 +5,7 @@ const { generateQueue } = require('../queues/email-queue');
 const db = require('./database');
 const stuckResponseDetector = require('./stuck-response-detector');
 const agencyNotionSync = require('./agency-notion-sync');
+const pdContactService = require('./pd-contact-service');
 
 // Feature flag: Use new Run Engine follow-up scheduler
 const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false';
@@ -45,7 +46,10 @@ class CronService {
         }, null, true, 'America/New_York');
 
         // Start follow-up scheduler (Phase 6: Run Engine integration)
-        if (USE_RUN_ENGINE_FOLLOWUPS) {
+        // Can be disabled with DISABLE_EMAIL_FOLLOWUPS=true when using deadline escalation mode
+        if (process.env.DISABLE_EMAIL_FOLLOWUPS === 'true') {
+            console.log('✓ Email follow-ups DISABLED (deadline escalation mode)');
+        } else if (USE_RUN_ENGINE_FOLLOWUPS) {
             followupScheduler.start();
             console.log('✓ Follow-up scheduler (Run Engine): Every 15 minutes');
         } else {
@@ -126,16 +130,14 @@ class CronService {
             }
         }, 30000);
 
-        // Phone call escalation: sweep for 14-day no-response email cases (daily at 10 AM)
-        this.jobs.phoneCallSweep = new CronJob('0 10 * * *', async () => {
+        // Deadline escalation: sweep for overdue cases, research contacts, route to phone/human review (daily at 10 AM)
+        this.jobs.deadlineEscalationSweep = new CronJob('0 10 * * *', async () => {
             try {
-                console.log('Running phone call escalation sweep...');
-                const result = await this.sweepNoResponseCases();
-                if (result.escalated > 0) {
-                    console.log(`Escalated ${result.escalated} case(s) to phone call queue`);
-                }
+                console.log('Running deadline escalation sweep...');
+                const result = await this.sweepOverdueCases();
+                console.log(`Deadline escalation sweep: ${result.phoneCalls} phone calls, ${result.humanReviews} human reviews, ${result.contactUpdates} contact updates, ${result.skipped} skipped`);
             } catch (error) {
-                console.error('Error in phone call sweep cron:', error);
+                console.error('Error in deadline escalation sweep cron:', error);
             }
         }, null, true, 'America/New_York');
 
@@ -155,7 +157,7 @@ class CronService {
         console.log('✓ Health check: Every 5 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
         console.log('✓ Agency sync: Every hour + on startup');
-        console.log('✓ Phone call sweep: Daily at 10 AM');
+        console.log('✓ Deadline escalation sweep: Daily at 10 AM');
         console.log('✓ Stuck portal sweep: Every 30 minutes');
     }
 
@@ -204,84 +206,215 @@ class CronService {
     }
 
     /**
-     * Sweep for email-only cases with no response after 14 days.
-     * Creates phone call queue entries for any that slipped through followup scheduling.
+     * Sweep for cases past their statutory deadline with no response.
+     * Researches contact info, then routes to phone call (email cases) or human review (portal/unknown).
      */
-    async sweepNoResponseCases() {
-        let escalated = 0;
+    async sweepOverdueCases() {
+        let phoneCalls = 0;
+        let humanReviews = 0;
+        let contactUpdates = 0;
+        let skipped = 0;
+
         try {
             const result = await db.query(`
                 SELECT c.*
                 FROM cases c
                 WHERE c.status IN ('sent', 'awaiting_response')
-                  AND c.send_date < NOW() - INTERVAL '14 days'
-                  AND (c.portal_url IS NULL OR c.portal_url = '')
+                  AND c.deadline_date IS NOT NULL
+                  AND c.deadline_date < CURRENT_DATE
+                  AND c.last_contact_research_at IS NULL
                   AND NOT EXISTS (
                     SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
                   )
-                ORDER BY c.send_date ASC
-                LIMIT 50
+                ORDER BY c.deadline_date ASC
+                LIMIT 20
             `);
 
             for (const caseData of result.rows) {
                 try {
-                    const daysSinceSent = Math.floor(
-                        (Date.now() - new Date(caseData.send_date).getTime()) / (1000 * 60 * 60 * 24)
+                    const daysOverdue = Math.floor(
+                        (Date.now() - new Date(caseData.deadline_date).getTime()) / (1000 * 60 * 60 * 24)
                     );
+                    const daysSinceSent = caseData.send_date
+                        ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / (1000 * 60 * 60 * 24))
+                        : daysOverdue;
 
-                    // Look up agency phone number
-                    let agencyPhone = null;
-                    if (caseData.agency_id) {
-                        const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
-                        if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
+                    // Mark as researched immediately to prevent re-processing on next sweep
+                    await db.updateCase(caseData.id, { last_contact_research_at: new Date() });
+
+                    // Research agency contact info
+                    let research = null;
+                    try {
+                        research = await pdContactService.lookupContact(
+                            caseData.agency_name,
+                            caseData.state || caseData.incident_location
+                        );
+                    } catch (lookupErr) {
+                        if (lookupErr.code === 'SERVICE_UNAVAILABLE') {
+                            console.warn(`Deadline sweep: pd-contact unavailable, skipping case ${caseData.id}`);
+                            // Clear research timestamp so it retries next sweep
+                            await db.updateCase(caseData.id, { last_contact_research_at: null });
+                            skipped++;
+                            continue;
+                        }
+                        console.warn(`Deadline sweep: lookup failed for case ${caseData.id}: ${lookupErr.message}`);
                     }
 
-                    const phoneTask = await db.createPhoneCallTask({
-                        case_id: caseData.id,
-                        agency_name: caseData.agency_name,
-                        agency_phone: agencyPhone,
-                        agency_state: caseData.state,
-                        reason: 'no_email_response',
-                        priority: daysSinceSent > 30 ? 2 : (daysSinceSent > 21 ? 1 : 0),
-                        notes: `No response after ${daysSinceSent} days (sweep)`,
-                        days_since_sent: daysSinceSent
-                    });
+                    // Compare research results to case data
+                    const contactChanged = this._contactInfoChanged(caseData, research);
+                    const isEmailCase = !caseData.portal_url || caseData.portal_url === '';
 
-                    // Auto-generate briefing (fire-and-forget)
-                    const aiService = require('./ai-service');
-                    db.getMessagesByCaseId(caseData.id, 20)
-                        .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
-                        .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
-                        .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
+                    if (contactChanged && research) {
+                        // Contact info is WRONG — update case and route to human review
+                        const updates = {
+                            contact_research_notes: [
+                                `Deadline sweep: contact info differs from research`,
+                                research.contact_email ? `Found email: ${research.contact_email}` : null,
+                                research.portal_url ? `Found portal: ${research.portal_url}` : null,
+                                research.records_officer ? `Records officer: ${research.records_officer}` : null,
+                                `Confidence: ${research.confidence || 'unknown'}`
+                            ].filter(Boolean).join('. ')
+                        };
+                        if (research.contact_email && research.contact_email !== caseData.agency_email) {
+                            updates.alternate_agency_email = research.contact_email;
+                        }
+                        if (research.portal_url) {
+                            const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+                            const normalized = normalizePortalUrl(research.portal_url);
+                            if (normalized && isSupportedPortalUrl(normalized)) {
+                                updates.portal_url = normalized;
+                                updates.portal_provider = research.portal_provider || detectPortalProviderByUrl(normalized)?.name || null;
+                            }
+                        }
+                        await db.updateCase(caseData.id, updates);
 
-                    await db.updateCaseStatus(caseData.id, 'needs_phone_call', {
-                        substatus: 'No email response after 14+ days'
-                    });
+                        await db.upsertProposal({
+                            proposalKey: `${caseData.id}:deadline_sweep:RESEARCH_AGENCY:${new Date().toISOString().slice(0, 10)}`,
+                            caseId: caseData.id,
+                            actionType: 'RESEARCH_AGENCY',
+                            reasoning: [
+                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
+                                { step: 'Contact info differs', detail: updates.contact_research_notes }
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Contact info update needed: ${caseData.case_name}`,
+                            draftBodyText: `Research found different contact info for ${caseData.agency_name}.\n\n${updates.contact_research_notes}`,
+                            status: 'PENDING_APPROVAL'
+                        });
 
-                    await db.logActivity('phone_call_escalated',
-                        `Case escalated to phone call queue via sweep: ${caseData.case_name}`,
-                        { case_id: caseData.id }
+                        await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                            substatus: `Deadline passed + contact info changed (${daysOverdue}d overdue)`
+                        });
+
+                        contactUpdates++;
+                        humanReviews++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → RESEARCH_AGENCY (contact changed)`);
+                    } else if (isEmailCase) {
+                        // Contact correct (or no research result) + email case → phone call
+                        let agencyPhone = research?.contact_phone || null;
+                        if (!agencyPhone && caseData.agency_id) {
+                            const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+                            if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
+                        }
+
+                        const phoneTask = await db.createPhoneCallTask({
+                            case_id: caseData.id,
+                            agency_name: caseData.agency_name,
+                            agency_phone: agencyPhone,
+                            agency_state: caseData.state,
+                            reason: 'deadline_passed',
+                            priority: daysOverdue > 14 ? 2 : (daysOverdue > 7 ? 1 : 0),
+                            notes: `Statutory deadline passed ${daysOverdue} days ago (deadline: ${caseData.deadline_date})`,
+                            days_since_sent: daysSinceSent
+                        });
+
+                        // Auto-generate briefing (fire-and-forget)
+                        const aiService = require('./ai-service');
+                        db.getMessagesByCaseId(caseData.id, 20)
+                            .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
+                            .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
+                            .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
+
+                        await db.updateCaseStatus(caseData.id, 'needs_phone_call', {
+                            substatus: `Deadline passed ${daysOverdue}d ago — no response`
+                        });
+
+                        phoneCalls++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (${daysOverdue}d overdue)`);
+                    } else {
+                        // Portal case or research returned null → human review
+                        await db.upsertProposal({
+                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE:${new Date().toISOString().slice(0, 10)}`,
+                            caseId: caseData.id,
+                            actionType: 'ESCALATE',
+                            reasoning: [
+                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
+                                { step: 'Portal case', detail: caseData.portal_url ? `Portal: ${caseData.portal_url}` : 'No contact research results' }
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Deadline overdue: ${caseData.case_name}`,
+                            draftBodyText: `${daysOverdue} days past statutory deadline. ${caseData.portal_url ? `Portal case: ${caseData.portal_url}` : 'Contact research returned no results.'}`,
+                            status: 'PENDING_APPROVAL'
+                        });
+
+                        await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                            substatus: `Deadline passed ${daysOverdue}d ago — ${caseData.portal_url ? 'portal case' : 'no contact info'}`
+                        });
+
+                        humanReviews++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → human review (${caseData.portal_url ? 'portal' : 'no contact'})`);
+                    }
+
+                    await db.logActivity('deadline_escalation',
+                        `Case ${caseData.case_name} escalated: ${daysOverdue}d past deadline`,
+                        { case_id: caseData.id, days_overdue: daysOverdue, contact_changed: contactChanged }
                     );
 
                     // Sync to Notion
                     try {
-                        const notionService = require('./notion-service');
                         await notionService.syncStatusToNotion(caseData.id);
                     } catch (err) {
-                        console.warn('Failed to sync phone escalation to Notion:', err.message);
+                        console.warn('Failed to sync deadline escalation to Notion:', err.message);
                     }
-
-                    escalated++;
-                    console.log(`Phone call escalation: case ${caseData.id} (${caseData.case_name})`);
                 } catch (error) {
-                    console.error(`Error escalating case ${caseData.id}:`, error.message);
+                    console.error(`Error in deadline escalation for case ${caseData.id}:`, error.message);
                 }
             }
         } catch (error) {
-            console.error('Error in sweepNoResponseCases:', error);
+            console.error('Error in sweepOverdueCases:', error);
         }
 
-        return { escalated };
+        return { phoneCalls, humanReviews, contactUpdates, skipped };
+    }
+
+    /**
+     * Compare research results to existing case contact data.
+     * Returns true if research found meaningfully different contact info.
+     */
+    _contactInfoChanged(caseData, research) {
+        if (!research) return false;
+
+        // Check email difference (normalize to lowercase)
+        if (research.contact_email) {
+            const researchEmail = research.contact_email.toLowerCase().trim();
+            const caseEmail = (caseData.agency_email || '').toLowerCase().trim();
+            if (researchEmail && caseEmail && researchEmail !== caseEmail) return true;
+        }
+
+        // Check portal: found portal where none existed, or different portal
+        if (research.portal_url) {
+            const { normalizePortalUrl } = require('../utils/portal-utils');
+            const researchPortal = normalizePortalUrl(research.portal_url) || '';
+            const casePortal = normalizePortalUrl(caseData.portal_url || '') || '';
+            if (researchPortal && !casePortal) return true;
+            if (researchPortal && casePortal && researchPortal !== casePortal) return true;
+        }
+
+        return false;
     }
 
     /**
@@ -442,11 +575,13 @@ class CronService {
         Object.values(this.jobs).forEach(job => job.stop());
 
         // Stop follow-up scheduler
-        if (USE_RUN_ENGINE_FOLLOWUPS) {
-            followupScheduler.stop();
-        } else {
-            const followUpService = require('./follow-up-service');
-            followUpService.stop();
+        if (process.env.DISABLE_EMAIL_FOLLOWUPS !== 'true') {
+            if (USE_RUN_ENGINE_FOLLOWUPS) {
+                followupScheduler.stop();
+            } else {
+                const followUpService = require('./follow-up-service');
+                followUpService.stop();
+            }
         }
 
         console.log('All cron jobs stopped');
@@ -458,20 +593,27 @@ class CronService {
     getStatus() {
         // Get follow-up status based on which scheduler is active
         let followUpStatus = false;
-        if (USE_RUN_ENGINE_FOLLOWUPS) {
+        let followUpEngine = 'disabled';
+        if (process.env.DISABLE_EMAIL_FOLLOWUPS === 'true') {
+            followUpStatus = false;
+            followUpEngine = 'disabled (deadline escalation)';
+        } else if (USE_RUN_ENGINE_FOLLOWUPS) {
             followUpStatus = followupScheduler.cronJob?.running || false;
+            followUpEngine = 'run_engine';
         } else {
             const followUpService = require('./follow-up-service');
             followUpStatus = followUpService.cronJob?.running || false;
+            followUpEngine = 'legacy';
         }
 
         return {
             notionSync: this.jobs.notionSync?.running || false,
             followUp: followUpStatus,
-            followUpEngine: USE_RUN_ENGINE_FOLLOWUPS ? 'run_engine' : 'legacy',
+            followUpEngine: followUpEngine,
             cleanup: this.jobs.cleanup?.running || false,
             healthCheck: this.jobs.healthCheck?.running || false,
-            stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false
+            stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false,
+            deadlineEscalationSweep: this.jobs.deadlineEscalationSweep?.running || false
         };
     }
 }

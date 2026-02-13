@@ -840,6 +840,7 @@
         .age-badge.fresh { background: #23863620; color: #3fb950; border: 1px solid #23863640; }
         .age-badge.aging { background: #d2992220; color: #d29922; border: 1px solid #d2992240; }
         .age-badge.stale { background: #f8514920; color: #f85149; border: 1px solid #f8514940; }
+        .age-badge.researched { margin-left: 3px; background: #388bfd20; color: #58a6ff; border: 1px solid #388bfd40; font-size: 9px; }
 
         /* Daily summary stats bar */
         .daily-stats-bar {
@@ -1090,7 +1091,7 @@
                         <th>Agency</th>
                         <th>Contact</th>
                         <th>Status</th>
-                        <th>Age</th>
+                        <th>Deadline</th>
                         <th>Pending</th>
                         <th>Messages</th>
                         <th>Active Run</th>
@@ -4139,14 +4140,38 @@
             }
         }
 
-        // === #5: Case age badges ===
+        // === #5: Case deadline badges ===
         function caseAgeBadge(c) {
-            const updated = c.updated_at || c.created_at;
-            if (!updated) return '-';
-            const days = Math.floor((Date.now() - new Date(updated).getTime()) / 86400000);
-            if (days < 2) return `<span class="age-badge fresh">${days}d</span>`;
-            if (days <= 5) return `<span class="age-badge aging">${days}d</span>`;
-            return `<span class="age-badge stale">${days}d</span>`;
+            let badge = '';
+            const isAwaiting = ['sent', 'awaiting_response'].includes(c.status);
+
+            if (c.deadline_date && isAwaiting) {
+                const deadlineDate = new Date(c.deadline_date);
+                const deadlineStr = deadlineDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+                if (c.days_overdue > 0) {
+                    badge = `<span class="age-badge stale" title="Deadline: ${deadlineStr}">${c.days_overdue}d overdue</span>`;
+                } else if (c.days_remaining !== null && c.days_remaining <= 2) {
+                    badge = `<span class="age-badge aging" title="Deadline: ${deadlineStr}">${c.days_remaining}d left</span>`;
+                } else if (c.days_remaining !== null) {
+                    badge = `<span class="age-badge fresh" title="Deadline: ${deadlineStr}">${c.days_remaining}d left</span>`;
+                }
+            } else {
+                // Fallback: show update age for non-awaiting cases
+                const updated = c.updated_at || c.created_at;
+                if (!updated) return '-';
+                const days = Math.floor((Date.now() - new Date(updated).getTime()) / 86400000);
+                if (days < 2) badge = `<span class="age-badge fresh">${days}d</span>`;
+                else if (days <= 5) badge = `<span class="age-badge aging">${days}d</span>`;
+                else badge = `<span class="age-badge stale">${days}d</span>`;
+            }
+
+            // Show researched indicator
+            if (c.last_contact_research_at) {
+                badge += `<span class="age-badge researched" title="Contact researched ${new Date(c.last_contact_research_at).toLocaleDateString()}">R</span>`;
+            }
+
+            return badge;
         }
 
         // === #8: Auto-pause refresh during interaction ===
