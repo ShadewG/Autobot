@@ -585,6 +585,49 @@
             text-transform: uppercase;
             margin-bottom: 6px;
         }
+
+        /* Accordion sections */
+        .accordion-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            padding: 8px 0;
+            margin-top: 6px;
+            border-top: 1px solid #21262d;
+            user-select: none;
+        }
+        .accordion-toggle:first-child { border-top: none; margin-top: 0; }
+        .accordion-toggle:hover { color: #58a6ff; }
+        .accordion-toggle h3 { margin: 0; font-size: 13px; color: inherit; }
+        .accordion-toggle .acc-arrow {
+            font-size: 11px;
+            color: #8b949e;
+            transition: transform 0.15s;
+        }
+        .accordion-toggle.open .acc-arrow { transform: rotate(90deg); }
+        .accordion-toggle .acc-count {
+            font-size: 11px;
+            color: #8b949e;
+            margin-left: 6px;
+            font-weight: normal;
+        }
+        .accordion-body {
+            overflow: hidden;
+            max-height: 0;
+            transition: max-height 0.2s ease-out;
+        }
+        .accordion-body.open {
+            max-height: 2000px;
+            transition: max-height 0.3s ease-in;
+        }
+
+        /* Password mask */
+        .pw-masked {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            letter-spacing: 2px;
+            color: #8b949e;
+        }
         .clickable-row { cursor: pointer; }
         .clickable-row:hover { background: #1f242b; }
         .clickable-row.expanded { background: #1c2333; }
@@ -882,10 +925,24 @@
             <button class="drawer-close" onclick="collapseCase()" title="Close">Close</button>
         </div>
         <div id="caseInspectorGrid" class="case-grid"></div>
-        <div id="casePortalInfoPanel" style="display:none; margin-top:12px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
+
+        <!-- Pending Actions + Quick Actions (always visible, not collapsible) -->
         <div id="caseInspectorProposalCards" style="margin-top:10px;"></div>
         <div id="caseInspectorActions" style="margin-top:10px;"></div>
         <div id="caseInspectorActionResult" class="send-result" style="display:none; margin-top:8px;"></div>
+
+        <!-- Portal Info accordion -->
+        <div id="casePortalInfoAccordion" style="display:none;">
+            <div class="accordion-toggle open" onclick="toggleAccordion(this)">
+                <h3>Portal Info</h3>
+                <span class="acc-arrow">&#9654;</span>
+            </div>
+            <div class="accordion-body open">
+                <div id="casePortalInfoPanel" style="margin-top:4px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
+            </div>
+        </div>
+
+        <!-- Portal Review form (shown/hidden by JS, not an accordion) -->
         <div id="casePortalReview" style="display:none; margin-top:10px; border:1px solid #30363d; border-radius:8px; padding:10px;">
             <h3 style="margin-top:0;">Portal Submission Review</h3>
             <div class="form-row">
@@ -925,12 +982,33 @@
                 <button class="drawer-btn" onclick="hidePortalReview()">Cancel</button>
             </div>
         </div>
-        <h3>Correspondence</h3>
-        <div id="caseInspectorMessages" class="case-list"></div>
-        <h3 style="margin-top:10px;">Runs</h3>
-        <div id="caseInspectorRuns" class="case-list"></div>
-        <h3 style="margin-top:10px;">Proposal History</h3>
-        <div id="caseInspectorProposals" class="case-list"></div>
+
+        <!-- Correspondence accordion (open by default) -->
+        <div class="accordion-toggle open" onclick="toggleAccordion(this)">
+            <h3>Correspondence <span class="acc-count" id="caseInspectorMsgCount"></span></h3>
+            <span class="acc-arrow">&#9654;</span>
+        </div>
+        <div class="accordion-body open">
+            <div id="caseInspectorMessages" class="case-list"></div>
+        </div>
+
+        <!-- Runs accordion (collapsed by default) -->
+        <div class="accordion-toggle" onclick="toggleAccordion(this)">
+            <h3>Runs <span class="acc-count" id="caseInspectorRunCount"></span></h3>
+            <span class="acc-arrow">&#9654;</span>
+        </div>
+        <div class="accordion-body">
+            <div id="caseInspectorRuns" class="case-list"></div>
+        </div>
+
+        <!-- Proposal History accordion (collapsed by default) -->
+        <div class="accordion-toggle" onclick="toggleAccordion(this)">
+            <h3>Proposal History <span class="acc-count" id="caseInspectorProposalCount"></span></h3>
+            <span class="acc-arrow">&#9654;</span>
+        </div>
+        <div class="accordion-body">
+            <div id="caseInspectorProposals" class="case-list"></div>
+        </div>
     </div>
 
     <div id="outbound" class="panel">
@@ -2312,7 +2390,7 @@
             actions.innerHTML = '';
             actionResult.style.display = 'none';
             reviewPanel.style.display = 'none';
-            portalInfoPanel.style.display = 'none';
+            document.getElementById('casePortalInfoAccordion').style.display = 'none';
             currentCaseData = null;
             latestCasePortalTasks = [];
             currentCaseMessages = [];
@@ -2344,25 +2422,26 @@
                 `;
 
                 // Portal Info panel
+                const portalAccordion = document.getElementById('casePortalInfoAccordion');
                 if (c.portal_url) {
                     const pa = data.portal_account;
-                    let portalHtml = `<h3 style="margin-top:0;color:#58a6ff;">Portal Info</h3><div class="case-grid">`;
+                    const escapedPw = pa?.password ? pa.password.replace(/'/g, "\\'").replace(/\\/g, '\\\\') : '';
+                    let portalHtml = `<div class="case-grid">`;
                     portalHtml += `<div class="cell"><span class="k">Portal URL</span><a class="case-link" href="${c.portal_url}" target="_blank">${truncate(c.portal_url, 50)}</a></div>`;
                     portalHtml += `<div class="cell"><span class="k">Provider</span>${c.portal_provider || '-'}</div>`;
                     portalHtml += `<div class="cell"><span class="k">Account Email</span>${pa?.email || '-'}</div>`;
-                    portalHtml += `<div class="cell"><span class="k">Account Password</span>${pa?.password ? `<span id="portalPwDisplay">${pa.password}</span> <button onclick="navigator.clipboard.writeText('${pa.password.replace(/'/g, "\\'")}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})" style="margin-left:6px;padding:2px 8px;font-size:11px;cursor:pointer;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;">Copy</button>` : '-'}</div>`;
+                    portalHtml += `<div class="cell"><span class="k">Account Password</span>${pa?.password ? `<span class="pw-masked">••••••••</span> <button onclick="togglePassword(this,'${escapedPw}')" style="margin-left:4px;padding:2px 8px;font-size:11px;cursor:pointer;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;">Show</button> <button onclick="navigator.clipboard.writeText('${escapedPw}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})" style="margin-left:2px;padding:2px 8px;font-size:11px;cursor:pointer;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;">Copy</button>` : '-'}</div>`;
                     portalHtml += `<div class="cell"><span class="k">Request Number</span>${c.portal_request_number || '-'}</div>`;
                     portalHtml += `<div class="cell"><span class="k">Last Status</span>${c.last_portal_status || '-'}${c.last_portal_status_at ? ` <span class="timestamp">(${formatTime(c.last_portal_status_at)})</span>` : ''}</div>`;
                     portalHtml += `</div>`;
-                    // Quick link buttons
                     let links = '';
                     if (c.portal_url) links += `<a href="${c.portal_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Open Portal</a>`;
                     if (c.last_portal_task_url) links += `<a href="${c.last_portal_task_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Skyvern Task</a>`;
                     if (links) portalHtml += `<div style="margin-top:6px;">${links}</div>`;
                     portalInfoPanel.innerHTML = portalHtml;
-                    portalInfoPanel.style.display = 'block';
+                    portalAccordion.style.display = 'block';
                 } else {
-                    portalInfoPanel.style.display = 'none';
+                    portalAccordion.style.display = 'none';
                     portalInfoPanel.innerHTML = '';
                 }
 
@@ -2420,6 +2499,7 @@
                     `).join('')
                     : '<div class="timestamp">No correspondence yet</div>';
                 msgList.innerHTML = msgHtml;
+                document.getElementById('caseInspectorMsgCount').textContent = messages.length ? `(${messages.length})` : '';
 
                 const runs = data.runs || [];
                 runList.innerHTML = runs.length
@@ -2430,6 +2510,7 @@
                         </div>
                     `).join('')
                     : '<div class="timestamp">No runs yet</div>';
+                document.getElementById('caseInspectorRunCount').textContent = runs.length ? `(${runs.length})` : '';
 
                 // Only show non-pending proposals in the minimal list
                 proposalList.innerHTML = otherProposals.length
@@ -2440,6 +2521,7 @@
                         </div>
                     `).join('')
                     : '<div class="timestamp">No past proposals</div>';
+                document.getElementById('caseInspectorProposalCount').textContent = otherProposals.length ? `(${otherProposals.length})` : '';
             } catch (error) {
                 grid.innerHTML = `<div class="cell">Error: ${error.message || error}</div>`;
                 msgList.innerHTML = '<div class="timestamp">-</div>';
@@ -2997,6 +3079,27 @@
             const div = document.createElement('div');
             div.textContent = text || '';
             return div.innerHTML;
+        }
+
+        function toggleAccordion(toggleEl) {
+            toggleEl.classList.toggle('open');
+            const body = toggleEl.nextElementSibling;
+            if (body && body.classList.contains('accordion-body')) {
+                body.classList.toggle('open');
+            }
+        }
+
+        function togglePassword(btn, password) {
+            const display = btn.previousElementSibling;
+            if (display.classList.contains('pw-masked')) {
+                display.classList.remove('pw-masked');
+                display.textContent = password;
+                btn.textContent = 'Hide';
+            } else {
+                display.classList.add('pw-masked');
+                display.textContent = '••••••••';
+                btn.textContent = 'Show';
+            }
         }
 
         function findLatestAnalysisSummary(messages, caseData) {
