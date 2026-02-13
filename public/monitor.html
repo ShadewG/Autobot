@@ -1896,37 +1896,25 @@
             document.getElementById('opsStuckRuns').textContent = s.stuck_runs_total ?? 0;
 
             renderOpsList('opsPendingList', payload.pending_approvals, (p) => {
-                const hasPortal = p.portal_url && !p.portal_url.startsWith('http://') || (p.portal_url && p.portal_url.includes('portal'));
                 const actionLabel = String(p.action_type || '').replace(/_/g, ' ');
-                const caseStatus = String(p.case_status || '').replace(/_/g, ' ');
-                const msgSummary = p.inbound_count > 0
-                    ? `${p.inbound_count} inbound msg${p.inbound_count > 1 ? 's' : ''}`
-                    : 'No responses yet';
+                const reasoning = truncate(formatReasoning(p.reasoning), 100);
                 const lastMsg = p.last_inbound_preview
-                    ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 100)
+                    ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 140)
                     : '';
-                const lastSubj = p.last_inbound_subject ? truncate(String(p.last_inbound_subject), 50) : '';
-                const reasoning = truncate(formatReasoning(p.reasoning), 120);
+                const msgCount = p.inbound_count > 0 ? `${p.inbound_count} inbound` : '';
                 return `
                 <div class="ops-item" style="padding:10px;">
-                    <div style="display:flex;justify-content:space-between;align-items:start;">
-                        <div>
-                            <a href="#" onclick="openCase(${p.case_id});return false;" style="color:#58a6ff;font-weight:600;">Case #${p.case_id || '-'}</a>
-                            <span style="color:#c9d1d9;font-size:12px;margin-left:4px;">${truncate(p.case_name || '', 35)}</span>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+                            <a href="#" onclick="openCase(${p.case_id});return false;" style="color:#58a6ff;font-weight:600;white-space:nowrap;">#${p.case_id || '-'}</a>
+                            <span style="color:#c9d1d9;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${truncate(p.case_name || '', 40)}</span>
+                            <span class="badge agent" style="font-size:10px;flex-shrink:0;">${actionLabel}</span>
                         </div>
-                        <span style="font-size:11px;color:#8b949e;">${relativeTime(p.created_at)}</span>
+                        <span style="font-size:11px;color:#8b949e;flex-shrink:0;margin-left:8px;">${relativeTime(p.created_at)}</span>
                     </div>
-                    <div style="margin-top:4px;">
-                        <span class="badge agent" style="font-size:10px;">${actionLabel}</span>
-                        ${p.agency_name ? `<span style="color:#8b949e;font-size:11px;margin-left:6px;">${truncate(p.agency_name, 30)}</span>` : ''}
-                        <span style="color:#8b949e;font-size:11px;margin-left:6px;">${caseStatus}</span>
-                    </div>
-                    ${reasoning ? `<div style="margin-top:4px;font-size:11px;color:#d2a8ff;line-height:1.4;">${reasoning}</div>` : ''}
-                    <div style="margin-top:4px;font-size:11px;color:#8b949e;">
-                        ${msgSummary}${p.message_count > 0 ? ` (${p.message_count} total)` : ''}
-                        ${lastSubj ? ` · Last: "${lastSubj}"` : ''}
-                    </div>
-                    ${lastMsg ? `<div style="margin-top:3px;font-size:11px;color:#6e7681;font-style:italic;line-height:1.3;max-height:32px;overflow:hidden;">${lastMsg}</div>` : ''}
+                    <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(p.agency_name || '', 40)}${msgCount ? ` · ${msgCount}` : ''}</div>
+                    ${lastMsg ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${lastMsg}</div>` : ''}
+                    ${reasoning ? `<div style="margin-top:4px;font-size:11px;color:#d2a8ff;">${reasoning}</div>` : ''}
                     <div style="margin-top:6px;display:flex;gap:6px;">
                         <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
                         <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
@@ -1935,15 +1923,30 @@
                 </div>`;
             });
 
-            renderOpsList('opsUnmatchedList', payload.unmatched_inbound, (m) => `
-                <div class="ops-item">
-                    <div><a href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${truncate(m.from_email, 36)}</div>
-                    <div>${truncate(m.subject, 70)} · ${relativeTime(m.received_at || m.created_at)}</div>
-                    <div style="margin-top:4px;">
-                        <button class="drawer-btn" onclick="openMatchModal(${m.id})">Match to Case</button>
+            renderOpsList('opsUnmatchedList', payload.unmatched_inbound, (m) => {
+                const bodyPreview = m.body_preview ? truncate(String(m.body_preview).replace(/\s+/g, ' '), 120) : '';
+                const suggested = Array.isArray(m.suggested_cases) ? m.suggested_cases : [];
+                const suggestHtml = suggested.length
+                    ? `<div style="margin-top:4px;font-size:11px;"><span style="color:#8b949e;">Possible match:</span> ${suggested.map(s => `<a href="#" onclick="openCase(${s.id});return false;" style="color:#58a6ff;">#${s.id} ${truncate(s.case_name || s.agency_name || '', 30)}</a>`).join(', ')}</div>`
+                    : '';
+                return `
+                <div class="ops-item" style="padding:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <a href="#" onclick="openMessage(${m.id});return false;" style="color:#58a6ff;font-weight:600;">#${m.id}</a>
+                            <span style="color:#c9d1d9;font-size:12px;">${truncate(m.from_email, 36)}</span>
+                        </div>
+                        <span style="font-size:11px;color:#8b949e;">${relativeTime(m.received_at || m.created_at)}</span>
                     </div>
-                </div>
-            `);
+                    <div style="margin-top:2px;font-size:12px;color:#c9d1d9;">${truncate(m.subject, 80)}</div>
+                    ${bodyPreview ? `<div style="margin-top:3px;font-size:11px;color:#6e7681;line-height:1.3;max-height:32px;overflow:hidden;">${bodyPreview}</div>` : ''}
+                    ${suggestHtml}
+                    <div style="margin-top:6px;display:flex;gap:6px;">
+                        <button class="drawer-btn" onclick="openMessage(${m.id})">View</button>
+                        <button class="drawer-btn primary" onclick="openMatchModal(${m.id})">Match to Case</button>
+                    </div>
+                </div>`;
+            });
 
         }
 
