@@ -2555,6 +2555,7 @@
         }
 
         let expandedCaseId = null;
+        let openCaseGen = 0;  // generation counter to discard stale fetches
 
         function toggleCase(caseId) {
             if (expandedCaseId === caseId) {
@@ -2580,6 +2581,8 @@
 
             // Collapse any previously expanded row
             collapseCase();
+
+            const thisGen = ++openCaseGen;  // stamp this call
 
             const inspector = document.getElementById('caseInspector');
             const title = document.getElementById('caseInspectorTitle');
@@ -2631,6 +2634,7 @@
 
             try {
                 const res = await fetch(`/api/monitor/case/${caseId}`);
+                if (thisGen !== openCaseGen) return;  // user clicked another case, discard
                 const data = await res.json();
                 if (!res.ok || !data.success) throw new Error(data.error || `Failed to load case (${res.status})`);
 
