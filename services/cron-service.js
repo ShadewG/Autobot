@@ -663,7 +663,59 @@ class CronService {
             console.error('Error in stuck agent run cleanup:', error);
         }
 
-        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned };
+        // Sweep 5: Retry proposals stuck in DECISION_RECEIVED > 5 minutes
+        // These are proposals the user approved but the resume job failed (e.g. Redis timeout)
+        let stuckDecisionsRetried = 0;
+        try {
+            const stuckDecisions = await db.query(`
+                SELECT p.id, p.case_id, p.action_type, p.human_decision
+                FROM proposals p
+                WHERE p.status = 'DECISION_RECEIVED'
+                  AND p.updated_at < NOW() - INTERVAL '5 minutes'
+            `);
+
+            for (const proposal of stuckDecisions.rows) {
+                try {
+                    // Check if there's already an active/queued agent run for this case
+                    const activeRun = await db.query(`
+                        SELECT id FROM agent_runs
+                        WHERE case_id = $1 AND status IN ('queued', 'running')
+                        LIMIT 1
+                    `, [proposal.case_id]);
+
+                    if (activeRun.rows.length > 0) {
+                        continue; // Already has a run in progress
+                    }
+
+                    // Re-enqueue the resume job
+                    const { enqueueResumeRunJob } = require('../queues/agent-queue');
+                    const run = await db.createAgentRunFull({
+                        case_id: proposal.case_id,
+                        trigger_type: 'resume_retry',
+                        status: 'queued',
+                        autopilot_mode: 'SUPERVISED',
+                        langgraph_thread_id: `resume:${proposal.case_id}:proposal-${proposal.id}`
+                    });
+
+                    await enqueueResumeRunJob(run.id, proposal.case_id, proposal.human_decision, {
+                        originalProposalId: proposal.id
+                    });
+
+                    stuckDecisionsRetried++;
+                    console.log(`Retried stuck DECISION_RECEIVED proposal #${proposal.id} for case #${proposal.case_id}`);
+                } catch (retryErr) {
+                    console.error(`Failed to retry proposal #${proposal.id}:`, retryErr.message);
+                }
+            }
+
+            if (stuckDecisionsRetried > 0) {
+                console.log(`Retried ${stuckDecisionsRetried} stuck DECISION_RECEIVED proposals`);
+            }
+        } catch (error) {
+            console.error('Error in stuck decision retry sweep:', error.message);
+        }
+
+        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried };
     }
 
     /**
