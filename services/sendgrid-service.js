@@ -732,6 +732,31 @@ class SendGridService {
                 return cases.rows[0];
             }
 
+            // --- Tier 2.5: Domain-level matching (active cases) ---
+            // Agencies often send from noreply@, records@, or other addresses on the same domain
+            const fromDomain = fromEmail.split('@')[1]?.toLowerCase();
+            if (fromDomain) {
+                const domainMatch = await db.query(
+                    `
+                    SELECT *
+                    FROM cases
+                    WHERE LOWER(agency_email) LIKE $1
+                      AND status = ANY($2)
+                      AND ($3::int IS NULL OR user_id = $3 OR user_id IS NULL)
+                    ORDER BY
+                      CASE WHEN user_id = $3 THEN 0 ELSE 1 END,
+                      updated_at DESC, created_at DESC
+                    LIMIT 1
+                    `,
+                    [`%@${fromDomain}`, activeStatuses, userId]
+                );
+
+                if (domainMatch.rows.length > 0) {
+                    console.log(`Matched inbound email by agency domain: ${fromDomain} (from ${fromEmail}, case has ${domainMatch.rows[0].agency_email})`);
+                    return domainMatch.rows[0];
+                }
+            }
+
             // --- Tier 3: Agency email fallback (any status) ---
             const fallback = await db.query(
                 `
@@ -750,6 +775,28 @@ class SendGridService {
             if (fallback.rows.length > 0) {
                 console.log(`Fallback match on agency email regardless of status: ${fromEmail}`);
                 return fallback.rows[0];
+            }
+
+            // --- Tier 3.5: Domain-level fallback (any status) ---
+            if (fromDomain) {
+                const domainFallback = await db.query(
+                    `
+                    SELECT *
+                    FROM cases
+                    WHERE LOWER(agency_email) LIKE $1
+                      AND ($2::int IS NULL OR user_id = $2 OR user_id IS NULL)
+                    ORDER BY
+                      CASE WHEN user_id = $2 THEN 0 ELSE 1 END,
+                      updated_at DESC, created_at DESC
+                    LIMIT 1
+                    `,
+                    [`%@${fromDomain}`, userId]
+                );
+
+                if (domainFallback.rows.length > 0) {
+                    console.log(`Domain fallback match (any status): ${fromDomain} → case #${domainFallback.rows[0].id}`);
+                    return domainFallback.rows[0];
+                }
             }
 
             console.warn(`No matching case found for inbound email from ${fromEmail} to ${toEmail}`);
@@ -893,6 +940,39 @@ class SendGridService {
             if (subdomainFallback.rows.length > 0) {
                 console.log(`Portal match (any-status fallback): subdomain "${signals.subdomain}" → case #${subdomainFallback.rows[0].id}`);
                 return subdomainFallback.rows[0];
+            }
+
+            // Fuzzy subdomain match: email local part and portal URL subdomain may differ
+            // e.g. email "sanmarcostexas@mycusthelp.net" vs portal "sanmarcostx.mycusthelp.com"
+            // Try matching portal_url containing the first 6+ chars of the subdomain
+            if (signals.subdomain.length >= 6) {
+                const prefix = signals.subdomain.substring(0, 6);
+                const fuzzyMatch = await db.query(
+                    `SELECT * FROM cases
+                     WHERE LOWER(portal_url) LIKE $1
+                       AND portal_provider = $2
+                       AND status = ANY($3)
+                     ORDER BY updated_at DESC
+                     LIMIT 1`,
+                    [`%${prefix}%`, signals.provider, activeStatuses]
+                );
+                if (fuzzyMatch.rows.length > 0) {
+                    console.log(`Portal match (fuzzy subdomain "${prefix}*"): case #${fuzzyMatch.rows[0].id}`);
+                    return fuzzyMatch.rows[0];
+                }
+
+                const fuzzyFallback = await db.query(
+                    `SELECT * FROM cases
+                     WHERE LOWER(portal_url) LIKE $1
+                       AND portal_provider = $2
+                     ORDER BY updated_at DESC
+                     LIMIT 1`,
+                    [`%${prefix}%`, signals.provider]
+                );
+                if (fuzzyFallback.rows.length > 0) {
+                    console.log(`Portal match (fuzzy subdomain any-status "${prefix}*"): case #${fuzzyFallback.rows[0].id}`);
+                    return fuzzyFallback.rows[0];
+                }
             }
         }
 
