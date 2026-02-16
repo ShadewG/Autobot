@@ -21,7 +21,7 @@ class PortalAgentServiceSkyvern {
         // Support both cloud and self-hosted
         this.baseUrl = process.env.SKYVERN_API_URL || 'https://api.skyvern.com/api/v1';
         this.apiKey = process.env.SKYVERN_API_KEY;
-        this.workflowId = process.env.SKYVERN_WORKFLOW_ID || null;
+        this.workflowId = process.env.SKYVERN_WORKFLOW_ID || 'wpid_461535111447599002';
         this.workflowRunUrl = process.env.SKYVERN_WORKFLOW_RUN_URL || 'https://api.skyvern.com/v1/run/workflows';
         this.workflowStatusUrl = process.env.SKYVERN_WORKFLOW_STATUS_URL || 'https://api.skyvern.com/v1/workflow_runs';
         this.workflowProxyLocation = process.env.SKYVERN_PROXY_LOCATION || 'RESIDENTIAL';
