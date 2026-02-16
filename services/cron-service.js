@@ -32,10 +32,21 @@ class CronService {
                     console.log(`Synced ${cases.length} new cases from Notion`);
 
                     for (const caseData of cases) {
-                        // Queue for generation and sending
-                        await generateQueue.add('generate-and-send', {
-                            caseId: caseData.id
-                        });
+                        // Queue for generation and sending (jobId dedup prevents double-queuing)
+                        try {
+                            await generateQueue.add('generate-and-send', {
+                                caseId: caseData.id
+                            }, {
+                                jobId: `generate-${caseData.id}`
+                            });
+                        } catch (queueErr) {
+                            // BullMQ rejects duplicate job IDs — this is expected
+                            if (queueErr.message?.includes('duplicate')) {
+                                console.log(`Case ${caseData.id} already queued, skipping`);
+                            } else {
+                                console.error(`Failed to queue case ${caseData.id}:`, queueErr.message);
+                            }
+                        }
                     }
 
                     await db.logActivity('notion_sync', `Synced and queued ${cases.length} cases from Notion`);
@@ -631,7 +642,28 @@ class CronService {
             console.error('Error in follow-up status fix sweep:', error);
         }
 
-        return { portalEscalated, proposalsCreated, followUpFixed };
+        // Sweep 4: Clean up stuck agent runs (queued/running > 1 hour)
+        // These block proposal approvals and pile up when the worker isn't processing
+        let stuckRunsCleaned = 0;
+        try {
+            const stuckResult = await db.query(`
+                UPDATE agent_runs
+                SET status = 'failed',
+                    ended_at = NOW(),
+                    error = 'Auto-cleaned: stuck in queued/running for >1h'
+                WHERE status IN ('queued', 'running')
+                  AND started_at < NOW() - INTERVAL '1 hour'
+                RETURNING id, case_id
+            `);
+            stuckRunsCleaned = stuckResult.rowCount || 0;
+            if (stuckRunsCleaned > 0) {
+                console.log(`Cleaned ${stuckRunsCleaned} stuck agent runs`);
+            }
+        } catch (error) {
+            console.error('Error in stuck agent run cleanup:', error);
+        }
+
+        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned };
     }
 
     /**
