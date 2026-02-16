@@ -612,6 +612,13 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
             throw new Error(`Case ${caseId} not found`);
         }
 
+        // Idempotency guard: skip cases already processed
+        const skipStatuses = ['sent', 'awaiting_response', 'portal_in_progress', 'completed', 'needs_phone_call'];
+        if (skipStatuses.includes(caseData.status)) {
+            console.log(`Case ${caseId} already '${caseData.status}' — skipping generation`);
+            return { success: true, case_id: caseId, skipped: true, reason: caseData.status };
+        }
+
         const portalUrl = normalizePortalUrl(caseData.portal_url);
         const contactEmail = pickBestEmail(caseData);
         let portalHandled = false;
@@ -686,12 +693,46 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                 }
             } catch (error) {
                 portalError = error;
-                console.error(`⚠️ Portal submission failed for case ${caseId}, falling back to email:`, error.message);
+                console.error(`⚠️ Portal submission failed for case ${caseId}:`, error.message);
                 await db.logActivity('portal_submission_failed', `Portal submission failed for case ${caseId}: ${error.message}`, {
                     case_id: caseId,
                     portal_url: portalUrl,
                     error: error.message
                 });
+
+                // If the error looks like a website/URL issue, re-research contact info
+                const errMsg = (error.message || '').toLowerCase();
+                const isWebsiteError = /navigat|not found|404|403|500|502|503|timeout|unreachable|refused|dns|err_|blocked|invalid.*url|page.*load|site.*down/i.test(errMsg);
+                if (isWebsiteError) {
+                    console.log(`🔍 Portal URL may be wrong for case ${caseId}, re-researching...`);
+                    try {
+                        const pdContactService = require('../services/pd-contact-service');
+                        const research = await pdContactService.firecrawlSearch(
+                            caseData.agency_name,
+                            caseData.state || caseData.incident_location
+                        );
+                        if (research && (research.portal_url || research.contact_email)) {
+                            const newPortal = research.portal_url ? normalizePortalUrl(research.portal_url) : null;
+                            const updates = {};
+                            if (newPortal && newPortal !== portalUrl) {
+                                updates.portal_url = newPortal;
+                                updates.portal_provider = research.portal_provider || null;
+                                console.log(`🔄 Found different portal for case ${caseId}: ${newPortal}`);
+                            }
+                            if (research.contact_email) {
+                                updates.alternate_agency_email = research.contact_email;
+                            }
+                            if (Object.keys(updates).length > 0) {
+                                await db.updateCase(caseId, updates);
+                                await db.logActivity('portal_reresearch', `Re-researched contact for case ${caseId} after portal failure`, {
+                                    case_id: caseId, old_portal: portalUrl, ...updates
+                                });
+                            }
+                        }
+                    } catch (researchErr) {
+                        console.warn(`Re-research failed for case ${caseId}:`, researchErr.message);
+                    }
+                }
             }
         } else if (portalUrl) {
             console.log(`⚠️ Portal URL provided for case ${caseId} but domain unsupported. Falling back to email.`);
