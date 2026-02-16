@@ -3649,9 +3649,9 @@
             if (!messages.length) {
                 html += '<div class="timestamp" style="padding:20px;">No correspondence yet</div>';
             } else {
-                // Sort chronologically (oldest first) for conversation flow
+                // Sort newest first so the most recent message appears at the top
                 const sorted = [...messages].sort((a, b) =>
-                    new Date(a.received_at || a.sent_at || a.created_at) - new Date(b.received_at || b.sent_at || b.created_at)
+                    new Date(b.received_at || b.sent_at || b.created_at) - new Date(a.received_at || a.sent_at || a.created_at)
                 );
                 sorted.forEach(m => {
                     const isInbound = m.direction === 'inbound';

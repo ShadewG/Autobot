@@ -990,7 +990,12 @@ ${agencyAnalysis?.full_analysis_json?.key_points ? `\nKey points from agency res
 
 Goals:
 ${actionInstruction}
-${agencyMessage ? '\nIMPORTANT: If the agency denied or withheld specific record types (e.g. body camera, video), also address those denials in the same email — request the legal basis for withholding and ask for segregable portions.' : ''}
+${agencyMessage ? `\nCRITICAL — RECORD DENIAL CHALLENGES:
+If the agency denied or withheld ANY record types, you MUST aggressively challenge every denial in this same email. Do NOT just politely ask — fight for the records.
+- Body camera (BWC) footage is the MOST IMPORTANT record in these cases. Without BWC, the case is essentially useless. If BWC is denied, this is the top priority to challenge.
+- For EACH denied record type: cite the applicable state public records law, challenge the specific exemption claimed, argue why the exemption does not apply, demand release of segregable/redactable portions, and request the specific statutory basis for withholding.
+- For BWC specifically: Note that BWC is routinely released in other jurisdictions, that the public interest in police accountability outweighs privacy concerns for on-duty conduct, and that redaction of sensitive portions (e.g. faces of bystanders) is the appropriate remedy — NOT blanket withholding.
+- Be firm but professional. Make clear that withholding without proper legal basis will be appealed.` : ''}
 ${customInstruction}
 ${lessonsContext}
 Email requirements:

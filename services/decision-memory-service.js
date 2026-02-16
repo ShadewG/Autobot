@@ -174,6 +174,11 @@ class DecisionMemoryService {
             keywords.add('has_fee_quote');
             if (caseData.last_fee_quote_amount > 500) keywords.add('high_fee');
         }
+        // Check if requested_records include BWC/video
+        const reqRecords = (Array.isArray(caseData.requested_records) ? caseData.requested_records.join(' ') : (caseData.requested_records || '')).toLowerCase();
+        if (reqRecords.includes('body cam') || reqRecords.includes('bodycam') || reqRecords.includes('bwc') || reqRecords.includes('body worn') || reqRecords.includes('video')) {
+            keywords.add('bwc_involved');
+        }
 
         // From messages — detect denials, fees, etc.
         for (const m of (messages || []).slice(0, 5)) {
@@ -199,6 +204,8 @@ class DecisionMemoryService {
             if (text.includes('forward') || text.includes('transferred') || text.includes('refer')) keywords.add('forwarded');
             if (text.includes('download') || text.includes('attached') || text.includes('records ready') || text.includes('available for pickup')) keywords.add('records_ready');
             if (text.includes('duplicate') || text.includes('already submitted') || text.includes('previously received')) keywords.add('duplicate_request');
+            if (text.includes('body cam') || text.includes('body-cam') || text.includes('bodycam') || text.includes('bwc') || text.includes('body worn') || text.includes('body-worn')) keywords.add('bwc_involved');
+            if ((text.includes('body cam') || text.includes('bodycam') || text.includes('bwc') || text.includes('body worn') || text.includes('video')) && (text.includes('denied') || text.includes('withheld') || text.includes('exempt') || text.includes('unable to release'))) keywords.add('bwc_denied');
         }
 
         // From prior proposals
@@ -232,6 +239,7 @@ class DecisionMemoryService {
         if (lesson.category === 'portal' && (keywords.has('has_portal') || keywords.has('portal'))) score += 3;
         if (lesson.category === 'fee' && keywords.has('fee')) score += 3;
         if (lesson.category === 'followup' && caseData.status === 'awaiting_response') score += 3;
+        if (lesson.category === 'bwc' && (keywords.has('bwc_involved') || keywords.has('bwc_denied'))) score += 5;
 
         return score;
     }
