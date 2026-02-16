@@ -75,9 +75,55 @@ async function decideNextActionNode(state) {
   try {
     // === FIRST: Check if response is even needed (prompt tuning fix) ===
     // This is the key gate that prevents unnecessary email drafting
-    if (requiresResponse === false) {
+    // BYPASS: Scheduled followups and NO_RESPONSE should go to the followup handler,
+    // not get blocked here — "no response needed" means no reply to an agency message,
+    // but we still need to send proactive follow-ups for unanswered requests.
+    const isFollowupTrigger = triggerType === 'SCHEDULED_FOLLOWUP' || triggerType === 'time_based_followup' || triggerType === 'followup_trigger';
+    if (requiresResponse === false && !(isFollowupTrigger || classification === 'NO_RESPONSE')) {
       reasoning.push(`No response needed: ${reasonNoResponse || 'Analysis determined no email required'}`);
       logs.push(`Skipping email draft: requires_response=false (${classification})`);
+
+      // OVERRIDE: Even when the AI says "no response needed" for a denial/closure,
+      // check if there's an unanswered clarification request in the thread.
+      // Agencies often close requests when clarifications go unanswered — the right
+      // action is to answer their question and ask to reopen, not to do nothing.
+      if (classification === 'DENIAL') {
+        const threadMessages = await db.getMessagesByCaseId(caseId);
+        const inboundAnalyses = await db.query(
+          `SELECT ra.message_id, ra.intent FROM response_analysis ra
+           JOIN messages m ON m.id = ra.message_id
+           WHERE ra.case_id = $1 AND m.direction = 'inbound'
+           ORDER BY ra.created_at ASC`,
+          [caseId]
+        );
+
+        const clarificationMsgIds = inboundAnalyses.rows
+          .filter(a => a.intent === 'question' || a.intent === 'more_info_needed')
+          .map(a => a.message_id);
+
+        if (clarificationMsgIds.length > 0) {
+          const lastClarificationId = clarificationMsgIds[clarificationMsgIds.length - 1];
+          const outboundAfter = threadMessages.filter(m =>
+            m.direction === 'outbound' && m.id > lastClarificationId
+          );
+
+          if (outboundAfter.length === 0) {
+            reasoning.length = 0; // Clear the "no response needed" reasoning
+            reasoning.push(`Denial received, but found unanswered clarification request (msg #${lastClarificationId})`);
+            reasoning.push('Agency likely closed due to no response — answering their original question instead');
+            return {
+              proposalActionType: SEND_CLARIFICATION,
+              latestInboundMessageId: lastClarificationId,
+              canAutoExecute: false,
+              requiresHuman: true,
+              pauseReason: 'DENIAL',
+              proposalReasoning: reasoning,
+              logs: [...logs, `Unanswered clarification detected (msg #${lastClarificationId}) — overriding requires_response=false`],
+              nextNode: 'draft_response'
+            };
+          }
+        }
+      }
 
       // Handle based on suggested action
       if (suggestedAction === 'use_portal') {
@@ -532,6 +578,52 @@ async function decideNextActionNode(state) {
       reasoning.push('Denial received from agency');
 
       const caseData = await db.getCaseById(caseId);
+
+      // CHECK: Was there an unanswered clarification request in this thread?
+      // If the agency asked us a question and we never replied, the "denial" is likely
+      // just the agency closing the request due to no response — not a true denial.
+      // The right action is to answer the original question, not reformulate/research.
+      const threadMessages = await db.getMessagesByCaseId(caseId);
+      const inboundAnalyses = await db.query(
+        `SELECT ra.message_id, ra.intent FROM response_analysis ra
+         JOIN messages m ON m.id = ra.message_id
+         WHERE ra.case_id = $1 AND m.direction = 'inbound'
+         ORDER BY ra.created_at ASC`,
+        [caseId]
+      );
+      const analysisMap = {};
+      for (const a of inboundAnalyses.rows) {
+        analysisMap[a.message_id] = a.intent;
+      }
+
+      // Find inbound clarification/question messages
+      const clarificationMsgIds = inboundAnalyses.rows
+        .filter(a => a.intent === 'question' || a.intent === 'more_info_needed')
+        .map(a => a.message_id);
+
+      if (clarificationMsgIds.length > 0) {
+        // Check if we replied to any of them (outbound message after the clarification)
+        const lastClarificationId = clarificationMsgIds[clarificationMsgIds.length - 1];
+        const outboundAfter = threadMessages.filter(m =>
+          m.direction === 'outbound' &&
+          m.id > lastClarificationId
+        );
+
+        if (outboundAfter.length === 0) {
+          reasoning.push(`Found unanswered clarification request (msg #${lastClarificationId}) — agency likely closed due to no response, not a true denial`);
+          reasoning.push('Proposing SEND_CLARIFICATION to answer their original question');
+          return {
+            proposalActionType: SEND_CLARIFICATION,
+            latestInboundMessageId: lastClarificationId,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: 'DENIAL',
+            proposalReasoning: reasoning,
+            logs: [...logs, `Unanswered clarification detected (msg #${lastClarificationId}) — responding to original question instead of treating as denial`],
+            nextNode: 'draft_response'
+          };
+        }
+      }
 
       // Resolve denial subtype: prefer state, fallback to latest analysis
       let resolvedSubtype = denialSubtype;

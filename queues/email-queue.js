@@ -327,8 +327,11 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         console.log(`📧 Analyzing message from: ${messageData.from_email}`);
         console.log(`   Subject: ${messageData.subject}`);
 
-        // Analyze the response
-        const analysis = await aiService.analyzeResponse(messageData, caseData);
+        // Load full thread so GPT has conversation context
+        const threadMessages = await db.getMessagesByCaseId(caseId);
+
+        // Analyze the response — with full thread context
+        const analysis = await aiService.analyzeResponse(messageData, caseData, { threadMessages });
 
         console.log(`📊 Analysis complete:`);
         console.log(`   Intent: ${analysis.intent}`);
@@ -1005,7 +1008,7 @@ const portalWorker = connection ? new Worker('portal-queue', async (job) => {
         messageId: job.data.messageId,
         notificationType: job.data.notificationType
     });
-}, { connection, concurrency: 1 }) : null;
+}, { connection, concurrency: 2 }) : null;
 
 // Error handlers (only if workers exist)
 emailWorker?.on('failed', (job, err) => {

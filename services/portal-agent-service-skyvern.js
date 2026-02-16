@@ -681,7 +681,37 @@ class PortalAgentServiceSkyvern {
         };
     }
 
-    async _submitViaWorkflow({ caseData, portalUrl, dryRun, runId }) {
+    async _generateRetryGuidance(caseData, portalUrl, error, workflowResponse) {
+        try {
+            const OpenAI = require('openai');
+            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+            const response = await openai.chat.completions.create({
+                model: process.env.PORTAL_RETRY_MODEL || 'gpt-4o-mini',
+                messages: [{
+                    role: 'system',
+                    content: `You are a browser automation expert. A Skyvern workflow to submit a FOIA request on a government portal failed. Analyze the error and provide a short, specific navigation_goal instruction that will help the retry succeed. Focus on what went wrong and how to work around it. Return ONLY a JSON object with: { "navigation_goal": "<instruction for the browser agent>", "should_retry": true/false }`
+                }, {
+                    role: 'user',
+                    content: `Portal: ${portalUrl}\nAgency: ${caseData.agency_name}\nError: ${error}\nWorkflow response: ${JSON.stringify(workflowResponse || {}).slice(0, 2000)}`
+                }],
+                max_tokens: 300,
+                temperature: 0.3
+            });
+
+            const text = response.choices[0]?.message?.content || '';
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            return { navigation_goal: text.trim(), should_retry: true };
+        } catch (err) {
+            console.error('AI retry guidance failed:', err.message);
+            return { navigation_goal: null, should_retry: true };
+        }
+    }
+
+    async _submitViaWorkflow({ caseData, portalUrl, dryRun, runId, retryContext = null }) {
         if (!this.workflowId) {
             throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode requested');
         }
@@ -694,6 +724,10 @@ class PortalAgentServiceSkyvern {
 
         const totpIdentifier = process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
         const parameters = this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun });
+        if (retryContext?.navigation_goal) {
+            parameters.navigation_goal = retryContext.navigation_goal;
+            console.log(`🔄 Retry with AI guidance: ${retryContext.navigation_goal}`);
+        }
         const requestBody = {
             workflow_id: this.workflowId,
             parameters,
@@ -843,40 +877,65 @@ class PortalAgentServiceSkyvern {
             }
 
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
-                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: 'Portal submission failed - requires human submission',
-                    requires_human: true
-                });
-                try {
-                    await database.upsertProposal({
-                        proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
-                        caseId: caseData.id,
-                        actionType: 'SUBMIT_PORTAL',
-                        reasoning: [{ step: 'Automated portal submission failed', detail: failureReason }],
-                        confidence: 0,
-                        requiresHuman: true,
-                        canAutoExecute: false,
-                        draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
-                        draftBodyText: `Portal: ${portalUrl}\nError: ${failureReason}`,
-                        status: 'PENDING_APPROVAL'
-                    });
-                } catch (proposalErr) {
-                    console.error('Failed to create proposal on portal failure:', proposalErr.message);
-                }
-                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
 
-                await database.logActivity(
-                    'portal_stage_failed',
-                    `Skyvern workflow failed for ${caseData.case_name}: ${failureReason}`,
-                    {
-                        case_id: caseData.id || null,
-                        portal_url: portalUrl,
-                        run_id: workflowRunId,
-                        engine: 'skyvern_workflow',
-                        error: failureReason,
-                        task_url: finalWorkflowRunLink || workflowRunLink || null
-                    }
-                );
+            // RETRY: If this is the first attempt, ask AI for guidance and retry once
+            if (!retryContext) {
+                console.log(`🔄 First failure for case ${caseData.id}, requesting AI retry guidance...`);
+
+                await database.logActivity('portal_retry_requested',
+                    `Portal failed, requesting AI guidance for retry: ${failureReason}`, {
+                    case_id: caseData.id, portal_url: portalUrl, error: failureReason,
+                    run_id: workflowRunId, engine: 'skyvern_workflow'
+                });
+
+                const guidance = await this._generateRetryGuidance(caseData, portalUrl, failureReason, finalResult);
+
+                if (guidance.should_retry !== false) {
+                    console.log(`🔄 Retrying portal for case ${caseData.id} with AI guidance`);
+                    return this._submitViaWorkflow({
+                        caseData, portalUrl, dryRun,
+                        runId: uuidv4(),
+                        retryContext: { navigation_goal: guidance.navigation_goal, previousError: failureReason }
+                    });
+                }
+            }
+
+            // ESCALATE: Retry exhausted or AI said don't retry
+            console.log(`❌ Portal failed for case ${caseData.id} after ${retryContext ? 'retry' : 'AI declined retry'}`);
+            await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                substatus: 'Portal submission failed - requires human submission',
+                requires_human: true
+            });
+            try {
+                await database.upsertProposal({
+                    proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
+                    caseId: caseData.id,
+                    actionType: 'SUBMIT_PORTAL',
+                    reasoning: [{ step: 'Automated portal submission failed', detail: failureReason }],
+                    confidence: 0,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
+                    draftBodyText: `Portal: ${portalUrl}\nError: ${failureReason}`,
+                    status: 'PENDING_APPROVAL'
+                });
+            } catch (proposalErr) {
+                console.error('Failed to create proposal on portal failure:', proposalErr.message);
+            }
+            try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
+            await database.logActivity(
+                'portal_stage_failed',
+                `Skyvern workflow failed for ${caseData.case_name}: ${failureReason}`,
+                {
+                    case_id: caseData.id || null,
+                    portal_url: portalUrl,
+                    run_id: workflowRunId,
+                    engine: 'skyvern_workflow',
+                    error: failureReason,
+                    task_url: finalWorkflowRunLink || workflowRunLink || null
+                }
+            );
 
             return {
                 success: false,

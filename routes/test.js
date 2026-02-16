@@ -1318,9 +1318,10 @@ router.post('/simulate-reply', async (req, res) => {
 
         console.log(`✅ Simulated message stored: ${message.id}`);
 
-        // Analyze response
+        // Analyze response — with full thread context
         const aiService = require('../services/ai-service');
-        const analysis = await aiService.analyzeResponse(message, caseData);
+        const threadMessages = await db.getMessagesByCaseId(caseData.id);
+        const analysis = await aiService.analyzeResponse(message, caseData, { threadMessages });
 
         console.log(`📊 Analysis complete: ${analysis.intent}`);
 

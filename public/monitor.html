@@ -1036,6 +1036,10 @@
                 <h4>Unmatched Inbound Queue</h4>
                 <div id="opsUnmatchedList"></div>
             </div>
+            <div class="ops-list">
+                <h4>Human Review Queue</h4>
+                <div id="opsHumanReviewList"></div>
+            </div>
         </div>
         </div>
     </div>
@@ -2460,6 +2464,29 @@
                         <button class="drawer-btn" onclick="openMessage(${m.id})">View</button>
                         <button class="drawer-btn primary" onclick="openMatchModal(${m.id})">Match to Case</button>
                         <button class="drawer-btn" onclick="dismissMessage(${m.id})" style="color:#f85149;">Dismiss</button>
+                    </div>
+                </div>`;
+            });
+
+            renderOpsList('opsHumanReviewList', payload.human_review_cases, (c) => {
+                const statusLabel = formatStatus(c.status);
+                const substatus = c.substatus ? truncate(c.substatus, 80) : '';
+                const preview = c.last_inbound_preview ? truncate(String(c.last_inbound_preview).replace(/\s+/g, ' '), 120) : '';
+                return `
+                <div class="ops-item" style="padding:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <a href="#" onclick="openCase(${c.id});return false;" style="color:#58a6ff;font-weight:600;">#${c.id}</a>
+                            <span style="color:#c9d1d9;font-size:12px;">${truncate(c.case_name || '', 40)}</span>
+                            <span class="badge agent" style="font-size:10px;">${statusLabel}</span>
+                        </div>
+                        <span style="font-size:11px;color:#8b949e;">${relativeTime(c.updated_at)}</span>
+                    </div>
+                    <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(c.agency_name || '', 40)}${c.inbound_count > 0 ? ` · ${c.inbound_count} inbound` : ''}</div>
+                    ${substatus ? `<div style="margin-top:3px;font-size:11px;color:#d2a8ff;">${substatus}</div>` : ''}
+                    ${preview ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${preview}</div>` : ''}
+                    <div style="margin-top:6px;">
+                        <button class="drawer-btn primary" onclick="openCase(${c.id})">Open</button>
                     </div>
                 </div>`;
             });

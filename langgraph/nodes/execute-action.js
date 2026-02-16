@@ -122,28 +122,9 @@ async function executeActionNode(state) {
 
   logs.push(`Route mode: ${routeMode || 'auto'}`);
 
-  // For initial requests with both channels available, force explicit routing.
-  if (proposalActionType === 'SEND_INITIAL_REQUEST' && hasPortal && hasEmail && !routeMode && !state.caseAgencyId) {
-    const pauseReason = 'Route decision required: choose email or portal for initial request';
-    logs.push(`BLOCKED: ${pauseReason}`);
-
-    await db.updateCaseStatus(caseId, 'needs_human_review', {
-      requires_human: true,
-      pause_reason: pauseReason
-    });
-
-    await db.updateProposal(proposalId, {
-      status: 'PENDING_APPROVAL',
-      execution_key: null
-    });
-
-    return {
-      actionExecuted: false,
-      gatedForReview: true,
-      missingFields: ['route_mode'],
-      errors: [pauseReason],
-      logs
-    };
+  // When both channels exist and no explicit route_mode, default to portal
+  if (proposalActionType === 'SEND_INITIAL_REQUEST' && hasPortal && hasEmail && !routeMode) {
+    logs.push('Both email and portal available - defaulting to portal');
   }
 
   // =========================================================================

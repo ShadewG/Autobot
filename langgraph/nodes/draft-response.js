@@ -51,9 +51,10 @@ async function draftResponseNode(state) {
     }
 
     // Fallback to most recent inbound if trigger message missing
+    // Note: getMessagesByCaseId returns DESC order (newest first)
     if (!latestInbound) {
       const messages = await db.getMessagesByCaseId(caseId);
-      latestInbound = messages.filter(m => m.direction === 'inbound').pop();
+      latestInbound = messages.find(m => m.direction === 'inbound') || null;
       latestAnalysis = latestInbound
         ? await db.getResponseAnalysisByMessageId(latestInbound.id)
         : null;
@@ -170,13 +171,16 @@ async function draftResponseNode(state) {
         logs.push(`Drafting fee acceptance for $${extractedFeeAmount}`);
 
         // Use generateFeeResponse with 'accept' action
+        // Pass the agency message so the draft can address any denials alongside the fee
         draft = await aiService.generateFeeResponse(
           caseData,
           {
             feeAmount: extractedFeeAmount,
             recommendedAction: 'accept',
             instructions: adjustmentInstruction,
-            lessonsContext
+            lessonsContext,
+            agencyMessage: latestInbound,
+            agencyAnalysis: latestAnalysis
           }
         );
         break;

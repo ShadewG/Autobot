@@ -122,8 +122,11 @@ async function classifyInboundNode(state) {
       };
     }
 
-    // Use existing AI analysis
-    const analysis = await aiService.analyzeResponse(message, caseData);
+    // Load full thread so GPT has conversation context
+    const threadMessages = await db.getMessagesByCaseId(caseId);
+
+    // Use existing AI analysis — with full thread context
+    const analysis = await aiService.analyzeResponse(message, caseData, { threadMessages });
 
     // Map intent to our classification enum
     // CANONICAL INTENT LIST (sync with prompts/response-handling-prompts.js)
@@ -151,8 +154,8 @@ async function classifyInboundNode(state) {
     const classification = classificationMap[analysis.intent] || 'UNKNOWN';
 
     // Extract requires_response - this is the key field from prompt tuning
-    // Default to true for safety if not specified
-    const requiresResponse = analysis.requires_response !== undefined
+    // Default to true for safety if not specified (let — may be overridden by unanswered question check)
+    let requiresResponse = analysis.requires_response !== undefined
       ? analysis.requires_response
       : (analysis.requires_action !== false);
 
@@ -185,6 +188,15 @@ async function classifyInboundNode(state) {
       }
     }
 
+    // If GPT detected an unanswered agency question, override requires_response
+    const unansweredQuestion = analysis.unanswered_agency_question || null;
+    if (unansweredQuestion && !requiresResponse) {
+      logger.info('GPT detected unanswered agency question — overriding requires_response to true', {
+        caseId, unansweredQuestion
+      });
+      requiresResponse = true;
+    }
+
     return {
       classification,
       classificationConfidence: analysis.confidence_score || analysis.confidence || 0.8,
@@ -196,11 +208,13 @@ async function classifyInboundNode(state) {
       portalUrl,
       suggestedAction: analysis.suggested_action || null,
       reasonNoResponse: analysis.reason_no_response || null,
+      unansweredAgencyQuestion: unansweredQuestion,
       logs: [
         `Classified as ${classification} (confidence: ${analysis.confidence_score || analysis.confidence}), ` +
         `sentiment: ${analysis.sentiment}, ` +
         `requires_response: ${requiresResponse}, ` +
-        `fee: ${feeAmount || 'none'}`
+        `fee: ${feeAmount || 'none'}` +
+        (unansweredQuestion ? `, unanswered_question: "${unansweredQuestion}"` : '')
       ]
     };
   } catch (error) {

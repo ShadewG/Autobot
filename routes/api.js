@@ -210,7 +210,7 @@ router.get('/cases/:caseId', async (req, res) => {
             messages = await db.getMessagesByThreadId(thread.id);
 
             // Get analysis for latest response
-            const latestInbound = messages.filter(m => m.direction === 'inbound').pop();
+            const latestInbound = messages.find(m => m.direction === 'inbound') || null;
             if (latestInbound) {
                 analysis = await db.getAnalysisByMessageId(latestInbound.id);
             }

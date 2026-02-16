@@ -927,6 +927,25 @@ router.get('/live-overview', async (req, res) => {
             LIMIT $1
         `, [limit]);
 
+        const humanReviewResult = await db.query(`
+            SELECT
+                c.id,
+                c.case_name,
+                c.agency_name,
+                c.status,
+                c.substatus,
+                c.updated_at,
+                c.portal_url,
+                (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
+                (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
+            FROM cases c
+            WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+              AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status = 'PENDING_APPROVAL')
+              ${caseUserFilter}
+            ORDER BY c.updated_at ASC
+            LIMIT $1
+        `, [limit]);
+
         res.json({
             success: true,
             summary: {
@@ -935,13 +954,15 @@ router.get('/live-overview', async (req, res) => {
                 unprocessed_inbound_total: parseInt(summaryResult.rows[0]?.unprocessed_inbound_total || 0, 10),
                 pending_approvals_total: pendingApprovalsResult.rows.length,
                 active_runs_total: activeRunsResult.rows.length,
-                stuck_runs_total: stuckRunsResult.rows.length
+                stuck_runs_total: stuckRunsResult.rows.length,
+                human_review_total: humanReviewResult.rows.length
             },
             pending_approvals: pendingApprovalsResult.rows,
             active_runs: activeRunsResult.rows,
             unmatched_inbound: unmatchedInboundResult.rows,
             unprocessed_inbound: unprocessedInboundResult.rows,
-            stuck_runs: stuckRunsResult.rows
+            stuck_runs: stuckRunsResult.rows,
+            human_review_cases: humanReviewResult.rows
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });

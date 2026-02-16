@@ -376,10 +376,39 @@ router.post('/events', express.json(), async (req, res) => {
                     console.log(`Email delivered: ${event.sg_message_id}`);
                     break;
                 case 'bounce':
-                case 'dropped':
-                    console.error(`Email failed: ${event.sg_message_id}`, event.reason);
-                    // TODO: Update case status and alert
+                case 'dropped': {
+                    console.error(`Email ${event.event}: ${event.sg_message_id}`, event.reason);
+                    try {
+                        const msgResult = await db.query(
+                            'SELECT id, case_id FROM messages WHERE sendgrid_message_id = $1 LIMIT 1',
+                            [event.sg_message_id]
+                        );
+                        const msg = msgResult.rows[0];
+
+                        await db.logActivity(
+                            event.event === 'bounce' ? 'email_bounced' : 'email_dropped',
+                            `Email delivery failed: ${event.reason || 'Unknown reason'}`,
+                            {
+                                case_id: msg?.case_id || null,
+                                message_id: msg?.id || null,
+                                sendgrid_message_id: event.sg_message_id,
+                                bounce_type: event.type,
+                                reason: event.reason,
+                                status_code: event.status
+                            }
+                        );
+
+                        if (msg?.case_id) {
+                            await db.updateCaseStatus(msg.case_id, 'needs_human_review', {
+                                substatus: `Email ${event.event}: ${event.reason || 'delivery failed'}`,
+                                requires_human: true
+                            });
+                        }
+                    } catch (err) {
+                        console.error('Failed to process bounce/drop event:', err.message);
+                    }
                     break;
+                }
                 case 'open':
                     console.log(`Email opened: ${event.sg_message_id}`);
                     break;

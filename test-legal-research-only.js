@@ -29,7 +29,7 @@ Focus on:
 Return concise legal citations and key statutory language.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-5',
+        model: 'gpt-5.2-2025-12-11',
         messages: [
             {
                 role: 'system',
@@ -98,7 +98,7 @@ Generate a STRONG, legally-grounded rebuttal that:
 Return ONLY the email body text, no subject line.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-5',
+        model: 'gpt-5.2-2025-12-11',
         messages: [
             {
                 role: 'system',

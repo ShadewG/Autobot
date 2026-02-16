@@ -297,12 +297,41 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
 
     /**
      * Analyze a response email from an agency
+     * @param {Object} messageData - The inbound message to analyze
+     * @param {Object} caseData - The case record
+     * @param {Object} [options] - Optional settings
+     * @param {Array}  [options.threadMessages] - Full message thread for context (oldest first)
      */
-    async analyzeResponse(messageData, caseData) {
+    async analyzeResponse(messageData, caseData, options = {}) {
         try {
             console.log(`Analyzing response for case: ${caseData.case_name}`);
 
             const cleanedBody = this.stripQuotedText(messageData.body_text || '');
+
+            // Build prior correspondence context (exclude the current message)
+            // Note: threadMessages may arrive in DESC order (from getMessagesByCaseId),
+            // so sort by date ASC to display chronologically
+            const threadMessages = (options.threadMessages || []).slice().sort((a, b) => {
+                const da = new Date(a.received_at || a.sent_at || a.created_at);
+                const db2 = new Date(b.received_at || b.sent_at || b.created_at);
+                return da - db2;
+            });
+            let correspondenceContext = '';
+            if (threadMessages.length > 0) {
+                const priorMessages = threadMessages
+                    .filter(m => m.id !== messageData.id)
+                    .slice(-10); // Last 10 messages max to stay within token limits
+                if (priorMessages.length > 0) {
+                    correspondenceContext = `\n**Prior Correspondence (${priorMessages.length} messages, oldest first):**\n` +
+                        priorMessages.map(m => {
+                            const dir = m.direction === 'outbound' ? 'US →' : '← AGENCY';
+                            const date = m.sent_at || m.received_at || m.created_at;
+                            const dateStr = date ? new Date(date).toLocaleDateString() : 'unknown date';
+                            const body = this.stripQuotedText(m.body_text || '').substring(0, 300);
+                            return `[${dir} ${dateStr}] Subject: ${m.subject || '(none)'}\n${body}${body.length >= 300 ? '...' : ''}`;
+                        }).join('\n---\n') + '\n';
+                }
+            }
 
             // Build requested records list for scope analysis
             // Prefer scope_items_jsonb (structured) over requested_records (legacy)
@@ -316,7 +345,8 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
                 ? requestedRecords.map((r, i) => `${i + 1}. ${r}`).join('\n')
                 : 'Not specified';
 
-            const prompt = `Analyze this email response to a FOIA request and extract key information:
+            const prompt = `Analyze this email response to a FOIA request and extract key information.
+${correspondenceContext ? 'IMPORTANT: Review the prior correspondence to understand the full context before classifying the new message. Consider whether earlier messages (e.g. unanswered agency questions) affect the appropriate response.' : ''}
 
 **Original Request Context:**
 Subject: ${caseData.subject_name}
@@ -330,8 +360,8 @@ ${recordsList}
 Status: ${caseData.status}
 ${caseData.portal_url ? `Portal URL on file: ${caseData.portal_url}` : 'No portal URL on file'}
 ${caseData.send_date ? `Request already sent on: ${caseData.send_date}` : 'Request not yet sent'}
-
-**Response Email:**
+${correspondenceContext}
+**New Response Email (analyze THIS message):**
 From: ${messageData.from_email}
 Subject: ${messageData.subject}
 Body:
@@ -377,6 +407,8 @@ Please analyze and provide a JSON response with:
     - estimated_hours: number or null
     - items: array of { description, amount }
     - deposit_required: number or null
+14. unanswered_agency_question: if the prior correspondence shows the agency asked us a question we never answered, describe it here (string or null). This is critical — an unanswered question may explain why the agency denied or closed the request.
+15. reason_no_response: if requires_response is false, briefly explain why (string or null)
 
 Return ONLY valid JSON, no other text.`;
 
@@ -920,7 +952,9 @@ Return ONLY the email body text.`;
             currency = 'USD',
             recommendedAction = 'negotiate', // accept | negotiate | decline
             instructions = null,
-            lessonsContext = ''
+            lessonsContext = '',
+            agencyMessage = null,
+            agencyAnalysis = null
         } = options;
 
         if (!feeAmount) {
@@ -951,9 +985,12 @@ Jurisdiction: ${caseData.state}
 Requested records: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
 Quoted fee: ${currency} ${feeAmount.toFixed(2)}
 Recommended action: ${recommendedAction.toUpperCase()}
+${agencyMessage ? `\nAgency's full response:\n${this.stripQuotedText(agencyMessage.body_text || '').substring(0, 500)}` : ''}
+${agencyAnalysis?.full_analysis_json?.key_points ? `\nKey points from agency response: ${agencyAnalysis.full_analysis_json.key_points.join('; ')}` : ''}
 
 Goals:
 ${actionInstruction}
+${agencyMessage ? '\nIMPORTANT: If the agency denied or withheld specific record types (e.g. body camera, video), also address those denials in the same email — request the legal basis for withholding and ask for segregable portions.' : ''}
 ${customInstruction}
 ${lessonsContext}
 Email requirements:

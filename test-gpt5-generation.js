@@ -19,7 +19,7 @@ Need: Body camera footage, police reports`;
     try {
         console.log('Calling GPT-5...');
         const response = await openai.chat.completions.create({
-            model: 'gpt-5',
+            model: 'gpt-5.2-2025-12-11',
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }

@@ -111,7 +111,7 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
         console.log('\n\n🤖 GENERATING FOIA REQUEST...\n');
 
         const completion = await openai.chat.completions.create({
-            model: 'gpt-5',
+            model: 'gpt-5.2-2025-12-11',
             messages: [
                 { role: 'system', content: documentaryPrompts.systemPrompt },
                 { role: 'user', content: userPrompt }

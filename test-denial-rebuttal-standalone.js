@@ -52,7 +52,7 @@ Return concise legal citations and key statutory language with sources.`;
     const startResearch = Date.now();
 
     const researchResponse = await openai.responses.create({
-        model: 'gpt-5',
+        model: 'gpt-5.2-2025-12-11',
         reasoning: { effort: 'medium' },
         text: { verbosity: 'medium' },
         tools: [
@@ -120,7 +120,7 @@ Return ONLY the email body text, no subject line.`;
     const startRebuttal = Date.now();
 
     const rebuttalResponse = await openai.responses.create({
-        model: 'gpt-5',
+        model: 'gpt-5.2-2025-12-11',
         reasoning: { effort: 'medium' },
         text: { verbosity: 'medium' },
         input: rebuttalPrompt

@@ -515,9 +515,75 @@ class CronService {
                     const triage = await aiService.triageStuckCase(caseData, messages, priorProposals);
                     const actionType = triage.actionType || 'ESCALATE';
 
+                    // Generate an actual email draft (not just the triage summary)
+                    let draftSubject = null;
+                    let draftBodyText = null;
+                    let draftBodyHtml = null;
+                    let triggerMessageId = null;
+
+                    try {
+                        if (actionType === 'SEND_FOLLOWUP') {
+                            const followupSchedule = await db.getFollowUpScheduleByCaseId(caseData.id);
+                            const attemptNumber = (followupSchedule?.followup_count || 0) + 1;
+                            const draft = await aiService.generateFollowUp(caseData, attemptNumber);
+                            draftSubject = draft.subject;
+                            draftBodyText = draft.body_text;
+                            draftBodyHtml = draft.body_html || null;
+                        } else if (actionType === 'SEND_REBUTTAL') {
+                            // Find the denial message to rebuttal against
+                            const latestInbound = messages.find(m => m.direction === 'inbound') || null;
+                            const latestAnalysis = latestInbound
+                                ? await db.getResponseAnalysisByMessageId(latestInbound.id)
+                                : null;
+                            if (latestInbound && latestAnalysis) {
+                                triggerMessageId = latestInbound.id;
+                                const constraints = caseData.constraints_jsonb || [];
+                                const exemptItems = (Array.isArray(constraints) ? constraints : [])
+                                    .filter(c => typeof c === 'string' && c.endsWith('_EXEMPT'));
+                                const draft = await aiService.generateDenialRebuttal(
+                                    latestInbound, latestAnalysis, caseData,
+                                    { excludeItems: exemptItems, scopeItems: caseData.scope_items_jsonb || [] }
+                                );
+                                draftSubject = draft.subject || `RE: ${latestInbound.subject || 'Public Records Request'}`;
+                                draftBodyText = draft.body_text;
+                                draftBodyHtml = draft.body_html || null;
+                            }
+                        } else if (actionType === 'SEND_CLARIFICATION') {
+                            const latestInbound = messages.find(m => m.direction === 'inbound') || null;
+                            const latestAnalysis = latestInbound
+                                ? await db.getResponseAnalysisByMessageId(latestInbound.id)
+                                : null;
+                            if (latestInbound) {
+                                triggerMessageId = latestInbound.id;
+                                if (typeof aiService.generateClarificationResponse === 'function') {
+                                    const draft = await aiService.generateClarificationResponse(
+                                        latestInbound, latestAnalysis, caseData
+                                    );
+                                    draftSubject = draft.subject || `RE: ${latestInbound.subject || 'Public Records Request'}`;
+                                    draftBodyText = draft.body_text;
+                                } else {
+                                    const draft = await aiService.generateAutoReply(
+                                        latestInbound, latestAnalysis, caseData
+                                    );
+                                    draftSubject = draft.subject || `RE: ${latestInbound.subject || 'Public Records Request'}`;
+                                    draftBodyText = draft.body_text;
+                                }
+                            }
+                        }
+                    } catch (draftErr) {
+                        console.error(`Draft generation failed for case ${caseData.id} (${actionType}):`, draftErr.message);
+                    }
+
+                    // Fallback: if draft generation failed or action doesn't have a draft path
+                    if (!draftBodyText) {
+                        draftSubject = `Action needed: ${caseData.case_name}`;
+                        draftBodyText = `${triage.summary}\n\nRecommendation: ${triage.recommendation}`;
+                    }
+
                     await db.upsertProposal({
                         proposalKey: `${caseData.id}:sweep_orphan:TRIAGE:${today}`,
                         caseId: caseData.id,
+                        triggerMessageId: triggerMessageId,
                         actionType: actionType,
                         reasoning: [
                             { step: 'AI triage summary', detail: triage.summary },
@@ -526,8 +592,9 @@ class CronService {
                         confidence: triage.confidence || 0,
                         requiresHuman: true,
                         canAutoExecute: false,
-                        draftSubject: `${actionType}: ${caseData.case_name}`,
-                        draftBodyText: `${triage.summary}\n\nRecommendation: ${triage.recommendation}`,
+                        draftSubject: draftSubject,
+                        draftBodyText: draftBodyText,
+                        draftBodyHtml: draftBodyHtml,
                         status: 'PENDING_APPROVAL'
                     });
                     await db.logActivity('human_review_proposal_created',

@@ -88,6 +88,10 @@ const FOIACaseStateAnnotation = Annotation.Root({
     reducer: (prev, v) => v !== undefined ? v : prev,
     default: () => null  // Explanation for why no response needed (for audit trail)
   }),
+  unansweredAgencyQuestion: Annotation({
+    reducer: (prev, v) => v !== undefined ? v : prev,
+    default: () => null  // GPT-detected unanswered question from prior correspondence
+  }),
 
   // === Constraints & Scope (persisted facts about this case) ===
   constraints: Annotation({
