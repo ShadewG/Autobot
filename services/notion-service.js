@@ -388,8 +388,25 @@ class NotionService {
                               '',
             status: this.mapNotionStatusToInternal(statusValue),
             // Add portal URL for reference
-            portal_url: portalUrl
+            portal_url: portalUrl,
+            // Extract assigned person name for user_id resolution
+            assigned_person: this.getAssignedPerson(props)
         };
+    }
+
+    /**
+     * Extract the assigned person's name from Notion people-type properties.
+     * Checks common property names: "Assigned", "Assignee", "Assigned To", "Owner".
+     */
+    getAssignedPerson(props) {
+        const candidates = ['Assigned', 'Assignee', 'Assigned To', 'Owner'];
+        for (const name of candidates) {
+            const prop = props[name];
+            if (prop?.type === 'people' && prop.people?.length > 0) {
+                return prop.people[0].name || null;
+            }
+        }
+        return null;
     }
 
     enrichCaseFromNarrative(caseData) {
@@ -1949,6 +1966,24 @@ Look for a records division email, FOIA email, or general agency email that acce
                 if (emailResult?.email) {
                     notionCase.agency_email = emailResult.email;
                     console.log(`AI email search found: ${emailResult.email}`);
+                }
+            }
+
+            // Resolve assigned person to user_id
+            if (notionCase.assigned_person) {
+                try {
+                    // Map Notion display names to local user names
+                    const nameMap = { 'Samuel Hylton': 'Sam' };
+                    const localName = nameMap[notionCase.assigned_person] || notionCase.assigned_person;
+                    const user = await db.getUserByName(localName);
+                    if (user) {
+                        notionCase.user_id = user.id;
+                        console.log(`Assigned case to user: ${user.name} (${user.email})`);
+                    } else {
+                        console.warn(`No matching user for Notion assignee: ${notionCase.assigned_person}`);
+                    }
+                } catch (err) {
+                    console.warn(`Failed to resolve assigned user: ${err.message}`);
                 }
             }
 

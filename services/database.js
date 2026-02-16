@@ -115,8 +115,8 @@ class DatabaseService {
                 state, incident_date, incident_location, requested_records,
                 additional_details, status, deadline_date, agency_id, scope_items_jsonb,
                 portal_url, portal_provider, alternate_agency_email,
-                tags, priority
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                tags, priority, user_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING *
         `;
         const values = [
@@ -138,7 +138,8 @@ class DatabaseService {
             caseData.portal_provider || null,
             caseData.alternate_agency_email || null,
             caseData.tags || '{}',
-            caseData.priority || 0
+            caseData.priority || 0,
+            caseData.user_id || null
         ];
         const result = await this.query(query, values);
         return result.rows[0];
@@ -770,6 +771,11 @@ class DatabaseService {
 
     async getUserById(id) {
         const result = await this.query('SELECT * FROM users WHERE id = $1', [id]);
+        return result.rows[0];
+    }
+
+    async getUserByName(name) {
+        const result = await this.query('SELECT * FROM users WHERE LOWER(name) = LOWER($1) AND active = true', [name]);
         return result.rows[0];
     }
 
