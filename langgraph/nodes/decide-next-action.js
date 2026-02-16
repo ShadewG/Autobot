@@ -530,6 +530,45 @@ async function decideNextActionNode(state) {
       const fee = Number(extractedFeeAmount);
       reasoning.push(`Fee quote received: $${fee}`);
 
+      // CRITICAL CHECK: Did the agency also deny critical records (BWC/video) in this message?
+      // If so, we should NOT accept the fee — we need to challenge the denial first.
+      // No point paying for records if BWC (the most important record) is withheld.
+      const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
+      const keyPoints = latestAnalysis?.key_points || latestAnalysis?.full_analysis_json?.key_points || [];
+      const keyPointsText = keyPoints.join(' ').toLowerCase();
+      const caseForRecords = await db.getCaseById(caseId);
+      const requestedRecords = (Array.isArray(caseForRecords?.requested_records)
+        ? caseForRecords.requested_records.join(' ')
+        : (caseForRecords?.requested_records || '')).toLowerCase();
+
+      const bwcRequested = requestedRecords.includes('body cam') || requestedRecords.includes('bodycam') ||
+                           requestedRecords.includes('bwc') || requestedRecords.includes('body worn') ||
+                           requestedRecords.includes('video');
+      const hasBwcMention = keyPointsText.includes('body cam') || keyPointsText.includes('bodycam') ||
+                            keyPointsText.includes('bwc') || keyPointsText.includes('body worn') ||
+                            keyPointsText.includes('body-worn') || keyPointsText.includes('video');
+      const hasDenialLanguage = keyPointsText.includes('not disclos') || keyPointsText.includes('disclosable') ||
+                                keyPointsText.includes('denied') || keyPointsText.includes('withheld') ||
+                                keyPointsText.includes('exempt') || keyPointsText.includes('not subject') ||
+                                keyPointsText.includes('not available') || keyPointsText.includes('unable to release') ||
+                                keyPointsText.includes('not releasable') || keyPointsText.includes('not foia') ||
+                                keyPointsText.includes('not public record') || keyPointsText.includes('not provid');
+      const bwcDenied = hasBwcMention && hasDenialLanguage;
+
+      if (bwcRequested && bwcDenied) {
+        reasoning.push('CRITICAL: Agency denied BWC/video — the most important record. Cannot accept fee without BWC.');
+        reasoning.push('Routing to SEND_REBUTTAL to challenge BWC denial before paying any fees.');
+        return {
+          proposalActionType: SEND_REBUTTAL,
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: 'DENIAL',
+          proposalReasoning: reasoning,
+          logs: [...logs, `BWC denied alongside fee quote ($${fee}) — challenging denial before accepting fee`],
+          nextNode: 'draft_response'
+        };
+      }
+
       // Determine fee action based on thresholds
       // Under FEE_AUTO_APPROVE_MAX: Accept (auto in AUTO mode)
       // FEE_AUTO_APPROVE_MAX to FEE_NEGOTIATE_THRESHOLD: Accept with review

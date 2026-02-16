@@ -126,6 +126,13 @@ async function draftResponseNode(state) {
         // Validate against constraints - don't request exempt items
         const exemptItems = (constraints || []).filter(c => c.endsWith('_EXEMPT'));
 
+        // If there's a fee quote alongside the denial, tell the rebuttal to address it
+        let rebuttalAdjustment = adjustmentInstruction || '';
+        if (extractedFeeAmount) {
+          const feeNote = `The agency also quoted a fee of $${extractedFeeAmount}. In your rebuttal, make clear that we are willing to pay the fee ONLY once BWC/video footage is confirmed to be included in the production. Do NOT accept the fee unconditionally — condition payment on full records including BWC.`;
+          rebuttalAdjustment = rebuttalAdjustment ? `${rebuttalAdjustment}\n${feeNote}` : feeNote;
+        }
+
         draft = await aiService.generateDenialRebuttal(
           latestInbound,
           latestAnalysis,
@@ -133,7 +140,7 @@ async function draftResponseNode(state) {
           {
             excludeItems: exemptItems,
             scopeItems,
-            adjustmentInstruction,
+            adjustmentInstruction: rebuttalAdjustment || undefined,
             lessonsContext
           }
         );
