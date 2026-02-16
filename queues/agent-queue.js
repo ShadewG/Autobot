@@ -192,7 +192,8 @@ async function enqueueResumeRunJob(runId, caseId, humanDecision, options = {}) {
     originalProposalId: options.originalProposalId
   }, {
     jobId,
-    attempts: 1,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 30000 },  // 30s, 60s, 120s
     removeOnComplete: { count: 100, age: 86400 },
     removeOnFail: { count: 200, age: 604800 }
   });

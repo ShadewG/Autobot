@@ -169,19 +169,46 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         langgraph_thread_id: `resume:${caseId}:proposal-${proposalId}`
     });
 
-    const job = await enqueueResumeRunJob(run.id, caseId, humanDecision, {
-        isInitialRequest: proposal.action_type === 'SEND_INITIAL_REQUEST',
-        originalProposalId: proposalId
-    });
+    let job = null;
+    let fallbackUsed = false;
 
-    notify('info', `Proposal ${action.toLowerCase()} — resume queued for case ${caseId}`, { case_id: caseId });
+    try {
+        job = await enqueueResumeRunJob(run.id, caseId, humanDecision, {
+            isInitialRequest: proposal.action_type === 'SEND_INITIAL_REQUEST',
+            originalProposalId: proposalId
+        });
+    } catch (enqueueErr) {
+        // Redis/queue unavailable — execute graph directly as fallback
+        console.error(`Queue enqueue failed for case ${caseId}, executing inline:`, enqueueErr.message);
+        fallbackUsed = true;
+
+        try {
+            const { processResumeRunJob } = require('../workers/agent-worker');
+            await processResumeRunJob({
+                id: `inline-${proposalId}`,
+                data: {
+                    runId: run.id,
+                    caseId,
+                    humanDecision,
+                    isInitialRequest: proposal.action_type === 'SEND_INITIAL_REQUEST',
+                    originalProposalId: proposalId
+                }
+            });
+        } catch (inlineErr) {
+            console.error(`Inline resume also failed for case ${caseId}:`, inlineErr.message);
+            // Don't throw — proposal is DECISION_RECEIVED, cron sweep will retry
+        }
+    }
+
+    notify('info', `Proposal ${action.toLowerCase()} — ${fallbackUsed ? 'executed inline (queue unavailable)' : 'resume queued'} for case ${caseId}`, { case_id: caseId });
     return {
         success: true,
-        message: 'Decision received, resume queued',
+        message: fallbackUsed ? 'Decision received, executed inline' : 'Decision received, resume queued',
         run: { id: run.id, status: run.status },
         proposal_id: proposalId,
         action,
-        job_id: job.id
+        job_id: job?.id || null,
+        fallback: fallbackUsed
     };
 }
 
