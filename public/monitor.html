@@ -1007,8 +1007,8 @@
                 <div class="value" id="opsInbound24h">-</div>
             </div>
             <div class="ops-card">
-                <div class="label">Pending Approvals</div>
-                <div class="value" id="opsPendingApprovals">-</div>
+                <div class="label">Needs Attention</div>
+                <div class="value" id="opsNeedsAttention">-</div>
             </div>
             <div class="ops-card">
                 <div class="label">Unmatched Inbound</div>
@@ -1029,16 +1029,12 @@
 
         <div class="ops-lists">
             <div class="ops-list">
-                <h4>Pending Approval Queue</h4>
-                <div id="opsPendingList"></div>
+                <h4>Needs Attention</h4>
+                <div id="opsNeedsAttentionList"></div>
             </div>
             <div class="ops-list">
                 <h4>Unmatched Inbound Queue</h4>
                 <div id="opsUnmatchedList"></div>
-            </div>
-            <div class="ops-list">
-                <h4>Human Review Queue</h4>
-                <div id="opsHumanReviewList"></div>
             </div>
         </div>
         </div>
@@ -2409,38 +2405,68 @@
             if (!payload || !payload.success) return;
             const s = payload.summary || {};
             document.getElementById('opsInbound24h').textContent = s.inbound_24h ?? 0;
-            document.getElementById('opsPendingApprovals').textContent = s.pending_approvals_total ?? 0;
+            document.getElementById('opsNeedsAttention').textContent = (s.pending_approvals_total ?? 0) + (s.human_review_total ?? 0);
             document.getElementById('opsUnmatchedInbound').textContent = s.unmatched_inbound_total ?? 0;
             document.getElementById('opsActiveRuns').textContent = s.active_runs_total ?? 0;
             document.getElementById('opsStuckRuns').textContent = s.stuck_runs_total ?? 0;
 
-            renderOpsList('opsPendingList', payload.pending_approvals, (p) => {
-                const actionLabel = String(p.action_type || '').replace(/_/g, ' ');
-                const reasoning = truncate(formatReasoning(p.reasoning), 100);
-                const lastMsg = p.last_inbound_preview
-                    ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 140)
-                    : '';
-                const msgCount = p.inbound_count > 0 ? `${p.inbound_count} inbound` : '';
-                return `
-                <div class="ops-item" style="padding:10px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
-                            <a href="#" onclick="openCase(${p.case_id});return false;" style="color:#58a6ff;font-weight:600;white-space:nowrap;">#${p.case_id || '-'}</a>
-                            <span style="color:#c9d1d9;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${truncate(p.case_name || '', 40)}</span>
-                            <span class="badge agent" style="font-size:10px;flex-shrink:0;">${actionLabel}</span>
+            // Render unified "Needs Attention" list: proposals first, then human review cases
+            const needsAttentionEl = document.getElementById('opsNeedsAttentionList');
+            if (needsAttentionEl) {
+                const proposalHtml = (payload.pending_approvals || []).map((p) => {
+                    const actionLabel = String(p.action_type || '').replace(/_/g, ' ');
+                    const reasoning = truncate(formatReasoning(p.reasoning), 100);
+                    const lastMsg = p.last_inbound_preview
+                        ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 140)
+                        : '';
+                    const msgCount = p.inbound_count > 0 ? `${p.inbound_count} inbound` : '';
+                    return `
+                    <div class="ops-item" style="padding:10px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+                                <a href="#" onclick="openCase(${p.case_id});return false;" style="color:#58a6ff;font-weight:600;white-space:nowrap;">#${p.case_id || '-'}</a>
+                                <span style="color:#c9d1d9;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${truncate(p.case_name || '', 40)}</span>
+                                <span class="badge agent" style="font-size:10px;flex-shrink:0;">${actionLabel}</span>
+                            </div>
+                            <span style="font-size:11px;color:#8b949e;flex-shrink:0;margin-left:8px;">${relativeTime(p.created_at)}</span>
                         </div>
-                        <span style="font-size:11px;color:#8b949e;flex-shrink:0;margin-left:8px;">${relativeTime(p.created_at)}</span>
-                    </div>
-                    <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(p.agency_name || '', 40)}${msgCount ? ` · ${msgCount}` : ''}</div>
-                    ${lastMsg ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${lastMsg}</div>` : ''}
-                    ${reasoning ? `<div style="margin-top:4px;font-size:11px;color:#d2a8ff;">${reasoning}</div>` : ''}
-                    <div style="margin-top:6px;display:flex;gap:6px;">
-                        <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
-                        <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
-                        <button class="drawer-btn" onclick="quickDismissFromOps(event, ${p.id})" style="color:#f85149;">Dismiss &#9662;</button>
-                    </div>
-                </div>`;
-            });
+                        <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(p.agency_name || '', 40)}${msgCount ? ` · ${msgCount}` : ''}</div>
+                        ${lastMsg ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${lastMsg}</div>` : ''}
+                        ${reasoning ? `<div style="margin-top:4px;font-size:11px;color:#d2a8ff;">${reasoning}</div>` : ''}
+                        <div style="margin-top:6px;display:flex;gap:6px;">
+                            <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
+                            <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
+                            <button class="drawer-btn" onclick="quickDismissFromOps(event, ${p.id})" style="color:#f85149;">Dismiss &#9662;</button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                const reviewHtml = (payload.human_review_cases || []).map((c) => {
+                    const statusLabel = formatStatus(c.status);
+                    const substatus = c.substatus ? truncate(c.substatus, 80) : '';
+                    const preview = c.last_inbound_preview ? truncate(String(c.last_inbound_preview).replace(/\s+/g, ' '), 120) : '';
+                    return `
+                    <div class="ops-item" style="padding:8px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;">
+                            <div style="display:flex;align-items:center;gap:6px;">
+                                <a href="#" onclick="openCase(${c.id});return false;" style="color:#58a6ff;font-weight:600;">#${c.id}</a>
+                                <span style="color:#c9d1d9;font-size:12px;">${truncate(c.case_name || '', 40)}</span>
+                                <span class="badge agent" style="font-size:10px;">${statusLabel}</span>
+                            </div>
+                            <span style="font-size:11px;color:#8b949e;">${relativeTime(c.updated_at)}</span>
+                        </div>
+                        <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(c.agency_name || '', 40)}${c.inbound_count > 0 ? ` · ${c.inbound_count} inbound` : ''}</div>
+                        ${substatus ? `<div style="margin-top:3px;font-size:11px;color:#d2a8ff;">${substatus}</div>` : ''}
+                        ${preview ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${preview}</div>` : ''}
+                        <div style="margin-top:6px;">
+                            <button class="drawer-btn primary" onclick="openCase(${c.id})">Open</button>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                const combined = proposalHtml + reviewHtml;
+                needsAttentionEl.innerHTML = combined || '<div class="timestamp">None</div>';
+            }
 
             renderOpsList('opsUnmatchedList', payload.unmatched_inbound, (m) => {
                 const bodyPreview = m.body_preview ? truncate(String(m.body_preview).replace(/\s+/g, ' '), 120) : '';
@@ -2464,29 +2490,6 @@
                         <button class="drawer-btn" onclick="openMessage(${m.id})">View</button>
                         <button class="drawer-btn primary" onclick="openMatchModal(${m.id})">Match to Case</button>
                         <button class="drawer-btn" onclick="dismissMessage(${m.id})" style="color:#f85149;">Dismiss</button>
-                    </div>
-                </div>`;
-            });
-
-            renderOpsList('opsHumanReviewList', payload.human_review_cases, (c) => {
-                const statusLabel = formatStatus(c.status);
-                const substatus = c.substatus ? truncate(c.substatus, 80) : '';
-                const preview = c.last_inbound_preview ? truncate(String(c.last_inbound_preview).replace(/\s+/g, ' '), 120) : '';
-                return `
-                <div class="ops-item" style="padding:8px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <a href="#" onclick="openCase(${c.id});return false;" style="color:#58a6ff;font-weight:600;">#${c.id}</a>
-                            <span style="color:#c9d1d9;font-size:12px;">${truncate(c.case_name || '', 40)}</span>
-                            <span class="badge agent" style="font-size:10px;">${statusLabel}</span>
-                        </div>
-                        <span style="font-size:11px;color:#8b949e;">${relativeTime(c.updated_at)}</span>
-                    </div>
-                    <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(c.agency_name || '', 40)}${c.inbound_count > 0 ? ` · ${c.inbound_count} inbound` : ''}</div>
-                    ${substatus ? `<div style="margin-top:3px;font-size:11px;color:#d2a8ff;">${substatus}</div>` : ''}
-                    ${preview ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${preview}</div>` : ''}
-                    <div style="margin-top:6px;">
-                        <button class="drawer-btn primary" onclick="openCase(${c.id})">Open</button>
                     </div>
                 </div>`;
             });
@@ -4489,13 +4492,13 @@
             if (count > lastPendingApprovalCount) {
                 const diff = count - lastPendingApprovalCount;
                 if ('Notification' in window && Notification.permission === 'granted') {
-                    new Notification('Autobot: New Pending Approvals', {
-                        body: `${diff} new proposal${diff > 1 ? 's' : ''} need${diff === 1 ? 's' : ''} your review`,
+                    new Notification('Autobot: Needs Attention', {
+                        body: `${diff} new item${diff > 1 ? 's' : ''} need${diff === 1 ? 's' : ''} your review`,
                         icon: '/favicon.ico',
-                        tag: 'pending-approvals'
+                        tag: 'needs-attention'
                     });
                 }
-                showToast('info', `${diff} new proposal${diff > 1 ? 's' : ''} pending approval`);
+                showToast('info', `${diff} new item${diff > 1 ? 's' : ''} need${diff === 1 ? 's' : ''} attention`);
             }
             lastPendingApprovalCount = count;
         }
@@ -4587,7 +4590,7 @@
             isManualRefresh = false;
             await _origLoadData();
             // Check pending approval count after data loads
-            const countEl = document.getElementById('opsPendingApprovals');
+            const countEl = document.getElementById('opsNeedsAttention');
             if (countEl) {
                 const count = parseInt(countEl.textContent) || 0;
                 checkForNewApprovals(count);
