@@ -220,7 +220,7 @@ class PortalAgentServiceSkyvern {
         return stage.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     }
 
-    async _createTaskAndPoll({ portalUrl, navigationGoal, navigationPayload, maxSteps }) {
+    async _createTaskAndPoll({ portalUrl, navigationGoal, navigationPayload, maxSteps, maxPolls: maxPollsOverride }) {
         console.log(`\n📝 Navigation Goal:\n${navigationGoal}\n`);
         console.log(`⏳ Creating task...\n`);
 
@@ -256,9 +256,10 @@ class PortalAgentServiceSkyvern {
             throw new Error('No task ID returned from API');
         }
 
-        console.log(`\n⏳ Polling for task completion (max 40 minutes)...`);
+        const maxPollMinutes = Math.round((maxPollsOverride || 480) * 5 / 60);
+        console.log(`\n⏳ Polling for task completion (max ${maxPollMinutes} minutes)...`);
 
-        const maxPolls = 480; // 480 polls * 5 seconds = 40 minutes
+        const maxPolls = maxPollsOverride || 480; // default: 480 polls * 5 seconds = 40 minutes
         let polls = 0;
         let finalTask = null;
 
@@ -754,15 +755,144 @@ class PortalAgentServiceSkyvern {
         }
     }
 
+    async _ensurePortalAccount({ portalUrl, caseData }) {
+        // Kill switch
+        if (process.env.PORTAL_SCOUT_DISABLED === 'true') {
+            console.log('🔇 Portal scout disabled via PORTAL_SCOUT_DISABLED — falling back to DB lookup');
+            const existing = await database.getPortalAccountByUrl(portalUrl);
+            if (existing?.account_status === 'no_account_needed') return null;
+            if (existing) await database.updatePortalAccountLastUsed(existing.id);
+            return existing;
+        }
+
+        // 1. Check DB for existing account
+        const existing = await database.getPortalAccountByUrl(portalUrl);
+        if (existing) {
+            if (existing.account_status === 'no_account_needed') {
+                console.log(`⏭️  Portal ${portalUrl} marked as no-account-needed — skipping scout`);
+                return null;
+            }
+            console.log(`🔑 Found existing portal account for ${portalUrl} (${existing.email})`);
+            await database.updatePortalAccountLastUsed(existing.id);
+            return existing;
+        }
+
+        // 2. No account found — run scout task
+        console.log(`🔍 No portal account found for ${portalUrl} — running scout task...`);
+        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const password = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+
+        await database.logActivity('portal_scout_started', `Scout task started for ${portalUrl}`, {
+            case_id: caseData.id || null,
+            portal_url: portalUrl
+        });
+
+        try {
+            const navigationGoal = this._buildScoutNavigationGoal({ email, password });
+            const navigationPayload = this._buildScoutNavigationPayload({ email, password });
+
+            const { finalTask, taskId } = await this._createTaskAndPoll({
+                portalUrl,
+                navigationGoal,
+                navigationPayload,
+                maxSteps: 15,
+                maxPolls: 60  // 5 minutes
+            });
+
+            const taskUrl = taskId ? `https://app.skyvern.com/tasks/${taskId}` : null;
+            const extracted = finalTask?.extracted_information || {};
+            const status = finalTask?.status;
+
+            await database.logActivity('portal_scout_completed', `Scout task finished for ${portalUrl}`, {
+                case_id: caseData.id || null,
+                portal_url: portalUrl,
+                task_id: taskId,
+                task_url: taskUrl,
+                scout_status: status,
+                extracted
+            });
+
+            // 3. Parse scout results
+            if (extracted.requires_account === false) {
+                console.log(`📋 Portal ${portalUrl} does not require an account — saving marker`);
+                try {
+                    await database.createPortalAccount({
+                        portal_url: portalUrl,
+                        portal_type: extracted.portal_type || null,
+                        email,
+                        password,
+                        first_name: 'Samuel',
+                        last_name: 'Hylton',
+                        account_status: 'no_account_needed'
+                    });
+                } catch (saveErr) {
+                    console.warn('Could not save no_account_needed marker:', saveErr.message);
+                }
+                return null;
+            }
+
+            if (extracted.account_created || extracted.account_already_existed) {
+                console.log(`✅ Scout ${extracted.account_created ? 'created' : 'found existing'} account on ${portalUrl}`);
+                try {
+                    const saved = await database.createPortalAccount({
+                        portal_url: portalUrl,
+                        portal_type: extracted.portal_type || null,
+                        email,
+                        password,
+                        first_name: 'Samuel',
+                        last_name: 'Hylton',
+                        account_status: 'active',
+                        additional_info: {
+                            created_by: 'portal_scout',
+                            scout_task_id: taskId,
+                            login_url: extracted.login_url || null,
+                            notes: extracted.notes || null
+                        }
+                    });
+                    console.log(`💾 Saved scout account ID: ${saved.id}`);
+                    saved.password = password; // createPortalAccount returns without decrypted password
+                    return saved;
+                } catch (saveErr) {
+                    console.warn('Could not save scout account:', saveErr.message);
+                    // Return a virtual account object so the workflow can still use creds
+                    return { email, password, account_status: 'active' };
+                }
+            }
+
+            // Scout completed but didn't clearly determine account status
+            if (status === 'completed') {
+                console.log(`⚠️  Scout completed but unclear result — proceeding without account`);
+            } else {
+                console.log(`⚠️  Scout ended with status=${status} — proceeding without account`);
+            }
+            return null;
+        } catch (scoutError) {
+            // Non-fatal: if scout fails, main workflow proceeds with defaults
+            console.warn(`⚠️  Scout task failed: ${scoutError.message} — proceeding without account`);
+            await database.logActivity('portal_scout_failed', `Scout task failed for ${portalUrl}: ${scoutError.message}`, {
+                case_id: caseData.id || null,
+                portal_url: portalUrl,
+                error: scoutError.message
+            });
+            return null;
+        }
+    }
+
     async _submitViaWorkflow({ caseData, portalUrl, dryRun, runId, retryContext = null }) {
         if (!this.workflowId) {
             throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode requested');
         }
 
         console.log('⚙️ Skyvern workflow mode enabled. Building parameters…');
-        let portalAccount = await database.getPortalAccountByUrl(portalUrl);
-        if (portalAccount) {
-            await database.updatePortalAccountLastUsed(portalAccount.id);
+        let portalAccount = null;
+        if (!retryContext) {
+            // First attempt: run scout to ensure credentials exist
+            portalAccount = await this._ensurePortalAccount({ portalUrl, caseData });
+        } else {
+            // Retry: just fetch existing account (scout already ran)
+            portalAccount = await database.getPortalAccountByUrl(portalUrl);
+            if (portalAccount?.account_status === 'no_account_needed') portalAccount = null;
+            if (portalAccount) await database.updatePortalAccountLastUsed(portalAccount.id);
         }
 
         const totpIdentifier = process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
@@ -844,8 +974,9 @@ class PortalAgentServiceSkyvern {
                         last_portal_task_url: workflowRunLink
                     });
                 }
+                const timeoutDetail = `Polling timeout — check Skyvern run${workflowRunLink ? ': ' + workflowRunLink : ''}`;
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: 'Portal submission failed (polling timeout) - requires human submission',
+                    substatus: `Portal failed: ${timeoutDetail}`,
                     requires_human: true
                 });
                 try {
@@ -853,12 +984,12 @@ class PortalAgentServiceSkyvern {
                         proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
                         caseId: caseData.id,
                         actionType: 'SUBMIT_PORTAL',
-                        reasoning: [{ step: 'Automated portal submission failed', detail: 'Workflow run status unavailable (polling timeout)' }],
+                        reasoning: [{ step: 'Automated portal submission failed', detail: timeoutDetail }],
                         confidence: 0,
                         requiresHuman: true,
                         canAutoExecute: false,
                         draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
-                        draftBodyText: `Portal: ${portalUrl}\nError: Workflow run status unavailable (polling timeout)`,
+                        draftBodyText: `Portal: ${portalUrl}\nError: ${timeoutDetail}`,
                         status: 'PENDING_APPROVAL'
                     });
                 } catch (proposalErr) {
@@ -1005,8 +1136,9 @@ class PortalAgentServiceSkyvern {
 
             // ESCALATE: Retry exhausted or AI said don't retry
             console.log(`❌ Portal failed for case ${caseData.id} after ${retryContext ? 'retry' : 'AI declined retry'}`);
+            const truncatedReason = (failureReason || 'Unknown error').substring(0, 200);
             await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                substatus: 'Portal submission failed - requires human submission',
+                substatus: `Portal failed: ${truncatedReason}`,
                 requires_human: true
             });
             try {
@@ -1054,8 +1186,9 @@ class PortalAgentServiceSkyvern {
             const message = error.response?.data?.message || error.response?.data?.error || error.message;
             console.error('❌ Skyvern workflow API error:', message);
             try {
+                const truncatedMsg = (message || 'Unknown error').substring(0, 200);
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: 'Portal submission failed - requires human submission',
+                    substatus: `Portal failed: ${truncatedMsg}`,
                     requires_human: true
                 });
                 await database.upsertProposal({
@@ -1203,6 +1336,55 @@ If no verification is required, simply log in successfully and stop.`;
             verification_code: verificationCode,
             agency_name: caseData.agency_name,
             case_name: caseData.case_name
+        };
+    }
+
+    _buildScoutNavigationGoal({ email, password }) {
+        return `You are scouting a government FOIA portal to determine if an account is required and, if so, create one.
+
+SCOUT INSTRUCTIONS:
+1. Visit the portal URL. Look for any login page, "Create Account", "Register", or "Sign In" links.
+2. If the portal requires an account to submit requests:
+   a. Create an account using EXACTLY these credentials:
+      - Email: ${email}
+      - Password: ${password}
+      - Name: Samuel Hylton
+      - Phone: 209-800-7702
+      - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
+   b. Fill in ALL required profile fields.
+   c. If the portal says "email already exists" or "account already exists", that is fine — set account_already_existed=true.
+3. If the portal does NOT require an account (e.g., guest/anonymous submissions allowed), set requires_account=false and stop immediately.
+4. Do NOT fill out any FOIA request forms. Do NOT submit any records requests. Your ONLY job is account creation.
+
+Use Set Extracted Information to return this JSON:
+{
+  "requires_account": boolean,
+  "account_created": boolean,
+  "account_already_existed": boolean,
+  "verification_required": boolean,
+  "portal_type": string,
+  "login_url": string,
+  "notes": string
+}`;
+    }
+
+    _buildScoutNavigationPayload({ email, password }) {
+        return {
+            account_email: email,
+            account_password: password,
+            account_password_confirm: password,
+            first_name: 'Samuel',
+            last_name: 'Hylton',
+            email: email,
+            phone: '209-800-7702',
+            phone_number: '209-800-7702',
+            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
+            street_address: '3021 21st Ave W, Apt 202',
+            city: 'Seattle',
+            state_abbr: 'WA',
+            zip: '98199',
+            zip_code: '98199',
+            organization: 'Matcher / FOIA Request Team'
         };
     }
 

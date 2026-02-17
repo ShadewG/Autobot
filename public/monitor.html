@@ -622,6 +622,80 @@
             transition: max-height 0.3s ease-in;
         }
 
+        /* Manual Submit Helper */
+        .msh-section { margin-bottom: 12px; }
+        .msh-section-header {
+            font-size: 11px;
+            font-weight: 600;
+            color: #58a6ff;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #21262d;
+        }
+        .msh-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 4px 0;
+            gap: 8px;
+        }
+        .msh-label {
+            font-size: 11px;
+            color: #8b949e;
+            min-width: 80px;
+            flex-shrink: 0;
+        }
+        .msh-value {
+            font-size: 12px;
+            color: #c9d1d9;
+            flex: 1;
+            word-break: break-all;
+            font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+        }
+        .msh-value a { color: #58a6ff; text-decoration: none; }
+        .msh-value a:hover { text-decoration: underline; }
+        .msh-copy-btn {
+            padding: 2px 8px;
+            font-size: 10px;
+            cursor: pointer;
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            flex-shrink: 0;
+            white-space: nowrap;
+        }
+        .msh-copy-btn:hover { background: #30363d; }
+        .msh-copy-all {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 6px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            background: #238636;
+            color: #fff;
+            border: 1px solid #2ea043;
+            border-radius: 6px;
+        }
+        .msh-copy-all:hover { background: #2ea043; }
+        .msh-details {
+            font-size: 11px;
+            color: #c9d1d9;
+            background: #0d1117;
+            border: 1px solid #21262d;
+            border-radius: 4px;
+            padding: 8px;
+            max-height: 150px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'SF Mono', SFMono-Regular, Consolas, monospace;
+            margin-top: 4px;
+        }
+
         /* Correspondence Thread Drawer */
         .thread-message {
             padding: 12px;
@@ -1147,6 +1221,17 @@
             </div>
             <div class="accordion-body open">
                 <div id="casePortalInfoPanel" style="margin-top:4px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
+            </div>
+        </div>
+
+        <!-- Manual Submit Helper accordion -->
+        <div id="manualSubmitHelperAccordion" style="display:none;">
+            <div class="accordion-toggle" onclick="toggleAccordion(this)">
+                <h3>Manual Submit Helper</h3>
+                <span class="acc-arrow">&#9654;</span>
+            </div>
+            <div class="accordion-body">
+                <div id="manualSubmitHelperPanel" style="margin-top:4px; border:1px solid #30363d; border-radius:8px; padding:10px;"></div>
             </div>
         </div>
 
@@ -2445,6 +2530,15 @@
                     const statusLabel = formatStatus(c.status);
                     const substatus = c.substatus ? truncate(c.substatus, 80) : '';
                     const preview = c.last_inbound_preview ? truncate(String(c.last_inbound_preview).replace(/\s+/g, ' '), 120) : '';
+                    const isPortalFail = (c.substatus || '').toLowerCase().includes('portal') && ((c.substatus || '').toLowerCase().includes('fail') || (c.substatus || '').toLowerCase().includes('error') || (c.substatus || '').toLowerCase().includes('human'));
+                    const skyvernUrl = c.last_portal_task_url || (c.last_portal_run_id ? `https://app.skyvern.com/runs/${c.last_portal_run_id}` : null);
+                    const portalLinks = isPortalFail && skyvernUrl
+                        ? `<div style="margin-top:4px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                            <a href="${skyvernUrl}" target="_blank" style="display:inline-block;padding:2px 8px;font-size:11px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Skyvern Run</a>
+                            ${c.portal_url ? `<a href="${c.portal_url}" target="_blank" style="display:inline-block;padding:2px 8px;font-size:11px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Open Portal</a>` : ''}
+                            ${c.last_portal_status ? `<span style="font-size:11px;color:#f85149;">Status: ${c.last_portal_status}</span>` : ''}
+                           </div>`
+                        : '';
                     return `
                     <div class="ops-item" style="padding:8px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -2457,6 +2551,7 @@
                         </div>
                         <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(c.agency_name || '', 40)}${c.inbound_count > 0 ? ` · ${c.inbound_count} inbound` : ''}</div>
                         ${substatus ? `<div style="margin-top:3px;font-size:11px;color:#d2a8ff;">${substatus}</div>` : ''}
+                        ${portalLinks}
                         ${preview ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${preview}</div>` : ''}
                         <div style="margin-top:6px;">
                             <button class="drawer-btn primary" onclick="openCase(${c.id})">Open</button>
@@ -2937,6 +3032,11 @@
                     portalInfoPanel.innerHTML = '';
                 }
 
+                // Manual Submit Helper panel
+                const helperPA = c.portal_url ? data.portal_account : null;
+                if (helperPA) currentCaseData._portalAccount = helperPA;
+                renderManualSubmitHelper(c, helperPA);
+
                 // Agencies panel
                 renderAgenciesPanel(data.case_agencies || [], c);
 
@@ -3287,9 +3387,15 @@
                 return;
             }
 
-            // For submit_manually, also open the portal URL
+            // For submit_manually, open the portal URL and scroll to helper
             if (action === 'submit_manually' && currentCaseData?.portal_url) {
                 window.open(currentCaseData.portal_url, '_blank');
+                const helper = document.getElementById('manualSubmitHelperAccordion');
+                if (helper && helper.style.display !== 'none') {
+                    const toggle = helper.querySelector('.accordion-toggle');
+                    if (toggle && !toggle.classList.contains('open')) toggle.click();
+                    helper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
             }
 
             try {
@@ -3350,6 +3456,150 @@
                 'Research:',
                 detailSnippet
             ].join('\n');
+        }
+
+        // ── Manual Submit Helper ──────────────────────────────
+
+        function copyField(text, btn) {
+            navigator.clipboard.writeText(text).then(() => {
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 1500);
+            });
+        }
+
+        const REQUESTER_INFO = {
+            name: 'Samuel Hylton',
+            email: 'requests@foib-request.com',
+            phone: '209-800-7702',
+            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
+            organization: 'Matcher / FOIA Request Team',
+            title: 'Documentary Researcher'
+        };
+
+        function buildManualSubmitText(c, pa) {
+            const records = Array.isArray(c.requested_records) ? c.requested_records.filter(Boolean) : [];
+            const details = (c.additional_details || '').trim();
+            const detailSnippet = details ? details.substring(0, 2000) : '';
+
+            let text = '';
+            text += '=== LOGIN ===\n';
+            text += `Portal: ${c.portal_url || '-'}\n`;
+            text += `Email: ${pa?.email || REQUESTER_INFO.email}\n`;
+            text += `Password: ${pa?.password || '-'}\n`;
+            text += '\n';
+            text += '=== REQUESTER INFO ===\n';
+            text += `Name: ${REQUESTER_INFO.name}\n`;
+            text += `Email: ${pa?.email || REQUESTER_INFO.email}\n`;
+            text += `Phone: ${REQUESTER_INFO.phone}\n`;
+            text += `Address: ${REQUESTER_INFO.address}\n`;
+            text += `Organization: ${REQUESTER_INFO.organization}\n`;
+            text += `Title: ${REQUESTER_INFO.title}\n`;
+            text += '\n';
+            text += '=== REQUEST DETAILS ===\n';
+            text += `Subject: ${c.subject_name || '-'}\n`;
+            text += `Agency: ${c.agency_name || '-'}\n`;
+            text += `State: ${c.state || '-'}\n`;
+            text += `Incident Date: ${c.incident_date || '-'}\n`;
+            text += `Incident Location: ${c.incident_location || '-'}\n`;
+            text += `Records Requested:\n`;
+            if (records.length) {
+                records.forEach(r => { text += `  - ${r}\n`; });
+            } else {
+                text += '  - (none specified)\n';
+            }
+            text += `Fee Waiver: Yes — Non-commercial documentary / public interest\n`;
+            text += `Delivery: Electronic / Email\n`;
+            if (detailSnippet) {
+                text += '\n=== ADDITIONAL DETAILS ===\n';
+                text += detailSnippet + '\n';
+            }
+            return text;
+        }
+
+        function renderManualSubmitHelper(c, pa) {
+            const accordion = document.getElementById('manualSubmitHelperAccordion');
+            const panel = document.getElementById('manualSubmitHelperPanel');
+            if (!c.portal_url) {
+                accordion.style.display = 'none';
+                panel.innerHTML = '';
+                return;
+            }
+
+            const records = Array.isArray(c.requested_records) ? c.requested_records.filter(Boolean) : [];
+            const details = (c.additional_details || '').trim();
+            const detailSnippet = details ? details.substring(0, 2000) : '';
+            const loginEmail = pa?.email || REQUESTER_INFO.email;
+            const loginPw = pa?.password || '';
+            const escapedPw = loginPw.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+            function row(label, value, copyValue) {
+                const cv = (copyValue !== undefined ? copyValue : value).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                return `<div class="msh-row">
+                    <span class="msh-label">${label}</span>
+                    <span class="msh-value">${value}</span>
+                    <button class="msh-copy-btn" onclick="copyField('${cv}', this)">Copy</button>
+                </div>`;
+            }
+
+            let html = '';
+
+            // Login section
+            html += `<div class="msh-section">`;
+            html += `<div class="msh-section-header">Login</div>`;
+            html += row('Portal', `<a href="${c.portal_url}" target="_blank">${truncate(c.portal_url, 60)}</a>`, c.portal_url);
+            html += row('Email', loginEmail);
+            if (loginPw) {
+                html += `<div class="msh-row">
+                    <span class="msh-label">Password</span>
+                    <span class="msh-value"><span id="mshPwMask">••••••••</span></span>
+                    <button class="msh-copy-btn" onclick="document.getElementById('mshPwMask').textContent=document.getElementById('mshPwMask').textContent==='••••••••'?'${escapedPw}':'••••••••';this.textContent=document.getElementById('mshPwMask').textContent==='••••••••'?'Show':'Hide'" style="margin-right:4px;">Show</button>
+                    <button class="msh-copy-btn" onclick="copyField('${escapedPw}', this)">Copy</button>
+                </div>`;
+            } else {
+                html += row('Password', '<span style="color:#8b949e;">-</span>', '');
+            }
+            html += `</div>`;
+
+            // Requester Info section
+            html += `<div class="msh-section">`;
+            html += `<div class="msh-section-header">Requester Info</div>`;
+            html += row('Name', REQUESTER_INFO.name);
+            html += row('Email', loginEmail);
+            html += row('Phone', REQUESTER_INFO.phone);
+            html += row('Address', REQUESTER_INFO.address);
+            html += row('Organization', REQUESTER_INFO.organization);
+            html += row('Title', REQUESTER_INFO.title);
+            html += `</div>`;
+
+            // Request Details section
+            html += `<div class="msh-section">`;
+            html += `<div class="msh-section-header">Request Details</div>`;
+            html += row('Subject', c.subject_name || '-');
+            html += row('Agency', c.agency_name || '-');
+            html += row('State', c.state || '-');
+            html += row('Incident Date', c.incident_date || '-');
+            html += row('Location', c.incident_location || '-');
+            html += row('Records', records.length ? records.join(', ') : '-');
+            html += row('Fee Waiver', 'Yes — Non-commercial documentary / public interest');
+            html += row('Delivery', 'Electronic / Email');
+            html += `</div>`;
+
+            // Additional Details (collapsible)
+            if (detailSnippet) {
+                html += `<div class="msh-section">`;
+                html += `<div class="msh-section-header">Additional Details</div>`;
+                html += `<div class="msh-details">${detailSnippet.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`;
+                html += `<button class="msh-copy-btn" style="margin-top:4px;" onclick="copyField(document.querySelector('.msh-details').textContent, this)">Copy Details</button>`;
+                html += `</div>`;
+            }
+
+            // Copy All button
+            html += `<div style="text-align:center; margin-top:6px;">`;
+            html += `<button class="msh-copy-all" onclick="copyField(buildManualSubmitText(currentCaseData, currentCaseData._portalAccount), this)">Copy All</button>`;
+            html += `</div>`;
+
+            panel.innerHTML = html;
+            accordion.style.display = 'block';
         }
 
         async function confirmPortalSubmission() {
@@ -4294,6 +4544,13 @@
                     try {
                         const data = JSON.parse(event.data);
                         showToast(data.type || 'info', data.message || 'Notification', data);
+                        // If this is a PD contact lookup result, finish the pending lookup
+                        if (_pdLookupPending && data.case_id === _pdLookupPending.caseId) {
+                            const msg = (data.message || '').toLowerCase();
+                            if (msg.includes('found contacts') || msg.includes('no contacts found') || (msg.includes('contact') && msg.includes('failed'))) {
+                                _finishPDLookup();
+                            }
+                        }
                     } catch (_) {}
                 };
                 sseSource.onerror = () => {
@@ -4311,21 +4568,37 @@
         }
 
         // === PD Contact Lookup ===
+        let _pdLookupPending = null; // { caseId, btn, timeout }
         async function triggerPDContactLookup(caseId, btn) {
             btn.disabled = true;
             btn.textContent = 'Searching...';
+            // Clear any previous pending lookup
+            if (_pdLookupPending?.timeout) clearTimeout(_pdLookupPending.timeout);
+            _pdLookupPending = { caseId, btn, timeout: null };
             try {
                 await fetch(`/api/monitor/case/${caseId}/lookup-contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
             } catch (err) {
                 showToast('error', `Lookup request failed: ${err.message}`, { case_id: caseId });
+                _finishPDLookup();
+                return;
             }
-            // Re-enable after 90s and refresh case data
-            setTimeout(async () => {
+            // Safety timeout: re-enable after 6 minutes if SSE never fires
+            _pdLookupPending.timeout = setTimeout(() => _finishPDLookup(), 360000);
+        }
+
+        function _finishPDLookup() {
+            if (!_pdLookupPending) return;
+            const { caseId, btn, timeout } = _pdLookupPending;
+            if (timeout) clearTimeout(timeout);
+            _pdLookupPending = null;
+            if (btn) {
                 btn.disabled = false;
                 btn.textContent = 'Find PD Contact';
-                // Refresh case data in the inspector
-                try { await openCase(caseId); } catch (_) {}
-            }, 90000);
+            }
+            // Refresh case data in the inspector
+            if (caseId) {
+                try { openCase(caseId); } catch (_) {}
+            }
         }
 
         // === Quick dismiss from ops panel ===

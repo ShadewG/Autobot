@@ -752,8 +752,9 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                 console.log(`🚫 BLOCKED: Case ${caseId} has portal_url but portal submission failed - NO EMAIL fallback`);
                 console.log(`🌐 Portal URL: ${portalUrl}`);
                 console.log(`⚠️ Portal error: ${portalError?.message || 'Unknown error or unsupported domain'}`);
+                const portalErrMsg = (portalError?.message || 'Unknown error or unsupported domain').substring(0, 200);
                 await db.updateCaseStatus(caseId, 'needs_human_review', {
-                    substatus: 'Portal submission failed - requires human intervention'
+                    substatus: `Portal failed: ${portalErrMsg}`
                 });
                 await notionService.syncStatusToNotion(caseId);
                 await db.logActivity('portal_requires_human', `Portal submission failed for case ${caseId}, no email fallback`, {

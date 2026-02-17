@@ -963,6 +963,9 @@ router.get('/live-overview', async (req, res) => {
                 c.substatus,
                 c.updated_at,
                 c.portal_url,
+                c.last_portal_task_url,
+                c.last_portal_run_id,
+                c.last_portal_status,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
             FROM cases c
@@ -1206,7 +1209,7 @@ router.get('/case/:id', async (req, res) => {
             db.query(`
                 SELECT
                     id, action_type, status, confidence, trigger_message_id, run_id,
-                    draft_subject, draft_body_text, created_at, updated_at, execution_key, email_job_id,
+                    draft_subject, draft_body_text, reasoning, created_at, updated_at, execution_key, email_job_id,
                     human_decision
                 FROM proposals
                 WHERE case_id = $1
