@@ -795,6 +795,12 @@ class PortalAgentServiceSkyvern {
 
             if (!finalResult) {
                 console.warn('⚠️ Workflow run status unavailable; manual follow-up required.');
+                // Save the Skyvern run link even on timeout so dashboard can link to it
+                if (workflowRunLink) {
+                    await database.updateCasePortalStatus(caseData.id, {
+                        last_portal_task_url: workflowRunLink
+                    });
+                }
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
                     substatus: 'Portal submission failed (polling timeout) - requires human submission',
                     requires_human: true

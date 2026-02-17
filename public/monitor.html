@@ -2924,7 +2924,8 @@
                     portalHtml += `</div>`;
                     let links = '';
                     if (c.portal_url) links += `<a href="${c.portal_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Open Portal</a>`;
-                    if (c.last_portal_task_url) links += `<a href="${c.last_portal_task_url}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Skyvern Task</a>`;
+                    const skyvernLink = c.last_portal_task_url || (c.last_portal_run_id ? `https://app.skyvern.com/runs/${c.last_portal_run_id}` : null);
+                    if (skyvernLink) links += `<a href="${skyvernLink}" target="_blank" style="display:inline-block;margin:4px 6px 0 0;padding:4px 10px;font-size:12px;background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:4px;text-decoration:none;">Skyvern Run</a>`;
                     if (links) portalHtml += `<div style="margin-top:6px;">${links}</div>`;
                     portalInfoPanel.innerHTML = portalHtml;
                     portalAccordion.style.display = 'block';
@@ -3405,11 +3406,11 @@
                     const data = await res.json();
                     if (!res.ok || !data.success) return;
                     const c = data.case || {};
-                    const task = c.last_portal_task_url;
+                    const task = c.last_portal_task_url || (c.last_portal_run_id ? `https://app.skyvern.com/runs/${c.last_portal_run_id}` : null);
                     const recording = c.last_portal_recording_url;
                     if (task || recording) {
                         const parts = [];
-                        if (task) parts.push(`<a class="case-link" href="${task}" target="_blank">Skyvern Task</a>`);
+                        if (task) parts.push(`<a class="case-link" href="${task}" target="_blank">Skyvern Run</a>`);
                         if (recording) parts.push(`<a class="case-link" href="${recording}" target="_blank">Recording</a>`);
                         resultDiv.className = 'send-result success';
                         resultDiv.innerHTML = `Portal submission started. ${parts.join(' | ')}`;

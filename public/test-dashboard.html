@@ -1578,6 +1578,10 @@
             if (taskUrl) {
                 const taskLabel = /workflow/i.test(taskUrl) ? 'Skyvern Workflow' : 'Skyvern Task';
                 links.push(`<a href="${escapeHtml(taskUrl)}" target="_blank" rel="noopener">${escapeHtml(taskLabel)}</a>`);
+            } else if (entity.last_portal_run_id) {
+                // Fallback: construct Skyvern link from run ID even if task_url wasn't saved
+                const fallbackUrl = `https://app.skyvern.com/runs/${escapeHtml(String(entity.last_portal_run_id))}`;
+                links.push(`<a href="${fallbackUrl}" target="_blank" rel="noopener">Skyvern Run</a>`);
             }
             if (recordingUrl) {
                 links.push(`<a href="${escapeHtml(recordingUrl)}" target="_blank" rel="noopener">Skyvern Replay</a>`);
@@ -1720,7 +1724,11 @@
             const accountHtml = c.last_portal_account_email
                 ? `<div class="case-meta">Login Email: ${escapeHtml(c.last_portal_account_email)} (password stored securely)</div>`
                 : '';
-            const runMeta = c.last_portal_run_id ? `<div class="case-meta">Run: ${escapeHtml(String(c.last_portal_run_id))}</div>` : '';
+            const runMeta = c.last_portal_run_id ? (() => {
+                const runId = escapeHtml(String(c.last_portal_run_id));
+                const skyvernUrl = c.last_portal_task_url || `https://app.skyvern.com/runs/${runId}`;
+                return `<div class="case-meta">Run: <a href="${escapeHtml(skyvernUrl)}" target="_blank" rel="noopener">${runId}</a></div>`;
+            })() : '';
             const completionWarning = c.last_portal_status && /completed|submitted|success/i.test(c.last_portal_status) && c.status && c.status !== 'sent'
                 ? `<div class="case-meta"><span class="status-chip warn">Portal done • Case ${escapeHtml(c.status)}</span></div>`
                 : '';
