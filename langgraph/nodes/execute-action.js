@@ -17,6 +17,7 @@
  */
 
 const db = require('../../services/database');
+const aiService = require('../../services/ai-service');
 const logger = require('../../services/logger');
 const { portalQueue } = require('../../queues/email-queue');
 const {
@@ -434,12 +435,7 @@ async function executeActionNode(state) {
     }
 
     case 'RESEARCH_AGENCY': {
-      // No email to send. Update case status for human review with research findings.
-      await db.updateCaseStatus(caseId, 'needs_human_review', {
-        substatus: 'agency_research_complete',
-        requires_human: true
-      });
-
+      // Mark the research proposal as executed
       await createExecutionRecord({
         caseId,
         proposalId,
@@ -448,15 +444,189 @@ async function executeActionNode(state) {
         actionType: 'RESEARCH_AGENCY',
         status: 'SENT',
         provider: 'none',
-        providerPayload: { reason: 'Agency research complete — awaiting human review' }
+        providerPayload: { reason: 'Agency research complete' }
       });
 
-      executionResult = { action: 'research_complete' };
       await db.updateProposal(proposalId, {
         status: 'EXECUTED',
         executedAt: new Date()
       });
-      logs.push('Agency research executed — case set to needs_human_review');
+      logs.push('Agency research proposal executed');
+
+      // --- Auto-create follow-up proposal for new agency ---
+      // Get research data from state (passed by draft-response) or parse from case
+      let contactResult = state.researchContactResult || null;
+      let brief = state.researchBrief || null;
+
+      if (!brief) {
+        // Fallback: parse from contact_research_notes stored on case
+        try {
+          const freshCase = await db.getCaseById(caseId);
+          if (freshCase?.contact_research_notes) {
+            const parsed = typeof freshCase.contact_research_notes === 'string'
+              ? JSON.parse(freshCase.contact_research_notes)
+              : freshCase.contact_research_notes;
+            contactResult = contactResult || parsed.contactResult || null;
+            brief = parsed.brief || null;
+          }
+        } catch (parseErr) {
+          logs.push(`Could not parse contact_research_notes: ${parseErr.message}`);
+        }
+      }
+
+      // Extract the best new agency from research
+      const suggestedAgency = brief?.suggested_agencies?.[0] || null;
+
+      if (!suggestedAgency?.name) {
+        logs.push('No suggested agency found in research — falling back to human review');
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          substatus: 'agency_research_complete',
+          requires_human: true
+        });
+        executionResult = { action: 'research_complete', followup: 'none' };
+        break;
+      }
+
+      logs.push(`Research suggests new agency: ${suggestedAgency.name} (confidence: ${suggestedAgency.confidence})`);
+
+      // Cross-reference with agencies table for portal/email info
+      let newAgencyEmail = contactResult?.contact_email || null;
+      let newAgencyPortalUrl = contactResult?.portal_url || null;
+      let newAgencyPortalProvider = null;
+      let agencyId = null;
+
+      try {
+        const knownAgency = await db.findAgencyByName(
+          suggestedAgency.name,
+          caseData?.state || null
+        );
+        if (knownAgency) {
+          agencyId = knownAgency.id;
+          newAgencyEmail = newAgencyEmail || knownAgency.email_main || null;
+          newAgencyPortalUrl = newAgencyPortalUrl || knownAgency.portal_url || null;
+          logs.push(`Matched "${suggestedAgency.name}" to known agency #${knownAgency.id}`);
+        }
+      } catch (lookupErr) {
+        logs.push(`Agency lookup failed: ${lookupErr.message}`);
+      }
+
+      // Must have at least one delivery channel
+      if (!newAgencyEmail && !newAgencyPortalUrl) {
+        logs.push('New agency has no email or portal URL — falling back to human review');
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          substatus: 'agency_research_complete',
+          requires_human: true
+        });
+        executionResult = { action: 'research_complete', followup: 'no_contact_info' };
+        break;
+      }
+
+      // Add the new agency to case_agencies
+      let caseAgency;
+      try {
+        caseAgency = await db.addCaseAgency(caseId, {
+          agency_id: agencyId,
+          agency_name: suggestedAgency.name,
+          agency_email: newAgencyEmail,
+          portal_url: newAgencyPortalUrl,
+          portal_provider: newAgencyPortalProvider,
+          is_primary: false,
+          added_source: 'research',
+          notes: suggestedAgency.reason || brief?.summary || null
+        });
+        logs.push(`Added case_agency #${caseAgency.id}: ${suggestedAgency.name}`);
+      } catch (addErr) {
+        logs.push(`Failed to add case agency: ${addErr.message}`);
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          substatus: 'agency_research_complete',
+          requires_human: true
+        });
+        executionResult = { action: 'research_complete', followup: 'add_agency_failed' };
+        break;
+      }
+
+      // Generate a FOIA request for the new agency
+      let foiaResult;
+      try {
+        const modifiedCaseData = { ...caseData, agency_name: suggestedAgency.name };
+        foiaResult = await aiService.generateFOIARequest(modifiedCaseData);
+        logs.push('Generated FOIA request for new agency');
+      } catch (foiaErr) {
+        logs.push(`FOIA generation failed: ${foiaErr.message} — falling back to human review`);
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          substatus: 'agency_research_complete',
+          requires_human: true
+        });
+        executionResult = { action: 'research_complete', followup: 'foia_generation_failed' };
+        break;
+      }
+
+      // Determine action type based on available channels
+      const followupActionType = newAgencyPortalUrl ? 'SUBMIT_PORTAL' : 'SEND_INITIAL_REQUEST';
+      const followupProposalKey = `${caseId}:research:ca${caseAgency.id}:${followupActionType}:0`;
+
+      // Build reasoning
+      const followupReasoning = [
+        `Agency research identified ${suggestedAgency.name} as likely records holder`,
+        suggestedAgency.reason || brief?.summary || 'Based on AI research analysis',
+        `Delivery method: ${followupActionType === 'SUBMIT_PORTAL' ? 'portal submission' : 'email'}`,
+        `Confidence: ${suggestedAgency.confidence || 'medium'}`
+      ];
+
+      // Build subject line
+      const subjectName = caseData?.subject_name || 'Records Request';
+      const draftSubject = `Public Records Request - ${subjectName}`;
+
+      // Create the follow-up proposal
+      try {
+        const followupProposal = await db.upsertProposal({
+          proposalKey: followupProposalKey,
+          caseId,
+          runId: runId || null,
+          actionType: followupActionType,
+          draftSubject,
+          draftBodyText: foiaResult.request_text,
+          draftBodyHtml: null,
+          reasoning: followupReasoning,
+          confidence: suggestedAgency.confidence || 0.7,
+          requiresHuman: true,
+          canAutoExecute: false,
+          status: 'PENDING_APPROVAL'
+        });
+        logs.push(`Created follow-up proposal #${followupProposal.id} (${followupActionType}) for ${suggestedAgency.name}`);
+      } catch (proposalErr) {
+        logs.push(`Follow-up proposal creation failed: ${proposalErr.message}`);
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          substatus: 'agency_research_complete',
+          requires_human: true
+        });
+        executionResult = { action: 'research_complete', followup: 'proposal_creation_failed' };
+        break;
+      }
+
+      // Set case to ready_to_send (not needs_human_review) — one-click approval
+      await db.updateCaseStatus(caseId, 'ready_to_send', {
+        substatus: 'research_followup_proposed',
+        requires_human: true
+      });
+
+      await db.logActivity('research_followup_proposed', `Research complete — proposed ${followupActionType} to ${suggestedAgency.name}`, {
+        caseId,
+        proposalId,
+        newAgency: suggestedAgency.name,
+        actionType: followupActionType,
+        caseAgencyId: caseAgency.id,
+        confidence: suggestedAgency.confidence
+      });
+
+      executionResult = {
+        action: 'research_complete',
+        followup: 'proposal_created',
+        newAgency: suggestedAgency.name,
+        actionType: followupActionType,
+        caseAgencyId: caseAgency.id
+      };
+      logs.push('Research loop closed — follow-up proposal ready for approval');
       break;
     }
 

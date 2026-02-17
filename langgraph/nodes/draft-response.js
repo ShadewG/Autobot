@@ -290,9 +290,12 @@ ${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` :
         });
 
         // No email draft — proposal with research findings for human review
+        // Pass research data through state so execute-action can auto-create follow-up proposal
         return {
           draftSubject: null,
           draftBodyText: null,
+          researchContactResult: contactResult,
+          researchBrief: brief,
           lessonsApplied,
           proposalReasoning: [...(state.proposalReasoning || []),
             `Research findings: ${brief.summary}`,
