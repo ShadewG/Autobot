@@ -452,6 +452,46 @@ class PortalAgentServiceSkyvern {
 
             await database.updateCasePortalStatus(caseData.id, portalStatusUpdate);
 
+            // Retroactive matching: link deferred unmatched emails by request number
+            if (extracted.confirmation_number) {
+                try {
+                    const unmatchedSignals = await database.findUnmatchedByRequestNumber(extracted.confirmation_number);
+                    for (const signal of unmatchedSignals) {
+                        await database.markUnmatchedSignalMatched(signal.id, caseData.id);
+                        // Link the message to the case if it has one
+                        if (signal.message_id) {
+                            let thread = await database.getThreadByCaseId(caseData.id);
+                            if (!thread) {
+                                thread = await database.createEmailThread({
+                                    case_id: caseData.id,
+                                    thread_id: `retroactive-${signal.message_id}`,
+                                    subject: signal.subject || 'Portal notification',
+                                    agency_email: signal.from_email,
+                                    initial_message_id: null,
+                                    status: 'active'
+                                });
+                            }
+                            await database.query(
+                                'UPDATE messages SET case_id = $1, thread_id = $2 WHERE id = $3 AND case_id IS NULL',
+                                [caseData.id, thread.id, signal.message_id]
+                            );
+                            console.log(`Retroactively matched message #${signal.message_id} to case #${caseData.id} via request number ${extracted.confirmation_number}`);
+                        }
+                        await database.logActivity('retroactive_match', `Deferred email matched to case via request number ${extracted.confirmation_number}`, {
+                            case_id: caseData.id,
+                            signal_id: signal.id,
+                            message_id: signal.message_id,
+                            request_number: extracted.confirmation_number
+                        });
+                    }
+                    if (unmatchedSignals.length > 0) {
+                        console.log(`Retroactively matched ${unmatchedSignals.length} deferred signal(s) for request number ${extracted.confirmation_number}`);
+                    }
+                } catch (retroErr) {
+                    console.warn('Retroactive matching failed:', retroErr.message);
+                }
+            }
+
             await database.logActivity('portal_run_completed', `Skyvern portal submission completed for ${caseData.case_name}`, {
                 case_id: caseData.id || null,
                 portal_url: portalUrl,
@@ -666,12 +706,15 @@ class PortalAgentServiceSkyvern {
     _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun }) {
         const caseInfo = this._buildWorkflowCaseInfo(caseData, portalUrl, dryRun);
         const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email);
-        const loginPayload = portalAccount
-            ? JSON.stringify({
-                  email: portalAccount.email,
-                  password: portalAccount.password
-              })
-            : '';
+
+        // Always send login credentials — either from saved account or defaults.
+        // This ensures Skyvern uses OUR password when creating accounts, not a random one.
+        const defaultEmail = personalInfo.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+        const loginPayload = JSON.stringify({
+            email: portalAccount?.email || defaultEmail,
+            password: portalAccount?.password || defaultPassword
+        });
 
         return {
             URL: portalUrl,
@@ -858,6 +901,26 @@ class PortalAgentServiceSkyvern {
                 try { await database.dismissPendingProposals(caseData.id, 'Portal submission completed', ['SUBMIT_PORTAL', 'SEND_FOLLOWUP', 'SEND_INITIAL_REQUEST']); } catch (_) {}
                 try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
 
+                // Auto-save portal account if we didn't have one — so future cases reuse it
+                if (!portalAccount) {
+                    try {
+                        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+                        await database.createPortalAccount({
+                            portal_url: portalUrl,
+                            portal_type: caseData.portal_provider || null,
+                            email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                            password: defaultPassword,
+                            first_name: process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
+                            last_name: process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
+                            account_status: 'active'
+                        });
+                        console.log(`💾 Auto-saved portal account for ${portalUrl}`);
+                    } catch (saveErr) {
+                        // Duplicate or other error — not critical
+                        console.warn('Could not auto-save portal account:', saveErr.message);
+                    }
+                }
+
                 await database.logActivity(
                     'portal_stage_completed',
                     `Skyvern workflow completed for ${caseData.case_name}`,
@@ -883,6 +946,40 @@ class PortalAgentServiceSkyvern {
             }
 
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
+            const fullRunText = JSON.stringify(finalResult).toLowerCase();
+
+            // ACCOUNT EXISTS: If Skyvern created an account but then looped, save creds and retry with login
+            const accountAlreadyExists = /email.*already exists|account.*already|duplicate.*email/i.test(failureReason + ' ' + fullRunText);
+            if (accountAlreadyExists && !portalAccount && !retryContext) {
+                console.log(`🔑 Account already exists on ${portalUrl} — saving credentials and retrying with login`);
+                const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+                try {
+                    await database.createPortalAccount({
+                        portal_url: portalUrl,
+                        portal_type: caseData.portal_provider || null,
+                        email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        password: defaultPassword,
+                        first_name: process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
+                        last_name: process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
+                        account_status: 'active'
+                    });
+                    console.log(`💾 Auto-saved portal account for ${portalUrl}`);
+                } catch (saveErr) {
+                    console.warn('Could not save portal account (may already exist):', saveErr.message);
+                }
+
+                await database.logActivity('portal_retry_requested',
+                    `Account already exists — retrying with saved credentials`, {
+                    case_id: caseData.id, portal_url: portalUrl, error: failureReason,
+                    run_id: workflowRunId, engine: 'skyvern_workflow'
+                });
+
+                return this._submitViaWorkflow({
+                    caseData, portalUrl, dryRun,
+                    runId: uuidv4(),
+                    retryContext: { navigation_goal: 'Log in with existing credentials and submit the FOIA request. Do NOT create a new account.', previousError: failureReason }
+                });
+            }
 
             // RETRY: If this is the first attempt, ask AI for guidance and retry once
             if (!retryContext) {
