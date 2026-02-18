@@ -256,6 +256,25 @@ class CronService {
                         ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / (1000 * 60 * 60 * 24))
                         : daysOverdue;
 
+                    // Check if AI already analyzed a response for this case
+                    const analysis = await db.getLatestResponseAnalysis(caseData.id);
+                    if (analysis && analysis.intent) {
+                        const handled = await this._handleAnalyzedOverdueCase(caseData, analysis, daysOverdue);
+                        if (handled) {
+                            if (handled === 'completed') {
+                                skipped++;
+                            } else {
+                                humanReviews++;
+                            }
+                            await db.logActivity('deadline_escalation',
+                                `Case ${caseData.case_name} routed by AI analysis (intent: ${analysis.intent})`,
+                                { case_id: caseData.id, days_overdue: daysOverdue, intent: analysis.intent }
+                            );
+                            try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+                            continue;
+                        }
+                    }
+
                     // Mark as researched immediately to prevent re-processing on next sweep
                     await db.updateCase(caseData.id, { last_contact_research_at: new Date() });
 
@@ -432,6 +451,137 @@ class CronService {
         }
 
         return false;
+    }
+
+    /**
+     * Handle an overdue case that already has an AI response analysis.
+     * Routes based on the AI-determined intent instead of blind escalation.
+     * Returns a truthy string ('proposal' or 'completed') if handled, or null to fall through.
+     */
+    async _handleAnalyzedOverdueCase(caseData, analysis, daysOverdue) {
+        const intent = analysis.intent;
+        const today = new Date().toISOString().slice(0, 10);
+        const proposalKeyBase = `${caseData.id}:deadline_sweep_ai`;
+
+        switch (intent) {
+            case 'fee_request': {
+                const feeAmount = parseFloat(analysis.extracted_fee_amount) || 0;
+                const actionType = feeAmount > 0 && feeAmount <= parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100')
+                    ? 'ACCEPT_FEE' : 'NEGOTIATE_FEE';
+                await db.upsertProposal({
+                    proposalKey: `${proposalKeyBase}:${actionType}:${today}`,
+                    caseId: caseData.id,
+                    actionType,
+                    reasoning: [
+                        { step: 'AI detected fee request', detail: `Agency quoted ${feeAmount > 0 ? '$' + feeAmount.toFixed(2) : 'unknown amount'}` },
+                        { step: 'Deadline passed', detail: `${daysOverdue} days overdue` }
+                    ],
+                    confidence: analysis.confidence_score || 0,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Fee decision needed: ${caseData.case_name}`,
+                    draftBodyText: `Agency quoted a fee${feeAmount > 0 ? ' of $' + feeAmount.toFixed(2) : ''}. ${daysOverdue} days past deadline.`,
+                    status: 'PENDING_APPROVAL'
+                });
+                await db.updateCaseStatus(caseData.id, 'pending_fee_decision', {
+                    substatus: `Fee quoted${feeAmount > 0 ? ': $' + feeAmount.toFixed(2) : ''} (${daysOverdue}d overdue)`
+                });
+                console.log(`Deadline sweep: case ${caseData.id} → ${actionType} (AI detected fee_request)`);
+                return 'proposal';
+            }
+
+            case 'question':
+            case 'more_info_needed': {
+                await db.upsertProposal({
+                    proposalKey: `${proposalKeyBase}:SEND_CLARIFICATION:${today}`,
+                    caseId: caseData.id,
+                    actionType: 'SEND_CLARIFICATION',
+                    reasoning: [
+                        { step: 'AI detected clarification request', detail: analysis.suggested_action || 'Agency asked for more information' },
+                        { step: 'Deadline passed', detail: `${daysOverdue} days overdue` }
+                    ],
+                    confidence: analysis.confidence_score || 0,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Clarification needed: ${caseData.case_name}`,
+                    draftBodyText: `Agency asked for clarification. Key points: ${(analysis.key_points || []).join('; ') || 'See analysis'}`,
+                    status: 'PENDING_APPROVAL'
+                });
+                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: `Agency asked for clarification (${daysOverdue}d overdue)`
+                });
+                console.log(`Deadline sweep: case ${caseData.id} → SEND_CLARIFICATION (AI detected ${intent})`);
+                return 'proposal';
+            }
+
+            case 'records_ready':
+            case 'delivery': {
+                await db.updateCaseStatus(caseData.id, 'completed', {
+                    substatus: `Records available (detected by AI, ${daysOverdue}d overdue)`
+                });
+                await db.logActivity('case_completed_by_ai',
+                    `Case ${caseData.case_name} marked completed — AI detected ${intent}`,
+                    { case_id: caseData.id, days_overdue: daysOverdue }
+                );
+                console.log(`Deadline sweep: case ${caseData.id} → completed (AI detected ${intent})`);
+                return 'completed';
+            }
+
+            case 'denial': {
+                await db.upsertProposal({
+                    proposalKey: `${proposalKeyBase}:SEND_REBUTTAL:${today}`,
+                    caseId: caseData.id,
+                    actionType: 'SEND_REBUTTAL',
+                    reasoning: [
+                        { step: 'AI detected denial', detail: analysis.suggested_action || 'Agency denied the request' },
+                        { step: 'Deadline passed', detail: `${daysOverdue} days overdue` }
+                    ],
+                    confidence: analysis.confidence_score || 0,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Denial rebuttal needed: ${caseData.case_name}`,
+                    draftBodyText: `Agency denied the request. Key points: ${(analysis.key_points || []).join('; ') || 'See analysis'}`,
+                    status: 'PENDING_APPROVAL'
+                });
+                await db.updateCaseStatus(caseData.id, 'needs_rebuttal', {
+                    substatus: `Denial received (${daysOverdue}d overdue)`
+                });
+                console.log(`Deadline sweep: case ${caseData.id} → SEND_REBUTTAL (AI detected denial)`);
+                return 'proposal';
+            }
+
+            case 'portal_redirect': {
+                await db.upsertProposal({
+                    proposalKey: `${proposalKeyBase}:SUBMIT_PORTAL:${today}`,
+                    caseId: caseData.id,
+                    actionType: 'SUBMIT_PORTAL',
+                    reasoning: [
+                        { step: 'AI detected portal redirect', detail: analysis.suggested_action || 'Agency directed to portal' },
+                        { step: 'Deadline passed', detail: `${daysOverdue} days overdue` }
+                    ],
+                    confidence: analysis.confidence_score || 0,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Portal submission needed: ${caseData.case_name}`,
+                    draftBodyText: `Agency redirected to portal. ${caseData.portal_url ? 'Portal: ' + caseData.portal_url : 'No portal URL on file.'}`,
+                    status: 'PENDING_APPROVAL'
+                });
+                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: `Portal redirect (${daysOverdue}d overdue)`
+                });
+                console.log(`Deadline sweep: case ${caseData.id} → SUBMIT_PORTAL (AI detected portal_redirect)`);
+                return 'proposal';
+            }
+
+            case 'acknowledgment':
+                // Agency acknowledged but hasn't delivered — fall through to existing escalation logic
+                console.log(`Deadline sweep: case ${caseData.id} — acknowledgment only, proceeding with standard escalation`);
+                return null;
+
+            default:
+                // Unknown intent — fall through to existing logic
+                return null;
+        }
     }
 
     /**

@@ -284,14 +284,25 @@ class FollowupScheduler {
       return null;
     }
 
-    // Skip escalation if agency has replied recently (last 14 days)
+    // Check if AI already analyzed a response — route based on intent, not just presence
+    const analysis = await db.getLatestResponseAnalysis(caseId);
+    if (analysis && analysis.intent) {
+      const actionableIntents = ['fee_request', 'question', 'more_info_needed', 'records_ready', 'delivery', 'denial', 'portal_redirect'];
+      if (actionableIntents.includes(analysis.intent)) {
+        logger.info(`Agency replied with "${analysis.intent}" — skipping phone escalation (AI pipeline handles this)`, { caseId, intent: analysis.intent });
+        return null;
+      }
+      // 'acknowledgment' and other intents fall through — phone may still be appropriate
+    }
+
+    // Secondary safety check: skip if agency replied recently but no analysis exists
     const recentInbound = await db.query(
       `SELECT COUNT(*) as cnt FROM messages
        WHERE case_id = $1 AND direction = 'inbound'
        AND received_at > NOW() - INTERVAL '14 days'`, [caseId]
     );
     if (parseInt(recentInbound.rows[0].cnt) > 0) {
-      logger.info('Case has recent inbound — skipping phone escalation', { caseId });
+      logger.info('Case has recent inbound (no analysis) — skipping phone escalation', { caseId });
       return null;
     }
 

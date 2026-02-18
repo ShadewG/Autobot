@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const db = require('../services/database');
 const actionValidator = require('../services/action-validator');
 const logger = require('../services/logger');
-const { cleanEmailBody } = require('../lib/email-cleaner');
+const { cleanEmailBody, htmlToPlainText } = require('../lib/email-cleaner');
 
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
@@ -247,7 +247,8 @@ function toRequestDetail(caseData) {
  * Includes cleaned body (boilerplate removed) and raw_body (original)
  */
 function toThreadMessage(message) {
-    const rawBody = message.body_text || message.body_html || '';
+    // Prefer body_text; fall back to body_html converted to plain text
+    const rawBody = message.body_text || (message.body_html ? htmlToPlainText(message.body_html) : '');
     const cleanedBody = cleanEmailBody(rawBody);
     const timestamp = message.sent_at || message.received_at || message.created_at;
 

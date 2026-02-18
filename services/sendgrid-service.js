@@ -567,18 +567,10 @@ class SendGridService {
                 });
             }
 
-            // Skip fee detection on portal notification emails (GovQA, NextRequest, etc.)
-            // to avoid extracting spurious $ amounts from automated confirmation messages
-            if (!portalNotificationInfo && !confirmationDetection) {
-                const feeQuote = this.detectFeeQuote({
-                    subject: inboundData.subject || '',
-                    text: inboundData.text || inboundData.body_text || inboundData.html || ''
-                });
-
-                if (feeQuote) {
-                    caseData = await this.handleFeeQuote(caseData, feeQuote, message.id);
-                }
-            }
+            // Fee detection removed: the AI pipeline (analyzeResponse → classify-inbound
+            // → email-queue → decide-next-action) handles fee_request intent with BWC denial
+            // checks, thresholds, and proper proposals. The old regex detectFeeQuote() ran
+            // before AI analysis and short-circuited the smarter pipeline.
 
             // Feature 6: Save attachments to disk
             if (inboundData.attachments?.length > 0 && !messageAlreadyExists) {
