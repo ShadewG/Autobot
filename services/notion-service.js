@@ -1504,6 +1504,23 @@ Look for a records division email, FOIA email, or general agency email that acce
                         continue;
                     }
 
+                    // Resolve assigned person to user_id
+                    if (notionCase.assigned_person) {
+                        try {
+                            const nameMap = { 'Samuel Hylton': 'Sam' };
+                            const localName = nameMap[notionCase.assigned_person] || notionCase.assigned_person;
+                            const user = await db.getUserByName(localName);
+                            if (user) {
+                                notionCase.user_id = user.id;
+                                console.log(`Assigned case to user: ${user.name} (${user.email})`);
+                            } else {
+                                console.warn(`No matching user for Notion assignee: ${notionCase.assigned_person}`);
+                            }
+                        } catch (err) {
+                            console.warn(`Failed to resolve assigned user: ${err.message}`);
+                        }
+                    }
+
                     // Calculate deadline based on state
                     const deadline = await this.calculateDeadline(notionCase.state);
                     notionCase.deadline_date = deadline;
