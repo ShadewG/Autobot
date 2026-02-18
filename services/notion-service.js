@@ -399,7 +399,7 @@ class NotionService {
      * Checks common property names: "Assigned", "Assignee", "Assigned To", "Owner".
      */
     getAssignedPerson(props) {
-        const candidates = ['Assigned', 'Assignee', 'Assigned To', 'Owner'];
+        const candidates = ['Assigned', 'Assignee', 'Assigned To', 'Owner', 'Outreacher'];
         for (const name of candidates) {
             const prop = props[name];
             if (prop?.type === 'people' && prop.people?.length > 0) {
