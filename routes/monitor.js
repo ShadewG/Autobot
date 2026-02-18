@@ -2002,6 +2002,7 @@ router.get('/events', (req, res) => {
 router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
     const caseId = parseInt(req.params.id, 10);
     if (!caseId) return res.status(400).json({ success: false, error: 'Invalid case id' });
+    const forceSearch = req.body?.forceSearch === true;
 
     const caseData = await db.getCaseById(caseId);
     if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
@@ -2011,13 +2012,17 @@ router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
     // Run in background
     (async () => {
         try {
-            notify('info', `Looking up contacts for ${caseData.agency_name || caseData.case_name}...`, { case_id: caseId });
+            notify('info', forceSearch
+                ? `Web-searching contacts for ${caseData.agency_name || caseData.case_name}...`
+                : `Looking up contacts for ${caseData.agency_name || caseData.case_name}...`,
+                { case_id: caseId });
 
             let result;
             try {
                 result = await pdContactService.lookupContact(
                     caseData.agency_name,
-                    caseData.state || caseData.incident_location
+                    caseData.state || caseData.incident_location,
+                    { forceSearch }
                 );
             } catch (lookupErr) {
                 if (lookupErr.code === 'SERVICE_UNAVAILABLE') {
@@ -2081,7 +2086,8 @@ router.post('/case/:id/lookup-contact', express.json(), async (req, res) => {
             if (updates.alternate_agency_email) parts.push(`email: ${updates.alternate_agency_email}`);
             if (result.contact_phone) parts.push(`phone: ${result.contact_phone}`);
 
-            notify('success', `Found contacts for ${caseData.agency_name || caseData.case_name}: ${parts.join(', ') || 'see research notes'}`, { case_id: caseId });
+            const fromNotion = !!result.fromNotion;
+            notify('success', `Found contacts for ${caseData.agency_name || caseData.case_name}: ${parts.join(', ') || 'see research notes'}${fromNotion ? ' (from Notion cache)' : ''}`, { case_id: caseId, fromNotion });
 
             await db.logActivity('pd_contact_lookup', `PD contact lookup completed for case ${caseData.case_name}`, {
                 case_id: caseId,

@@ -273,13 +273,13 @@ async function saveToNotion(pageId, contactData) {
  * save-to-Notion in background.
  * Returns normalized contact data or null on failure.
  */
-async function lookupContact(name, location) {
+async function lookupContact(name, location, { forceSearch = false } = {}) {
     if (!name) return null;
 
-    // 1. Try fast Notion pre-check
+    // 1. Try fast Notion pre-check (skip if forceSearch requested)
     const quick = await preCheck(name, location);
-    if (quick?.hasContact && quick.contact) {
-        return quick.contact;
+    if (!forceSearch && quick?.hasContact && quick.contact) {
+        return { ...quick.contact, fromNotion: true };
     }
 
     // 2. Full Firecrawl search

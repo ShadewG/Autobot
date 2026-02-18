@@ -4601,7 +4601,7 @@
                         if (_pdLookupPending && data.case_id === _pdLookupPending.caseId) {
                             const msg = (data.message || '').toLowerCase();
                             if (msg.includes('found contacts') || msg.includes('no contacts found') || (msg.includes('contact') && msg.includes('failed'))) {
-                                _finishPDLookup();
+                                _finishPDLookup(data.fromNotion === true);
                             }
                         }
                     } catch (_) {}
@@ -4622,31 +4622,47 @@
 
         // === PD Contact Lookup ===
         let _pdLookupPending = null; // { caseId, btn, timeout }
-        async function triggerPDContactLookup(caseId, btn) {
+        async function triggerPDContactLookup(caseId, btn, forceSearch = false) {
             btn.disabled = true;
-            btn.textContent = 'Searching...';
+            btn.textContent = forceSearch ? 'Web searching...' : 'Searching...';
             // Clear any previous pending lookup
             if (_pdLookupPending?.timeout) clearTimeout(_pdLookupPending.timeout);
             _pdLookupPending = { caseId, btn, timeout: null };
             try {
-                await fetch(`/api/monitor/case/${caseId}/lookup-contact`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                await fetch(`/api/monitor/case/${caseId}/lookup-contact`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ forceSearch })
+                });
             } catch (err) {
                 showToast('error', `Lookup request failed: ${err.message}`, { case_id: caseId });
-                _finishPDLookup();
+                _finishPDLookup(false);
                 return;
             }
             // Safety timeout: re-enable after 6 minutes if SSE never fires
-            _pdLookupPending.timeout = setTimeout(() => _finishPDLookup(), 360000);
+            _pdLookupPending.timeout = setTimeout(() => _finishPDLookup(false), 360000);
         }
 
-        function _finishPDLookup() {
+        function _finishPDLookup(fromNotion) {
             if (!_pdLookupPending) return;
             const { caseId, btn, timeout } = _pdLookupPending;
             if (timeout) clearTimeout(timeout);
             _pdLookupPending = null;
             if (btn) {
                 btn.disabled = false;
-                btn.textContent = 'Find PD Contact';
+                if (fromNotion) {
+                    // Result came from Notion cache — offer a real web search
+                    btn.textContent = 'Find PD Contact';
+                    const webBtn = document.createElement('button');
+                    webBtn.className = 'btn-pd-contact';
+                    webBtn.style.marginLeft = '6px';
+                    webBtn.style.background = '#1f6feb';
+                    webBtn.textContent = 'Search Web';
+                    webBtn.onclick = () => triggerPDContactLookup(caseId, webBtn, true);
+                    btn.parentNode.insertBefore(webBtn, btn.nextSibling);
+                } else {
+                    btn.textContent = 'Find PD Contact';
+                }
             }
             // Refresh case data in the inspector
             if (caseId) {
