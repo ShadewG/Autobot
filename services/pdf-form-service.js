@@ -16,6 +16,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const { PDFExtract } = require('pdf.js-extract');
 const OpenAI = require('openai');
 const database = require('./database');
 
@@ -69,7 +70,7 @@ async function extractPdfUrl(failureReason, workflowResponse, portalUrl) {
     // Strategy 3: Ask AI to extract from the error text
     try {
         const aiResponse = await getOpenAI().chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5.2',
             messages: [{
                 role: 'system',
                 content: 'Extract the PDF download URL from this portal failure information. Return ONLY the URL, nothing else. If no URL can be found, return "NONE".'
@@ -77,7 +78,7 @@ async function extractPdfUrl(failureReason, workflowResponse, portalUrl) {
                 role: 'user',
                 content: `Failure reason: ${failureReason}\n\nPortal URL: ${portalUrl}\n\nResponse data (truncated): ${responseText.substring(0, 3000)}`
             }],
-            max_tokens: 200,
+            max_completion_tokens: 200,
             temperature: 0
         });
 
@@ -191,19 +192,74 @@ async function fillPdfForm(pdfBuffer, caseData) {
 }
 
 /**
- * Use AI to identify text placement coordinates on a flat (non-fillable) PDF form,
- * then overlay text using drawText.
+ * Post-process AI checkbox placements: ensure the correct option is checked
+ * based on preferred_format. Finds checkbox "X" placements near known checkbox
+ * labels and moves the X to the correct option.
+ */
+function _fixCheckboxPlacements(placements, pageLabels, preferredFormat) {
+    // Find all "X" placements (checkbox marks)
+    const xPlacements = placements.filter(p => String(p.text).trim() === 'X');
+    if (xPlacements.length === 0) return placements;
+
+    const isEmailPreferred = /email|electronic/i.test(preferredFormat);
+    if (!isEmailPreferred) return placements;
+
+    // Find checkbox-style labels (start with underscores or have checkbox patterns)
+    const checkboxLabels = pageLabels.filter(l => /^_{3,}/.test(l.text) || /want.*record|want.*inspect/i.test(l.text));
+    if (checkboxLabels.length < 2) return placements; // need at least 2 options to fix
+
+    // Identify the email checkbox vs non-email checkboxes
+    const emailCheckbox = checkboxLabels.find(l => /email|emailed|electronic/i.test(l.text));
+    const nonEmailCheckboxes = checkboxLabels.filter(l => /photocopy|inspect|digital|fax|print|copy.*record/i.test(l.text) && !/email/i.test(l.text));
+
+    if (!emailCheckbox || nonEmailCheckboxes.length === 0) return placements;
+
+    // Check if any X is near a non-email checkbox (within 8px y tolerance)
+    for (const xp of xPlacements) {
+        const nearNonEmail = nonEmailCheckboxes.find(l => Math.abs(l.pdfLibY - xp.y) < 8);
+        if (nearNonEmail) {
+            console.log(`  📌 Fixing checkbox: moving X from y=${xp.y} ("${nearNonEmail.text.substring(0, 40)}...") to email option at y=${emailCheckbox.pdfLibY}`);
+            xp.y = emailCheckbox.pdfLibY;
+            xp.x = emailCheckbox.x + 2; // Same x as the label start + small offset
+        }
+    }
+
+    return placements;
+}
+
+/**
+ * Fill a flat (non-fillable) PDF form by extracting label positions with pdf.js-extract,
+ * then using AI to map case data to labels, and overlaying text at precise coordinates.
  */
 async function _fillFlatForm(pdfDoc, caseData, requester) {
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const pageCount = pdfDoc.getPageCount();
 
-    // Extract text content description from each page for AI context
-    const pageDescriptions = [];
-    for (let i = 0; i < pageCount; i++) {
-        const page = pdfDoc.getPage(i);
-        const { width, height } = page.getSize();
-        pageDescriptions.push({ pageIndex: i, width, height });
+    // Step 1: Extract all text positions from the PDF using pdf.js-extract
+    const pdfBytes = await pdfDoc.save();
+    const pdfExtract = new PDFExtract();
+    const extractData = await pdfExtract.extractBuffer(Buffer.from(pdfBytes), {});
+
+    // Build a structured label map: { pageIndex, label, x, y, width, height }
+    const labels = [];
+    for (const page of extractData.pages) {
+        const pageIdx = page.pageInfo.num - 1; // 0-based
+        const pageHeight = page.pageInfo.height;
+        for (const item of page.content) {
+            if (item.str.trim()) {
+                labels.push({
+                    pageIndex: pageIdx,
+                    pageHeight,
+                    text: item.str.trim(),
+                    // pdf.js-extract uses top-left origin; convert to bottom-left for pdf-lib
+                    x: item.x,
+                    topY: item.y, // y from top
+                    pdfLibY: pageHeight - item.y - item.height, // y from bottom (for pdf-lib)
+                    width: item.width,
+                    height: item.height
+                });
+            }
+        }
     }
 
     const records = Array.isArray(caseData.requested_records)
@@ -214,80 +270,124 @@ async function _fillFlatForm(pdfDoc, caseData, requester) {
         year: 'numeric', month: 'long', day: 'numeric'
     });
 
-    const aiResponse = await getOpenAI().chat.completions.create({
-        model: 'gpt-4o',
+    // Step 2: AI template for per-page form filling
+    const aiTemplate = {
+        model: 'gpt-5.2',
         messages: [{
             role: 'system',
-            content: `You are filling out a flat PDF government form by placing text at specific coordinates.
-The PDF has ${pageCount} pages, each ${pageDescriptions[0]?.width}x${pageDescriptions[0]?.height}pt (letter size, origin at bottom-left).
+            content: `You are filling out a PDF government form. You have exact label positions extracted from ONE page of the form.
 
-Return a JSON object with a "placements" array. Each placement has:
-- "pageIndex": 0-based page number
-- "x": x coordinate (72 = 1 inch left margin)
-- "y": y coordinate from bottom (792 = top of page)
-- "text": the text to place
-- "size": font size (default 10)
+For each label that needs an answer, return a placement with:
+- "x": x coordinate to place the answer text
+- "y": y coordinate (pdf-lib bottom-left origin) to place the answer text
+- "text": the answer text to place
+- "size": font size (default 10, use 9 for long text)
 
-Place the requester info and records description on the form pages that have blank fields/lines.
-Typical form fields: date, name, address, city/state/zip, phone, email, record description, date of record, location/department.
-For checkbox-style fields, place an "X" at the appropriate position.`
+RULES for placing text:
+- For labels like "Date of request:", "Requestor's name:", etc., place the answer right after the label: x = label.x + label.width + 4, y = label.pdfLibY
+- For City/State/Zip on the same line: place city after "City:" label, state after "State:" label, zip after "Zip:" label
+- For labels followed by blank answer lines BELOW (e.g. "Title of requested record"), place text on the next line down: x = label.x, y = label.pdfLibY - label.height - 4
+- CHECKBOXES: When you see a group of checkbox options (e.g. "inspect", "emailed", "photocopy", "digital copy"), you MUST select EXACTLY ONE that matches preferred_format. The preferred_format is "email / electronic delivery", so you MUST select the "email" checkbox option. Place "X" at: x = label.x + 2, y = label.pdfLibY. Do NOT mark photocopy, inspect, or any other option.
+- Only fill form field areas (skip policy/instruction text, headers, footers)
+- Do NOT place text on "(For Internal Use Only)" fields
+- Fill ALL relevant fields on this page — do not leave blanks if you have the data
+
+Return JSON with a "placements" array.`
         }, {
             role: 'user',
-            content: JSON.stringify({
-                pages: pageDescriptions,
-                form_data: {
-                    date_of_request: today,
-                    name: requester.name,
-                    address: requester.address,
-                    address_line2: requester.addressLine2,
-                    city: requester.city,
-                    state: requester.state,
-                    zip: requester.zip,
-                    phone: requester.phone,
-                    email: requester.email,
-                    organization: requester.organization,
-                    records_requested: records,
-                    subject_name: caseData.subject_name,
-                    incident_date: caseData.incident_date,
-                    incident_location: caseData.incident_location,
-                    agency_name: caseData.agency_name,
-                    preferred_format: 'email / electronic delivery'
-                }
-            })
+            content: null // set per-page below
         }],
         response_format: { type: 'json_object' },
-        max_tokens: 3000,
+        max_completion_tokens: 4000,
         temperature: 0
-    });
+    };
 
-    let result;
-    try {
-        result = JSON.parse(aiResponse.choices[0]?.message?.content || '{}');
-    } catch {
-        throw new Error('AI returned invalid JSON for flat form overlay');
+    const formData = {
+        date_of_request: today,
+        name: requester.name,
+        address: `${requester.address}${requester.addressLine2 ? ', ' + requester.addressLine2 : ''}`,
+        city: requester.city,
+        state: requester.state,
+        zip: requester.zip,
+        phone: requester.phone,
+        email: requester.email,
+        organization: requester.organization,
+        records_requested: records,
+        subject_name: caseData.subject_name,
+        incident_date: caseData.incident_date,
+        incident_location: caseData.incident_location,
+        agency_name: caseData.agency_name,
+        preferred_format: 'email / electronic delivery'
+    };
+
+    // Step 3: Per-page AI calls for better coverage
+    let totalPlaced = 0;
+    const pageGroups = {};
+    for (const l of labels) {
+        if (!pageGroups[l.pageIndex]) pageGroups[l.pageIndex] = [];
+        pageGroups[l.pageIndex].push(l);
     }
 
-    const placements = result.placements || [];
-    if (placements.length === 0) {
-        throw new Error('AI returned no placements for flat form');
-    }
+    for (const [pageIdxStr, pageLabels] of Object.entries(pageGroups)) {
+        const pageIdx = parseInt(pageIdxStr);
+        if (pageIdx < 0 || pageIdx >= pageCount) continue;
 
-    let placedCount = 0;
-    for (const p of placements) {
-        if (p.pageIndex >= 0 && p.pageIndex < pageCount && p.text && p.x != null && p.y != null) {
-            const page = pdfDoc.getPage(p.pageIndex);
-            page.drawText(String(p.text), {
-                x: p.x,
-                y: p.y,
-                size: p.size || 10,
-                font,
-                color: rgb(0, 0, 0)
-            });
-            placedCount++;
+        // Skip pages with very few labels (likely policy/instruction pages)
+        if (pageLabels.length < 5) continue;
+
+        const pageAiResponse = await getOpenAI().chat.completions.create({
+            ...aiTemplate,
+            messages: [
+                aiTemplate.messages[0],
+                {
+                    role: 'user',
+                    content: JSON.stringify({
+                        page_number: pageIdx + 1,
+                        labels: pageLabels.map(l => ({
+                            text: l.text,
+                            x: Math.round(l.x * 10) / 10,
+                            pdfLibY: Math.round(l.pdfLibY * 10) / 10,
+                            width: Math.round(l.width * 10) / 10,
+                            height: Math.round(l.height * 10) / 10
+                        })),
+                        form_data: formData
+                    })
+                }
+            ]
+        });
+
+        let result;
+        try {
+            result = JSON.parse(pageAiResponse.choices[0]?.message?.content || '{}');
+        } catch {
+            console.warn(`AI returned invalid JSON for page ${pageIdx}, skipping`);
+            continue;
         }
+
+        let placements = result.placements || [];
+
+        // Post-process: fix checkbox selections based on preferred_format
+        placements = _fixCheckboxPlacements(placements, pageLabels, formData.preferred_format);
+
+        const page = pdfDoc.getPage(pageIdx);
+        for (const p of placements) {
+            if (p.text && p.x != null && p.y != null) {
+                page.drawText(String(p.text), {
+                    x: p.x,
+                    y: p.y,
+                    size: p.size || 10,
+                    font,
+                    color: rgb(0, 0, 0)
+                });
+                totalPlaced++;
+            }
+        }
+        console.log(`  Page ${pageIdx + 1}: ${placements.length} placements`);
     }
 
-    console.log(`✅ Placed ${placedCount} text items on flat form (${pageCount} pages)`);
+    const placedCount = totalPlaced;
+
+    console.log(`✅ Placed ${placedCount} text items on flat form (${pageCount} pages) using label-aware positioning`);
     const filledBytes = await pdfDoc.save();
     return Buffer.from(filledBytes);
 }
@@ -304,7 +404,7 @@ async function _fillFormFields(pdfDoc, form, fields, caseData, requester) {
     console.log(`📋 Found ${fields.length} fillable fields:`, fieldInfo.map(f => f.name).join(', '));
 
     const aiResponse = await getOpenAI().chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.2',
         messages: [{
             role: 'system',
             content: `You are filling out a FOIA/public records request PDF form. Given the form field names and case data, return a JSON object mapping field names to values. Only include fields you can confidently fill. Use exact field names as keys.`
@@ -326,7 +426,7 @@ async function _fillFormFields(pdfDoc, form, fields, caseData, requester) {
             })
         }],
         response_format: { type: 'json_object' },
-        max_tokens: 2000,
+        max_completion_tokens: 2000,
         temperature: 0
     });
 
@@ -581,7 +681,7 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
 async function _generateCoverEmail(caseData, requester, portalUrl) {
     try {
         const aiResponse = await getOpenAI().chat.completions.create({
-            model: 'gpt-4o-mini',
+            model: 'gpt-5.2',
             messages: [{
                 role: 'system',
                 content: `Write a brief, professional email to submit a FOIA/public records request form via email.
@@ -598,7 +698,7 @@ Return JSON with "subject" and "bodyText" keys.`
                 })
             }],
             response_format: { type: 'json_object' },
-            max_tokens: 500,
+            max_completion_tokens: 500,
             temperature: 0.3
         });
 

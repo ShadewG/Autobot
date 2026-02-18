@@ -64,6 +64,7 @@
     "multer": "^2.0.2",
     "openai": "^4.24.1",
     "pdf-lib": "^1.17.1",
+    "pdf.js-extract": "^0.2.1",
     "pg": "^8.11.3",
     "playwright": "^1.40.0",
     "playwright-chromium": "^1.40.0",
