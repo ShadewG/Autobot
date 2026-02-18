@@ -252,9 +252,11 @@ async function _fillFlatForm(pdfDoc, caseData, requester) {
                     pageHeight,
                     text: item.str.trim(),
                     // pdf.js-extract uses top-left origin; convert to bottom-left for pdf-lib
+                    // Add baseline correction: drawText uses baseline, not bounding box bottom.
+                    // Descenders are ~20% of height, so baseline ≈ bottom + 0.2 * height
                     x: item.x,
                     topY: item.y, // y from top
-                    pdfLibY: pageHeight - item.y - item.height, // y from bottom (for pdf-lib)
+                    pdfLibY: pageHeight - item.y - item.height + item.height * 0.2, // baseline from bottom
                     width: item.width,
                     height: item.height
                 });
