@@ -1080,10 +1080,74 @@ class PortalAgentServiceSkyvern {
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
             const fullRunText = JSON.stringify(finalResult).toLowerCase();
 
-            // PDF FORM FALLBACK: If portal requires downloading/mailing a PDF form
+            // NOT A REAL PORTAL: PDF download, fax-only, cannot-automate, etc.
+            // Research for a real portal FIRST before falling back to PDF email.
             if (pdfFormService.isPdfFormFailure(failureReason, finalResult)) {
+                console.log(`🔍 Portal not automatable for case ${caseData.id} — researching for real portal first...`);
+                await database.logActivity('portal_not_automatable',
+                    `Portal URL is not a real online form (PDF/fax/download): ${failureReason}`, {
+                    case_id: caseData.id, portal_url: portalUrl, error: failureReason
+                });
+
+                // Research for a real portal
                 try {
-                    console.log(`📄 PDF form detected for case ${caseData.id}, attempting fallback...`);
+                    const pdContactService = require('./pd-contact-service');
+                    const research = await pdContactService.lookupContact(
+                        caseData.agency_name, caseData.state
+                    );
+                    const newPortal = research?.portal_url;
+                    const newEmail = research?.contact_email;
+
+                    // If research found a DIFFERENT real portal, update case and re-submit
+                    if (newPortal && newPortal !== portalUrl) {
+                        console.log(`🔍 Research found a better portal for case ${caseData.id}: ${newPortal}`);
+                        await database.updateCasePortalStatus(caseData.id, {
+                            portal_url: newPortal,
+                            portal_provider: research.portal_provider || 'Auto-detected'
+                        });
+                        await database.logActivity('portal_research_redirect',
+                            `Found real portal via research: ${newPortal} (was: ${portalUrl})`, {
+                            case_id: caseData.id, old_portal: portalUrl, new_portal: newPortal,
+                            source: research.source || 'pd-contact'
+                        });
+
+                        // Re-submit to the real portal
+                        return this._submitViaWorkflow({
+                            caseData: { ...caseData, portal_url: newPortal },
+                            portalUrl: newPortal,
+                            dryRun,
+                            runId: uuidv4(),
+                            retryContext: { navigation_goal: 'Submit the FOIA request using the online portal form.', previousError: `Previous URL was PDF-only: ${portalUrl}` }
+                        });
+                    }
+
+                    // If research found an email but no portal, switch to email route
+                    if (newEmail && !newPortal) {
+                        console.log(`🔍 No real portal found, but research found email: ${newEmail} for case ${caseData.id}`);
+                        await database.logActivity('portal_research_email_found',
+                            `No real portal found — research suggests email to ${newEmail}`, {
+                            case_id: caseData.id, portal_url: portalUrl, contact_email: newEmail
+                        });
+                    }
+
+                    // Store research notes
+                    if (research) {
+                        await database.query(
+                            `UPDATE cases SET contact_research_notes = $2, last_contact_research_at = NOW() WHERE id = $1`,
+                            [caseData.id, JSON.stringify(research)]
+                        );
+                    }
+                } catch (researchErr) {
+                    console.warn(`🔍 Research failed for case ${caseData.id}:`, researchErr.message);
+                    await database.logActivity('portal_research_failed',
+                        `Research for real portal failed: ${researchErr.message}`, {
+                        case_id: caseData.id, portal_url: portalUrl, error: researchErr.message
+                    });
+                }
+
+                // Research didn't find a better portal — fall back to PDF form
+                try {
+                    console.log(`📄 No better portal found for case ${caseData.id}, trying PDF form fallback...`);
                     const pdfResult = await pdfFormService.handlePdfFormFallback(
                         caseData, portalUrl, failureReason, finalResult
                     );
@@ -1093,7 +1157,7 @@ class PortalAgentServiceSkyvern {
                             caseId: caseData.id,
                             actionType: 'SEND_PDF_EMAIL',
                             reasoning: [
-                                { step: 'Portal requires PDF form submission', detail: failureReason },
+                                { step: 'Portal requires PDF form submission (no real portal found via research)', detail: failureReason },
                                 { step: 'PDF form filled automatically', detail: `Attachment ID: ${pdfResult.attachmentId}` }
                             ],
                             confidence: 0.7,
@@ -1104,10 +1168,9 @@ class PortalAgentServiceSkyvern {
                             status: 'PENDING_APPROVAL'
                         });
                         await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                            substatus: 'PDF form filled — review and send email'
+                            substatus: 'No real portal found — PDF form filled, review and send email'
                         });
-                        try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
-                        await database.logActivity('pdf_form_fallback', `PDF form filled for case ${caseData.id}`, {
+                        await database.logActivity('pdf_form_fallback', `PDF form filled for case ${caseData.id} (after research)`, {
                             case_id: caseData.id,
                             portal_url: portalUrl,
                             attachment_id: pdfResult.attachmentId,
