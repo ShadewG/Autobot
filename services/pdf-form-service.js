@@ -150,27 +150,146 @@ function _getRequesterInfo(caseData) {
 }
 
 /**
- * Attempt to fill a PDF form. If fillable fields exist, use AI to map case data to fields.
- * If no fillable fields, generate a FOIA request letter PDF.
+ * Attempt to fill a PDF form. Strategies in order:
+ * 1. If fillable fields exist, use AI to map case data to fields
+ * 2. If flat form (no fillable fields), use AI to place text overlay on the form pages
+ * 3. Last resort: generate a standalone FOIA request letter PDF
  */
 async function fillPdfForm(pdfBuffer, caseData) {
     const requester = _getRequesterInfo(caseData);
 
+    let pdfDoc;
     try {
-        const pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+        pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+    } catch (loadErr) {
+        console.log(`📝 Cannot load PDF (${loadErr.message}), generating FOIA letter`);
+        return await _generateFoiaLetterPdf(caseData, requester);
+    }
+
+    // Strategy 1: fillable form fields
+    try {
         const form = pdfDoc.getForm();
         const fields = form.getFields();
-
         if (fields.length > 0) {
             return await _fillFormFields(pdfDoc, form, fields, caseData, requester);
         }
     } catch (formErr) {
-        // No form or can't parse form — generate letter instead
-        console.log(`📝 PDF has no fillable fields (${formErr.message}), generating FOIA letter`);
+        // No form or can't parse — continue to flat overlay
     }
 
-    // Generate a FOIA request letter PDF
+    // Strategy 2: AI-driven text overlay on flat form pages
+    if (pdfDoc.getPageCount() > 0) {
+        try {
+            return await _fillFlatForm(pdfDoc, caseData, requester);
+        } catch (flatErr) {
+            console.warn(`📝 Flat form overlay failed (${flatErr.message}), generating FOIA letter`);
+        }
+    }
+
+    // Strategy 3: generate standalone letter
     return await _generateFoiaLetterPdf(caseData, requester);
+}
+
+/**
+ * Use AI to identify text placement coordinates on a flat (non-fillable) PDF form,
+ * then overlay text using drawText.
+ */
+async function _fillFlatForm(pdfDoc, caseData, requester) {
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const pageCount = pdfDoc.getPageCount();
+
+    // Extract text content description from each page for AI context
+    const pageDescriptions = [];
+    for (let i = 0; i < pageCount; i++) {
+        const page = pdfDoc.getPage(i);
+        const { width, height } = page.getSize();
+        pageDescriptions.push({ pageIndex: i, width, height });
+    }
+
+    const records = Array.isArray(caseData.requested_records)
+        ? caseData.requested_records.join('; ')
+        : caseData.requested_records;
+
+    const today = new Date().toLocaleDateString('en-US', {
+        year: 'numeric', month: 'long', day: 'numeric'
+    });
+
+    const aiResponse = await getOpenAI().chat.completions.create({
+        model: 'gpt-4o',
+        messages: [{
+            role: 'system',
+            content: `You are filling out a flat PDF government form by placing text at specific coordinates.
+The PDF has ${pageCount} pages, each ${pageDescriptions[0]?.width}x${pageDescriptions[0]?.height}pt (letter size, origin at bottom-left).
+
+Return a JSON object with a "placements" array. Each placement has:
+- "pageIndex": 0-based page number
+- "x": x coordinate (72 = 1 inch left margin)
+- "y": y coordinate from bottom (792 = top of page)
+- "text": the text to place
+- "size": font size (default 10)
+
+Place the requester info and records description on the form pages that have blank fields/lines.
+Typical form fields: date, name, address, city/state/zip, phone, email, record description, date of record, location/department.
+For checkbox-style fields, place an "X" at the appropriate position.`
+        }, {
+            role: 'user',
+            content: JSON.stringify({
+                pages: pageDescriptions,
+                form_data: {
+                    date_of_request: today,
+                    name: requester.name,
+                    address: requester.address,
+                    address_line2: requester.addressLine2,
+                    city: requester.city,
+                    state: requester.state,
+                    zip: requester.zip,
+                    phone: requester.phone,
+                    email: requester.email,
+                    organization: requester.organization,
+                    records_requested: records,
+                    subject_name: caseData.subject_name,
+                    incident_date: caseData.incident_date,
+                    incident_location: caseData.incident_location,
+                    agency_name: caseData.agency_name,
+                    preferred_format: 'email / electronic delivery'
+                }
+            })
+        }],
+        response_format: { type: 'json_object' },
+        max_tokens: 3000,
+        temperature: 0
+    });
+
+    let result;
+    try {
+        result = JSON.parse(aiResponse.choices[0]?.message?.content || '{}');
+    } catch {
+        throw new Error('AI returned invalid JSON for flat form overlay');
+    }
+
+    const placements = result.placements || [];
+    if (placements.length === 0) {
+        throw new Error('AI returned no placements for flat form');
+    }
+
+    let placedCount = 0;
+    for (const p of placements) {
+        if (p.pageIndex >= 0 && p.pageIndex < pageCount && p.text && p.x != null && p.y != null) {
+            const page = pdfDoc.getPage(p.pageIndex);
+            page.drawText(String(p.text), {
+                x: p.x,
+                y: p.y,
+                size: p.size || 10,
+                font,
+                color: rgb(0, 0, 0)
+            });
+            placedCount++;
+        }
+    }
+
+    console.log(`✅ Placed ${placedCount} text items on flat form (${pageCount} pages)`);
+    const filledBytes = await pdfDoc.save();
+    return Buffer.from(filledBytes);
 }
 
 /**
