@@ -284,6 +284,17 @@ class FollowupScheduler {
       return null;
     }
 
+    // Skip escalation if agency has replied recently (last 14 days)
+    const recentInbound = await db.query(
+      `SELECT COUNT(*) as cnt FROM messages
+       WHERE case_id = $1 AND direction = 'inbound'
+       AND received_at > NOW() - INTERVAL '14 days'`, [caseId]
+    );
+    if (parseInt(recentInbound.rows[0].cnt) > 0) {
+      logger.info('Case has recent inbound — skipping phone escalation', { caseId });
+      return null;
+    }
+
     // Look up agency phone number
     let agencyPhone = null;
     if (caseData.agency_id) {

@@ -237,6 +237,12 @@ class CronService {
                   AND NOT EXISTS (
                     SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
                   )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                      AND m.received_at > CURRENT_DATE - INTERVAL '14 days'
+                  )
                 ORDER BY c.deadline_date ASC
                 LIMIT 20
             `);

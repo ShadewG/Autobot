@@ -567,13 +567,17 @@ class SendGridService {
                 });
             }
 
-            const feeQuote = this.detectFeeQuote({
-                subject: inboundData.subject || '',
-                text: inboundData.text || inboundData.body_text || inboundData.html || ''
-            });
+            // Skip fee detection on portal notification emails (GovQA, NextRequest, etc.)
+            // to avoid extracting spurious $ amounts from automated confirmation messages
+            if (!portalNotificationInfo && !confirmationDetection) {
+                const feeQuote = this.detectFeeQuote({
+                    subject: inboundData.subject || '',
+                    text: inboundData.text || inboundData.body_text || inboundData.html || ''
+                });
 
-            if (feeQuote) {
-                caseData = await this.handleFeeQuote(caseData, feeQuote, message.id);
+                if (feeQuote) {
+                    caseData = await this.handleFeeQuote(caseData, feeQuote, message.id);
+                }
             }
 
             // Feature 6: Save attachments to disk
@@ -625,6 +629,79 @@ class SendGridService {
             console.error('Error processing inbound email:', error);
             throw error;
         }
+    }
+
+    /**
+     * Extract portal request numbers from email text.
+     * Patterns: #26-544, Request 26-544, R-26-544, Tracking: 26-544, PD-2026-665
+     */
+    extractRequestNumber(text) {
+        if (!text) return null;
+        const patterns = [
+            /(?:Request|Tracking|Ref|Reference|Confirmation)[:\s#]*([A-Z]{0,5}-?\d{2,4}-\d+)/i,
+            /#([A-Z]{0,5}-?\d{2,4}-\d+)/i,
+            /R-(\d{2,4}-\d+)/i,
+            /(?:Request|Tracking|Ref)[:\s#]*(\d{3,})/i,
+            /#(\d{4,})/i
+        ];
+        for (const pattern of patterns) {
+            const match = text.match(pattern);
+            if (match) return match[1];
+        }
+        return null;
+    }
+
+    /**
+     * Score and disambiguate multiple candidate cases for an inbound email.
+     * Returns the highest-scoring candidate.
+     */
+    async disambiguateCandidates(candidates, { subject, bodyText, fromEmail }) {
+        if (!candidates || candidates.length === 0) return null;
+        if (candidates.length === 1) return candidates[0];
+
+        const requestNumber = this.extractRequestNumber(`${subject || ''}\n${bodyText || ''}`);
+        const subjectWords = (subject || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
+        const scored = await Promise.all(candidates.map(async (c) => {
+            let score = 0;
+
+            // Request number match (instant winner)
+            if (requestNumber && c.portal_request_number && c.portal_request_number === requestNumber) {
+                score += 100;
+            }
+
+            // Temporal proximity: minutes since last outbound
+            const lastOutbound = await db.getLastOutboundTime(c.id);
+            if (lastOutbound) {
+                const minutesAgo = (Date.now() - new Date(lastOutbound).getTime()) / 60000;
+                score += Math.max(0, 50 - minutesAgo / 10);
+            }
+
+            // Status affinity
+            const statusScores = {
+                portal_in_progress: 20,
+                awaiting_response: 15,
+                sent: 10
+            };
+            score += statusScores[c.status] || 0;
+
+            // Subject keyword overlap with case fields
+            const caseText = `${c.requested_records || ''} ${c.agency_name || ''} ${c.case_name || ''}`.toLowerCase();
+            let keywordScore = 0;
+            for (const word of subjectWords) {
+                if (caseText.includes(word)) keywordScore += 2;
+            }
+            score += Math.min(keywordScore, 10);
+
+            return { candidate: c, score };
+        }));
+
+        scored.sort((a, b) => b.score - a.score);
+        const winner = scored[0];
+        if (scored.length > 1) {
+            console.log(`Disambiguation scores: ${scored.map(s => `case #${s.candidate.id}=${s.score.toFixed(1)}`).join(', ')}`);
+        }
+        return winner.candidate;
     }
 
     /**
@@ -701,6 +778,32 @@ class SendGridService {
                 }
             }
 
+            // --- Tier 1.75: Request number cross-reference ---
+            const detectedReqNum = this.extractRequestNumber(`${subject || ''}\n${text || ''}`);
+            if (detectedReqNum) {
+                const reqNumMatch = await db.query(
+                    `SELECT * FROM cases
+                     WHERE portal_request_number IS NOT NULL
+                       AND ($1 LIKE '%' || portal_request_number || '%'
+                            OR $2 LIKE '%' || portal_request_number || '%')
+                       AND ($3::int IS NULL OR user_id = $3 OR user_id IS NULL)
+                     ORDER BY updated_at DESC
+                     LIMIT 5`,
+                    [subject || '', (text || '').substring(0, 2000), userId]
+                );
+                if (reqNumMatch.rows.length === 1) {
+                    console.log(`Matched inbound email by request number (Tier 1.75): ${detectedReqNum} → case #${reqNumMatch.rows[0].id}`);
+                    return reqNumMatch.rows[0];
+                }
+                if (reqNumMatch.rows.length > 1) {
+                    const winner = await this.disambiguateCandidates(reqNumMatch.rows, { subject, bodyText: text, fromEmail });
+                    if (winner) {
+                        console.log(`Matched inbound email by request number + disambiguation (Tier 1.75): ${detectedReqNum} → case #${winner.id}`);
+                        return winner;
+                    }
+                }
+            }
+
             // --- Tier 2: Agency email matching (active cases) ---
             console.log(`No thread/portal match found, trying to match by agency email: ${fromEmail}`);
             const activeStatuses = [
@@ -722,14 +825,21 @@ class SendGridService {
                 ORDER BY
                   CASE WHEN user_id = $3 THEN 0 ELSE 1 END,
                   updated_at DESC, created_at DESC
-                LIMIT 1
+                LIMIT 10
                 `,
                 [fromEmail, activeStatuses, userId]
             );
 
-            if (cases.rows.length > 0) {
+            if (cases.rows.length === 1) {
                 console.log(`Matched inbound email by agency email: ${fromEmail}`);
                 return cases.rows[0];
+            }
+            if (cases.rows.length > 1) {
+                const winner = await this.disambiguateCandidates(cases.rows, { subject, bodyText: text, fromEmail });
+                if (winner) {
+                    console.log(`Matched inbound email by agency email + disambiguation: ${fromEmail} → case #${winner.id}`);
+                    return winner;
+                }
             }
 
             // --- Tier 2.5: Domain-level matching (active cases) ---
@@ -746,14 +856,21 @@ class SendGridService {
                     ORDER BY
                       CASE WHEN user_id = $3 THEN 0 ELSE 1 END,
                       updated_at DESC, created_at DESC
-                    LIMIT 1
+                    LIMIT 10
                     `,
                     [`%@${fromDomain}`, activeStatuses, userId]
                 );
 
-                if (domainMatch.rows.length > 0) {
+                if (domainMatch.rows.length === 1) {
                     console.log(`Matched inbound email by agency domain: ${fromDomain} (from ${fromEmail}, case has ${domainMatch.rows[0].agency_email})`);
                     return domainMatch.rows[0];
+                }
+                if (domainMatch.rows.length > 1) {
+                    const winner = await this.disambiguateCandidates(domainMatch.rows, { subject, bodyText: text, fromEmail });
+                    if (winner) {
+                        console.log(`Matched inbound email by agency domain + disambiguation: ${fromDomain} → case #${winner.id}`);
+                        return winner;
+                    }
                 }
             }
 
@@ -767,14 +884,21 @@ class SendGridService {
                 ORDER BY
                   CASE WHEN user_id = $2 THEN 0 ELSE 1 END,
                   updated_at DESC, created_at DESC
-                LIMIT 1
+                LIMIT 10
                 `,
                 [fromEmail, userId]
             );
 
-            if (fallback.rows.length > 0) {
+            if (fallback.rows.length === 1) {
                 console.log(`Fallback match on agency email regardless of status: ${fromEmail}`);
                 return fallback.rows[0];
+            }
+            if (fallback.rows.length > 1) {
+                const winner = await this.disambiguateCandidates(fallback.rows, { subject, bodyText: text, fromEmail });
+                if (winner) {
+                    console.log(`Fallback match on agency email + disambiguation: ${fromEmail} → case #${winner.id}`);
+                    return winner;
+                }
             }
 
             // --- Tier 3.5: Domain-level fallback (any status) ---
@@ -788,14 +912,50 @@ class SendGridService {
                     ORDER BY
                       CASE WHEN user_id = $2 THEN 0 ELSE 1 END,
                       updated_at DESC, created_at DESC
-                    LIMIT 1
+                    LIMIT 10
                     `,
                     [`%@${fromDomain}`, userId]
                 );
 
-                if (domainFallback.rows.length > 0) {
+                if (domainFallback.rows.length === 1) {
                     console.log(`Domain fallback match (any status): ${fromDomain} → case #${domainFallback.rows[0].id}`);
                     return domainFallback.rows[0];
+                }
+                if (domainFallback.rows.length > 1) {
+                    const winner = await this.disambiguateCandidates(domainFallback.rows, { subject, bodyText: text, fromEmail });
+                    if (winner) {
+                        console.log(`Domain fallback match + disambiguation (any status): ${fromDomain} → case #${winner.id}`);
+                        return winner;
+                    }
+                }
+            }
+
+            // --- Save unmatched portal signal for deferred matching ---
+            const unmatchedPortalInfo = this.detectPortalProviderFromEmail(fromEmail);
+            if (unmatchedPortalInfo || detectedReqNum) {
+                try {
+                    // Find the message_id if we can (best-effort lookup)
+                    let messageDbId = null;
+                    const msgLookup = await db.query(
+                        `SELECT id FROM messages WHERE from_email = $1 AND subject = $2 ORDER BY received_at DESC LIMIT 1`,
+                        [fromEmail, subject || '']
+                    );
+                    if (msgLookup.rows.length > 0) {
+                        messageDbId = msgLookup.rows[0].id;
+                    }
+
+                    await db.saveUnmatchedPortalSignal({
+                        message_id: messageDbId,
+                        from_email: fromEmail,
+                        from_domain: fromDomain,
+                        subject: subject,
+                        detected_request_number: detectedReqNum || null,
+                        portal_provider: unmatchedPortalInfo?.provider || null,
+                        portal_subdomain: unmatchedPortalInfo?.subdomain || null
+                    });
+                    console.log(`Saved unmatched portal signal: from=${fromEmail}, reqNum=${detectedReqNum || 'none'}, provider=${unmatchedPortalInfo?.provider || 'none'}`);
+                } catch (e) {
+                    console.warn('Failed to save unmatched portal signal:', e.message);
                 }
             }
 
