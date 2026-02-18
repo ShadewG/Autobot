@@ -731,7 +731,7 @@ class PortalAgentServiceSkyvern {
             const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
             const response = await openai.chat.completions.create({
-                model: process.env.PORTAL_RETRY_MODEL || 'gpt-4o-mini',
+                model: process.env.PORTAL_RETRY_MODEL || 'gpt-5.2-2025-12-11',
                 messages: [{
                     role: 'system',
                     content: `You are a browser automation expert. A Skyvern workflow to submit a FOIA request on a government portal failed. Analyze the error and provide a short, specific navigation_goal instruction that will help the retry succeed. Focus on what went wrong and how to work around it. Return ONLY a JSON object with: { "navigation_goal": "<instruction for the browser agent>", "should_retry": true/false }`
