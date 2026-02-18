@@ -849,12 +849,15 @@ async function decideNextActionNode(state) {
     }
 
     if (classification === 'ACKNOWLEDGMENT') {
-      reasoning.push('Acknowledgment received, no action needed');
+      reasoning.push('Acknowledgment received, no action needed — reverting to awaiting_response');
+      // Revert status: processInboundEmail sets every inbound to 'responded', but an
+      // acknowledgment isn't a substantive response. Reset so the case doesn't look stuck.
+      await db.updateCaseStatus(caseId, 'awaiting_response');
       return {
         isComplete: true,
         proposalActionType: NONE,
         proposalReasoning: reasoning,
-        logs: [...logs, 'Acknowledgment received, waiting for next response']
+        logs: [...logs, 'Acknowledgment received, status reset to awaiting_response']
       };
     }
 
