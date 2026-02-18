@@ -43,14 +43,11 @@ class NotificationService {
             });
         }
 
-        // Update Notion page with escalation status
+        // Sync status to Notion
         try {
-            await notionService.updatePageStatus(case_id, 'Needs Review', {
-                escalation_reason: reason,
-                urgency: urgency
-            });
+            await notionService.syncStatusToNotion(case_id);
         } catch (error) {
-            console.error('Failed to update Notion:', error.message);
+            console.error('Failed to sync Notion status:', error.message);
         }
     }
 

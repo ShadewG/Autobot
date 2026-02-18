@@ -2112,6 +2112,51 @@ router.get('/case/:id/fee-history', async (req, res) => {
 });
 
 // =========================================================================
+// Bulk Notion Sync
+// =========================================================================
+
+router.post('/sync-notion', express.json(), async (req, res) => {
+    try {
+        const notionService = require('../services/notion-service');
+
+        // Get all active cases (non-terminal statuses)
+        const activeCases = await db.query(`
+            SELECT id FROM cases
+            WHERE status NOT IN ('completed', 'cancelled', 'withdrawn')
+              AND notion_page_id IS NOT NULL
+              AND notion_page_id NOT LIKE 'test-%'
+            ORDER BY id
+        `);
+
+        const caseIds = activeCases.rows.map(r => r.id);
+        let synced = 0;
+        let failed = 0;
+        const errors = [];
+
+        for (const caseId of caseIds) {
+            try {
+                await notionService.syncStatusToNotion(caseId);
+                synced++;
+            } catch (err) {
+                failed++;
+                errors.push({ caseId, error: err.message });
+            }
+        }
+
+        res.json({
+            success: true,
+            total: caseIds.length,
+            synced,
+            failed,
+            errors: errors.slice(0, 10)
+        });
+    } catch (error) {
+        console.error('Bulk Notion sync error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// =========================================================================
 // Feature 6: Attachment Download
 // =========================================================================
 

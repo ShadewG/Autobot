@@ -72,6 +72,31 @@ class DatabaseService {
             await this.query('ALTER TABLE attachments ADD COLUMN IF NOT EXISTS storage_path TEXT');
             await this.query('CREATE INDEX IF NOT EXISTS idx_attachments_case ON attachments(case_id)');
 
+            // Feature 7: Unmatched portal signals for deferred email matching
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS unmatched_portal_signals (
+                    id SERIAL PRIMARY KEY,
+                    message_id INTEGER REFERENCES messages(id),
+                    from_email TEXT,
+                    from_domain TEXT,
+                    subject TEXT,
+                    detected_request_number TEXT,
+                    portal_provider TEXT,
+                    portal_subdomain TEXT,
+                    matched_case_id INTEGER REFERENCES cases(id),
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await this.query('ALTER TABLE cases ADD COLUMN IF NOT EXISTS portal_request_number TEXT');
+            await this.query(`
+                CREATE INDEX IF NOT EXISTS idx_unmatched_signals_request_number
+                    ON unmatched_portal_signals(detected_request_number) WHERE matched_case_id IS NULL
+            `);
+            await this.query(`
+                CREATE INDEX IF NOT EXISTS idx_cases_portal_request_number
+                    ON cases(portal_request_number) WHERE portal_request_number IS NOT NULL
+            `);
+
             console.log('Database schema initialized successfully');
             return true;
         } catch (error) {
@@ -167,6 +192,15 @@ class DatabaseService {
 
         const query = `UPDATE cases SET ${setClause} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
+
+        // Fire-and-forget Notion sync on every status change (lazy require avoids circular dep)
+        try {
+            const notionService = require('./notion-service');
+            notionService.syncStatusToNotion(caseId).catch(err =>
+                console.warn(`[DB] Notion sync failed for case ${caseId}:`, err.message)
+            );
+        } catch (e) { /* notion service not available */ }
+
         return result.rows[0];
     }
 
@@ -708,7 +742,7 @@ class DatabaseService {
             params.push(email);
         }
 
-        query += ' AND account_status = \'active\' ORDER BY created_at DESC LIMIT 1';
+        query += ' AND account_status IN (\'active\', \'no_account_needed\') ORDER BY created_at DESC LIMIT 1';
 
         const result = await this.query(query, params);
         if (result.rows.length > 0) {
@@ -2429,6 +2463,58 @@ class DatabaseService {
 
     async dismissMessage(messageId) {
         await this.query('DELETE FROM messages WHERE id = $1 AND case_id IS NULL', [messageId]);
+    }
+
+    // =========================================================================
+    // Feature 7: Unmatched Portal Signals
+    // =========================================================================
+
+    async saveUnmatchedPortalSignal(data) {
+        const result = await this.query(`
+            INSERT INTO unmatched_portal_signals
+                (message_id, from_email, from_domain, subject, detected_request_number, portal_provider, portal_subdomain)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING *
+        `, [
+            data.message_id || null,
+            data.from_email || null,
+            data.from_domain || null,
+            data.subject || null,
+            data.detected_request_number || null,
+            data.portal_provider || null,
+            data.portal_subdomain || null
+        ]);
+        return result.rows[0];
+    }
+
+    async getLastOutboundTime(caseId) {
+        const result = await this.query(`
+            SELECT sent_at FROM messages
+            WHERE case_id = $1 AND direction = 'outbound'
+            ORDER BY sent_at DESC
+            LIMIT 1
+        `, [caseId]);
+        return result.rows[0]?.sent_at || null;
+    }
+
+    async findUnmatchedByRequestNumber(requestNumber) {
+        const result = await this.query(`
+            SELECT * FROM unmatched_portal_signals
+            WHERE detected_request_number = $1
+              AND matched_case_id IS NULL
+            ORDER BY created_at DESC
+        `, [requestNumber]);
+        return result.rows;
+    }
+
+    async markUnmatchedSignalMatched(signalId, caseId) {
+        const result = await this.query(`
+            UPDATE unmatched_portal_signals
+            SET matched_case_id = $2
+            WHERE id = $1
+            RETURNING *
+        `, [signalId, caseId]);
+        return result.rows[0];
     }
 }
 
