@@ -1599,7 +1599,8 @@ class SendGridService {
         const {
             to, subject, text, html,
             inReplyTo, references,
-            caseId, messageType = 'reply'
+            caseId, messageType = 'reply',
+            attachments
         } = params;
 
         try {
@@ -1625,6 +1626,7 @@ class SendGridService {
                     ...(caseId && { case_id: caseId.toString() }),
                     message_type: messageType
                 },
+                ...(attachments?.length > 0 && { attachments }),
                 trackingSettings: {
                     clickTracking: { enable: false },
                     openTracking: { enable: true }

@@ -5,6 +5,7 @@ const database = require('./database');
 const notionService = require('./notion-service');
 const EmailVerificationHelper = require('../agentkit/email-helper');
 const { notify } = require('./event-bus');
+const pdfFormService = require('./pdf-form-service');
 
 /**
  * Portal Agent using Skyvern AI
@@ -1078,6 +1079,61 @@ class PortalAgentServiceSkyvern {
 
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
             const fullRunText = JSON.stringify(finalResult).toLowerCase();
+
+            // PDF FORM FALLBACK: If portal requires downloading/mailing a PDF form
+            if (pdfFormService.isPdfFormFailure(failureReason, finalResult)) {
+                try {
+                    console.log(`📄 PDF form detected for case ${caseData.id}, attempting fallback...`);
+                    const pdfResult = await pdfFormService.handlePdfFormFallback(
+                        caseData, portalUrl, failureReason, finalResult
+                    );
+                    if (pdfResult.success) {
+                        await database.upsertProposal({
+                            proposalKey: `${caseData.id}:pdf_form:SEND_PDF_EMAIL:1`,
+                            caseId: caseData.id,
+                            actionType: 'SEND_PDF_EMAIL',
+                            reasoning: [
+                                { step: 'Portal requires PDF form submission', detail: failureReason },
+                                { step: 'PDF form filled automatically', detail: `Attachment ID: ${pdfResult.attachmentId}` }
+                            ],
+                            confidence: 0.7,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: pdfResult.draftSubject,
+                            draftBodyText: pdfResult.draftBodyText,
+                            status: 'PENDING_APPROVAL'
+                        });
+                        await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                            substatus: 'PDF form filled — review and send email'
+                        });
+                        try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+                        await database.logActivity('pdf_form_fallback', `PDF form filled for case ${caseData.id}`, {
+                            case_id: caseData.id,
+                            portal_url: portalUrl,
+                            attachment_id: pdfResult.attachmentId,
+                            pdf_url: pdfResult.pdfUrl
+                        });
+
+                        return {
+                            success: false,
+                            status: 'pdf_form_pending',
+                            runId: workflowRunId,
+                            recording_url: recordingUrl || null,
+                            workflow_url: finalWorkflowRunLink || null,
+                            error: failureReason,
+                            engine: 'skyvern_workflow'
+                        };
+                    }
+                } catch (pdfErr) {
+                    console.warn(`📄 PDF form fallback failed for case ${caseData.id}:`, pdfErr.message);
+                    await database.logActivity('pdf_form_fallback_failed', `PDF fallback failed: ${pdfErr.message}`, {
+                        case_id: caseData.id,
+                        portal_url: portalUrl,
+                        error: pdfErr.message
+                    });
+                    // Fall through to normal retry/escalation
+                }
+            }
 
             // ACCOUNT EXISTS: If Skyvern created an account but then looped, save creds and retry with login
             const accountAlreadyExists = /email.*already exists|account.*already|duplicate.*email/i.test(failureReason + ' ' + fullRunText);

@@ -225,7 +225,8 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 const {
                     executionKey: execKey, executionId, proposalId,
                     to, bodyText, bodyHtml,
-                    originalMessageId: origMsgId, threadId, headers
+                    originalMessageId: origMsgId, threadId, headers,
+                    attachments
                 } = job.data;
 
                 // Actually send the email
@@ -237,7 +238,8 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                     inReplyTo: origMsgId || originalMessageId,
                     references: headers?.References,
                     caseId,
-                    messageType: jobType
+                    messageType: jobType,
+                    attachments
                 });
 
                 // Update execution record via executor adapter

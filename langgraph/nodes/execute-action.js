@@ -13,7 +13,7 @@
  *
  * Handles: SEND_INITIAL_REQUEST, SEND_FOLLOWUP, SEND_REBUTTAL, SEND_CLARIFICATION,
  *          RESPOND_PARTIAL_APPROVAL, ACCEPT_FEE, NEGOTIATE_FEE, DECLINE_FEE,
- *          ESCALATE, SUBMIT_PORTAL, NONE
+ *          ESCALATE, SUBMIT_PORTAL, SEND_PDF_EMAIL, NONE
  */
 
 const db = require('../../services/database');
@@ -750,6 +750,127 @@ async function executeActionNode(state) {
 
       executionResult = { action: 'portal_task_created', ...portalResult };
       logs.push(`Portal task created: ${portalResult.taskId}`);
+      break;
+    }
+
+    case 'SEND_PDF_EMAIL': {
+      // =========================================================================
+      // PDF EMAIL - Send filled PDF form to agency via email
+      // =========================================================================
+      if (!targetEmail) {
+        const pauseReason = 'Cannot send PDF email: no agency_email on case';
+        logs.push(`BLOCKED: ${pauseReason}`);
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          requires_human: true,
+          pause_reason: pauseReason
+        });
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null
+        });
+        return {
+          actionExecuted: false,
+          gatedForReview: true,
+          errors: [pauseReason],
+          logs
+        };
+      }
+
+      // Find the filled PDF attachment for this case
+      const attachments = await db.getAttachmentsByCaseId(caseId);
+      const pdfAttachment = attachments.find(a =>
+        a.filename?.startsWith('filled_') && a.content_type === 'application/pdf'
+      );
+
+      if (!pdfAttachment) {
+        logs.push('BLOCKED: No filled PDF attachment found for case');
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null
+        });
+        return {
+          actionExecuted: false,
+          errors: ['No filled PDF attachment found'],
+          logs
+        };
+      }
+
+      // Read PDF from disk and base64 encode
+      const fs = require('fs');
+      const pdfPath = pdfAttachment.storage_path;
+      if (!fs.existsSync(pdfPath)) {
+        logs.push(`BLOCKED: PDF file not found at ${pdfPath}`);
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null
+        });
+        return {
+          actionExecuted: false,
+          errors: [`PDF file not found at ${pdfPath}`],
+          logs
+        };
+      }
+
+      const pdfBuffer = fs.readFileSync(pdfPath);
+      const pdfBase64 = pdfBuffer.toString('base64');
+
+      // Send email with PDF attachment via SendGrid directly
+      const sendgridService = require('../../services/sendgrid-service');
+      const sendResult = await sendgridService.sendEmail({
+        to: targetEmail,
+        subject: draftSubject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`,
+        text: draftBodyText || draftBodyHtml,
+        html: draftBodyHtml || null,
+        caseId,
+        messageType: 'send_pdf_email',
+        attachments: [{
+          content: pdfBase64,
+          filename: pdfAttachment.filename,
+          type: 'application/pdf',
+          disposition: 'attachment'
+        }]
+      });
+
+      logs.push(`PDF email sent to ${targetEmail} (messageId: ${sendResult.messageId})`);
+
+      // Create execution record
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: 'SEND_PDF_EMAIL',
+        status: 'SENT',
+        provider: 'email',
+        providerPayload: {
+          to: targetEmail,
+          subject: draftSubject,
+          messageId: sendResult.messageId,
+          attachmentId: pdfAttachment.id,
+          attachmentFilename: pdfAttachment.filename
+        }
+      });
+
+      // Update proposal status
+      await db.updateProposal(proposalId, {
+        status: 'EXECUTED',
+        executedAt: new Date(),
+        emailJobId: sendResult.messageId
+      });
+
+      // Update case status
+      await db.updateCaseStatus(caseId, 'awaiting_response', {
+        substatus: 'PDF form emailed to agency',
+        send_date: caseData.send_date || new Date()
+      });
+
+      executionResult = {
+        action: 'pdf_email_sent',
+        messageId: sendResult.messageId,
+        attachmentId: pdfAttachment.id,
+        to: targetEmail
+      };
+
       break;
     }
 
