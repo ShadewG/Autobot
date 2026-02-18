@@ -976,7 +976,7 @@ class PortalAgentServiceSkyvern {
                 }
                 const timeoutDetail = `Polling timeout — check Skyvern run${workflowRunLink ? ': ' + workflowRunLink : ''}`;
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: `Portal failed: ${timeoutDetail}`,
+                    substatus: `Portal failed: ${timeoutDetail}`.substring(0, 100),
                     requires_human: true
                 });
                 try {
@@ -1136,9 +1136,9 @@ class PortalAgentServiceSkyvern {
 
             // ESCALATE: Retry exhausted or AI said don't retry
             console.log(`❌ Portal failed for case ${caseData.id} after ${retryContext ? 'retry' : 'AI declined retry'}`);
-            const truncatedReason = (failureReason || 'Unknown error').substring(0, 200);
+            const truncatedReason = (failureReason || 'Unknown error').substring(0, 80);
             await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                substatus: `Portal failed: ${truncatedReason}`,
+                substatus: `Portal failed: ${truncatedReason}`.substring(0, 100),
                 requires_human: true
             });
             try {
@@ -1186,9 +1186,9 @@ class PortalAgentServiceSkyvern {
             const message = error.response?.data?.message || error.response?.data?.error || error.message;
             console.error('❌ Skyvern workflow API error:', message);
             try {
-                const truncatedMsg = (message || 'Unknown error').substring(0, 200);
+                const truncatedMsg = (message || 'Unknown error').substring(0, 80);
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: `Portal failed: ${truncatedMsg}`,
+                    substatus: `Portal failed: ${truncatedMsg}`.substring(0, 100),
                     requires_human: true
                 });
                 await database.upsertProposal({
