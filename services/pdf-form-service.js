@@ -192,76 +192,34 @@ async function fillPdfForm(pdfBuffer, caseData) {
 }
 
 /**
- * Post-process AI checkbox placements: ensure the correct option is checked
- * based on preferred_format. Finds checkbox "X" placements near known checkbox
- * labels and moves the X to the correct option.
- */
-function _fixCheckboxPlacements(placements, pageLabels, preferredFormat) {
-    // Find all "X" placements (checkbox marks)
-    const xPlacements = placements.filter(p => String(p.text).trim() === 'X');
-    if (xPlacements.length === 0) return placements;
-
-    const isEmailPreferred = /email|electronic/i.test(preferredFormat);
-    if (!isEmailPreferred) return placements;
-
-    // Find checkbox-style labels (start with underscores or have checkbox patterns)
-    const checkboxLabels = pageLabels.filter(l => /^_{3,}/.test(l.text) || /want.*record|want.*inspect/i.test(l.text));
-    if (checkboxLabels.length < 2) return placements; // need at least 2 options to fix
-
-    // Identify the email checkbox vs non-email checkboxes
-    const emailCheckbox = checkboxLabels.find(l => /email|emailed|electronic/i.test(l.text));
-    const nonEmailCheckboxes = checkboxLabels.filter(l => /photocopy|inspect|digital|fax|print|copy.*record/i.test(l.text) && !/email/i.test(l.text));
-
-    if (!emailCheckbox || nonEmailCheckboxes.length === 0) return placements;
-
-    // Check if any X is near a non-email checkbox (within 8px y tolerance)
-    for (const xp of xPlacements) {
-        const nearNonEmail = nonEmailCheckboxes.find(l => Math.abs(l.pdfLibY - xp.y) < 8);
-        if (nearNonEmail) {
-            console.log(`  📌 Fixing checkbox: moving X from y=${xp.y} ("${nearNonEmail.text.substring(0, 40)}...") to email option at y=${emailCheckbox.pdfLibY}`);
-            xp.y = emailCheckbox.pdfLibY;
-            xp.x = emailCheckbox.x + 2; // Same x as the label start + small offset
-        }
-    }
-
-    return placements;
-}
-
-/**
- * Fill a flat (non-fillable) PDF form by extracting label positions with pdf.js-extract,
- * then using AI to map case data to labels, and overlaying text at precise coordinates.
+ * Fill a flat (non-fillable) PDF form by OCR-ing its structure, then generating
+ * a clean new PDF that reproduces the form with all fields filled in.
+ * This avoids coordinate alignment issues from overlaying text on the original.
  */
 async function _fillFlatForm(pdfDoc, caseData, requester) {
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const pageCount = pdfDoc.getPageCount();
 
-    // Step 1: Extract all text positions from the PDF using pdf.js-extract
+    // Step 1: Extract all text from the PDF to understand form structure
     const pdfBytes = await pdfDoc.save();
     const pdfExtract = new PDFExtract();
     const extractData = await pdfExtract.extractBuffer(Buffer.from(pdfBytes), {});
 
-    // Build a structured label map: { pageIndex, label, x, y, width, height }
-    const labels = [];
+    // Build readable text per page
+    const pageTexts = [];
     for (const page of extractData.pages) {
-        const pageIdx = page.pageInfo.num - 1; // 0-based
-        const pageHeight = page.pageInfo.height;
+        const lines = [];
+        let currentLine = '';
+        let lastY = null;
         for (const item of page.content) {
-            if (item.str.trim()) {
-                labels.push({
-                    pageIndex: pageIdx,
-                    pageHeight,
-                    text: item.str.trim(),
-                    // pdf.js-extract uses top-left origin; convert to bottom-left for pdf-lib
-                    // Add baseline correction: drawText uses baseline, not bounding box bottom.
-                    // Descenders are ~20% of height, so baseline ≈ bottom + 0.2 * height
-                    x: item.x,
-                    topY: item.y, // y from top
-                    pdfLibY: pageHeight - item.y - item.height + item.height * 0.2, // baseline from bottom
-                    width: item.width,
-                    height: item.height
-                });
+            if (lastY !== null && Math.abs(item.y - lastY) > 3) {
+                if (currentLine.trim()) lines.push(currentLine.trim());
+                currentLine = '';
             }
+            currentLine += item.str;
+            lastY = item.y;
         }
+        if (currentLine.trim()) lines.push(currentLine.trim());
+        pageTexts.push(lines.join('\n'));
     }
 
     const records = Array.isArray(caseData.requested_records)
@@ -272,38 +230,7 @@ async function _fillFlatForm(pdfDoc, caseData, requester) {
         year: 'numeric', month: 'long', day: 'numeric'
     });
 
-    // Step 2: AI template for per-page form filling
-    const aiTemplate = {
-        model: 'gpt-5.2',
-        messages: [{
-            role: 'system',
-            content: `You are filling out a PDF government form. You have exact label positions extracted from ONE page of the form.
-
-For each label that needs an answer, return a placement with:
-- "x": x coordinate to place the answer text
-- "y": y coordinate (pdf-lib bottom-left origin) to place the answer text
-- "text": the answer text to place
-- "size": font size (default 10, use 9 for long text)
-
-RULES for placing text:
-- For labels like "Date of request:", "Requestor's name:", etc., place the answer right after the label: x = label.x + label.width + 4, y = label.pdfLibY
-- For City/State/Zip on the same line: place city after "City:" label, state after "State:" label, zip after "Zip:" label
-- For labels followed by blank answer lines BELOW (e.g. "Title of requested record"), place text on the next line down: x = label.x, y = label.pdfLibY - label.height - 4
-- CHECKBOXES: When you see a group of checkbox options (e.g. "inspect", "emailed", "photocopy", "digital copy"), you MUST select EXACTLY ONE that matches preferred_format. The preferred_format is "email / electronic delivery", so you MUST select the "email" checkbox option. Place "X" at: x = label.x + 2, y = label.pdfLibY. Do NOT mark photocopy, inspect, or any other option.
-- Only fill form field areas (skip policy/instruction text, headers, footers)
-- Do NOT place text on "(For Internal Use Only)" fields
-- Fill ALL relevant fields on this page — do not leave blanks if you have the data
-
-Return JSON with a "placements" array.`
-        }, {
-            role: 'user',
-            content: null // set per-page below
-        }],
-        response_format: { type: 'json_object' },
-        max_completion_tokens: 4000,
-        temperature: 0
-    };
-
+    // Step 2: Ask AI to reproduce each form page as structured content
     const formData = {
         date_of_request: today,
         name: requester.name,
@@ -322,76 +249,195 @@ Return JSON with a "placements" array.`
         preferred_format: 'email / electronic delivery'
     };
 
-    // Step 3: Per-page AI calls for better coverage
-    let totalPlaced = 0;
-    const pageGroups = {};
-    for (const l of labels) {
-        if (!pageGroups[l.pageIndex]) pageGroups[l.pageIndex] = [];
-        pageGroups[l.pageIndex].push(l);
+    const aiResponse = await getOpenAI().chat.completions.create({
+        model: 'gpt-5.2',
+        messages: [{
+            role: 'system',
+            content: `You are recreating a filled-out government PDF form. Given the OCR text of the original form pages and the requester's data, produce a structured JSON representation of each form page with all fields filled in.
+
+Return JSON with a "pages" array. Each page object has:
+- "title": The form/page title (e.g. "Madison County Sheriff's Public Records Request Form")
+- "subtitle": Optional subtitle like "Attachment A"
+- "sections": Array of section objects, each with:
+  - "heading": Optional section heading (e.g. "Record Information", "Record Format")
+  - "fields": Array of field objects, each with:
+    - "label": The field label text
+    - "value": The filled-in value (use the form_data provided)
+    - "type": "text" | "checkbox" | "note"
+    - "checked": For checkbox type, true if this option should be selected, false otherwise
+    - "layout": "inline" (label: value on same line) or "below" (value on line under label)
+
+RULES:
+- Fill ALL fields you have data for — do not leave blanks
+- For checkbox groups (e.g. record format options), mark ONLY the one matching preferred_format
+- Since preferred_format is "email / electronic delivery", check the EMAIL option
+- Skip "For Internal Use Only" sections entirely
+- Skip policy/instruction pages — only include actual form pages with fillable fields
+- Preserve the original form's field order and grouping`
+        }, {
+            role: 'user',
+            content: JSON.stringify({
+                original_form_pages: pageTexts.map((text, i) => ({ page: i + 1, text })),
+                form_data: formData
+            })
+        }],
+        response_format: { type: 'json_object' },
+        max_completion_tokens: 6000,
+        temperature: 0
+    });
+
+    let formStructure;
+    try {
+        formStructure = JSON.parse(aiResponse.choices[0]?.message?.content || '{}');
+    } catch {
+        throw new Error('AI returned invalid JSON for form structure');
     }
 
-    for (const [pageIdxStr, pageLabels] of Object.entries(pageGroups)) {
-        const pageIdx = parseInt(pageIdxStr);
-        if (pageIdx < 0 || pageIdx >= pageCount) continue;
+    const pages = formStructure.pages || [];
+    if (pages.length === 0) {
+        throw new Error('AI returned no form pages');
+    }
 
-        // Skip pages with very few labels (likely policy/instruction pages)
-        if (pageLabels.length < 5) continue;
+    // Step 3: Generate a clean new PDF from the structured data
+    const newPdf = await PDFDocument.create();
+    const font = await newPdf.embedFont(StandardFonts.Helvetica);
+    const boldFont = await newPdf.embedFont(StandardFonts.HelveticaBold);
 
-        const pageAiResponse = await getOpenAI().chat.completions.create({
-            ...aiTemplate,
-            messages: [
-                aiTemplate.messages[0],
-                {
-                    role: 'user',
-                    content: JSON.stringify({
-                        page_number: pageIdx + 1,
-                        labels: pageLabels.map(l => ({
-                            text: l.text,
-                            x: Math.round(l.x * 10) / 10,
-                            pdfLibY: Math.round(l.pdfLibY * 10) / 10,
-                            width: Math.round(l.width * 10) / 10,
-                            height: Math.round(l.height * 10) / 10
-                        })),
-                        form_data: formData
-                    })
-                }
-            ]
-        });
+    const PAGE_WIDTH = 612;
+    const PAGE_HEIGHT = 792;
+    const MARGIN = 60;
+    const MAX_WIDTH = PAGE_WIDTH - 2 * MARGIN;
 
-        let result;
-        try {
-            result = JSON.parse(pageAiResponse.choices[0]?.message?.content || '{}');
-        } catch {
-            console.warn(`AI returned invalid JSON for page ${pageIdx}, skipping`);
-            continue;
-        }
+    for (const formPage of pages) {
+        let page = newPdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+        let y = PAGE_HEIGHT - MARGIN;
 
-        let placements = result.placements || [];
-
-        // Post-process: fix checkbox selections based on preferred_format
-        placements = _fixCheckboxPlacements(placements, pageLabels, formData.preferred_format);
-
-        const page = pdfDoc.getPage(pageIdx);
-        for (const p of placements) {
-            if (p.text && p.x != null && p.y != null) {
-                page.drawText(String(p.text), {
-                    x: p.x,
-                    y: p.y,
-                    size: p.size || 10,
-                    font,
-                    color: rgb(0, 0, 0)
-                });
-                totalPlaced++;
+        function ensureSpace(needed) {
+            if (y - needed < MARGIN) {
+                page = newPdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+                y = PAGE_HEIGHT - MARGIN;
             }
         }
-        console.log(`  Page ${pageIdx + 1}: ${placements.length} placements`);
+
+        function drawLine(x1, y1, x2) {
+            page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y1 }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6) });
+        }
+
+        // Subtitle (e.g. "Attachment A")
+        if (formPage.subtitle) {
+            ensureSpace(20);
+            page.drawText(formPage.subtitle, { x: MARGIN, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+            y -= 24;
+        }
+
+        // Title
+        if (formPage.title) {
+            ensureSpace(24);
+            const titleSize = 12;
+            const titleWidth = boldFont.widthOfTextAtSize(formPage.title, titleSize);
+            const titleX = (PAGE_WIDTH - titleWidth) / 2;
+            page.drawText(formPage.title, { x: titleX, y, size: titleSize, font: boldFont, color: rgb(0, 0, 0) });
+            // Underline
+            drawLine(titleX, y - 2, titleX + titleWidth);
+            y -= 30;
+        }
+
+        // Sections
+        for (const section of (formPage.sections || [])) {
+            if (section.heading) {
+                ensureSpace(28);
+                page.drawText(section.heading, { x: MARGIN, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+                const headingWidth = boldFont.widthOfTextAtSize(section.heading, 10);
+                drawLine(MARGIN, y - 2, MARGIN + headingWidth);
+                y -= 20;
+            }
+
+            for (const field of (section.fields || [])) {
+                if (field.type === 'checkbox') {
+                    ensureSpace(18);
+                    const box = field.checked ? '[X]' : '[  ]';
+                    page.drawText(`${box}  ${field.label}`, { x: MARGIN + 10, y, size: 10, font, color: rgb(0, 0, 0) });
+                    y -= 18;
+                } else if (field.type === 'note') {
+                    ensureSpace(16);
+                    // Italicized note text — use regular font, smaller
+                    const noteText = field.value || field.label || '';
+                    _drawWrapped(page, noteText, MARGIN, y, MAX_WIDTH, 9, font);
+                    const noteLines = _countWrappedLines(noteText, MAX_WIDTH, 9, font);
+                    y -= noteLines * 14;
+                } else if (field.layout === 'below') {
+                    // Label on one line, value on next
+                    ensureSpace(36);
+                    page.drawText(field.label + ':', { x: MARGIN, y, size: 10, font, color: rgb(0, 0, 0) });
+                    y -= 16;
+                    if (field.value) {
+                        _drawWrapped(page, String(field.value), MARGIN + 10, y, MAX_WIDTH - 10, 10, font);
+                        const valLines = _countWrappedLines(String(field.value), MAX_WIDTH - 10, 10, font);
+                        y -= valLines * 15;
+                        drawLine(MARGIN, y + 2, PAGE_WIDTH - MARGIN);
+                    }
+                    y -= 6;
+                } else {
+                    // Inline: "Label: Value" with underline
+                    ensureSpace(20);
+                    const labelText = field.label + ': ';
+                    const labelWidth = font.widthOfTextAtSize(labelText, 10);
+                    page.drawText(labelText, { x: MARGIN, y, size: 10, font, color: rgb(0, 0, 0) });
+                    if (field.value) {
+                        page.drawText(String(field.value), { x: MARGIN + labelWidth, y, size: 10, font: boldFont, color: rgb(0, 0, 0) });
+                    }
+                    drawLine(MARGIN + labelWidth, y - 2, PAGE_WIDTH - MARGIN);
+                    y -= 20;
+                }
+            }
+            y -= 6; // gap between sections
+        }
     }
 
-    const placedCount = totalPlaced;
-
-    console.log(`✅ Placed ${placedCount} text items on flat form (${pageCount} pages) using label-aware positioning`);
-    const filledBytes = await pdfDoc.save();
+    console.log(`✅ Generated clean filled PDF with ${pages.length} form page(s)`);
+    const filledBytes = await newPdf.save();
     return Buffer.from(filledBytes);
+}
+
+/** Helper: draw wrapped text */
+function _drawWrapped(page, text, x, y, maxWidth, fontSize, font) {
+    if (!text) return y;
+    text = String(text);
+    const words = text.split(/\s+/);
+    let line = '';
+    let currentY = y;
+    for (const word of words) {
+        const testLine = line ? `${line} ${word}` : word;
+        if (font.widthOfTextAtSize(testLine, fontSize) > maxWidth && line) {
+            page.drawText(line, { x, y: currentY, size: fontSize, font, color: rgb(0, 0, 0) });
+            currentY -= fontSize + 4;
+            line = word;
+        } else {
+            line = testLine;
+        }
+    }
+    if (line) page.drawText(line, { x, y: currentY, size: fontSize, font, color: rgb(0, 0, 0) });
+    return currentY;
+}
+
+/** Helper: count how many lines wrapped text will take */
+function _countWrappedLines(text, maxWidth, fontSize, font) {
+    if (!text) return 0;
+    text = String(text);
+    const words = text.split(/\s+/);
+    let line = '';
+    let lines = 0;
+    for (const word of words) {
+        const testLine = line ? `${line} ${word}` : word;
+        if (font.widthOfTextAtSize(testLine, fontSize) > maxWidth && line) {
+            lines++;
+            line = word;
+        } else {
+            line = testLine;
+        }
+    }
+    if (line) lines++;
+    return lines;
 }
 
 /**
