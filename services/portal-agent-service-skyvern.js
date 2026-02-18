@@ -619,7 +619,7 @@ class PortalAgentServiceSkyvern {
             return null;
         }
         const base = (this.skyvernAppBaseUrl || 'https://app.skyvern.com').replace(/\/$/, '');
-        return `${base}/workflow-runs/${workflowRunId}`;
+        return `${base}/workflows/${this.workflowId}/${workflowRunId}`;
     }
 
     _formatWorkflowDate(value) {
