@@ -2903,7 +2903,7 @@
                 document.getElementById('drawerTo').textContent = data.message.to_email || '-';
                 document.getElementById('drawerDirection').textContent = data.message.direction || '-';
                 document.getElementById('drawerTimestamp').textContent = formatTime(data.message.received_at || data.message.sent_at || data.message.created_at);
-                document.getElementById('drawerBody').textContent = data.message.body_text || data.message.body_html || '-';
+                document.getElementById('drawerBody').textContent = data.message.body_text || htmlToPlainText(data.message.body_html) || '-';
                 document.getElementById('drawerSource').textContent = data.source || '-';
                 document.getElementById('drawerMessageType').textContent = data.message.message_type || '-';
                 document.getElementById('drawerProcessedAt').textContent = formatTime(data.message.processed_at);
@@ -3957,7 +3957,7 @@
                             <span>${formatTime(ts)}</span>
                         </div>
                         <div class="thread-msg-subject">${escapeHtml(m.subject || '(no subject)')}</div>
-                        <div class="thread-msg-body">${escapeHtml(m.body_text || '(no body)')}</div>
+                        <div class="thread-msg-body">${escapeHtml(m.body_text || htmlToPlainText(m.body_html) || '(no body)')}</div>
                         <div class="thread-msg-footer"><a href="#" onclick="openMessage(${m.id});return false;">Open details</a></div>
                     </div>`;
                 });
@@ -4448,6 +4448,19 @@
             const div = document.createElement('div');
             div.textContent = text || '';
             return div.innerHTML;
+        }
+
+        /** Convert HTML string to readable plain text (for HTML-only emails like GovQA). */
+        function htmlToPlainText(html) {
+            if (!html) return '';
+            const tmp = document.createElement('div');
+            tmp.innerHTML = html;
+            // Remove style/script blocks
+            tmp.querySelectorAll('style, script').forEach(el => el.remove());
+            // Remove tracking pixels
+            tmp.querySelectorAll('img[width="1"], img[height="1"]').forEach(el => el.remove());
+            // Use the browser's built-in text extraction
+            return (tmp.textContent || tmp.innerText || '').replace(/\n{3,}/g, '\n\n').trim();
         }
 
         function toggleOpsPanel() {
