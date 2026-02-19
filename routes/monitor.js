@@ -156,6 +156,96 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         };
     }
 
+    // SEND_PDF_EMAIL: Execute directly — these proposals are created outside
+    // the LangGraph flow so there's no checkpoint to resume from.
+    if (proposal.action_type === 'SEND_PDF_EMAIL') {
+        const caseData = await db.getCaseById(caseId);
+        const targetEmail = caseData?.agency_email;
+        if (!targetEmail) {
+            const err = new Error(`Cannot send PDF email: no agency_email on case ${caseId}`);
+            err.status = 400;
+            throw err;
+        }
+
+        // Find the filled PDF attachment
+        const attachments = await db.getAttachmentsByCaseId(caseId);
+        const pdfAttachment = attachments.find(a =>
+            a.filename?.startsWith('filled_') && a.content_type === 'application/pdf'
+        );
+        if (!pdfAttachment) {
+            const err = new Error('No filled PDF attachment found for this case');
+            err.status = 400;
+            throw err;
+        }
+
+        // Read PDF from disk or DB
+        const fs = require('fs');
+        let pdfBuffer;
+        if (pdfAttachment.storage_path && fs.existsSync(pdfAttachment.storage_path)) {
+            pdfBuffer = fs.readFileSync(pdfAttachment.storage_path);
+        } else {
+            const fullAtt = await db.getAttachmentById(pdfAttachment.id);
+            if (fullAtt?.file_data) pdfBuffer = fullAtt.file_data;
+        }
+        if (!pdfBuffer) {
+            const err = new Error('PDF file not available — please retrigger the case to regenerate');
+            err.status = 400;
+            throw err;
+        }
+
+        // Send email with PDF attachment
+        const sendgridService = require('../services/sendgrid-service');
+        const sendResult = await sendgridService.sendEmail({
+            to: targetEmail,
+            subject: proposal.draft_subject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`,
+            text: proposal.draft_body_text,
+            html: proposal.draft_body_html || null,
+            caseId,
+            messageType: 'send_pdf_email',
+            attachments: [{
+                content: pdfBuffer.toString('base64'),
+                filename: pdfAttachment.filename,
+                type: 'application/pdf',
+                disposition: 'attachment'
+            }]
+        });
+
+        // Update proposal
+        await db.updateProposal(proposalId, {
+            human_decision: humanDecision,
+            status: 'EXECUTED',
+            executedAt: new Date(),
+            emailJobId: sendResult.messageId
+        });
+
+        // Update case status
+        await db.updateCaseStatus(caseId, 'sent', {
+            substatus: `PDF form emailed to ${targetEmail}`,
+            send_date: caseData.send_date || new Date()
+        });
+
+        await db.logActivity('pdf_email_sent', `PDF form emailed to ${targetEmail} for case ${caseId}`, {
+            case_id: caseId,
+            to: targetEmail,
+            attachment_id: pdfAttachment.id,
+            message_id: sendResult.messageId
+        });
+
+        try {
+            const notionService = require('../services/notion-service');
+            await notionService.syncStatusToNotion(caseId);
+        } catch (_) {}
+
+        notify('info', `PDF email sent to ${targetEmail} for case ${caseId}`, { case_id: caseId });
+        return {
+            success: true,
+            message: `PDF email sent to ${targetEmail}`,
+            proposal_id: proposalId,
+            action,
+            messageId: sendResult.messageId
+        };
+    }
+
     await db.updateProposal(proposalId, {
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
