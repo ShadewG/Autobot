@@ -129,16 +129,21 @@ async function classifyInboundNode(state) {
     const portalSystems = ['justfoia', 'nextrequest', 'govqa', 'jotform', 'smartsheet'];
     const isPortalSystem = portalSystems.some(p => fromAddr.includes(p) || subjectLower.includes(p));
     const isNoReply = /no.?reply|do.?not.?reply/.test(fromAddr);
-    const isVerification = subjectLower.includes('verify') || subjectLower.includes('confirm your') ||
+    const isConfirmationOrVerification =
+        subjectLower.includes('verify') || subjectLower.includes('confirm your') ||
+        subjectLower.includes('submission confirmation') || subjectLower.includes('request confirmation') ||
+        subjectLower.includes('request received') || subjectLower.includes('thank you for submitting') ||
         bodySnippet.includes('verify your email') || bodySnippet.includes('confirm your email') ||
-        bodySnippet.includes('confirm your account');
+        bodySnippet.includes('confirm your account') || bodySnippet.includes('thank you for submitting') ||
+        bodySnippet.includes('request has been received') || bodySnippet.includes('your request has been submitted') ||
+        bodySnippet.includes('submission confirmation');
 
-    if ((isPortalSystem || isNoReply) && isVerification) {
-      logger.info('Auto-classified as portal verification email', { caseId, from: fromAddr, subject: message.subject });
+    if ((isPortalSystem || isNoReply) && isConfirmationOrVerification) {
+      logger.info('Auto-classified as portal confirmation/verification email', { caseId, from: fromAddr, subject: message.subject });
       await db.saveResponseAnalysis({
         messageId: latestInboundMessageId, caseId,
         intent: 'acknowledgment', confidenceScore: 0.99, sentiment: 'neutral',
-        keyPoints: ['Automated portal verification/confirmation email — no action needed'],
+        keyPoints: ['Automated portal confirmation/verification email — no action needed'],
         requiresAction: false, suggestedAction: 'wait',
         fullAnalysisJson: { auto_classified: true, reason: 'portal_verification_email' }
       });

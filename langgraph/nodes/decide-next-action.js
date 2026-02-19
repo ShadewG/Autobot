@@ -923,11 +923,12 @@ async function decideNextActionNode(state) {
     // NEW: Partial delivery - download and wait
     if (classification === 'PARTIAL_DELIVERY') {
       reasoning.push('Partial delivery received - download and wait for remainder');
+      await db.updateCaseStatus(caseId, 'awaiting_response');
       return {
         isComplete: true,
         proposalActionType: NONE,
         proposalReasoning: reasoning,
-        logs: [...logs, 'Partial delivery - download available records, await remainder']
+        logs: [...logs, 'Partial delivery received, status reset to awaiting_response']
       };
     }
 

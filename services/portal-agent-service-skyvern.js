@@ -986,7 +986,14 @@ class PortalAgentServiceSkyvern {
                         last_portal_task_url: workflowRunLink
                     });
                 }
-                const timeoutDetail = `Polling timeout — check Skyvern run${workflowRunLink ? ': ' + workflowRunLink : ''}`;
+                // Try email fallback before escalating to human
+                const timeoutReason = `Polling timeout — check Skyvern run${workflowRunLink ? ': ' + workflowRunLink : ''}`;
+                const emailSent = await this._fallbackToEmailIfPossible(caseData, portalUrl, timeoutReason);
+                if (emailSent) {
+                    try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+                    return { success: true, status: 'email_fallback_sent', runId: workflowRunId, engine: 'pdf_form_auto' };
+                }
+                const timeoutDetail = timeoutReason;
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
                     substatus: `Portal failed: ${timeoutDetail}`.substring(0, 100),
                     requires_human: true
@@ -1159,6 +1166,14 @@ class PortalAgentServiceSkyvern {
 
             // ESCALATE: Retry exhausted or AI said don't retry
             console.log(`❌ Portal failed for case ${caseData.id} after ${retryContext ? 'retry' : 'AI declined retry'}`);
+
+            // Try email fallback before escalating to human
+            const emailSent = await this._fallbackToEmailIfPossible(caseData, portalUrl, failureReason);
+            if (emailSent) {
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+                return { success: true, status: 'email_fallback_sent', runId: workflowRunId, engine: 'pdf_form_auto' };
+            }
+
             const truncatedReason = (failureReason || 'Unknown error').substring(0, 80);
             await database.updateCaseStatus(caseData.id, 'needs_human_review', {
                 substatus: `Portal failed: ${truncatedReason}`.substring(0, 100),
@@ -1210,6 +1225,14 @@ class PortalAgentServiceSkyvern {
             console.error('❌ Skyvern workflow API error:', message);
             // workflowRunLink may not be defined if error was thrown before assignment
             const safeRunLink = (typeof workflowRunLink !== 'undefined') ? workflowRunLink : null;
+
+            // Try email fallback before escalating to human
+            const emailSent = await this._fallbackToEmailIfPossible(caseData, portalUrl, message);
+            if (emailSent) {
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+                return { success: true, status: 'email_fallback_sent', engine: 'pdf_form_auto' };
+            }
+
             try {
                 const truncatedMsg = (message || 'Unknown error').substring(0, 80);
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
@@ -1248,6 +1271,72 @@ class PortalAgentServiceSkyvern {
                 workflow_url: safeRunLink,
                 engine: 'skyvern_workflow'
             };
+        }
+    }
+
+    /**
+     * Try sending FOIA via email when portal submission fails.
+     * Returns true if email was sent, false if fallback not possible.
+     */
+    async _fallbackToEmailIfPossible(caseData, portalUrl, reason) {
+        const targetEmail = caseData.agency_email || caseData.alternate_agency_email;
+        if (!targetEmail) return false;
+
+        try {
+            console.log(`📧 Portal failed for case ${caseData.id}, falling back to email (${targetEmail})`);
+            const pdfResult = await pdfFormService.handlePdfFormFallback(caseData, portalUrl, reason, {});
+            if (!pdfResult.success) return false;
+
+            const fs = require('fs');
+            const sendgridService = require('./sendgrid-service');
+            const attachments = await database.getAttachmentsByCaseId(caseData.id);
+            const pdfAttachment = attachments.find(a =>
+                a.filename?.startsWith('filled_') && a.content_type === 'application/pdf'
+            );
+            let pdfBuffer;
+            if (pdfAttachment?.storage_path && fs.existsSync(pdfAttachment.storage_path)) {
+                pdfBuffer = fs.readFileSync(pdfAttachment.storage_path);
+            } else if (pdfAttachment) {
+                const fullAtt = await database.getAttachmentById(pdfAttachment.id);
+                if (fullAtt?.file_data) pdfBuffer = fullAtt.file_data;
+            }
+            if (!pdfBuffer) return false;
+
+            const draftSubject = pdfResult.draftSubject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`;
+            const sendResult = await sendgridService.sendEmail({
+                to: targetEmail, subject: draftSubject, text: pdfResult.draftBodyText,
+                caseId: caseData.id, messageType: 'send_pdf_email',
+                attachments: [{
+                    content: pdfBuffer.toString('base64'), filename: pdfAttachment.filename,
+                    type: 'application/pdf', disposition: 'attachment'
+                }]
+            });
+
+            try { await database.dismissPendingProposals(caseData.id, 'Portal failed, email fallback sent', ['SUBMIT_PORTAL']); } catch (_) {}
+            await database.upsertProposal({
+                proposalKey: `${caseData.id}:portal_fallback:SEND_PDF_EMAIL:1`,
+                caseId: caseData.id, actionType: 'SEND_PDF_EMAIL',
+                reasoning: [
+                    { step: 'Portal submission failed', detail: reason },
+                    { step: 'Email fallback sent', detail: `Sent to ${targetEmail}` }
+                ],
+                confidence: 0.9, requiresHuman: false, canAutoExecute: true,
+                draftSubject, draftBodyText: pdfResult.draftBodyText, status: 'EXECUTED'
+            });
+            await database.updateCaseStatus(caseData.id, 'sent', {
+                substatus: `Email fallback to ${targetEmail} (portal failed)`,
+                send_date: new Date()
+            });
+            await database.logActivity('portal_email_fallback',
+                `Portal failed, sent via email to ${targetEmail}`, {
+                case_id: caseData.id, portal_url: portalUrl,
+                sendgrid_message_id: sendResult.messageId
+            });
+            console.log(`📧 Email fallback sent to ${targetEmail} for case ${caseData.id}`);
+            return true;
+        } catch (err) {
+            console.warn(`📧 Email fallback failed for case ${caseData.id}:`, err.message);
+            return false;
         }
     }
 
