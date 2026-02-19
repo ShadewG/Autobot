@@ -231,6 +231,7 @@ function toRequestDetail(caseData) {
         fee_quote: feeQuote,
         portal_url: caseData.portal_url || null,
         portal_provider: caseData.portal_provider || null,
+        portal_request_number: caseData.portal_request_number || null,
         notion_url: notionUrl,
         submitted_at: caseData.send_date || null,
         statutory_due_at: listItem.due_info.statutory_due_at,
@@ -552,15 +553,26 @@ router.get('/:id/workspace', async (req, res) => {
 
         if (thread) {
             const messages = await db.getMessagesByThreadId(thread.id);
-            threadMessages = messages.map(toThreadMessage);
 
-            // Fetch analysis for all inbound messages
+            // Fetch analysis for all inbound messages first
             for (const msg of messages.filter(m => m.direction === 'inbound')) {
                 const analysis = await db.getAnalysisByMessageId(msg.id);
                 if (analysis) {
                     analysisMap[msg.id] = analysis;
                 }
             }
+
+            // Build thread messages with analysis data attached
+            threadMessages = messages.map(msg => {
+                const tm = toThreadMessage(msg);
+                const analysis = analysisMap[msg.id];
+                if (analysis) {
+                    tm.classification = analysis.intent || null;
+                    tm.summary = analysis.key_points || null;
+                    tm.sentiment = analysis.sentiment || null;
+                }
+                return tm;
+            });
         }
 
         // Fetch activity log for timeline events

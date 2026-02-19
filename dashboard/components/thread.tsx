@@ -48,6 +48,30 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
         )}
       </div>
 
+      {/* Classification and sentiment badges for inbound messages */}
+      {!isOutbound && (message.classification || message.sentiment) && (
+        <div className="flex items-center gap-1 mt-0.5 mb-0.5">
+          {message.classification && (
+            <Badge variant="outline" className="text-[10px]">
+              {message.classification}
+            </Badge>
+          )}
+          {message.sentiment && (
+            <Badge
+              variant="outline"
+              className={cn(
+                "text-[10px]",
+                message.sentiment === 'POSITIVE' && "text-green-600",
+                message.sentiment === 'NEGATIVE' && "text-red-600",
+                message.sentiment === 'HOSTILE' && "text-red-700 bg-red-50"
+              )}
+            >
+              {message.sentiment}
+            </Badge>
+          )}
+        </div>
+      )}
+
       {/* Message bubble - full width, colored border to indicate direction */}
       <div
         className={cn(

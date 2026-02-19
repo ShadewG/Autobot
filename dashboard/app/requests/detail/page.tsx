@@ -588,6 +588,14 @@ function RequestDetailContent() {
               <span className="text-amber-600 font-medium">Requires Human</span>
             </div>
           )}
+          {request.portal_request_number && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">NR:</span>
+              <Badge variant="outline" className="font-medium">
+                {request.portal_request_number}
+              </Badge>
+            </div>
+          )}
           {request.pause_reason && (
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Pause Reason:</span>

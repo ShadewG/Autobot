@@ -84,6 +84,7 @@ export interface RequestDetail extends RequestListItem {
   fee_quote?: FeeQuote;
   portal_url: string | null;
   portal_provider: string | null;
+  portal_request_number: string | null;
   submitted_at: string | null;
   statutory_due_at: string | null;
   attachments: Attachment[];
@@ -143,6 +144,9 @@ export interface ThreadMessage {
   sent_at: string;
   timestamp: string;   // Alias for sent_at for convenience
   processed_at?: string; // When this message was processed by the agent
+  classification?: string;
+  summary?: string;
+  sentiment?: string;
   attachments: Attachment[];
 }
 

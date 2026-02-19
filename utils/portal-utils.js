@@ -10,7 +10,8 @@ const PORTAL_EMAIL_DOMAINS = {
     'mycusthelp.net':         { provider: 'govqa',       subdomainFromLocalPart: true },
     'mycusthelp.com':         { provider: 'govqa',       subdomainFromLocalPart: true },
     'custhelp.com':           { provider: 'govqa',       subdomainFromLocalPart: true },
-    'govqa.us':               { provider: 'govqa',       subdomainFromLocalPart: true }
+    'govqa.us':               { provider: 'govqa',       subdomainFromLocalPart: true },
+    'civicplus.com':          { provider: 'civicplus',   subdomainFromLocalPart: false }
 };
 
 const PORTAL_PROVIDERS = [
@@ -33,6 +34,13 @@ const PORTAL_PROVIDERS = [
         label: 'JustFOIA',
         domains: ['justfoia.com'],
         keywords: ['justfoia', 'govbuilt'],
+        defaultPath: '/'
+    },
+    {
+        name: 'civicplus',
+        label: 'CivicPlus',
+        domains: ['civicplus.com'],
+        keywords: ['civicplus', 'civic plus', 'request tracker'],
         defaultPath: '/'
     }
 ];
