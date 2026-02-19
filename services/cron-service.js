@@ -22,34 +22,16 @@ class CronService {
         console.log('Starting cron services...');
 
         // Sync from Notion every 15 minutes
+        // Notion sync still runs on cron (Notion has no webhooks), but generation
+        // queuing is now reactive — db.createCase() and db.updateCaseStatus() auto-dispatch.
         this.jobs.notionSync = new CronJob('*/15 * * * *', async () => {
             try {
                 console.log('Running Notion sync...');
                 const cases = await notionService.syncCasesFromNotion('Ready To Send');
 
-                // Auto-process new cases if enabled
                 if (cases.length > 0) {
-                    console.log(`Synced ${cases.length} new cases from Notion`);
-
-                    for (const caseData of cases) {
-                        // Queue for generation and sending (jobId dedup prevents double-queuing)
-                        try {
-                            await generateQueue.add('generate-and-send', {
-                                caseId: caseData.id
-                            }, {
-                                jobId: `generate-${caseData.id}`
-                            });
-                        } catch (queueErr) {
-                            // BullMQ rejects duplicate job IDs — this is expected
-                            if (queueErr.message?.includes('duplicate')) {
-                                console.log(`Case ${caseData.id} already queued, skipping`);
-                            } else {
-                                console.error(`Failed to queue case ${caseData.id}:`, queueErr.message);
-                            }
-                        }
-                    }
-
-                    await db.logActivity('notion_sync', `Synced and queued ${cases.length} cases from Notion`);
+                    console.log(`Synced ${cases.length} cases from Notion (reactive dispatch handles queuing)`);
+                    await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`);
                 }
             } catch (error) {
                 console.error('Error in Notion sync cron:', error);

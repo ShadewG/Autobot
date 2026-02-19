@@ -167,7 +167,16 @@ class DatabaseService {
             caseData.user_id || null
         ];
         const result = await this.query(query, values);
-        return result.rows[0];
+        const created = result.rows[0];
+
+        // Reactive dispatch for newly created cases
+        if (created.status) {
+            this._dispatchStatusAction(created.id, created.status).catch(err =>
+                console.warn(`[DB] Reactive dispatch failed for new case ${created.id}:`, err.message)
+            );
+        }
+
+        return created;
     }
 
     async getCaseById(id) {
@@ -192,6 +201,7 @@ class DatabaseService {
 
         const query = `UPDATE cases SET ${setClause} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
+        const updatedCase = result.rows[0];
 
         // Fire-and-forget Notion sync on every status change (lazy require avoids circular dep)
         try {
@@ -201,7 +211,42 @@ class DatabaseService {
             );
         } catch (e) { /* notion service not available */ }
 
-        return result.rows[0];
+        // Reactive dispatch: immediately queue next action based on new status
+        this._dispatchStatusAction(caseId, status).catch(err =>
+            console.warn(`[DB] Reactive dispatch failed for case ${caseId} → ${status}:`, err.message)
+        );
+
+        return updatedCase;
+    }
+
+    /**
+     * Reactive dispatch — when a case enters a status, immediately queue the next action.
+     * Replaces cron-based discovery for state transitions.
+     */
+    async _dispatchStatusAction(caseId, status) {
+        try {
+            const { generateQueue, emailQueue } = require('../queues/email-queue');
+
+            switch (status) {
+                case 'ready_to_send': {
+                    if (!generateQueue) break;
+                    await generateQueue.add('generate-and-send', { caseId }, {
+                        jobId: `generate-${caseId}`,
+                        attempts: 2,
+                        backoff: { type: 'exponential', delay: 30000 }
+                    });
+                    console.log(`[reactive] Case ${caseId} → ready_to_send: queued generation`);
+                    break;
+                }
+                // Future reactive hooks can be added here:
+                // case 'responded': queue analysis job
+                // case 'portal_submitted': queue portal status check
+            }
+        } catch (err) {
+            // Duplicate job IDs are expected and fine
+            if (err.message?.includes('duplicate')) return;
+            throw err;
+        }
     }
 
     async updateCasePortalStatus(caseId, portalData = {}) {
