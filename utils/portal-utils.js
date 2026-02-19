@@ -83,8 +83,8 @@ function isSupportedPortalUrl(url) {
         const urlObj = new URL(normalized);
         const pathname = urlObj.pathname.toLowerCase();
 
-        // Reject PDF files
-        if (pathname.endsWith('.pdf')) {
+        // Reject document file URLs — these are downloads, not portals
+        if (/\.(pdf|doc|docx|xls|xlsx|rtf|odt)$/i.test(pathname)) {
             return false;
         }
 
