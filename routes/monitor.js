@@ -228,7 +228,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             case_id: caseId,
             to: targetEmail,
             attachment_id: pdfAttachment.id,
-            message_id: sendResult.messageId
+            sendgrid_message_id: sendResult.messageId
         });
 
         try {
