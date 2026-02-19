@@ -1314,6 +1314,11 @@ class PortalAgentServiceSkyvern {
                 caseData, originalUrl, reason, {}
             );
             if (pdfResult.success) {
+                // Dismiss any stale SUBMIT_PORTAL proposals for this case
+                await database.query(
+                    `UPDATE proposals SET status = 'DISMISSED', human_decision = jsonb_build_object('reason','Superseded by PDF email fallback','decidedBy','system') WHERE case_id = $1 AND action_type = 'SUBMIT_PORTAL' AND status = 'PENDING_APPROVAL'`,
+                    [caseData.id]
+                );
                 await database.upsertProposal({
                     proposalKey: `${caseData.id}:pdf_form:SEND_PDF_EMAIL:1`,
                     caseId: caseData.id,

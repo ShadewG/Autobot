@@ -4176,6 +4176,21 @@
                     html += `</div>`;
                 }
 
+                // Show PDF attachment link for SEND_PDF_EMAIL in collapsed view
+                const isPdfEmail = String(p.action_type) === 'SEND_PDF_EMAIL';
+                let pdfAttachmentId = null;
+                if (isPdfEmail && Array.isArray(p.reasoning)) {
+                    const attStep = p.reasoning.find(r => /Attachment ID:\s*\d+/.test(r.detail || ''));
+                    pdfAttachmentId = attStep ? (attStep.detail.match(/Attachment ID:\s*(\d+)/)||[])[1] : null;
+                }
+                if (pdfAttachmentId) {
+                    html += `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;margin:4px 0;background:#1a1208;border:1px solid #f0883e;border-radius:6px;">`;
+                    html += `<span style="font-size:16px;">📎</span>`;
+                    html += `<span style="font-size:12px;color:#f0883e;font-weight:600;">Filled PDF attached</span>`;
+                    html += `<a href="/api/monitor/attachments/${pdfAttachmentId}/download" target="_blank" style="margin-left:auto;color:#58a6ff;font-size:12px;text-decoration:none;font-weight:600;">View PDF ↗</a>`;
+                    html += `</div>`;
+                }
+
                 const hasDraftContent = !!(p.draft_subject || p.draft_body_text);
                 if (hasDraftContent) {
                     html += `<div class="pac-draft">`;
@@ -4214,6 +4229,23 @@
                 if (p.portal_url) {
                     html += `<div style="font-size:12px;color:#8b949e;margin-bottom:6px;">Portal: <a class="case-link" href="${p.portal_url}" target="_blank">${escapeHtml(truncate(p.portal_url, 60))}</a></div>`;
                 }
+
+                // PDF attachment for SEND_PDF_EMAIL proposals
+                if (String(p.action_type) === 'SEND_PDF_EMAIL' && Array.isArray(p.reasoning)) {
+                    const attStep = p.reasoning.find(r => /Attachment ID:\s*\d+/.test(r.detail || ''));
+                    const attId = attStep ? (attStep.detail.match(/Attachment ID:\s*(\d+)/)||[])[1] : null;
+                    if (attId) {
+                        html += `<div style="background:#0d1117;border:2px solid #f0883e;border-radius:8px;padding:12px;margin:8px 0;display:flex;align-items:center;gap:12px;">`;
+                        html += `<span style="font-size:24px;">📎</span>`;
+                        html += `<div style="flex:1;">`;
+                        html += `<div style="font-size:12px;font-weight:600;color:#f0883e;">Filled PDF Form Attached</div>`;
+                        html += `<div style="font-size:11px;color:#8b949e;">Attachment #${attId} — review before approving</div>`;
+                        html += `</div>`;
+                        html += `<a href="/api/monitor/attachments/${attId}/download" target="_blank" class="drawer-btn primary" style="text-decoration:none;padding:6px 14px;font-size:12px;">View PDF</a>`;
+                        html += `</div>`;
+                    }
+                }
+
                 if (p.draft_subject || p.draft_body_text) {
                     html += `<div style="background:#0d1117;border:2px solid #1f6feb;border-radius:8px;padding:12px;margin:8px 0;max-height:400px;overflow-y:auto;">`;
                     if (p.draft_subject) {
