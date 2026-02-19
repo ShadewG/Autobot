@@ -795,23 +795,32 @@ async function executeActionNode(state) {
         };
       }
 
-      // Read PDF from disk and base64 encode
+      // Read PDF from disk or DB file_data
       const fs = require('fs');
       const pdfPath = pdfAttachment.storage_path;
-      if (!fs.existsSync(pdfPath)) {
-        logs.push(`BLOCKED: PDF file not found at ${pdfPath}`);
+      let pdfBuffer;
+      if (pdfPath && fs.existsSync(pdfPath)) {
+        pdfBuffer = fs.readFileSync(pdfPath);
+      } else {
+        // Fall back to DB binary (survives ephemeral deploys)
+        const fullAtt = await db.getAttachmentById(pdfAttachment.id);
+        if (fullAtt?.file_data) {
+          pdfBuffer = fullAtt.file_data;
+          logs.push('PDF loaded from database (disk file missing after deploy)');
+        }
+      }
+      if (!pdfBuffer) {
+        logs.push(`BLOCKED: PDF file not found on disk or in database`);
         await db.updateProposal(proposalId, {
           status: 'BLOCKED',
           execution_key: null
         });
         return {
           actionExecuted: false,
-          errors: [`PDF file not found at ${pdfPath}`],
+          errors: ['PDF file not available'],
           logs
         };
       }
-
-      const pdfBuffer = fs.readFileSync(pdfPath);
       const pdfBase64 = pdfBuffer.toString('base64');
 
       // Send email with PDF attachment via SendGrid directly
