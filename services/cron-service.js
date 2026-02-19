@@ -92,6 +92,35 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Safety net: queue any orphaned ready_to_send cases every 10 minutes
+        // Catches cases that entered ready_to_send before reactive dispatch, or where dispatch failed
+        this.jobs.readyToSendSweep = new CronJob('*/10 * * * *', async () => {
+            if (!generateQueue) return;
+            try {
+                const readyCases = await db.getCasesByStatus('ready_to_send');
+                if (readyCases.length === 0) return;
+                let queued = 0;
+                for (const c of readyCases) {
+                    try {
+                        await generateQueue.add('generate-and-send', { caseId: c.id }, {
+                            jobId: `generate-${c.id}`,
+                            attempts: 2,
+                            backoff: { type: 'exponential', delay: 30000 }
+                        });
+                        queued++;
+                    } catch (e) {
+                        if (!e.message?.includes('duplicate')) throw e;
+                        // Already queued — skip
+                    }
+                }
+                if (queued > 0) {
+                    console.log(`[sweep] Queued ${queued} orphaned ready_to_send cases`);
+                }
+            } catch (error) {
+                console.error('Error in ready_to_send sweep:', error);
+            }
+        }, null, true, 'America/New_York');
+
         // Sync agencies from Notion every hour
         this.jobs.agencySync = new CronJob('0 * * * *', async () => {
             try {
