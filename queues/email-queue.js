@@ -949,6 +949,11 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
         });
 
         if (!result || !result.success) {
+            // PDF fallback already handled — don't create duplicate proposals
+            if (result?.status === 'pdf_form_pending' || result?.status === 'not_real_portal') {
+                console.log(`Portal submission for case ${caseId} handled via ${result.status} — no further action needed`);
+                return result;
+            }
             throw new Error(result?.error || 'Portal submission failed');
         }
 
