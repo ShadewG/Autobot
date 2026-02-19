@@ -31,10 +31,10 @@ CONTENT STRUCTURE (use natural language, not templates):
 8. Ask for exemption citations if anything is withheld and request segregable portions
 9. Mention non-commercial/documentary purpose and reasonable cost agreement (notify if over $50)
 10. Reference the state's response timeline
-11. Professional closing: "Thank you, Samuel Hylton, Matcher"
+11. Professional closing with the requester's name, title, and phone as provided in the user prompt.
 
-DO NOT include email addresses, phone numbers, mailing addresses, or any contact info in the body.
-The email's From header already identifies the sender — repeating it in the body is redundant.
+DO NOT include email addresses or mailing addresses in the body.
+The email's From header already provides the reply address.
 
 IMPORTANT:
 - Write naturally - vary your language between requests

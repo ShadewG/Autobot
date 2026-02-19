@@ -51,12 +51,25 @@ class AIService {
         try {
             console.log(`Generating FOIA request for case: ${caseData.case_name}`);
 
+            // Load user signature if case is assigned
+            let userSignature = null;
+            if (caseData.user_id) {
+                const user = await db.getUserById(caseData.user_id);
+                if (user) {
+                    userSignature = {
+                        name: user.signature_name || user.name,
+                        title: user.signature_title || 'Documentary Researcher, Matcher',
+                        phone: user.signature_phone || null
+                    };
+                }
+            }
+
             // Get adaptive strategy based on learned patterns
             const strategy = await adaptiveLearning.generateStrategicVariation(caseData);
             console.log('Using strategy:', strategy);
 
             const systemPrompt = this.buildFOIASystemPrompt(caseData.state, strategy);
-            const userPrompt = this.buildFOIAUserPrompt(caseData, strategy);
+            const userPrompt = this.buildFOIAUserPrompt(caseData, strategy, userSignature);
 
             // Combine system and user prompts for GPT-5
             const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
@@ -125,7 +138,7 @@ class AIService {
                 };
             } catch (openaiError) {
                 console.error('OpenAI failed, trying Claude:', openaiError.message);
-                return await this.generateWithClaude(caseData);
+                return await this.generateWithClaude(caseData, userSignature);
             }
         } catch (error) {
             console.error('Error generating FOIA request:', error);
@@ -136,9 +149,9 @@ class AIService {
     /**
      * Generate FOIA request using Claude (fallback)
      */
-    async generateWithClaude(caseData) {
+    async generateWithClaude(caseData, userSignature = null) {
         const systemPrompt = this.buildFOIASystemPrompt(caseData.state);
-        const userPrompt = this.buildFOIAUserPrompt(caseData);
+        const userPrompt = this.buildFOIAUserPrompt(caseData, null, userSignature);
 
         const modelUsed = process.env.CLAUDE_MODEL || 'claude-3-7-sonnet-20250219';
         const response = await this.anthropic.messages.create({
@@ -206,7 +219,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
     /**
      * Build the user prompt for FOIA request generation (documentary-focused)
      */
-    buildFOIAUserPrompt(caseData, strategy = null) {
+    buildFOIAUserPrompt(caseData, strategy = null, userSignature = null) {
         const legalStyle = strategy?.tone || caseData.legal_style || 'standard';
         const legalStyleInstructions = {
             'standard': 'Use standard professional legal language with polite but firm tone.',
@@ -252,9 +265,16 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
             incidentDescription += `. ${caseData.additional_details}`;
         }
 
-        // Get requester info from env or use defaults
-        const requesterName = process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const requesterEmail = process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        // Get requester info from user signature, env, or defaults
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const requesterTitle = userSignature?.title || 'Documentary Researcher, Matcher';
+        const requesterPhone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+
+        // Build signature block for the closing
+        let signatureBlock = `   - Name: ${requesterName}\n   - Title: ${requesterTitle}`;
+        if (requesterPhone) {
+            signatureBlock += `\n   - Phone: ${requesterPhone}`;
+        }
 
         return `Generate a professional FOIA/public records request following the structure in the system prompt.
 
@@ -262,8 +282,6 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    - Jurisdiction: ${caseData.state}
    - Agency: ${caseData.agency_name}
    - Requester: ${requesterName}
-   - Email: ${requesterEmail}
-   - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
 
 2. INCIDENT DETAILS:
    ${incidentDescription}
@@ -291,6 +309,9 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    - Request preservation of footage
    - Avoid requesting unnecessary administrative documents
    - Keep total request to 200-400 words
+
+7. CLOSING SIGNATURE (use exactly this info):
+${signatureBlock}
 
 Generate ONLY the email body following the structure. Do NOT add a subject line.`;
     }

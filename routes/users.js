@@ -135,6 +135,15 @@ router.patch('/:id', express.json(), async (req, res) => {
         if (req.body.active !== undefined) {
             updates.active = !!req.body.active;
         }
+        if (req.body.signature_name !== undefined) {
+            updates.signature_name = req.body.signature_name.trim() || null;
+        }
+        if (req.body.signature_title !== undefined) {
+            updates.signature_title = req.body.signature_title.trim() || null;
+        }
+        if (req.body.signature_phone !== undefined) {
+            updates.signature_phone = req.body.signature_phone.trim() || null;
+        }
 
         const updated = await db.updateUser(id, updates);
         res.json({ success: true, user: updated });

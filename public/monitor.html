@@ -1011,6 +1011,7 @@
                 <option value="">All Users</option>
                 <option value="unowned">Unowned</option>
             </select>
+            <button onclick="openSignatureSettings()" title="Edit email signature" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px;">Signature</button>
             <span class="runtime-badge live" id="runtimeMode">Execution: LIVE</span>
             <span class="runtime-badge" id="shadowMode">Shadow: OFF</span>
             <span class="runtime-badge sse-disconnected" id="sseBadge">SSE: --</span>
@@ -1638,6 +1639,38 @@
         <div id="corrDrawerContent"></div>
     </div>
 
+    <!-- Signature Settings Drawer -->
+    <div id="sigBackdrop" class="drawer-backdrop" onclick="closeSignatureSettings()"></div>
+    <div id="sigDrawer" class="drawer" style="width:min(420px, 90vw);">
+        <div class="drawer-header">
+            <div class="drawer-title">Email Signature Settings</div>
+            <button class="drawer-close" onclick="closeSignatureSettings()">Close</button>
+        </div>
+        <div style="padding:16px;">
+            <label style="display:block;margin-bottom:4px;color:#8b949e;font-size:12px;">User</label>
+            <select id="sigUserSelect" onchange="loadSignatureForUser()" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:8px;border-radius:6px;margin-bottom:12px;font-size:13px;"></select>
+
+            <label style="display:block;margin-bottom:4px;color:#8b949e;font-size:12px;">Signature Name (as shown in emails)</label>
+            <input id="sigName" type="text" placeholder="e.g. Samuel Hylton" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:8px;border-radius:6px;margin-bottom:12px;font-size:13px;box-sizing:border-box;">
+
+            <label style="display:block;margin-bottom:4px;color:#8b949e;font-size:12px;">Title</label>
+            <input id="sigTitle" type="text" placeholder="e.g. Documentary Researcher, Matcher" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:8px;border-radius:6px;margin-bottom:12px;font-size:13px;box-sizing:border-box;">
+
+            <label style="display:block;margin-bottom:4px;color:#8b949e;font-size:12px;">Phone</label>
+            <input id="sigPhone" type="text" placeholder="e.g. 209-800-7702" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:8px;border-radius:6px;margin-bottom:16px;font-size:13px;box-sizing:border-box;">
+
+            <div style="display:flex;gap:8px;">
+                <button onclick="saveSignatureSettings()" class="drawer-btn primary" style="flex:1;">Save</button>
+                <button onclick="closeSignatureSettings()" class="drawer-btn" style="flex:1;">Cancel</button>
+            </div>
+            <div id="sigStatus" style="margin-top:10px;font-size:12px;color:#8b949e;"></div>
+            <div style="margin-top:16px;padding:12px;background:#161b22;border-radius:6px;border:1px solid #30363d;">
+                <div style="color:#8b949e;font-size:11px;margin-bottom:6px;">Preview:</div>
+                <div id="sigPreview" style="color:#c9d1d9;font-size:13px;white-space:pre-line;line-height:1.5;"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Tab switching
         document.querySelectorAll('.tab').forEach(tab => {
@@ -1804,6 +1837,88 @@
             const sel = document.getElementById('activeUserSwitcher');
             activeUserName = sel.value;
             localStorage.setItem('monitorActiveUser', activeUserName);
+        }
+
+        // === Signature Settings ===
+        let _sigUsers = [];
+        async function openSignatureSettings() {
+            document.getElementById('sigBackdrop').classList.add('active');
+            document.getElementById('sigDrawer').classList.add('active');
+            try {
+                const res = await fetch('/api/users');
+                const data = await res.json();
+                _sigUsers = data.users || [];
+                const sel = document.getElementById('sigUserSelect');
+                sel.textContent = '';
+                _sigUsers.forEach(u => {
+                    const opt = document.createElement('option');
+                    opt.value = u.id;
+                    opt.textContent = u.name;
+                    sel.appendChild(opt);
+                });
+                loadSignatureForUser();
+            } catch (e) {
+                document.getElementById('sigStatus').textContent = 'Error loading users';
+            }
+        }
+
+        function closeSignatureSettings() {
+            document.getElementById('sigBackdrop').classList.remove('active');
+            document.getElementById('sigDrawer').classList.remove('active');
+        }
+
+        function loadSignatureForUser() {
+            const uid = parseInt(document.getElementById('sigUserSelect').value);
+            const user = _sigUsers.find(u => u.id === uid);
+            if (!user) return;
+            document.getElementById('sigName').value = user.signature_name || user.name || '';
+            document.getElementById('sigTitle').value = user.signature_title || '';
+            document.getElementById('sigPhone').value = user.signature_phone || '';
+            document.getElementById('sigStatus').textContent = '';
+            updateSigPreview();
+        }
+
+        function updateSigPreview() {
+            const name = document.getElementById('sigName').value || '(name)';
+            const title = document.getElementById('sigTitle').value || '(title)';
+            const phone = document.getElementById('sigPhone').value;
+            let preview = `Thank you,\n${name}\n${title}`;
+            if (phone) preview += `\n${phone}`;
+            document.getElementById('sigPreview').textContent = preview;
+        }
+
+        // Live preview on input
+        ['sigName', 'sigTitle', 'sigPhone'].forEach(id => {
+            document.getElementById(id)?.addEventListener('input', updateSigPreview);
+        });
+
+        async function saveSignatureSettings() {
+            const uid = document.getElementById('sigUserSelect').value;
+            const body = {
+                signature_name: document.getElementById('sigName').value,
+                signature_title: document.getElementById('sigTitle').value,
+                signature_phone: document.getElementById('sigPhone').value
+            };
+            try {
+                const res = await fetch(`/api/users/${uid}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('sigStatus').textContent = 'Saved!';
+                    document.getElementById('sigStatus').style.color = '#3fb950';
+                    const idx = _sigUsers.findIndex(u => u.id === parseInt(uid));
+                    if (idx >= 0) Object.assign(_sigUsers[idx], data.user);
+                } else {
+                    document.getElementById('sigStatus').textContent = data.error || 'Save failed';
+                    document.getElementById('sigStatus').style.color = '#f85149';
+                }
+            } catch (e) {
+                document.getElementById('sigStatus').textContent = 'Save failed';
+                document.getElementById('sigStatus').style.color = '#f85149';
+            }
         }
 
         function updateUrlHash() {
