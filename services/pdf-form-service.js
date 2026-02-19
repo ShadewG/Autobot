@@ -35,10 +35,11 @@ const ATTACHMENTS_DIR = path.join(__dirname, '..', 'data', 'attachments');
 /**
  * Check if a Skyvern failure is PDF-form-related.
  */
-function isPdfFormFailure(failureReason, workflowResponse) {
+function isPdfFormFailure(failureReason, workflowResponse, portalUrl) {
     const text = [
         failureReason || '',
-        JSON.stringify(workflowResponse || {})
+        JSON.stringify(workflowResponse || {}),
+        portalUrl || ''
     ].join(' ').toLowerCase();
 
     // Direct keyword matches
@@ -70,15 +71,15 @@ function isPdfFormFailure(failureReason, workflowResponse) {
 async function extractPdfUrl(failureReason, workflowResponse, portalUrl) {
     const responseText = JSON.stringify(workflowResponse || {});
 
-    // Strategy 1: Find .pdf URLs in the response
-    const pdfUrlMatch = responseText.match(/https?:\/\/[^\s"',]+\.pdf(?:\?[^\s"',]*)?/i);
-    if (pdfUrlMatch) {
-        return pdfUrlMatch[0];
+    // Strategy 1: Find document URLs in the response (.pdf, .doc, .docx, .xls, etc.)
+    const docUrlMatch = responseText.match(/https?:\/\/[^\s"',]+\.(?:pdf|doc|docx|xls|xlsx|rtf|odt)(?:\?[^\s"',]*)?/i);
+    if (docUrlMatch) {
+        return docUrlMatch[0];
     }
 
     // Strategy 2: Find any download/form URLs
     const downloadMatch = responseText.match(/https?:\/\/[^\s"',]+(?:download|form|request)[^\s"',]*/i);
-    if (downloadMatch && /\.pdf|download|form/i.test(downloadMatch[0])) {
+    if (downloadMatch && /\.pdf|\.doc|download|form/i.test(downloadMatch[0])) {
         return downloadMatch[0];
     }
 
@@ -105,8 +106,8 @@ async function extractPdfUrl(failureReason, workflowResponse, portalUrl) {
         console.warn('AI PDF URL extraction failed:', err.message);
     }
 
-    // Strategy 4: If portal URL itself ends in .pdf
-    if (portalUrl && /\.pdf(\?.*)?$/i.test(portalUrl)) {
+    // Strategy 4: If portal URL itself is a document file
+    if (portalUrl && /\.(pdf|doc|docx|xls|xlsx|rtf|odt)(\?.*)?$/i.test(portalUrl)) {
         return portalUrl;
     }
 

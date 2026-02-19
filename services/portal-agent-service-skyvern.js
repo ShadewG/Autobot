@@ -1082,7 +1082,7 @@ class PortalAgentServiceSkyvern {
 
             // NOT A REAL PORTAL: PDF download, fax-only, cannot-automate, etc.
             // Research for a real portal FIRST before falling back to PDF email.
-            if (pdfFormService.isPdfFormFailure(failureReason, finalResult)) {
+            if (pdfFormService.isPdfFormFailure(failureReason, finalResult, portalUrl)) {
                 console.log(`🔍 Portal not automatable for case ${caseData.id} — researching for real portal first...`);
                 await database.logActivity('portal_not_automatable',
                     `Portal URL is not a real online form (PDF/fax/download): ${failureReason}`, {
