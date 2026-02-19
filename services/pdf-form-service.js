@@ -713,14 +713,15 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
 
     console.log(`💾 Saved filled PDF: ${filledPath} (${filledBuffer.length} bytes)`);
 
-    // 5. Save to attachments table
+    // 5. Save to attachments table (include binary so it survives ephemeral deploys)
     const attachment = await database.createAttachment({
         message_id: null,
         case_id: caseData.id,
         filename: filledFilename,
         content_type: 'application/pdf',
         size_bytes: filledBuffer.length,
-        storage_path: filledPath
+        storage_path: filledPath,
+        file_data: filledBuffer
     });
 
     // 6. Generate cover email draft via AI

@@ -2438,16 +2438,18 @@ class DatabaseService {
 
     async createAttachment(data) {
         const result = await this.query(`
-            INSERT INTO attachments (message_id, case_id, filename, content_type, size_bytes, storage_path)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO attachments (message_id, case_id, filename, content_type, size_bytes, storage_path, file_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             RETURNING *
-        `, [data.message_id, data.case_id, data.filename, data.content_type, data.size_bytes, data.storage_path]);
+        `, [data.message_id, data.case_id, data.filename, data.content_type, data.size_bytes, data.storage_path, data.file_data || null]);
         return result.rows[0];
     }
 
     async getAttachmentsByCaseId(caseId) {
         const result = await this.query(`
-            SELECT a.*, m.subject AS message_subject, m.direction AS message_direction
+            SELECT a.id, a.message_id, a.case_id, a.filename, a.content_type, a.size_bytes,
+                   a.storage_path, a.storage_url, a.created_at,
+                   m.subject AS message_subject, m.direction AS message_direction
             FROM attachments a
             LEFT JOIN messages m ON a.message_id = m.id
             WHERE a.case_id = $1

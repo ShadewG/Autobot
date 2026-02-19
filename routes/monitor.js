@@ -2173,16 +2173,23 @@ router.get('/attachments/:id/download', async (req, res) => {
 
         const attachment = await db.getAttachmentById(attachmentId);
         if (!attachment) return res.status(404).json({ success: false, error: 'Attachment not found' });
-        if (!attachment.storage_path) return res.status(404).json({ success: false, error: 'No file on disk' });
 
+        res.setHeader('Content-Disposition', `inline; filename="${attachment.filename || 'download'}"`);
+        res.setHeader('Content-Type', attachment.content_type || 'application/octet-stream');
+
+        // Try disk first, fall back to DB binary
         const fsSync = require('fs');
-        if (!fsSync.existsSync(attachment.storage_path)) {
-            return res.status(404).json({ success: false, error: 'File not found on disk' });
+        if (attachment.storage_path && fsSync.existsSync(attachment.storage_path)) {
+            return fsSync.createReadStream(attachment.storage_path).pipe(res);
         }
 
-        res.setHeader('Content-Disposition', `attachment; filename="${attachment.filename || 'download'}"`);
-        res.setHeader('Content-Type', attachment.content_type || 'application/octet-stream');
-        fsSync.createReadStream(attachment.storage_path).pipe(res);
+        // Serve from DB file_data column
+        if (attachment.file_data) {
+            res.setHeader('Content-Length', attachment.file_data.length);
+            return res.send(attachment.file_data);
+        }
+
+        return res.status(404).json({ success: false, error: 'File not available (lost during deploy)' });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
