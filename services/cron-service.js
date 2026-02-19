@@ -103,14 +103,13 @@ class CronService {
                 for (const c of readyCases) {
                     try {
                         await generateQueue.add('generate-and-send', { caseId: c.id }, {
-                            jobId: `generate-${c.id}`,
+                            jobId: `generate-${c.id}-${Date.now()}`,
                             attempts: 2,
                             backoff: { type: 'exponential', delay: 30000 }
                         });
                         queued++;
                     } catch (e) {
                         if (!e.message?.includes('duplicate')) throw e;
-                        // Already queued — skip
                     }
                 }
                 if (queued > 0) {

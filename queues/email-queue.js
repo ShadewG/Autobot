@@ -749,11 +749,9 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
 
         // If portal submission did not occur/succeed, fall back to email flow
         if (!portalHandled) {
-            // NEVER fall back to email if there's a portal_url - portal submission only
-            if (portalUrl) {
-                console.log(`🚫 BLOCKED: Case ${caseId} has portal_url but portal submission failed - NO EMAIL fallback`);
-                console.log(`🌐 Portal URL: ${portalUrl}`);
-                console.log(`⚠️ Portal error: ${portalError?.message || 'Unknown error or unsupported domain'}`);
+            // Portal failed — try email fallback if available, otherwise human review
+            if (portalUrl && !contactEmail) {
+                console.log(`🚫 Case ${caseId} has portal_url but portal failed and no email — needs human review`);
                 const portalErrMsg = (portalError?.message || 'Unknown error or unsupported domain').substring(0, 80);
                 await db.updateCaseStatus(caseId, 'needs_human_review', {
                     substatus: `Portal failed: ${portalErrMsg}`.substring(0, 100)
@@ -772,6 +770,8 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                     portal_failed: true,
                     requires_human_review: true
                 };
+            } else if (portalUrl && contactEmail) {
+                console.log(`📧 Portal failed for case ${caseId}, falling back to email (${contactEmail})`);
             }
 
             if (portalError) {
