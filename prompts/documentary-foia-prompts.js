@@ -13,14 +13,6 @@ STYLE GUIDELINES:
 - Be polite and respectful
 - Keep requests short and organized (200-400 words total)
 
-REQUESTER INFO (always include at end):
-Name: Samuel Hylton
-Email: requests@foib-request.com
-Address:
-3021 21st Ave W
-Apt 202
-Seattle, WA 98199
-
 CONTENT STRUCTURE (use natural language, not templates):
 1. Opening greeting (professional and simple)
 2. State the applicable public records law for the jurisdiction
@@ -39,8 +31,10 @@ CONTENT STRUCTURE (use natural language, not templates):
 8. Ask for exemption citations if anything is withheld and request segregable portions
 9. Mention non-commercial/documentary purpose and reasonable cost agreement (notify if over $50)
 10. Reference the state's response timeline
-11. Professional closing
-12. Full signature with contact info
+11. Professional closing: "Thank you, Samuel Hylton, Matcher"
+
+DO NOT include email addresses, phone numbers, mailing addresses, or any contact info in the body.
+The email's From header already identifies the sender — repeating it in the body is redundant.
 
 IMPORTANT:
 - Write naturally - vary your language between requests
