@@ -122,6 +122,33 @@ async function classifyInboundNode(state) {
       };
     }
 
+    // Pre-check: detect automated portal system emails and skip AI classification
+    const fromAddr = (message.from_email || message.sender_email || '').toLowerCase();
+    const subjectLower = (message.subject || '').toLowerCase();
+    const bodySnippet = ((message.body_text || message.body_html || '').substring(0, 500)).toLowerCase();
+    const portalSystems = ['justfoia', 'nextrequest', 'govqa', 'jotform', 'smartsheet'];
+    const isPortalSystem = portalSystems.some(p => fromAddr.includes(p) || subjectLower.includes(p));
+    const isNoReply = /no.?reply|do.?not.?reply/.test(fromAddr);
+    const isVerification = subjectLower.includes('verify') || subjectLower.includes('confirm your') ||
+        bodySnippet.includes('verify your email') || bodySnippet.includes('confirm your email') ||
+        bodySnippet.includes('confirm your account');
+
+    if ((isPortalSystem || isNoReply) && isVerification) {
+      logger.info('Auto-classified as portal verification email', { caseId, from: fromAddr, subject: message.subject });
+      await db.saveResponseAnalysis({
+        messageId: latestInboundMessageId, caseId,
+        intent: 'acknowledgment', confidenceScore: 0.99, sentiment: 'neutral',
+        keyPoints: ['Automated portal verification/confirmation email — no action needed'],
+        requiresAction: false, suggestedAction: 'wait',
+        fullAnalysisJson: { auto_classified: true, reason: 'portal_verification_email' }
+      });
+      return {
+        classification: 'ACKNOWLEDGMENT', classificationConfidence: 0.99,
+        requiresResponse: false,
+        logs: [`Auto-classified: portal verification email from ${fromAddr} — no action needed`]
+      };
+    }
+
     // Load full thread so GPT has conversation context
     const threadMessages = await db.getMessagesByCaseId(caseId);
 

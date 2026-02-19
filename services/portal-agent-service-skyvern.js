@@ -1319,13 +1319,81 @@ class PortalAgentServiceSkyvern {
                     `UPDATE proposals SET status = 'DISMISSED', human_decision = jsonb_build_object('reason','Superseded by PDF email fallback','decidedBy','system') WHERE case_id = $1 AND action_type = 'SUBMIT_PORTAL' AND status = 'PENDING_APPROVAL'`,
                     [caseData.id]
                 );
+
+                const targetEmail = caseData.agency_email || caseData.alternate_agency_email;
+
+                if (targetEmail) {
+                    // Auto-send: we have an email and a filled PDF — just send it
+                    try {
+                        const fs = require('fs');
+                        const sendgridService = require('./sendgrid-service');
+                        const attachments = await database.getAttachmentsByCaseId(caseData.id);
+                        const pdfAttachment = attachments.find(a =>
+                            a.filename?.startsWith('filled_') && a.content_type === 'application/pdf'
+                        );
+                        let pdfBuffer;
+                        if (pdfAttachment?.storage_path && fs.existsSync(pdfAttachment.storage_path)) {
+                            pdfBuffer = fs.readFileSync(pdfAttachment.storage_path);
+                        } else if (pdfAttachment) {
+                            const fullAtt = await database.getAttachmentById(pdfAttachment.id);
+                            if (fullAtt?.file_data) pdfBuffer = fullAtt.file_data;
+                        }
+                        if (pdfBuffer) {
+                            const draftSubject = pdfResult.draftSubject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`;
+                            const sendResult = await sendgridService.sendEmail({
+                                to: targetEmail,
+                                subject: draftSubject,
+                                text: pdfResult.draftBodyText,
+                                caseId: caseData.id,
+                                messageType: 'send_pdf_email',
+                                attachments: [{
+                                    content: pdfBuffer.toString('base64'),
+                                    filename: pdfAttachment.filename,
+                                    type: 'application/pdf',
+                                    disposition: 'attachment'
+                                }]
+                            });
+                            await database.upsertProposal({
+                                proposalKey: `${caseData.id}:pdf_form:SEND_PDF_EMAIL:1`,
+                                caseId: caseData.id,
+                                actionType: 'SEND_PDF_EMAIL',
+                                reasoning: [
+                                    { step: 'Portal URL is not a real online form', detail: reason },
+                                    { step: 'PDF form filled and auto-sent via email', detail: `Sent to ${targetEmail}` }
+                                ],
+                                confidence: 0.9,
+                                requiresHuman: false,
+                                canAutoExecute: true,
+                                draftSubject,
+                                draftBodyText: pdfResult.draftBodyText,
+                                status: 'EXECUTED'
+                            });
+                            await database.updateCaseStatus(caseData.id, 'sent', {
+                                substatus: `PDF form auto-sent to ${targetEmail} (portal was not a real form)`,
+                                send_date: new Date()
+                            });
+                            await database.logActivity('pdf_email_auto_sent', `PDF form auto-sent to ${targetEmail} for case ${caseData.id}`, {
+                                case_id: caseData.id, portal_url: originalUrl,
+                                attachment_id: pdfResult.attachmentId, message_id: sendResult.messageId
+                            });
+                            console.log(`📧 PDF form auto-sent to ${targetEmail} for case ${caseData.id}`);
+                            return { success: true, status: 'pdf_email_sent', engine: 'pdf_form_auto' };
+                        }
+                    } catch (sendErr) {
+                        console.warn(`📧 PDF auto-send failed for case ${caseData.id}:`, sendErr.message);
+                        // Fall through to PENDING_APPROVAL below
+                    }
+                }
+
+                // No email or send failed — needs human review
                 await database.upsertProposal({
                     proposalKey: `${caseData.id}:pdf_form:SEND_PDF_EMAIL:1`,
                     caseId: caseData.id,
                     actionType: 'SEND_PDF_EMAIL',
                     reasoning: [
                         { step: 'Portal URL is not a real online form (researched, no alternative found)', detail: reason },
-                        { step: 'PDF form filled automatically', detail: `Attachment ID: ${pdfResult.attachmentId}` }
+                        { step: 'PDF form filled automatically', detail: `Attachment ID: ${pdfResult.attachmentId}` },
+                        { step: 'No email address on file', detail: 'Needs human to find agency email before sending' }
                     ],
                     confidence: 0.7,
                     requiresHuman: true,
@@ -1335,9 +1403,9 @@ class PortalAgentServiceSkyvern {
                     status: 'PENDING_APPROVAL'
                 });
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: 'No real portal found — PDF form filled, review and send email'
+                    substatus: 'No real portal found — PDF form filled but no email address on file'
                 });
-                await database.logActivity('pdf_form_fallback', `PDF form filled for case ${caseData.id} (no real portal)`, {
+                await database.logActivity('pdf_form_fallback', `PDF form filled for case ${caseData.id} (no real portal, no email)`, {
                     case_id: caseData.id, portal_url: originalUrl,
                     attachment_id: pdfResult.attachmentId, pdf_url: pdfResult.pdfUrl
                 });
