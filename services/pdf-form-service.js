@@ -41,7 +41,22 @@ function isPdfFormFailure(failureReason, workflowResponse) {
         JSON.stringify(workflowResponse || {})
     ].join(' ').toLowerCase();
 
-    return /pdf|download.*form|print.*mail|fillable|fax|cannot be automated within the browser|mail.*form|form.*download|form.*email|submit.*mail|submit.*fax/.test(text);
+    // Direct keyword matches
+    if (/pdf|download.*form|print.*mail|fillable|fax|cannot be automated within the browser|mail.*form|form.*download|form.*email|submit.*mail|submit.*fax/.test(text)) {
+        return true;
+    }
+
+    // Document file URLs that aren't real online portals (.doc, .docx, .pdf, .xls, etc.)
+    if (/\.(doc|docx|pdf|xls|xlsx|rtf|odt)\b/i.test(text)) {
+        return true;
+    }
+
+    // Navigation failed on a document URL (ERR_ABORTED is typical for file downloads)
+    if (/err_aborted|failedtonavigatetourl/i.test(text) && /\.(doc|docx|pdf|xls|xlsx)\b/i.test(text)) {
+        return true;
+    }
+
+    return false;
 }
 
 // =========================================================================

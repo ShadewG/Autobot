@@ -1304,6 +1304,8 @@ class PortalAgentServiceSkyvern {
         } catch (error) {
             const message = error.response?.data?.message || error.response?.data?.error || error.message;
             console.error('❌ Skyvern workflow API error:', message);
+            // workflowRunLink may not be defined if error was thrown before assignment
+            const safeRunLink = (typeof workflowRunLink !== 'undefined') ? workflowRunLink : null;
             try {
                 const truncatedMsg = (message || 'Unknown error').substring(0, 80);
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
@@ -1332,14 +1334,14 @@ class PortalAgentServiceSkyvern {
                     portal_url: portalUrl,
                     engine: 'skyvern_workflow',
                     error: message,
-                    task_url: workflowRunLink || null
+                    task_url: safeRunLink
                 }
             );
             return {
                 success: false,
                 status: 'failed',
                 error: message,
-                workflow_url: workflowRunLink || null,
+                workflow_url: safeRunLink,
                 engine: 'skyvern_workflow'
             };
         }
