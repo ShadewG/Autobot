@@ -928,6 +928,13 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
             throw new Error(`Case ${caseId} not found`);
         }
 
+        // Idempotency: skip if case already past submission stage
+        const skipStatuses = ['sent', 'awaiting_response', 'responded', 'completed', 'needs_phone_call'];
+        if (skipStatuses.includes(caseData.status)) {
+            console.log(`Portal submission skipped for case ${caseId} — already '${caseData.status}'`);
+            return { success: true, case_id: caseId, skipped: true, reason: caseData.status };
+        }
+
         const targetUrl = portalUrl || caseData.portal_url;
         if (!targetUrl) {
             throw new Error(`No portal URL available for case ${caseId}`);

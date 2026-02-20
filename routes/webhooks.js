@@ -206,7 +206,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
             if (!alreadyProcessed && result.portal_notification) {
                 // Don't re-queue portal jobs if the case was already submitted
                 const portalCase = await db.getCaseById(result.case_id);
-                const caseAlreadySubmitted = portalCase && ['sent', 'portal_in_progress'].includes(portalCase.status);
+                const caseAlreadySubmitted = portalCase && ['sent', 'portal_in_progress', 'awaiting_response', 'responded', 'completed'].includes(portalCase.status);
 
                 if (caseAlreadySubmitted) {
                     console.log(`🌐 Portal notification for case ${result.case_id} but already '${portalCase.status}' — skipping portal queue`);
