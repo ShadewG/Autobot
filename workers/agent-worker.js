@@ -481,8 +481,16 @@ async function processInboundMessageJob(job) {
       `Graph execution timed out after ${GRAPH_EXECUTION_TIMEOUT}ms for case ${caseId}`
     );
 
-    // Mark message as processed
+    // Mark trigger message as processed
     await db.markMessageProcessed(messageId, runId, null);
+
+    // Mark ALL other unprocessed inbound messages for this case as processed too —
+    // the graph already saw them all when it ran for this case
+    await db.query(
+      `UPDATE messages SET processed_at = NOW(), processed_run_id = $2
+       WHERE case_id = $1 AND direction = 'inbound' AND processed_at IS NULL AND last_error IS NULL AND id != $3`,
+      [caseId, runId, messageId]
+    );
 
     // Update run based on result
     if (result.status === 'interrupted') {
