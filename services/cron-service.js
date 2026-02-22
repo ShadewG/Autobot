@@ -335,7 +335,7 @@ class CronService {
                         await db.updateCase(caseData.id, updates);
 
                         await db.upsertProposal({
-                            proposalKey: `${caseData.id}:deadline_sweep:RESEARCH_AGENCY:${new Date().toISOString().slice(0, 10)}`,
+                            proposalKey: `${caseData.id}:deadline_sweep:RESEARCH_AGENCY`,
                             caseId: caseData.id,
                             actionType: 'RESEARCH_AGENCY',
                             reasoning: [
@@ -392,7 +392,7 @@ class CronService {
                     } else {
                         // Portal case or research returned null → human review
                         await db.upsertProposal({
-                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE:${new Date().toISOString().slice(0, 10)}`,
+                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
                             caseId: caseData.id,
                             actionType: 'ESCALATE',
                             reasoning: [
@@ -470,7 +470,7 @@ class CronService {
      */
     async _handleAnalyzedOverdueCase(caseData, analysis, daysOverdue) {
         const intent = analysis.intent;
-        const today = new Date().toISOString().slice(0, 10);
+        // Static key base (no date) — dedup relies on case-level guard in upsertProposal
         const proposalKeyBase = `${caseData.id}:deadline_sweep_ai`;
 
         switch (intent) {
@@ -479,7 +479,7 @@ class CronService {
                 const actionType = feeAmount > 0 && feeAmount <= parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100')
                     ? 'ACCEPT_FEE' : 'NEGOTIATE_FEE';
                 await db.upsertProposal({
-                    proposalKey: `${proposalKeyBase}:${actionType}:${today}`,
+                    proposalKey: `${proposalKeyBase}:${actionType}`,
                     caseId: caseData.id,
                     actionType,
                     reasoning: [
@@ -503,7 +503,7 @@ class CronService {
             case 'question':
             case 'more_info_needed': {
                 await db.upsertProposal({
-                    proposalKey: `${proposalKeyBase}:SEND_CLARIFICATION:${today}`,
+                    proposalKey: `${proposalKeyBase}:SEND_CLARIFICATION`,
                     caseId: caseData.id,
                     actionType: 'SEND_CLARIFICATION',
                     reasoning: [
@@ -539,7 +539,7 @@ class CronService {
 
             case 'denial': {
                 await db.upsertProposal({
-                    proposalKey: `${proposalKeyBase}:SEND_REBUTTAL:${today}`,
+                    proposalKey: `${proposalKeyBase}:SEND_REBUTTAL`,
                     caseId: caseData.id,
                     actionType: 'SEND_REBUTTAL',
                     reasoning: [
@@ -562,7 +562,7 @@ class CronService {
 
             case 'portal_redirect': {
                 await db.upsertProposal({
-                    proposalKey: `${proposalKeyBase}:SUBMIT_PORTAL:${today}`,
+                    proposalKey: `${proposalKeyBase}:SUBMIT_PORTAL`,
                     caseId: caseData.id,
                     actionType: 'SUBMIT_PORTAL',
                     reasoning: [
@@ -675,7 +675,6 @@ class CronService {
             `);
 
             const aiService = require('./ai-service');
-            const today = new Date().toISOString().slice(0, 10);
 
             for (const caseData of orphaned.rows) {
                 try {
@@ -758,7 +757,7 @@ class CronService {
                     }
 
                     await db.upsertProposal({
-                        proposalKey: `${caseData.id}:sweep_orphan:TRIAGE:${today}`,
+                        proposalKey: `${caseData.id}:sweep_orphan:${actionType}`,
                         caseId: caseData.id,
                         triggerMessageId: triggerMessageId,
                         actionType: actionType,

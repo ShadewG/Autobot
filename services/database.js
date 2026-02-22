@@ -1281,6 +1281,27 @@ class DatabaseService {
             }
         }
 
+        // DEDUP GUARD: Check for existing PENDING_APPROVAL proposals for this case.
+        // Multiple code paths (LangGraph, cron sweeps, portal failures) create proposals
+        // with different proposal_key formats, so ON CONFLICT alone isn't sufficient.
+        // Rule: one pending proposal per case. First proposal wins; human dismisses if wrong.
+        if (proposalData.caseId) {
+            const existing = await this.query(
+                `SELECT id, action_type, proposal_key, created_at FROM proposals
+                 WHERE case_id = $1 AND status = 'PENDING_APPROVAL'
+                 ORDER BY created_at DESC`,
+                [proposalData.caseId]
+            );
+
+            if (existing.rows.length > 0) {
+                const first = existing.rows[0];
+                console.log(`[DB] Skipping proposal for case ${proposalData.caseId}: ` +
+                    `${proposalData.actionType} not created — ${first.action_type} already pending ` +
+                    `(proposal #${first.id}, key: ${first.proposal_key})`);
+                return await this.getProposalById(first.id);
+            }
+        }
+
         const query = `
             INSERT INTO proposals (
                 proposal_key, case_id, run_id, trigger_message_id, action_type,
