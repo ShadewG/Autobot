@@ -1450,6 +1450,210 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
 });
 
 /**
+ * POST /cases/:id/add-correspondence
+ *
+ * Log manual correspondence (phone call, letter, in-person, fax, other)
+ * and optionally trigger agent processing for next-step recommendations.
+ *
+ * Body:
+ * - correspondence_type: string (required) - phone_call | letter | in_person | fax | other
+ * - direction: string (required) - inbound | outbound
+ * - summary: string (required, min 10 chars) - Description of what happened
+ * - contact_name: string (optional) - Contact person name
+ * - contact_info: string (optional) - Phone/address/etc
+ * - trigger_ai: boolean (defaults to true) - Set false to only log without processing
+ */
+router.post('/cases/:id/add-correspondence', async (req, res) => {
+  const caseId = parseInt(req.params.id);
+  const {
+    correspondence_type,
+    direction,
+    summary,
+    contact_name,
+    contact_info
+  } = req.body || {};
+  // Coerce trigger_ai: string "false" → false, missing → true
+  const trigger_ai = req.body?.trigger_ai === false || req.body?.trigger_ai === 'false' ? false : true;
+
+  try {
+    // === VALIDATION ===
+    const validationErrors = [];
+    const allowedTypes = ['phone_call', 'letter', 'in_person', 'fax', 'other'];
+    const allowedDirections = ['inbound', 'outbound'];
+
+    if (!correspondence_type || typeof correspondence_type !== 'string') {
+      validationErrors.push({ field: 'correspondence_type', error: 'required (string)' });
+    } else if (!allowedTypes.includes(correspondence_type)) {
+      validationErrors.push({ field: 'correspondence_type', error: `must be one of: ${allowedTypes.join(', ')}` });
+    }
+
+    if (!direction || typeof direction !== 'string') {
+      validationErrors.push({ field: 'direction', error: 'required (string)' });
+    } else if (!allowedDirections.includes(direction)) {
+      validationErrors.push({ field: 'direction', error: 'must be inbound or outbound' });
+    }
+
+    if (!summary || typeof summary !== 'string') {
+      validationErrors.push({ field: 'summary', error: 'required (string)' });
+    } else if (summary.length < 10) {
+      validationErrors.push({ field: 'summary', error: 'too short (min 10 chars)' });
+    }
+
+    if (validationErrors.length > 0) {
+      return res.status(422).json({
+        success: false,
+        error: 'Validation failed',
+        details: validationErrors
+      });
+    }
+
+    // Verify case exists
+    const caseData = await db.getCaseById(caseId);
+    if (!caseData) {
+      return res.status(404).json({ success: false, error: 'Case not found' });
+    }
+
+    // === DEDUPLICATION ===
+    const crypto = require('crypto');
+    const normalizedSummary = summary.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 500);
+    const dedupeKey = crypto.createHash('sha256')
+      .update(`${correspondence_type}|${direction}|${normalizedSummary}`)
+      .digest('hex')
+      .slice(0, 32);
+
+    const duplicateCheck = await db.query(`
+      SELECT id, created_at FROM messages
+      WHERE thread_id IN (SELECT id FROM email_threads WHERE case_id = $1)
+        AND direction = $2
+        AND metadata->>'dedupe_key' = $3
+        AND created_at > NOW() - INTERVAL '24 hours'
+      LIMIT 1
+    `, [caseId, direction, dedupeKey]);
+
+    if (duplicateCheck.rows.length > 0) {
+      const existing = duplicateCheck.rows[0];
+      logger.info('Duplicate correspondence detected', { caseId, existingMessageId: existing.id, dedupeKey });
+      return res.status(409).json({
+        success: false,
+        error: 'Duplicate correspondence already logged',
+        existing_message_id: existing.id,
+        dedupe_key: dedupeKey
+      });
+    }
+
+    // === CHECK FOR ACTIVE RUN ===
+    if (trigger_ai) {
+      const existingRun = await db.getActiveRunForCase(caseId);
+      if (existingRun) {
+        return res.status(409).json({
+          success: false,
+          error: 'Case has an active agent run. Wait for it to complete or cancel it first.',
+          active_run: { id: existingRun.id, status: existingRun.status, started_at: existingRun.started_at }
+        });
+      }
+    }
+
+    // === CREATE THREAD IF NEEDED ===
+    let thread = await db.getThreadByCaseId(caseId);
+    if (!thread) {
+      const threadResult = await db.query(`
+        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+        VALUES ($1, $2, NOW(), NOW())
+        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
+        RETURNING *
+      `, [caseId, `Correspondence for case ${caseId}`]);
+      thread = threadResult.rows[0];
+    }
+
+    // === CREATE MESSAGE ===
+    const fromLabel = direction === 'inbound' ? (contact_name || 'Agency Contact') : 'Our Team';
+    const toLabel = direction === 'inbound' ? 'Our Team' : (contact_name || 'Agency Contact');
+    const typeLabel = correspondence_type.replace(/_/g, ' ');
+
+    const messageResult = await db.query(`
+      INSERT INTO messages (
+        thread_id, case_id, direction, from_email, to_email, subject,
+        body_text, received_at, created_at, provider_message_id,
+        message_type, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8, $9, $10)
+      RETURNING *
+    `, [
+      thread.id,
+      caseId,
+      direction,
+      fromLabel,
+      toLabel,
+      `Manual ${typeLabel}${contact_name ? ` - ${contact_name}` : ''}`,
+      summary,
+      `correspondence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      correspondence_type,
+      JSON.stringify({
+        source: 'manual_correspondence',
+        correspondence_type,
+        contact_name: contact_name || null,
+        contact_info: contact_info || null,
+        dedupe_key: dedupeKey
+      })
+    ]);
+
+    const message = messageResult.rows[0];
+
+    // Update case for inbound correspondence only
+    if (direction === 'inbound') {
+      await db.updateCase(caseId, { last_response_date: message.received_at, status: 'responded' });
+    }
+
+    await db.logActivity('correspondence_logged', `Logged ${direction} ${typeLabel}`, {
+      case_id: caseId, message_id: message.id, correspondence_type, direction, contact_name: contact_name || null
+    });
+
+    // === TRIGGER AI RUN ===
+    let run = null;
+    let job = null;
+
+    if (trigger_ai) {
+      run = await db.createAgentRunFull({
+        case_id: caseId,
+        trigger_type: 'inbound_message',
+        message_id: message.id,
+        status: 'queued',
+        autopilot_mode: 'SUPERVISED',
+        langgraph_thread_id: `case:${caseId}:msg-${message.id}`
+      });
+
+      try {
+        job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+          autopilotMode: 'SUPERVISED',
+          threadId: run.langgraph_thread_id
+        });
+      } catch (enqueueError) {
+        await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
+        throw enqueueError;
+      }
+
+      logger.info('Correspondence logged and run triggered', { caseId, messageId: message.id, runId: run.id });
+    } else {
+      logger.info('Correspondence logged (no run triggered)', { caseId, messageId: message.id });
+    }
+
+    res.status(201).json({
+      success: true,
+      message: trigger_ai ? 'Correspondence logged and AI processing started' : 'Correspondence logged successfully',
+      inbound_message_id: message.id,
+      thread_id: thread.id,
+      dedupe_key: dedupeKey,
+      run: run ? { id: run.id, status: run.status, thread_id: run.langgraph_thread_id } : null,
+      job_id: job?.id || null
+    });
+
+  } catch (error) {
+    logger.error('Error logging correspondence', { caseId, error: error.message, stack: error.stack });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * POST /cases/:id/inbound-and-run
  *
  * ATOMIC endpoint that creates an inbound message AND triggers agent processing in one call.

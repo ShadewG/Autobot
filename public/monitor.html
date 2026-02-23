@@ -1298,8 +1298,48 @@
         </div>
         <div class="accordion-body open">
             <div id="caseInspectorMessages" class="case-list"></div>
-            <div style="padding:6px 0;">
-                <button class="drawer-btn primary" onclick="openCorrespondenceDrawer()" style="width:100%;text-align:center;padding:8px;">View Full Thread</button>
+            <div style="padding:6px 0;display:flex;gap:6px;">
+                <button class="drawer-btn primary" onclick="openCorrespondenceDrawer()" style="flex:1;text-align:center;padding:8px;">View Full Thread</button>
+                <button class="drawer-btn" onclick="toggleCorrespondenceForm()" style="flex:1;text-align:center;padding:8px;background:#238636;color:#fff;">+ Add Correspondence</button>
+            </div>
+            <!-- Inline correspondence form (hidden by default) -->
+            <div id="correspondenceForm" style="display:none;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;margin-top:6px;">
+                <div style="display:flex;gap:8px;margin-bottom:8px;">
+                    <div style="flex:1;">
+                        <label style="font-size:11px;color:#8b949e;display:block;margin-bottom:3px;">Type</label>
+                        <select id="corrType" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:6px;font-size:12px;">
+                            <option value="phone_call">Phone Call</option>
+                            <option value="letter">Letter / Mail</option>
+                            <option value="in_person">In-Person</option>
+                            <option value="fax">Fax</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div style="flex:1;">
+                        <label style="font-size:11px;color:#8b949e;display:block;margin-bottom:3px;">Direction</label>
+                        <select id="corrDirection" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:6px;font-size:12px;">
+                            <option value="inbound">They contacted us</option>
+                            <option value="outbound">We contacted them</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:11px;color:#8b949e;display:block;margin-bottom:3px;">Contact Name (optional)</label>
+                    <input id="corrContact" type="text" placeholder="e.g. John Smith, Records Dept" style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:6px;font-size:12px;box-sizing:border-box;">
+                </div>
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:11px;color:#8b949e;display:block;margin-bottom:3px;">Summary</label>
+                    <textarea id="corrSummary" rows="4" placeholder="Describe what happened, what was discussed, and the outcome..." style="width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:6px;font-size:12px;resize:vertical;box-sizing:border-box;"></textarea>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
+                    <input id="corrTriggerAI" type="checkbox" checked>
+                    <label for="corrTriggerAI" style="font-size:11px;color:#8b949e;cursor:pointer;">Get AI recommendation for next steps</label>
+                </div>
+                <div style="display:flex;gap:6px;">
+                    <button id="corrSubmitBtn" class="drawer-btn" onclick="submitCorrespondence()" style="flex:1;background:#238636;color:#fff;padding:8px;text-align:center;">Submit</button>
+                    <button class="drawer-btn" onclick="toggleCorrespondenceForm()" style="padding:8px;">Cancel</button>
+                </div>
+                <div id="corrStatus" style="display:none;margin-top:8px;font-size:11px;padding:6px;border-radius:4px;"></div>
             </div>
         </div>
 
@@ -1731,8 +1771,12 @@
             return '';
         }
 
-        // Badge for direction
-        function directionBadge(dir) {
+        // Badge for direction + correspondence type
+        function directionBadge(dir, messageType) {
+            const corrTypes = { phone_call: 'phone', letter: 'letter', in_person: 'in-person', fax: 'fax', other: 'note' };
+            if (corrTypes[messageType]) {
+                return `<span class="badge" style="background:#6e40c9;color:#fff;">${corrTypes[messageType]}</span> <span class="badge ${dir}">${dir}</span>`;
+            }
             return `<span class="badge ${dir}">${dir}</span>`;
         }
 
@@ -2066,7 +2110,7 @@
                     .map(m => `
                         <tr class="clickable-row" data-message-id="${m.id}" onclick="openMessage(${m.id})">
                             <td class="timestamp">${relativeTime(m.received_at || m.sent_at || m.created_at)}</td>
-                            <td>${directionBadge(m.direction)}</td>
+                            <td>${directionBadge(m.direction, m.message_type)}</td>
                             <td>${truncate(m.from_email, 30)}</td>
                             <td>${truncate(m.to_email, 30)}</td>
                             <td class="email-subject">${truncate(m.subject, 60)}</td>
@@ -3247,7 +3291,7 @@
                 msgHtml += messages.length
                     ? [...messages].reverse().map(m => `
                         <div class="case-list-item">
-                            <div>${directionBadge(m.direction)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
+                            <div>${directionBadge(m.direction, m.message_type)} <a class="case-link" href="#" onclick="openMessage(${m.id});return false;">Message #${m.id}</a> · ${relativeTime(m.received_at || m.sent_at || m.created_at)}</div>
                             <div>${truncate(m.subject || '-', 120)}</div>
                             ${m.summary ? `<div style="font-size:11px;color:#8b949e;font-style:italic;">${escapeHtml(m.summary)}</div>` : ''}
                         </div>
@@ -3995,6 +4039,84 @@
         }
 
         // =====================================================================
+        // Add Correspondence Form
+        // =====================================================================
+        function toggleCorrespondenceForm() {
+            const form = document.getElementById('correspondenceForm');
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            if (form.style.display === 'block') {
+                document.getElementById('corrSummary').value = '';
+                document.getElementById('corrContact').value = '';
+                document.getElementById('corrStatus').style.display = 'none';
+                document.getElementById('corrSubmitBtn').disabled = false;
+            }
+        }
+
+        async function submitCorrespondence() {
+            const caseId = currentCaseData?.id;
+            if (!caseId) return;
+
+            const summary = document.getElementById('corrSummary').value.trim();
+            if (summary.length < 10) {
+                showCorrStatus('Please provide a more detailed summary (at least 10 characters).', 'error');
+                return;
+            }
+
+            const body = {
+                correspondence_type: document.getElementById('corrType').value,
+                direction: document.getElementById('corrDirection').value,
+                summary,
+                contact_name: document.getElementById('corrContact').value.trim() || undefined,
+                trigger_ai: document.getElementById('corrTriggerAI').checked
+            };
+
+            const btn = document.getElementById('corrSubmitBtn');
+            btn.disabled = true;
+            btn.textContent = 'Submitting...';
+            showCorrStatus('Logging correspondence...', 'info');
+
+            try {
+                const resp = await fetch(`/api/run-engine/cases/${caseId}/add-correspondence`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    showCorrStatus(data.error || 'Failed to log correspondence', 'error');
+                    btn.disabled = false;
+                    btn.textContent = 'Submit';
+                    return;
+                }
+
+                const aiMsg = data.run ? ` AI run #${data.run.id} started.` : '';
+                showCorrStatus(`Correspondence logged (Message #${data.inbound_message_id}).${aiMsg}`, 'success');
+                btn.textContent = 'Submit';
+                btn.disabled = false;
+
+                // Refresh the case detail after a short delay
+                setTimeout(() => {
+                    toggleCorrespondenceForm();
+                    openCase(caseId);
+                }, 1500);
+            } catch (err) {
+                showCorrStatus('Network error: ' + err.message, 'error');
+                btn.disabled = false;
+                btn.textContent = 'Submit';
+            }
+        }
+
+        function showCorrStatus(msg, type) {
+            const el = document.getElementById('corrStatus');
+            el.style.display = 'block';
+            el.textContent = msg;
+            el.style.background = type === 'error' ? '#3d1117' : type === 'success' ? '#0d2818' : '#161b22';
+            el.style.color = type === 'error' ? '#f85149' : type === 'success' ? '#3fb950' : '#8b949e';
+            el.style.border = '1px solid ' + (type === 'error' ? '#f8514933' : type === 'success' ? '#3fb95033' : '#30363d');
+        }
+
+        // =====================================================================
         // Correspondence Thread Drawer
         // =====================================================================
         function openCorrespondenceDrawer() {
@@ -4082,7 +4204,7 @@
                     const ts = m.received_at || m.sent_at || m.created_at;
                     html += `<div class="thread-message ${dirClass}">
                         <div class="thread-msg-header">
-                            <span>${directionBadge(m.direction)} <strong>${escapeHtml(m.from_email || '-')}</strong> → ${escapeHtml(m.to_email || '-')}</span>
+                            <span>${directionBadge(m.direction, m.message_type)} <strong>${escapeHtml(m.from_email || '-')}</strong> → ${escapeHtml(m.to_email || '-')}</span>
                             <span>${formatTime(ts)}</span>
                         </div>
                         <div class="thread-msg-subject">${escapeHtml(m.subject || '(no subject)')}</div>
