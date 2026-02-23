@@ -309,7 +309,11 @@ class DatabaseService {
         const query = `
             INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status)
             VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
+            ON CONFLICT (case_id) DO UPDATE SET
+              thread_id = COALESCE(EXCLUDED.thread_id, email_threads.thread_id),
+              subject = COALESCE(EXCLUDED.subject, email_threads.subject),
+              agency_email = COALESCE(EXCLUDED.agency_email, email_threads.agency_email),
+              updated_at = NOW()
             RETURNING *
         `;
         const values = [

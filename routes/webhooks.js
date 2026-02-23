@@ -251,13 +251,13 @@ router.post('/inbound', upload.any(), async (req, res) => {
                     console.warn(`🌐 Portal notification for case ${result.case_id} but portalQueue is null — skipping`);
                 } else if (result.portal_notification.type === 'confirmation_link') {
                     await portalQueue.add('portal-submit', portalJobData, {
-                        jobId: `${result.case_id}:portal-submit`,
+                        jobId: `${result.case_id}:portal-submit:${result.message_id}`,
                         attempts: 1
                     });
                     console.log(`🔁 Portal submission re-queued for case ${result.case_id} using confirmation link`);
                 } else {
                     await portalQueue.add('portal-refresh', portalJobData, {
-                        jobId: `${result.case_id}:portal-refresh`,
+                        jobId: `${result.case_id}:portal-refresh:${result.message_id}`,
                         attempts: 3,
                         backoff: {
                             type: 'exponential',
@@ -269,7 +269,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
                     if (result.portal_notification.type === 'submission_required') {
                         await portalQueue.add('portal-submit', portalJobData, {
-                            jobId: `${result.case_id}:portal-submit`,
+                            jobId: `${result.case_id}:portal-submit:${result.message_id}`,
                             attempts: 1
                         });
                         console.log(`🚀 Portal submission queued for case ${result.case_id} (${portalJobData.provider})`);

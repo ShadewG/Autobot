@@ -1141,36 +1141,41 @@ router.post('/runs/:id/retry', async (req, res) => {
       langgraph_thread_id: `retry:${originalRun.case_id}:run-${runId}:${Date.now()}`
     });
 
-    // Enqueue the appropriate job based on original trigger type
+    // Enqueue the appropriate job based on original trigger type (clean up orphaned run on failure)
     let job;
     const triggerType = originalRun.trigger_type?.toLowerCase() || 'manual';
 
-    if (triggerType.includes('initial')) {
-      job = await enqueueInitialRequestJob(newRun.id, originalRun.case_id, {
-        autopilotMode: newRun.autopilot_mode,
-        threadId: newRun.langgraph_thread_id
-      });
-    } else if (triggerType.includes('inbound')) {
-      // Need the original message ID
-      const messageId = originalRun.message_id;
-      if (messageId) {
-        job = await enqueueInboundMessageJob(newRun.id, originalRun.case_id, messageId, {
+    try {
+      if (triggerType.includes('initial')) {
+        job = await enqueueInitialRequestJob(newRun.id, originalRun.case_id, {
           autopilotMode: newRun.autopilot_mode,
           threadId: newRun.langgraph_thread_id
         });
+      } else if (triggerType.includes('inbound')) {
+        // Need the original message ID
+        const messageId = originalRun.message_id;
+        if (messageId) {
+          job = await enqueueInboundMessageJob(newRun.id, originalRun.case_id, messageId, {
+            autopilotMode: newRun.autopilot_mode,
+            threadId: newRun.langgraph_thread_id
+          });
+        } else {
+          // Fall back to manual trigger
+          job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
+        }
+      } else if (triggerType.includes('followup')) {
+        job = await enqueueFollowupTriggerJob(newRun.id, originalRun.case_id, null, {
+          autopilotMode: newRun.autopilot_mode,
+          threadId: newRun.langgraph_thread_id,
+          manualTrigger: true
+        });
       } else {
-        // Fall back to manual trigger
+        // Generic manual trigger
         job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
       }
-    } else if (triggerType.includes('followup')) {
-      job = await enqueueFollowupTriggerJob(newRun.id, originalRun.case_id, null, {
-        autopilotMode: newRun.autopilot_mode,
-        threadId: newRun.langgraph_thread_id,
-        manualTrigger: true
-      });
-    } else {
-      // Generic manual trigger
-      job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
+    } catch (enqueueError) {
+      await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
+      throw enqueueError;
     }
 
     logger.info('Agent run retry created', {
@@ -1192,6 +1197,9 @@ router.post('/runs/:id/retry', async (req, res) => {
     });
 
   } catch (error) {
+    if (error.code === '23505' && String(error.constraint || '').includes('one_active_per_case')) {
+      return res.status(409).json({ success: false, error: 'Case already has an active agent run (constraint)' });
+    }
     logger.error('Error retrying run', { runId, error: error.message });
     res.status(500).json({
       success: false,
@@ -1324,6 +1332,7 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
       const threadResult = await db.query(`
         INSERT INTO email_threads (case_id, subject, created_at, updated_at)
         VALUES ($1, $2, NOW(), NOW())
+        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
         RETURNING *
       `, [caseId, subject || `Manual ingestion for case ${caseId}`]);
       thread = threadResult.rows[0];
@@ -1531,6 +1540,7 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
       const threadResult = await db.query(`
         INSERT INTO email_threads (case_id, subject, created_at, updated_at)
         VALUES ($1, $2, NOW(), NOW())
+        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
         RETURNING *
       `, [caseId, subject || `Inbound for case ${caseId}`]);
       thread = threadResult.rows[0];

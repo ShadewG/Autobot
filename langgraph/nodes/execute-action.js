@@ -177,7 +177,7 @@ async function executeActionNode(state) {
         provider: caseData.portal_provider || null,
         instructions: draftBodyText || draftBodyHtml || null
       }, {
-        jobId: `${caseId}:portal-submit`,
+        jobId: `${caseId}:portal-submit:${runId || proposalId}`,
         attempts: 1,
         removeOnComplete: 100,
         removeOnFail: 100
@@ -319,9 +319,9 @@ async function executeActionNode(state) {
         originalMessageId: latestInbound?.message_id
       });
 
-      // Check for send failure (email executor returned success: false)
-      if (emailResult.success === false) {
-        const failReason = emailResult.error || 'Email send failed';
+      // Check for send failure (email executor returned falsy success)
+      if (!emailResult || emailResult.success !== true) {
+        const failReason = emailResult?.error || 'Email send failed';
         logs.push(`BLOCKED: ${failReason}`);
 
         await db.updateProposal(proposalId, {
@@ -779,7 +779,7 @@ async function executeActionNode(state) {
           provider: caseData.portal_provider || null,
           instructions: draftBodyText || draftBodyHtml || null
         }, {
-          jobId: `${caseId}:portal-submit`,
+          jobId: `${caseId}:portal-submit:${runId || proposalId}`,
           attempts: 1,
           removeOnComplete: 100,
           removeOnFail: 100
