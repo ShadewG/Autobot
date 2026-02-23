@@ -568,7 +568,9 @@ router.get('/:id/workspace', async (req, res) => {
                 const analysis = analysisMap[msg.id];
                 if (analysis) {
                     tm.classification = analysis.intent || null;
-                    tm.summary = analysis.key_points || null;
+                    tm.summary = Array.isArray(analysis.key_points)
+                        ? analysis.key_points.join('; ')
+                        : (analysis.key_points || null);
                     tm.sentiment = analysis.sentiment || null;
                 }
                 return tm;

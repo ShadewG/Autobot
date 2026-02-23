@@ -589,9 +589,9 @@ function RequestDetailContent() {
             </div>
           )}
           {request.portal_request_number && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 min-w-0">
               <span className="text-muted-foreground">NR:</span>
-              <Badge variant="outline" className="font-medium">
+              <Badge variant="outline" className="font-medium truncate max-w-[120px]" title={request.portal_request_number}>
                 {request.portal_request_number}
               </Badge>
             </div>

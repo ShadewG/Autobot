@@ -406,16 +406,18 @@ class SendGridService {
                 const detectedNR = this.extractRequestNumber(`${inboundData.subject || ''}\n${bodyText}`);
                 if (detectedNR) {
                     try {
-                        await db.query(
-                            'UPDATE cases SET portal_request_number = $1 WHERE id = $2 AND portal_request_number IS NULL',
+                        const result = await db.query(
+                            'UPDATE cases SET portal_request_number = $1 WHERE id = $2 AND (portal_request_number IS NULL OR portal_request_number = \'\')',
                             [detectedNR, caseData.id]
                         );
-                        caseData.portal_request_number = detectedNR;
-                        console.log(`Stored portal_request_number "${detectedNR}" for case #${caseData.id}`);
-                        await db.logActivity('nr_captured', `Request number ${detectedNR} captured from inbound email`, {
-                            case_id: caseData.id,
-                            request_number: detectedNR
-                        });
+                        if (result.rowCount > 0) {
+                            caseData.portal_request_number = detectedNR;
+                            console.log(`Stored portal_request_number "${detectedNR}" for case #${caseData.id}`);
+                            await db.logActivity('nr_captured', `Request number ${detectedNR} captured from inbound email`, {
+                                case_id: caseData.id,
+                                request_number: detectedNR
+                            });
+                        }
                     } catch (e) {
                         console.warn('Failed to save portal_request_number post-match:', e.message);
                     }
@@ -1076,9 +1078,9 @@ class SendGridService {
                 }
             }
         } else if (provider === 'civicplus') {
-            // Request number from subject: "Request #12345" or "Tracking: 12345"
-            const reqMatch = subjectStr.match(/(?:Request|Tracking|Ref)[:\s#]*([A-Z]{0,5}-?\d{2,4}-?\d+)/i)
-                          || subjectStr.match(/#([A-Z0-9]+-\d+|\d{3,})/i);
+            // Request number from subject — require keyword anchor to avoid matching bare dates
+            const reqMatch = subjectStr.match(/(?:Request|Tracking|Ref|Confirmation)[:\s#]+([A-Z]{1,5}-\d{2,4}-\d+)/i)
+                          || subjectStr.match(/#([A-Z0-9]+-\d+|\d{4,})/i);
             if (reqMatch) {
                 signals.requestNumber = reqMatch[1];
             }
