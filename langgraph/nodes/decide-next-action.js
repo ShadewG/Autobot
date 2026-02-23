@@ -477,9 +477,11 @@ async function decideNextActionNode(state) {
         case 'APPROVE':
           reasoning.push('Human approved the proposal');
           return {
+            humanDecision: null,  // Clear consumed decision to prevent stale routing
             proposalActionType,  // Use hydrated value
             canAutoExecute: true,  // Now approved for execution
             requiresHuman: false,
+            adjustmentInstruction: null,  // Clear stale adjustment text
             logs,
             proposalReasoning: reasoning,
             nextNode: 'execute_action'
@@ -488,6 +490,7 @@ async function decideNextActionNode(state) {
         case 'ADJUST':
           reasoning.push(`Human requested adjustment: ${humanDecision.instruction}`);
           return {
+            humanDecision: null,  // Clear consumed decision to prevent stale routing
             proposalActionType,  // Use hydrated value
             adjustmentInstruction: humanDecision.instruction,  // Pass instruction to draft node
             proposalReasoning: reasoning,
@@ -498,11 +501,11 @@ async function decideNextActionNode(state) {
         case 'DISMISS':
           reasoning.push('Human dismissed proposal - ending graph run');
           // For now, DISMISS ends the graph. User can manually re-invoke later.
-          // TODO: Implement proper dismissal tracking
           return {
             proposalId: null,
             proposalKey: null,
             humanDecision: null,
+            adjustmentInstruction: null,  // Clear stale adjustment text
             isComplete: true,  // End the graph run
             logs: [...logs, 'Proposal dismissed by user'],
             proposalReasoning: reasoning
@@ -515,6 +518,8 @@ async function decideNextActionNode(state) {
           });
           await db.updateCase(caseId, { outcome_type: 'withdrawn', outcome_recorded: new Date() });
           return {
+            humanDecision: null,  // Clear consumed decision to prevent stale routing
+            adjustmentInstruction: null,  // Clear stale adjustment text
             isComplete: true,
             logs: [...logs, 'Request withdrawn by user'],
             proposalReasoning: reasoning

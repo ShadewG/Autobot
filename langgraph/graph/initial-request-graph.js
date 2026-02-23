@@ -80,6 +80,9 @@ function routeFromGate(state) {
   if (nextNode && VALID_INIT_GATE_DESTINATIONS.has(nextNode)) {
     return nextNode;
   }
+  if (nextNode && !VALID_INIT_GATE_DESTINATIONS.has(nextNode)) {
+    logger.warn('routeFromGate: ignoring invalid nextNode', { nextNode, caseId: state.caseId });
+  }
 
   // If can auto-execute, proceed
   if (canAutoExecute) {

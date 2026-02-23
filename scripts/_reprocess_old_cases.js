@@ -86,6 +86,29 @@ async function clearProcessedAt(messageId) {
   `, [messageId]);
 }
 
+// Verify the run that processed this message actually failed or produced no output
+// before clearing processed_at — prevents wiping valid processing markers
+async function shouldClearProcessedAt(caseId, processedRunId) {
+  if (!processedRunId) return { ok: true, reason: 'no processed_run_id on message' };
+
+  const result = await pool.query(`
+    SELECT ar.id, ar.status,
+      COALESCE(p.cnt, 0)::int AS proposal_count,
+      COALESCE(dt.cnt, 0)::int AS trace_count
+    FROM agent_runs ar
+    LEFT JOIN (SELECT run_id, count(*) AS cnt FROM proposals GROUP BY run_id) p ON p.run_id = ar.id
+    LEFT JOIN (SELECT run_id, count(*) AS cnt FROM decision_traces GROUP BY run_id) dt ON dt.run_id = ar.id
+    WHERE ar.id = $1 AND ar.case_id = $2
+    LIMIT 1
+  `, [processedRunId, caseId]);
+
+  const run = result.rows[0];
+  if (!run) return { ok: true, reason: `run #${processedRunId} not found` };
+  if (run.status === 'failed' || run.status === 'cancelled') return { ok: true, reason: `run #${processedRunId} ${run.status}` };
+  if (run.status === 'completed' && run.proposal_count === 0 && run.trace_count === 0) return { ok: true, reason: `run #${processedRunId} completed with no output` };
+  return { ok: false, reason: `run #${processedRunId} status=${run.status}, proposals=${run.proposal_count}, traces=${run.trace_count}` };
+}
+
 async function markAgentHandled(caseId) {
   await pool.query(`UPDATE cases SET agent_handled = true WHERE id = $1`, [caseId]);
 }
@@ -218,13 +241,19 @@ async function main() {
 
     // Clear processed_at if message was marked processed by a failed/empty run
     if (msg.processed_at) {
+      const clearCheck = await shouldClearProcessedAt(caseId, msg.processed_run_id);
+      if (!clearCheck.ok) {
+        console.log(`    SKIP: Not clearing processed_at — ${clearCheck.reason}`);
+        results.push({ caseId, outcome: 'SKIP', reason: `processed_at safeguard: ${clearCheck.reason}` });
+        continue;
+      }
       if (DRY_RUN) {
-        console.log(`    DRY RUN: Would clear processed_at on Msg #${msg.id} (was processed by run #${msg.processed_run_id})`);
+        console.log(`    DRY RUN: Would clear processed_at on Msg #${msg.id} (${clearCheck.reason})`);
         console.log(`    DRY RUN: Would trigger run-inbound with Msg #${msg.id}`);
         results.push({ caseId, outcome: 'DRY_RUN', messageId: msg.id });
         continue;
       }
-      console.log(`    Clearing processed_at on Msg #${msg.id} (was processed by run #${msg.processed_run_id})`);
+      console.log(`    Clearing processed_at on Msg #${msg.id} (${clearCheck.reason})`);
       await clearProcessedAt(msg.id);
     } else if (DRY_RUN) {
       console.log(`    DRY RUN: Would trigger run-inbound with Msg #${msg.id}`);
