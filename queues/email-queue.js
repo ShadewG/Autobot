@@ -600,6 +600,17 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         console.error('❌ Analysis job failed:', error);
         console.error('   Error message:', error.message);
         console.error('   Error stack:', error.stack);
+
+        // Reset processed_at so the message can be retried or picked up by manual triggers
+        try {
+            await db.query(
+                'UPDATE messages SET processed_at = NULL WHERE id = $1 AND processed_run_id IS NULL',
+                [messageId]
+            );
+        } catch (resetErr) {
+            console.error('Failed to reset processed_at:', resetErr.message);
+        }
+
         throw error;
     }
 }, {

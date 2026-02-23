@@ -679,9 +679,12 @@ class SendGridService {
         const scored = await Promise.all(candidates.map(async (c) => {
             let score = 0;
 
-            // Request number match (instant winner)
-            if (requestNumber && c.portal_request_number && c.portal_request_number === requestNumber) {
-                score += 100;
+            // Request number match (instant winner) — supports comma-separated list
+            if (requestNumber && c.portal_request_number) {
+                const storedNums = c.portal_request_number.replace(/\s/g, '').split(',');
+                if (storedNums.includes(requestNumber)) {
+                    score += 100;
+                }
             }
 
             // Temporal proximity: minutes since last outbound
@@ -783,7 +786,7 @@ class SendGridService {
                             await db.query(
                                 `UPDATE cases SET portal_request_number = CASE
                                     WHEN portal_request_number IS NULL OR portal_request_number = '' THEN $1
-                                    WHEN $1 = ANY(string_to_array(portal_request_number, ',')) THEN portal_request_number
+                                    WHEN $1 = ANY(string_to_array(REPLACE(portal_request_number, ' ', ''), ',')) THEN portal_request_number
                                     ELSE portal_request_number || ',' || $1
                                  END
                                  WHERE id = $2`,
@@ -800,11 +803,14 @@ class SendGridService {
             // --- Tier 1.75: Request number cross-reference ---
             const detectedReqNum = this.extractRequestNumber(`${subject || ''}\n${text || ''}`);
             if (detectedReqNum) {
+                // Supports comma-separated portal_request_number: check each number individually
                 const reqNumMatch = await db.query(
                     `SELECT * FROM cases
                      WHERE portal_request_number IS NOT NULL
-                       AND ($1 LIKE '%' || portal_request_number || '%'
-                            OR $2 LIKE '%' || portal_request_number || '%')
+                       AND EXISTS (
+                           SELECT 1 FROM unnest(string_to_array(REPLACE(portal_request_number, ' ', ''), ',')) AS rn
+                           WHERE $1 LIKE '%' || rn || '%' OR $2 LIKE '%' || rn || '%'
+                       )
                        AND ($3::int IS NULL OR user_id = $3 OR user_id IS NULL)
                      ORDER BY updated_at DESC
                      LIMIT 5`,
@@ -1174,7 +1180,7 @@ class SendGridService {
             const reqMatch = await db.query(
                 `SELECT * FROM cases
                  WHERE (portal_request_number = $1
-                        OR $1 = ANY(string_to_array(portal_request_number, ',')))
+                        OR $1 = ANY(string_to_array(REPLACE(portal_request_number, ' ', ''), ',')))
                    AND status = ANY($2)
                  ORDER BY
                    CASE WHEN portal_request_number = $1 THEN 0 ELSE 1 END,
@@ -1191,7 +1197,7 @@ class SendGridService {
             const reqFallback = await db.query(
                 `SELECT * FROM cases
                  WHERE (portal_request_number = $1
-                        OR $1 = ANY(string_to_array(portal_request_number, ',')))
+                        OR $1 = ANY(string_to_array(REPLACE(portal_request_number, ' ', ''), ',')))
                  ORDER BY updated_at DESC
                  LIMIT 1`,
                 [signals.requestNumber]
@@ -1244,21 +1250,33 @@ class SendGridService {
                 .replace(/\s+(County|City|Parish|Borough|Township)\s*$/i, '')  // strip trailing type
                 .trim().toLowerCase();
 
-            if (cityName.length >= 4) {
-                // Match city name against agency_name (word-based)
-                const cityMatch = await db.query(
-                    `SELECT * FROM cases
-                     WHERE LOWER(agency_name) LIKE $1
-                       AND status = ANY($2)
-                     ORDER BY
-                       CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
-                       updated_at DESC
-                     LIMIT 1`,
-                    [`%${cityName}%`, activeStatuses]
-                );
-                if (cityMatch.rows.length > 0) {
-                    console.log(`Portal match: city name "${cityName}" from "${signals.agencyName}" → case #${cityMatch.rows[0].id}`);
-                    return cityMatch.rows[0];
+            if (cityName.length >= 5) {
+                // Match city name against agency_name — scoped to cases with matching portal provider
+                // to prevent false positives (e.g., "salem" matching unrelated cases)
+                const providerDomains = {
+                    nextrequest: 'nextrequest.com',
+                    justfoia: 'justfoia.com',
+                    govqa: 'mycusthelp',
+                    civicplus: 'civicplus'
+                };
+                const providerDomain = providerDomains[signals.provider] || '';
+
+                if (providerDomain) {
+                    const cityMatch = await db.query(
+                        `SELECT * FROM cases
+                         WHERE LOWER(agency_name) LIKE $1
+                           AND LOWER(portal_url) LIKE $3
+                           AND status = ANY($2)
+                         ORDER BY
+                           CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                           updated_at DESC
+                         LIMIT 1`,
+                        [`%${cityName}%`, activeStatuses, `%${providerDomain}%`]
+                    );
+                    if (cityMatch.rows.length > 0) {
+                        console.log(`Portal match: city name "${cityName}" + provider ${signals.provider} → case #${cityMatch.rows[0].id}`);
+                        return cityMatch.rows[0];
+                    }
                 }
 
                 // Match city name against portal_url for NextRequest
