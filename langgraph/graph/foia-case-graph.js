@@ -80,18 +80,26 @@ function withNodeTracking(nodeName, nodeFunction) {
 
 /**
  * Route based on decision node output
+ *
+ * IMPORTANT: Only accept nextNode values that are valid destinations from this
+ * routing point. Stale nextNode values from prior nodes could cause errors.
  */
+const VALID_DECISION_DESTINATIONS = new Set(["draft_response", "execute_action", "gate_or_execute", "end"]);
+
 function routeFromDecision(state) {
   const { isComplete, nextNode, proposalActionType } = state;
 
-  // Explicit routing
-  if (nextNode) {
-    return nextNode;
-  }
-
-  // Complete state
+  // Terminal state takes priority — prevents stale nextNode from overriding
   if (isComplete) {
     return "end";
+  }
+
+  // Explicit routing — only accept valid destinations from this node
+  if (nextNode && VALID_DECISION_DESTINATIONS.has(nextNode)) {
+    return nextNode;
+  }
+  if (nextNode && !VALID_DECISION_DESTINATIONS.has(nextNode)) {
+    logger.warn('routeFromDecision: ignoring invalid nextNode', { nextNode, caseId: state.caseId });
   }
 
   // Route based on action type
@@ -109,7 +117,14 @@ function routeFromDecision(state) {
 
 /**
  * Route based on gate node output
+ *
+ * IMPORTANT: Only accept nextNode values that are valid destinations from this
+ * routing point. Stale nextNode values from prior nodes (e.g., 'gate_or_execute'
+ * set by decide_next_action) persist in state and would cause "unknown destination"
+ * errors if passed through unchecked.
  */
+const VALID_GATE_DESTINATIONS = new Set(["execute_action", "decide_next_action", "end"]);
+
 function routeFromGate(state) {
   const { nextNode, humanDecision, isComplete } = state;
 
@@ -118,13 +133,17 @@ function routeFromGate(state) {
     return "decide_next_action";
   }
 
-  // Explicit routing
-  if (nextNode) {
-    return nextNode;
-  }
-
+  // Terminal state takes priority — prevents stale nextNode from overriding
   if (isComplete) {
     return "end";
+  }
+
+  // Explicit routing — only accept valid destinations from this node
+  if (nextNode && VALID_GATE_DESTINATIONS.has(nextNode)) {
+    return nextNode;
+  }
+  if (nextNode && !VALID_GATE_DESTINATIONS.has(nextNode)) {
+    logger.warn('routeFromGate: ignoring invalid nextNode', { nextNode, caseId: state.caseId });
   }
 
   return "execute_action";

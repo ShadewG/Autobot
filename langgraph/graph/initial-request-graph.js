@@ -48,6 +48,12 @@ function routeAfterDraft(state) {
  * - If auto-execute allowed, continue to execute
  * - If requires human, interrupt
  */
+/**
+ * IMPORTANT: Only accept nextNode values that are valid destinations from this
+ * routing point. Stale nextNode values from prior nodes could cause errors.
+ */
+const VALID_INIT_GATE_DESTINATIONS = new Set(["execute_action", "draft_initial_request", "commit_state", "end"]);
+
 function routeFromGate(state) {
   const { nextNode, humanDecision, isComplete, canAutoExecute } = state;
 
@@ -65,13 +71,14 @@ function routeFromGate(state) {
     }
   }
 
-  // Explicit routing
-  if (nextNode) {
-    return nextNode;
-  }
-
+  // Terminal state takes priority — prevents stale nextNode from overriding
   if (isComplete) {
     return "end";
+  }
+
+  // Explicit routing — only accept valid destinations from this node
+  if (nextNode && VALID_INIT_GATE_DESTINATIONS.has(nextNode)) {
+    return nextNode;
   }
 
   // If can auto-execute, proceed

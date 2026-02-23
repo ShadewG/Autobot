@@ -65,6 +65,7 @@ async function gateOrExecuteNode(state) {
     logs.push('NONE action type - skipping proposal creation, completing graph');
     return {
       isComplete: true,
+      nextNode: null,  // Clear stale nextNode from prior nodes to prevent routing errors
       logs,
       proposalActionType: 'NONE'
     };
