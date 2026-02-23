@@ -777,13 +777,28 @@ class SendGridService {
                 const portalMatch = await this.matchCaseByPortalSignals(signals);
                 if (portalMatch) {
                     console.log(`Matched inbound email by portal signals (${portalInfo.provider}): case #${portalMatch.id}`);
-                    // Persist request number if we extracted one and case doesn't have it
-                    if (signals.requestNumber && !portalMatch.portal_request_number) {
+                    // Persist request number if we extracted one
+                    if (signals.requestNumber) {
                         try {
-                            await db.query(
-                                'UPDATE cases SET portal_request_number = $1 WHERE id = $2',
-                                [signals.requestNumber, portalMatch.id]
-                            );
+                            if (!portalMatch.portal_request_number) {
+                                // No request number stored yet — set it
+                                await db.query(
+                                    'UPDATE cases SET portal_request_number = $1 WHERE id = $2',
+                                    [signals.requestNumber, portalMatch.id]
+                                );
+                            } else if (portalMatch.portal_request_number !== signals.requestNumber) {
+                                // Different request number — store as additional
+                                // Uses comma-separated list in portal_request_number
+                                const existing = portalMatch.portal_request_number;
+                                const nums = existing.split(',').map(s => s.trim());
+                                if (!nums.includes(signals.requestNumber)) {
+                                    await db.query(
+                                        'UPDATE cases SET portal_request_number = $1 WHERE id = $2',
+                                        [`${existing},${signals.requestNumber}`, portalMatch.id]
+                                    );
+                                    console.log(`Added additional request number ${signals.requestNumber} to case #${portalMatch.id} (was: ${existing})`);
+                                }
+                            }
                         } catch (e) {
                             console.warn('Failed to save portal_request_number:', e.message);
                         }
@@ -1164,13 +1179,16 @@ class SendGridService {
             }
         }
 
-        // Priority 2: Request number match
+        // Priority 2: Request number match (supports comma-separated list)
         if (signals.requestNumber) {
             const reqMatch = await db.query(
                 `SELECT * FROM cases
-                 WHERE portal_request_number = $1
+                 WHERE (portal_request_number = $1
+                        OR portal_request_number LIKE '%' || $1 || '%')
                    AND status = ANY($2)
-                 ORDER BY updated_at DESC
+                 ORDER BY
+                   CASE WHEN portal_request_number = $1 THEN 0 ELSE 1 END,
+                   updated_at DESC
                  LIMIT 1`,
                 [signals.requestNumber, activeStatuses]
             );
@@ -1182,7 +1200,8 @@ class SendGridService {
             // Fallback: any status
             const reqFallback = await db.query(
                 `SELECT * FROM cases
-                 WHERE portal_request_number = $1
+                 WHERE (portal_request_number = $1
+                        OR portal_request_number LIKE '%' || $1 || '%')
                  ORDER BY updated_at DESC
                  LIMIT 1`,
                 [signals.requestNumber]
@@ -1193,7 +1212,7 @@ class SendGridService {
             }
         }
 
-        // Priority 3: Agency name match (NextRequest)
+        // Priority 3: Agency name match (NextRequest, CivicPlus)
         if (signals.agencyName) {
             const exactMatch = await db.query(
                 `SELECT * FROM cases
@@ -1224,6 +1243,52 @@ class SendGridService {
             if (fuzzyMatch.rows.length > 0) {
                 console.log(`Portal match: fuzzy agency name "${signals.agencyName}" → case #${fuzzyMatch.rows[0].id}`);
                 return fuzzyMatch.rows[0];
+            }
+
+            // City-name extraction: "Shreveport, LA" → "shreveport"
+            // Handles: "City, ST", "Augusta, Georgia", "Winnebago County - Sheriff, WI"
+            const cityName = signals.agencyName
+                .replace(/,\s*[A-Z]{2}\s*$/i, '')  // strip ", LA" / ", TX" etc
+                .replace(/,\s*\w+$/i, '')  // strip ", Georgia" / ", Texas" etc (full state name)
+                .replace(/\s*-\s*(Sheriff|Police|PD|SO|Clerk|Records)\b.*$/i, '')  // strip "- Sheriff" etc
+                .replace(/\s+(County|City|Parish|Borough|Township)\s*$/i, '')  // strip trailing type
+                .trim().toLowerCase();
+
+            if (cityName.length >= 4) {
+                // Match city name against agency_name (word-based)
+                const cityMatch = await db.query(
+                    `SELECT * FROM cases
+                     WHERE LOWER(agency_name) LIKE $1
+                       AND status = ANY($2)
+                     ORDER BY
+                       CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                       updated_at DESC
+                     LIMIT 1`,
+                    [`%${cityName}%`, activeStatuses]
+                );
+                if (cityMatch.rows.length > 0) {
+                    console.log(`Portal match: city name "${cityName}" from "${signals.agencyName}" → case #${cityMatch.rows[0].id}`);
+                    return cityMatch.rows[0];
+                }
+
+                // Match city name against portal_url for NextRequest
+                if (signals.provider === 'nextrequest') {
+                    const portalUrlMatch = await db.query(
+                        `SELECT * FROM cases
+                         WHERE LOWER(portal_url) LIKE $1
+                           AND LOWER(portal_url) LIKE '%nextrequest.com%'
+                           AND status = ANY($2)
+                         ORDER BY
+                           CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
+                           updated_at DESC
+                         LIMIT 1`,
+                        [`%${cityName}%`, activeStatuses]
+                    );
+                    if (portalUrlMatch.rows.length > 0) {
+                        console.log(`Portal match: city "${cityName}" in portal_url → case #${portalUrlMatch.rows[0].id}`);
+                        return portalUrlMatch.rows[0];
+                    }
+                }
             }
         }
 
