@@ -117,32 +117,37 @@ async function tryMatch(signals) {
         if (r2.rows.length > 0) return { method: 'subdomain(any-status)', case: r2.rows[0] };
     }
 
-    // Priority 2: Request number
+    // Priority 2: Request number (supports comma-separated stored values)
     if (signals.requestNumber) {
         const r = await pool.query(
             `SELECT id, case_name, portal_url, status FROM cases
-             WHERE portal_request_number = $1
+             WHERE (portal_request_number = $1
+                    OR $1 = ANY(string_to_array(REPLACE(portal_request_number, ' ', ''), ',')))
              ORDER BY updated_at DESC LIMIT 1`,
             [signals.requestNumber]
         );
         if (r.rows.length > 0) return { method: 'request_number', case: r.rows[0] };
     }
 
-    // Priority 3: Agency name
+    // Priority 3: Agency name (scoped by provider when available)
     if (signals.agencyName) {
         const r = await pool.query(
             `SELECT id, case_name, portal_url, status FROM cases
-             WHERE LOWER(agency_name) = LOWER($1) AND status = ANY($2)
+             WHERE LOWER(agency_name) = LOWER($1)
+               AND ($3::text IS NULL OR portal_provider = $3)
+               AND status = ANY($2)
              ORDER BY updated_at DESC LIMIT 1`,
-            [signals.agencyName, activeStatuses]
+            [signals.agencyName, activeStatuses, signals.provider || null]
         );
         if (r.rows.length > 0) return { method: 'agency_name_exact', case: r.rows[0] };
 
         const r2 = await pool.query(
             `SELECT id, case_name, portal_url, status FROM cases
-             WHERE LOWER(agency_name) LIKE $1 AND status = ANY($2)
+             WHERE LOWER(agency_name) LIKE $1
+               AND ($3::text IS NULL OR portal_provider = $3)
+               AND status = ANY($2)
              ORDER BY updated_at DESC LIMIT 1`,
-            [`%${signals.agencyName.toLowerCase()}%`, activeStatuses]
+            [`%${signals.agencyName.toLowerCase()}%`, activeStatuses, signals.provider || null]
         );
         if (r2.rows.length > 0) return { method: 'agency_name_fuzzy', case: r2.rows[0] };
     }

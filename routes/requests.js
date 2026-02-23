@@ -2139,7 +2139,7 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
                 if (effectiveActionType === 'SEND_FOLLOWUP') {
                     canAutoExecute = true;
                 } else if (effectiveActionType === 'APPROVE_FEE') {
-                    const feeAmount = analysis?.fee_amount || 0;
+                    const feeAmount = analysis?.extracted_fee_amount || 0;
                     canAutoExecute = feeAmount <= FEE_THRESHOLD;
                 } else if (effectiveActionType === 'MARK_COMPLETE') {
                     canAutoExecute = effectiveConfidence >= 0.9;
