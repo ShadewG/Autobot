@@ -1107,6 +1107,16 @@ class SendGridService {
             'pending_fee_decision', 'needs_human_review', 'responded'
         ];
 
+        // Guard: reject a candidate if the inbound email's request number
+        // conflicts with the case's stored request number (prevents cross-request mismatches)
+        const hasRequestNumberConflict = (caseRow) => {
+            if (!signals.requestNumber || !caseRow?.portal_request_number) return false;
+            const incoming = signals.requestNumber.replace(/\s/g, '').toUpperCase();
+            const storedNums = caseRow.portal_request_number
+                .replace(/\s/g, '').split(',').map(n => n.toUpperCase()).filter(Boolean);
+            return storedNums.length > 0 && !storedNums.includes(incoming);
+        };
+
         // Priority 1: Subdomain match against portal_url (JustFOIA / GovQA)
         if (signals.subdomain && (signals.provider === 'justfoia' || signals.provider === 'govqa')) {
             const portalDomain = signals.provider === 'justfoia'
@@ -1125,8 +1135,13 @@ class SendGridService {
                 [`%${portalDomain}%`, activeStatuses, signals.requestNumber || '']
             );
             if (subdomainMatch.rows.length > 0) {
-                console.log(`Portal match: subdomain "${signals.subdomain}" → case #${subdomainMatch.rows[0].id}`);
-                return subdomainMatch.rows[0];
+                const candidate = subdomainMatch.rows[0];
+                if (hasRequestNumberConflict(candidate)) {
+                    console.warn(`Portal match rejected: subdomain "${signals.subdomain}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                } else {
+                    console.log(`Portal match: subdomain "${signals.subdomain}" → case #${candidate.id}`);
+                    return candidate;
+                }
             }
 
             // Fallback: any status
@@ -1140,8 +1155,13 @@ class SendGridService {
                 [`%${portalDomain}%`, signals.requestNumber || '']
             );
             if (subdomainFallback.rows.length > 0) {
-                console.log(`Portal match (any-status fallback): subdomain "${signals.subdomain}" → case #${subdomainFallback.rows[0].id}`);
-                return subdomainFallback.rows[0];
+                const candidate = subdomainFallback.rows[0];
+                if (hasRequestNumberConflict(candidate)) {
+                    console.warn(`Portal match rejected: subdomain fallback "${signals.subdomain}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                } else {
+                    console.log(`Portal match (any-status fallback): subdomain "${signals.subdomain}" → case #${candidate.id}`);
+                    return candidate;
+                }
             }
 
             // Fuzzy subdomain match: email local part and portal URL subdomain may differ
@@ -1159,8 +1179,13 @@ class SendGridService {
                     [`%${prefix}%`, signals.provider, activeStatuses]
                 );
                 if (fuzzyMatch.rows.length > 0) {
-                    console.log(`Portal match (fuzzy subdomain "${prefix}*"): case #${fuzzyMatch.rows[0].id}`);
-                    return fuzzyMatch.rows[0];
+                    const candidate = fuzzyMatch.rows[0];
+                    if (hasRequestNumberConflict(candidate)) {
+                        console.warn(`Portal match rejected: fuzzy subdomain "${prefix}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                    } else {
+                        console.log(`Portal match (fuzzy subdomain "${prefix}*"): case #${candidate.id}`);
+                        return candidate;
+                    }
                 }
 
                 const fuzzyFallback = await db.query(
@@ -1172,8 +1197,13 @@ class SendGridService {
                     [`%${prefix}%`, signals.provider]
                 );
                 if (fuzzyFallback.rows.length > 0) {
-                    console.log(`Portal match (fuzzy subdomain any-status "${prefix}*"): case #${fuzzyFallback.rows[0].id}`);
-                    return fuzzyFallback.rows[0];
+                    const candidate = fuzzyFallback.rows[0];
+                    if (hasRequestNumberConflict(candidate)) {
+                        console.warn(`Portal match rejected: fuzzy subdomain fallback "${prefix}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                    } else {
+                        console.log(`Portal match (fuzzy subdomain any-status "${prefix}*"): case #${candidate.id}`);
+                        return candidate;
+                    }
                 }
             }
         }
@@ -1225,8 +1255,13 @@ class SendGridService {
                 [signals.agencyName, activeStatuses, signals.provider || null]
             );
             if (exactMatch.rows.length > 0) {
-                console.log(`Portal match: agency name "${signals.agencyName}" → case #${exactMatch.rows[0].id}`);
-                return exactMatch.rows[0];
+                const candidate = exactMatch.rows[0];
+                if (hasRequestNumberConflict(candidate)) {
+                    console.warn(`Portal match rejected: agency "${signals.agencyName}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                    return null;
+                }
+                console.log(`Portal match: agency name "${signals.agencyName}" → case #${candidate.id}`);
+                return candidate;
             }
 
             // Fuzzy: LIKE %name% — still scoped by provider
@@ -1242,8 +1277,13 @@ class SendGridService {
                 [`%${signals.agencyName.toLowerCase()}%`, activeStatuses, signals.provider || null]
             );
             if (fuzzyMatch.rows.length > 0) {
-                console.log(`Portal match: fuzzy agency name "${signals.agencyName}" → case #${fuzzyMatch.rows[0].id}`);
-                return fuzzyMatch.rows[0];
+                const candidate = fuzzyMatch.rows[0];
+                if (hasRequestNumberConflict(candidate)) {
+                    console.warn(`Portal match rejected: fuzzy agency "${signals.agencyName}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                    return null;
+                }
+                console.log(`Portal match: fuzzy agency name "${signals.agencyName}" → case #${candidate.id}`);
+                return candidate;
             }
 
             // City-name extraction: "Shreveport, LA" → "shreveport"
@@ -1279,8 +1319,13 @@ class SendGridService {
                         [`%${cityName}%`, activeStatuses, `%${providerDomain}%`]
                     );
                     if (cityMatch.rows.length > 0) {
-                        console.log(`Portal match: city name "${cityName}" + provider ${signals.provider} → case #${cityMatch.rows[0].id}`);
-                        return cityMatch.rows[0];
+                        const candidate = cityMatch.rows[0];
+                        if (hasRequestNumberConflict(candidate)) {
+                            console.warn(`Portal match rejected: city "${cityName}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                            return null;
+                        }
+                        console.log(`Portal match: city name "${cityName}" + provider ${signals.provider} → case #${candidate.id}`);
+                        return candidate;
                     }
                 }
 
@@ -1298,8 +1343,13 @@ class SendGridService {
                         [`%${cityName}%`, activeStatuses]
                     );
                     if (portalUrlMatch.rows.length > 0) {
-                        console.log(`Portal match: city "${cityName}" in portal_url → case #${portalUrlMatch.rows[0].id}`);
-                        return portalUrlMatch.rows[0];
+                        const candidate = portalUrlMatch.rows[0];
+                        if (hasRequestNumberConflict(candidate)) {
+                            console.warn(`Portal match rejected: city "${cityName}" in portal_url → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                            return null;
+                        }
+                        console.log(`Portal match: city "${cityName}" in portal_url → case #${candidate.id}`);
+                        return candidate;
                     }
                 }
             }
@@ -1318,8 +1368,13 @@ class SendGridService {
                 [`%${signals.bodySubdomain}.nextrequest.com%`, activeStatuses]
             );
             if (bodySubMatch.rows.length > 0) {
-                console.log(`Portal match: body URL subdomain "${signals.bodySubdomain}" → case #${bodySubMatch.rows[0].id}`);
-                return bodySubMatch.rows[0];
+                const candidate = bodySubMatch.rows[0];
+                if (hasRequestNumberConflict(candidate)) {
+                    console.warn(`Portal match rejected: body subdomain "${signals.bodySubdomain}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                    return null;
+                }
+                console.log(`Portal match: body URL subdomain "${signals.bodySubdomain}" → case #${candidate.id}`);
+                return candidate;
             }
 
             // Fallback: any status
@@ -1331,8 +1386,13 @@ class SendGridService {
                 [`%${signals.bodySubdomain}.nextrequest.com%`]
             );
             if (bodySubFallback.rows.length > 0) {
-                console.log(`Portal match (any-status): body URL subdomain "${signals.bodySubdomain}" → case #${bodySubFallback.rows[0].id}`);
-                return bodySubFallback.rows[0];
+                const candidate = bodySubFallback.rows[0];
+                if (hasRequestNumberConflict(candidate)) {
+                    console.warn(`Portal match rejected: body subdomain fallback "${signals.bodySubdomain}" → case #${candidate.id}, but NR "${signals.requestNumber}" conflicts with stored "${candidate.portal_request_number}"`);
+                    return null;
+                }
+                console.log(`Portal match (any-status): body URL subdomain "${signals.bodySubdomain}" → case #${candidate.id}`);
+                return candidate;
             }
         }
 
