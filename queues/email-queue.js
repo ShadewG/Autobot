@@ -318,6 +318,16 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
     const { messageId, caseId } = job.data;
 
     try {
+        // Idempotency guard: skip if already analyzed
+        const existingAnalysis = await db.query(
+            'SELECT id FROM response_analysis WHERE message_id = $1 LIMIT 1',
+            [messageId]
+        );
+        if (existingAnalysis.rows.length > 0) {
+            console.log(`Analysis already exists for message ${messageId} — skipping`);
+            return { skipped: true, reason: 'already_analyzed', existingId: existingAnalysis.rows[0].id };
+        }
+
         const messageData = await db.getMessageById(messageId);
         const caseData = await db.getCaseById(caseId);
 
@@ -397,6 +407,8 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             if (USE_RUN_ENGINE && USE_LANGGRAPH) {
                 agentLog.info('Using Run Engine for inbound message processing');
 
+                let runEngineEnqueued = false;
+                let run = null;
                 try {
                     const { enqueueInboundMessageJob } = getAgentQueueModule();
 
@@ -404,7 +416,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                     const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 
                     // Create agent_run record and enqueue job
-                    const run = await db.createAgentRunFull({
+                    run = await db.createAgentRunFull({
                         case_id: caseId,
                         trigger_type: 'inbound_message',
                         message_id: messageId,
@@ -419,28 +431,45 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                         analysisJobId: job.id
                     });
 
+                    runEngineEnqueued = true;
+
                     agentLog.info(`Run Engine job queued`, {
                         runId: run.id,
                         jobId: agentJob.id,
                         autopilotMode
                     });
 
-                    // Mark case as being handled by agent
-                    await db.query(
-                        'UPDATE cases SET agent_handled = true WHERE id = $1',
-                        [caseId]
-                    );
-
-                    // Mark message as processed to prevent duplicates
-                    await db.query(
-                        'UPDATE messages SET processed_at = NOW(), processed_run_id = $2 WHERE id = $1',
-                        [messageId, run.id]
-                    );
+                    // DB updates in separate try — enqueue already succeeded, don't fall through
+                    try {
+                        await db.query(
+                            'UPDATE cases SET agent_handled = true WHERE id = $1',
+                            [caseId]
+                        );
+                        await db.query(
+                            'UPDATE messages SET processed_at = NOW(), processed_run_id = $2 WHERE id = $1',
+                            [messageId, run.id]
+                        );
+                    } catch (dbError) {
+                        agentLog.error(`Post-enqueue DB update failed (run still active): ${dbError.message}`);
+                    }
 
                     // Don't run deterministic flow - LangGraph will handle everything
                     return analysis;
                 } catch (agentError) {
+                    // Only fall through if enqueue itself failed — not if DB updates failed
+                    if (runEngineEnqueued) {
+                        agentLog.error(`Post-enqueue error (run still active): ${agentError.message}`);
+                        return analysis;
+                    }
                     agentLog.error(`Failed to queue Run Engine job: ${agentError.message}`);
+                    // Clean up orphaned run record
+                    if (run) {
+                        try {
+                            await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${agentError.message}` });
+                        } catch (cleanupErr) {
+                            agentLog.error(`Failed to clean up orphaned run: ${cleanupErr.message}`);
+                        }
+                    }
                     // Fall through to legacy agent or deterministic flow
                 }
             }
@@ -449,6 +478,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             if (USE_LANGGRAPH && !USE_RUN_ENGINE) {
                 agentLog.info('Queuing to LangGraph agent (legacy path)');
 
+                let legacyEnqueued = false;
                 try {
                     const { enqueueAgentJob } = getAgentQueueModule();
                     const agentJob = await enqueueAgentJob(caseId, 'INBOUND_MESSAGE', {
@@ -456,17 +486,27 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                         analysisJobId: job.id
                     });
 
+                    legacyEnqueued = true;
+
                     agentLog.info(`LangGraph agent job queued: ${agentJob.id}`);
 
-                    // Mark case as being handled by agent
-                    await db.query(
-                        'UPDATE cases SET agent_handled = true WHERE id = $1',
-                        [caseId]
-                    );
+                    // DB updates in separate try
+                    try {
+                        await db.query(
+                            'UPDATE cases SET agent_handled = true WHERE id = $1',
+                            [caseId]
+                        );
+                    } catch (dbError) {
+                        agentLog.error(`Post-enqueue DB update failed (job still active): ${dbError.message}`);
+                    }
 
                     // Don't run deterministic flow - LangGraph will handle everything
                     return analysis;
                 } catch (agentError) {
+                    if (legacyEnqueued) {
+                        agentLog.error(`Post-enqueue error (job still active): ${agentError.message}`);
+                        return analysis;
+                    }
                     agentLog.error(`Failed to queue LangGraph agent: ${agentError.message}`);
                     // Fall through to legacy agent or deterministic flow
                 }
@@ -825,7 +865,10 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
             const subject = `Public Records Request - ${simpleName}`;
 
             // Queue the email to be sent immediately (no delays)
-            await emailQueue?.add('send-initial-request', {
+            if (!emailQueue) {
+                throw new Error('emailQueue is null — Redis connection unavailable');
+            }
+            await emailQueue.add('send-initial-request', {
                 type: 'initial_request',
                 caseId: caseId,
                 toEmail: contactEmail,
@@ -1089,8 +1132,13 @@ emailWorker?.on('failed', (job, err) => {
     console.error(`Email job ${job.id} failed:`, err);
 });
 
-analysisWorker?.on('failed', (job, err) => {
+analysisWorker?.on('failed', async (job, err) => {
     console.error(`Analysis job ${job.id} failed:`, err);
+
+    // Move to DLQ after max attempts (same pattern as email worker)
+    if (job.attemptsMade >= analysisJobOptions.attempts) {
+        await moveToDeadLetterQueue('analysis-queue', job, err);
+    }
 });
 
 generateWorker?.on('failed', (job, err) => {

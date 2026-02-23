@@ -5,6 +5,19 @@ const pdContactService = require('./pd-contact-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
+// Lazy-load generateQueue to avoid circular dependency
+let _generateQueue = null;
+function getGenerateQueue() {
+    if (_generateQueue === null) {
+        try {
+            _generateQueue = require('../queues/email-queue').generateQueue;
+        } catch (e) {
+            _generateQueue = false; // Mark as unavailable
+        }
+    }
+    return _generateQueue || null;
+}
+
 const STATE_ABBREVIATIONS = {
     'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
     'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE', 'district of columbia': 'DC',
@@ -1495,6 +1508,18 @@ Look for a records division email, FOIA email, or general agency email that acce
                             agency_email: notionCase.agency_email,
                             status: 'ready_to_send'
                         });
+
+                        // Reactively dispatch to generate queue so the case is picked up immediately
+                        const gq = getGenerateQueue();
+                        if (gq) {
+                            try {
+                                await gq.add('generate-and-send', { caseId: existing.id }, {
+                                    jobId: `generate-${existing.id}-sync-${Date.now()}`
+                                });
+                            } catch (queueErr) {
+                                console.warn(`Failed to queue generation for re-synced case ${existing.id}:`, queueErr.message);
+                            }
+                        }
 
                         syncedCases.push(updatedCase);
 

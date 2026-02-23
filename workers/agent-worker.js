@@ -433,6 +433,17 @@ async function processInitialRequestJob(job) {
       };
     }
 
+    // Defensive fallback: never leave run in "running" on unknown statuses
+    await db.updateAgentRun(runId, {
+      status: 'completed',
+      ended_at: new Date(),
+      error: `Non-standard graph status: ${result.status || 'unknown'}`
+    });
+
+    log.warn('Initial request returned non-standard status; forcing completion', {
+      runId, caseId, status: result.status
+    });
+
     return { success: true, status: result.status };
 
   } catch (error) {
@@ -441,7 +452,7 @@ async function processInitialRequestJob(job) {
     await db.updateAgentRun(runId, {
       status: 'failed',
       ended_at: new Date(),
-      error_message: error.message
+      error: error.message
     });
 
     throw error;
@@ -484,20 +495,17 @@ async function processInboundMessageJob(job) {
       `Graph execution timed out after ${GRAPH_EXECUTION_TIMEOUT}ms for case ${caseId}`
     );
 
-    // Mark trigger message as processed
-    await db.markMessageProcessed(messageId, runId, null);
-
-    // Mark ALL other unprocessed inbound messages for this case as processed too —
-    // the graph already saw them all when it ran for this case.
-    // Only marks messages that existed before the graph started (avoids marking
-    // messages that arrived during execution and were never seen by the graph).
-    await db.query(
-      `UPDATE messages SET processed_at = NOW(), processed_run_id = $2
-       WHERE case_id = $1 AND direction = 'inbound' AND processed_at IS NULL
-         AND last_error IS NULL AND id != $3
-         AND COALESCE(received_at, created_at) < $4`,
-      [caseId, runId, messageId, graphStartedAt]
-    );
+    // Helper: mark trigger + bulk messages as processed (called after each terminal branch)
+    const markMessagesProcessed = async () => {
+      await db.markMessageProcessed(messageId, runId, null);
+      await db.query(
+        `UPDATE messages SET processed_at = NOW(), processed_run_id = $2
+         WHERE case_id = $1 AND direction = 'inbound' AND processed_at IS NULL
+           AND last_error IS NULL AND id != $3
+           AND created_at < $4`,
+        [caseId, runId, messageId, graphStartedAt]
+      );
+    };
 
     // Update run based on result
     if (result.status === 'interrupted') {
@@ -507,6 +515,8 @@ async function processInboundMessageJob(job) {
         ended_at: new Date(),
         proposal_id: proposalId  // Link run to proposal
       });
+
+      await markMessagesProcessed();
 
       const caseData = await db.getCaseById(caseId);
       await discordService.notifyCaseNeedsReview(caseData, {
@@ -534,6 +544,7 @@ async function processInboundMessageJob(job) {
         proposal_id: proposalId  // Link run to proposal
       });
 
+      await markMessagesProcessed();
       await notionService.syncStatusToNotion(caseId);
 
       log.info('Inbound message processing completed', { runId, caseId, proposalId });
@@ -550,8 +561,10 @@ async function processInboundMessageJob(job) {
     await db.updateAgentRun(runId, {
       status: 'completed',
       ended_at: new Date(),
-      error_message: `Non-standard graph status: ${result.status || 'unknown'}`
+      error: `Non-standard graph status: ${result.status || 'unknown'}`
     });
+
+    await markMessagesProcessed();
 
     log.warn('Inbound message processing returned non-standard status; forcing completion', {
       runId,
@@ -570,7 +583,7 @@ async function processInboundMessageJob(job) {
     await db.updateAgentRun(runId, {
       status: 'failed',
       ended_at: new Date(),
-      error_message: error.message
+      error: error.message
     });
 
     throw error;
@@ -651,6 +664,17 @@ async function processFollowupTriggerJob(job) {
       };
     }
 
+    // Defensive fallback: never leave run in "running" on unknown statuses
+    await db.updateAgentRun(runId, {
+      status: 'completed',
+      ended_at: new Date(),
+      error: `Non-standard graph status: ${result.status || 'unknown'}`
+    });
+
+    log.warn('Followup trigger returned non-standard status; forcing completion', {
+      runId, caseId, status: result.status
+    });
+
     return { success: true, status: result.status };
 
   } catch (error) {
@@ -659,7 +683,7 @@ async function processFollowupTriggerJob(job) {
     await db.updateAgentRun(runId, {
       status: 'failed',
       ended_at: new Date(),
-      error_message: error.message
+      error: error.message
     });
 
     throw error;
@@ -699,7 +723,7 @@ async function processResumeRunJob(job) {
       await db.updateAgentRun(runId, {
         status: 'skipped',
         ended_at: new Date(),
-        error_message: `Proposal ${originalProposalId} already in terminal state: ${proposal.status}`
+        error: `Proposal ${originalProposalId} already in terminal state: ${proposal.status}`
       });
 
       return {
@@ -728,7 +752,7 @@ async function processResumeRunJob(job) {
       await db.updateAgentRun(runId, {
         status: 'skipped',
         ended_at: new Date(),
-        error_message: `Proposal ${originalProposalId} already has execution: ${existingExecution.rows[0].id}`
+        error: `Proposal ${originalProposalId} already has execution: ${existingExecution.rows[0].id}`
       });
 
       return {
@@ -803,6 +827,17 @@ async function processResumeRunJob(job) {
       };
     }
 
+    // Defensive fallback: never leave run in "running" on unknown statuses
+    await db.updateAgentRun(runId, {
+      status: 'completed',
+      ended_at: new Date(),
+      error: `Non-standard graph status: ${result.status || 'unknown'}`
+    });
+
+    log.warn('Resume run returned non-standard status; forcing completion', {
+      runId, caseId, status: result.status
+    });
+
     return { success: true, status: result.status };
 
   } catch (error) {
@@ -811,7 +846,7 @@ async function processResumeRunJob(job) {
     await db.updateAgentRun(runId, {
       status: 'failed',
       ended_at: new Date(),
-      error_message: error.message
+      error: error.message
     });
 
     throw error;

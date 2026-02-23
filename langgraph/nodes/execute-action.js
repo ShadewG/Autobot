@@ -44,6 +44,20 @@ async function executeActionNode(state) {
 
   logs.push(`Execution mode: ${EXECUTION_MODE}`);
 
+  // TIMEOUT GUARD: If the run has already been marked failed/skipped (e.g. by reaper),
+  // bail out immediately to avoid executing on a cancelled run.
+  if (runId) {
+    const currentRun = await db.getAgentRunById(runId);
+    if (currentRun && ['failed', 'skipped'].includes(currentRun.status)) {
+      logs.push(`SKIPPED: Run ${runId} already in terminal state '${currentRun.status}'`);
+      return {
+        actionExecuted: false,
+        executionResult: { action: 'run_already_terminal', runStatus: currentRun.status },
+        logs
+      };
+    }
+  }
+
   // IDEMPOTENCY CHECK - Already executed?
   const existingProposal = await db.getProposalById(proposalId);
 
@@ -163,6 +177,7 @@ async function executeActionNode(state) {
         provider: caseData.portal_provider || null,
         instructions: draftBodyText || draftBodyHtml || null
       }, {
+        jobId: `${caseId}:portal-submit`,
         attempts: 1,
         removeOnComplete: 100,
         removeOnFail: 100
@@ -303,6 +318,29 @@ async function executeActionNode(state) {
         threadId: thread?.id,
         originalMessageId: latestInbound?.message_id
       });
+
+      // Check for send failure (email executor returned success: false)
+      if (emailResult.success === false) {
+        const failReason = emailResult.error || 'Email send failed';
+        logs.push(`BLOCKED: ${failReason}`);
+
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null
+        });
+
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          requires_human: true,
+          pause_reason: `Email send failed: ${failReason}`
+        });
+
+        return {
+          actionExecuted: false,
+          gatedForReview: true,
+          errors: [failReason],
+          logs
+        };
+      }
 
       executionResult = {
         action: emailResult.dryRun ? 'dry_run_skipped' : 'email_queued',
@@ -741,6 +779,7 @@ async function executeActionNode(state) {
           provider: caseData.portal_provider || null,
           instructions: draftBodyText || draftBodyHtml || null
         }, {
+          jobId: `${caseId}:portal-submit`,
           attempts: 1,
           removeOnComplete: 100,
           removeOnFail: 100

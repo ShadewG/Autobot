@@ -445,6 +445,11 @@ ${prompt}`
 
             const analysis = JSON.parse(response.output_text);
 
+            // Normalize: LLM sometimes returns requires_response instead of requires_action
+            if (analysis.requires_response !== undefined && analysis.requires_action === undefined) {
+                analysis.requires_action = analysis.requires_response;
+            }
+
             // Store analysis in database
             // Sanitize values: convert string "null" to actual null
             const analysisRecord = await db.createResponseAnalysis({

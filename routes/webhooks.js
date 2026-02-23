@@ -92,6 +92,26 @@ const upload = multer({
  */
 router.post('/inbound', upload.any(), async (req, res) => {
     try {
+        // Signature verification (graceful degradation)
+        // SendGrid Inbound Parse uses different auth than Event Webhook,
+        // but if signature headers are present, verify them.
+        const sigHeader = req.headers['x-twilio-email-event-webhook-signature'];
+        const tsHeader = req.headers['x-twilio-email-event-webhook-timestamp'];
+        if (sigHeader && tsHeader && process.env.SENDGRID_WEBHOOK_SECRET) {
+            try {
+                const rawBody = JSON.stringify(req.body);
+                const isValid = sendgridService.verifyWebhookSignature(rawBody, sigHeader, tsHeader);
+                if (!isValid) {
+                    console.error('Inbound webhook signature verification failed');
+                    return res.status(403).json({ error: 'Invalid webhook signature' });
+                }
+            } catch (sigErr) {
+                console.warn('Webhook signature verification error (allowing through):', sigErr.message);
+            }
+        } else if (process.env.SENDGRID_WEBHOOK_SECRET && !sigHeader) {
+            console.warn('SENDGRID_WEBHOOK_SECRET is set but no signature headers on inbound webhook');
+        }
+
         console.log('Received inbound email webhook from SendGrid');
 
         // Log webhook hit immediately for debugging
@@ -186,12 +206,17 @@ router.post('/inbound', upload.any(), async (req, res) => {
             if (alreadyProcessed) {
                 console.log(`Duplicate inbound detected for case ${result.case_id}; skipping analysis queue.`);
             } else {
-                // Queue for AI analysis
+                // Queue for AI analysis (with null guard and deterministic job ID)
+                if (!analysisQueue) {
+                    console.error('analysisQueue is null — cannot queue analysis');
+                    return res.status(503).json({ success: false, error: 'Analysis queue unavailable' });
+                }
                 await analysisQueue.add('analyze-response', {
                     messageId: result.message_id,
                     caseId: result.case_id,
                     instantReply: isTestMode
                 }, {
+                    jobId: `analyze-${result.message_id}`,
                     delay: isTestMode ? 0 : 2000, // faster processing, but still ensure DB commit
                     attempts: 3,
                     backoff: {
@@ -222,13 +247,17 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
                 if (!portalJobData.portalUrl) {
                     console.warn(`🌐 Portal notification detected but no portal URL stored for case ${result.case_id}`);
+                } else if (!portalQueue) {
+                    console.warn(`🌐 Portal notification for case ${result.case_id} but portalQueue is null — skipping`);
                 } else if (result.portal_notification.type === 'confirmation_link') {
                     await portalQueue.add('portal-submit', portalJobData, {
+                        jobId: `${result.case_id}:portal-submit`,
                         attempts: 1
                     });
                     console.log(`🔁 Portal submission re-queued for case ${result.case_id} using confirmation link`);
                 } else {
                     await portalQueue.add('portal-refresh', portalJobData, {
+                        jobId: `${result.case_id}:portal-refresh`,
                         attempts: 3,
                         backoff: {
                             type: 'exponential',
@@ -240,6 +269,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
                     if (result.portal_notification.type === 'submission_required') {
                         await portalQueue.add('portal-submit', portalJobData, {
+                            jobId: `${result.case_id}:portal-submit`,
                             attempts: 1
                         });
                         console.log(`🚀 Portal submission queued for case ${result.case_id} (${portalJobData.provider})`);
@@ -305,15 +335,20 @@ router.post('/inbound', upload.any(), async (req, res) => {
                             console.log(`Portal retry matched MSG #${savedMsgId} -> Case #${matchedCase.id} (thread ${threadId || 'NULL'})`);
 
                             // Queue for AI analysis since we found a match
-                            await analysisQueue.add('analyze-response', {
-                                messageId: savedMsgId,
-                                caseId: matchedCase.id,
-                                instantReply: false
-                            }, {
-                                delay: 2000,
-                                attempts: 3,
-                                backoff: { type: 'exponential', delay: 3000 }
-                            });
+                            if (analysisQueue) {
+                                await analysisQueue.add('analyze-response', {
+                                    messageId: savedMsgId,
+                                    caseId: matchedCase.id,
+                                    instantReply: false
+                                }, {
+                                    jobId: `analyze-${savedMsgId}`,
+                                    delay: 2000,
+                                    attempts: 3,
+                                    backoff: { type: 'exponential', delay: 3000 }
+                                });
+                            } else {
+                                console.warn('analysisQueue is null — skipping portal-retry analysis');
+                            }
 
                             await db.logActivity('webhook_portal_retry_matched',
                                 `Portal retry matched MSG #${savedMsgId} to case #${matchedCase.id} via portal signals`,

@@ -309,6 +309,7 @@ class DatabaseService {
         const query = `
             INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status)
             VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
             RETURNING *
         `;
         const values = [
