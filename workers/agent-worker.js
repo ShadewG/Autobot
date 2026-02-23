@@ -808,12 +808,40 @@ async function processResumeRunJob(job) {
         ended_at: new Date()
       });
 
-      // Update original proposal status if provided
-      if (originalProposalId) {
-        await db.updateProposal(originalProposalId, {
-          status: humanDecision.action === 'APPROVE' ? 'EXECUTED' : 'ADJUSTED',
-          executed_at: new Date()
-        });
+      // Update original proposal status based on human decision
+      // IMPORTANT: For APPROVE, execute-action.js already sets the proposal status
+      // (EXECUTED, BLOCKED, PENDING_PORTAL) based on the actual outcome.
+      // We must NOT overwrite it here, or we'd mark failed executions as EXECUTED.
+      if (originalProposalId && humanDecision?.action) {
+        switch (humanDecision.action) {
+          case 'APPROVE':
+            // execute-action.js handles status — don't overwrite
+            break;
+          case 'DISMISS':
+            await db.updateProposal(originalProposalId, {
+              status: 'DISMISSED',
+              executed_at: new Date()
+            });
+            break;
+          case 'WITHDRAW':
+            await db.updateProposal(originalProposalId, {
+              status: 'WITHDRAWN',
+              executed_at: new Date()
+            });
+            break;
+          case 'ADJUST':
+            await db.updateProposal(originalProposalId, {
+              status: 'ADJUSTED',
+              executed_at: new Date()
+            });
+            break;
+          default:
+            log.warn('Unknown human decision action in resume — not updating proposal status', {
+              action: humanDecision.action,
+              originalProposalId
+            });
+            break;
+        }
       }
 
       await notionService.syncStatusToNotion(caseId);

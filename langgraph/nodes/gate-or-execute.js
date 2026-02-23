@@ -49,16 +49,29 @@ async function gateOrExecuteNode(state) {
 
   const logs = [];
 
-  // If proposalActionType is missing, try to recover from latest pending proposal for this case
+  // If proposalActionType is missing, try to recover from the most specific source
   if (!proposalActionType) {
-    const pendingProposal = await db.getLatestPendingProposal(caseId);
-    if (pendingProposal?.action_type) {
-      proposalActionType = pendingProposal.action_type;
-      logs.push(`Recovered action_type from pending proposal: ${proposalActionType}`);
-    } else {
-      // Last resort - use a default
-      logs.push(`WARNING: No proposalActionType in state and no pending proposal, defaulting to NONE`);
-      proposalActionType = 'NONE';
+    // Priority 1: Recover from a specific proposal ID in state (most reliable)
+    if (state.proposalId) {
+      const existingProposal = await db.getProposalById(state.proposalId);
+      if (existingProposal?.action_type) {
+        proposalActionType = existingProposal.action_type;
+        logs.push(`Recovered action_type from proposalId ${state.proposalId}: ${proposalActionType}`);
+      }
+    }
+    // Priority 2: Fall back to latest pending proposal (less specific — could pick wrong one)
+    if (!proposalActionType) {
+      const pendingProposal = await db.getLatestPendingProposal(caseId);
+      if (pendingProposal?.action_type) {
+        proposalActionType = pendingProposal.action_type;
+        logs.push(`Recovered action_type from latest pending proposal: ${proposalActionType}`);
+        logger.warn('Recovered proposalActionType via getLatestPendingProposal fallback — may be inaccurate', {
+          caseId, proposalActionType, proposalId: pendingProposal.id
+        });
+      } else {
+        logs.push(`WARNING: No proposalActionType recoverable, defaulting to NONE`);
+        proposalActionType = 'NONE';
+      }
     }
   }
 
