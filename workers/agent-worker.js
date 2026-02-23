@@ -687,7 +687,7 @@ async function processResumeRunJob(job) {
   // GUARD: Check if proposal is already in terminal state (prevents infinite loops)
   if (originalProposalId) {
     const proposal = await db.getProposalById(originalProposalId);
-    const terminalStatuses = ['EXECUTED', 'APPROVED', 'DISMISSED', 'CANCELLED', 'FAILED'];
+    const terminalStatuses = ['EXECUTED', 'ADJUSTED', 'DISMISSED', 'WITHDRAWN', 'APPROVED', 'CANCELLED', 'FAILED'];
 
     if (proposal && terminalStatuses.includes(proposal.status)) {
       log.warn('Refusing to resume - proposal already in terminal state', {

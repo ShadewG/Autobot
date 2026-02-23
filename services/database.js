@@ -1322,52 +1322,74 @@ class DatabaseService {
                 langgraph_thread_id, adjustment_count, lessons_applied
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ON CONFLICT (proposal_key) DO UPDATE SET
-                -- Update run_id if provided (link to the run that created/updated this)
-                run_id = COALESCE(EXCLUDED.run_id, proposals.run_id),
-                -- Don't update if in a terminal/settled status (executed, dismissed, adjusting)
+                -- ONLY update when existing row is PENDING_APPROVAL.
+                -- All other statuses are fully immutable — prevents resurrection,
+                -- overwriting in-flight states (PENDING_PORTAL, DECISION_RECEIVED, etc.),
+                -- and corruption of terminal records (EXECUTED, DISMISSED, etc.).
+                run_id = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN COALESCE(EXCLUDED.run_id, proposals.run_id)
+                    ELSE proposals.run_id
+                END,
                 action_type = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.action_type
-                    WHEN EXCLUDED.action_type IS NULL THEN proposals.action_type
-                    ELSE EXCLUDED.action_type
+                    WHEN proposals.status = 'PENDING_APPROVAL' AND EXCLUDED.action_type IS NOT NULL THEN EXCLUDED.action_type
+                    ELSE proposals.action_type
                 END,
                 draft_subject = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.draft_subject
-                    ELSE EXCLUDED.draft_subject
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.draft_subject
+                    ELSE proposals.draft_subject
                 END,
                 draft_body_text = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.draft_body_text
-                    ELSE EXCLUDED.draft_body_text
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.draft_body_text
+                    ELSE proposals.draft_body_text
                 END,
                 draft_body_html = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.draft_body_html
-                    ELSE EXCLUDED.draft_body_html
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.draft_body_html
+                    ELSE proposals.draft_body_html
                 END,
                 reasoning = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.reasoning
-                    ELSE EXCLUDED.reasoning
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.reasoning
+                    ELSE proposals.reasoning
                 END,
                 confidence = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.confidence
-                    ELSE EXCLUDED.confidence
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.confidence
+                    ELSE proposals.confidence
                 END,
-                risk_flags = COALESCE(EXCLUDED.risk_flags, proposals.risk_flags),
-                warnings = COALESCE(EXCLUDED.warnings, proposals.warnings),
+                risk_flags = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN COALESCE(EXCLUDED.risk_flags, proposals.risk_flags)
+                    ELSE proposals.risk_flags
+                END,
+                warnings = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN COALESCE(EXCLUDED.warnings, proposals.warnings)
+                    ELSE proposals.warnings
+                END,
                 can_auto_execute = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.can_auto_execute
-                    ELSE EXCLUDED.can_auto_execute
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.can_auto_execute
+                    ELSE proposals.can_auto_execute
                 END,
                 requires_human = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.requires_human
-                    ELSE EXCLUDED.requires_human
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.requires_human
+                    ELSE proposals.requires_human
                 END,
                 status = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.status
-                    ELSE EXCLUDED.status
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN EXCLUDED.status
+                    ELSE proposals.status
                 END,
-                langgraph_thread_id = COALESCE(EXCLUDED.langgraph_thread_id, proposals.langgraph_thread_id),
-                adjustment_count = COALESCE(EXCLUDED.adjustment_count, proposals.adjustment_count),
-                lessons_applied = COALESCE(EXCLUDED.lessons_applied, proposals.lessons_applied),
-                updated_at = CURRENT_TIMESTAMP
+                langgraph_thread_id = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN COALESCE(EXCLUDED.langgraph_thread_id, proposals.langgraph_thread_id)
+                    ELSE proposals.langgraph_thread_id
+                END,
+                adjustment_count = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN COALESCE(EXCLUDED.adjustment_count, proposals.adjustment_count)
+                    ELSE proposals.adjustment_count
+                END,
+                lessons_applied = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN COALESCE(EXCLUDED.lessons_applied, proposals.lessons_applied)
+                    ELSE proposals.lessons_applied
+                END,
+                updated_at = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL' THEN CURRENT_TIMESTAMP
+                    ELSE proposals.updated_at
+                END
             RETURNING *
         `;
 
