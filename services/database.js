@@ -1274,9 +1274,12 @@ class DatabaseService {
         if (!proposalData.actionType) {
             // Try to extract from proposal_key if available
             if (proposalData.proposalKey) {
+                // Keys can be: caseId:msg:action:adj OR caseId:msg:ca<id>:action:adj
+                // Find the first part that looks like an action type (all uppercase with underscores)
                 const parts = proposalData.proposalKey.split(':');
-                if (parts.length >= 3 && parts[2]) {
-                    proposalData.actionType = parts[2];
+                const actionPart = parts.find(p => /^[A-Z][A-Z_]+$/.test(p));
+                if (actionPart) {
+                    proposalData.actionType = actionPart;
                     console.warn(`[DB] Recovered actionType from proposal_key: ${proposalData.actionType}`);
                 }
             }
@@ -1287,15 +1290,17 @@ class DatabaseService {
             }
         }
 
-        // DEDUP GUARD: Check for existing PENDING_APPROVAL proposals for this case.
+        // DEDUP GUARD: Prevent duplicate PENDING_APPROVAL proposals for the same case.
         // Multiple code paths (LangGraph, cron sweeps, portal failures) create proposals
         // with different proposal_key formats, so ON CONFLICT alone isn't sufficient.
-        // Rule: one pending proposal per case. First proposal wins; human dismisses if wrong.
-        if (proposalData.caseId) {
+        // Only blocks when the INCOMING proposal would be PENDING_APPROVAL — allows
+        // EXECUTED/APPROVED audit records through even if a pending proposal exists.
+        const incomingStatus = proposalData.status || 'PENDING_APPROVAL';
+        if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const existing = await this.query(
-                `SELECT id, action_type, proposal_key, created_at FROM proposals
+                `SELECT id, action_type, proposal_key FROM proposals
                  WHERE case_id = $1 AND status = 'PENDING_APPROVAL'
-                 ORDER BY created_at DESC`,
+                 LIMIT 1`,
                 [proposalData.caseId]
             );
 
@@ -1321,42 +1326,42 @@ class DatabaseService {
                 run_id = COALESCE(EXCLUDED.run_id, proposals.run_id),
                 -- Don't update if in a terminal/settled status (executed, dismissed, adjusting)
                 action_type = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.action_type
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.action_type
                     WHEN EXCLUDED.action_type IS NULL THEN proposals.action_type
                     ELSE EXCLUDED.action_type
                 END,
                 draft_subject = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.draft_subject
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.draft_subject
                     ELSE EXCLUDED.draft_subject
                 END,
                 draft_body_text = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.draft_body_text
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.draft_body_text
                     ELSE EXCLUDED.draft_body_text
                 END,
                 draft_body_html = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.draft_body_html
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.draft_body_html
                     ELSE EXCLUDED.draft_body_html
                 END,
                 reasoning = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.reasoning
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.reasoning
                     ELSE EXCLUDED.reasoning
                 END,
                 confidence = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.confidence
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.confidence
                     ELSE EXCLUDED.confidence
                 END,
                 risk_flags = COALESCE(EXCLUDED.risk_flags, proposals.risk_flags),
                 warnings = COALESCE(EXCLUDED.warnings, proposals.warnings),
                 can_auto_execute = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.can_auto_execute
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.can_auto_execute
                     ELSE EXCLUDED.can_auto_execute
                 END,
                 requires_human = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.requires_human
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.requires_human
                     ELSE EXCLUDED.requires_human
                 END,
                 status = CASE
-                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.status
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED', 'DECISION_RECEIVED', 'ADJUSTED') THEN proposals.status
                     ELSE EXCLUDED.status
                 END,
                 langgraph_thread_id = COALESCE(EXCLUDED.langgraph_thread_id, proposals.langgraph_thread_id),
