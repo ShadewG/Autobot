@@ -97,6 +97,12 @@ class DatabaseService {
                     ON cases(portal_request_number) WHERE portal_request_number IS NOT NULL
             `);
 
+            // Enforce at most one PENDING_APPROVAL proposal per case (prevents race conditions)
+            await this.query(`
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_pending_per_case
+                    ON proposals (case_id) WHERE status = 'PENDING_APPROVAL'
+            `);
+
             console.log('Database schema initialized successfully');
             return true;
         } catch (error) {
@@ -1313,44 +1319,44 @@ class DatabaseService {
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update run_id if provided (link to the run that created/updated this)
                 run_id = COALESCE(EXCLUDED.run_id, proposals.run_id),
-                -- Don't update if already executed, and preserve existing if new is null
+                -- Don't update if in a terminal/settled status (executed, dismissed, adjusting)
                 action_type = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.action_type
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.action_type
                     WHEN EXCLUDED.action_type IS NULL THEN proposals.action_type
                     ELSE EXCLUDED.action_type
                 END,
                 draft_subject = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.draft_subject
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.draft_subject
                     ELSE EXCLUDED.draft_subject
                 END,
                 draft_body_text = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.draft_body_text
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.draft_body_text
                     ELSE EXCLUDED.draft_body_text
                 END,
                 draft_body_html = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.draft_body_html
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.draft_body_html
                     ELSE EXCLUDED.draft_body_html
                 END,
                 reasoning = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.reasoning
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.reasoning
                     ELSE EXCLUDED.reasoning
                 END,
                 confidence = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.confidence
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.confidence
                     ELSE EXCLUDED.confidence
                 END,
                 risk_flags = COALESCE(EXCLUDED.risk_flags, proposals.risk_flags),
                 warnings = COALESCE(EXCLUDED.warnings, proposals.warnings),
                 can_auto_execute = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.can_auto_execute
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.can_auto_execute
                     ELSE EXCLUDED.can_auto_execute
                 END,
                 requires_human = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.requires_human
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.requires_human
                     ELSE EXCLUDED.requires_human
                 END,
                 status = CASE
-                    WHEN proposals.status = 'EXECUTED' THEN proposals.status
+                    WHEN proposals.status IN ('EXECUTED', 'DISMISSED', 'ADJUSTMENT_REQUESTED') THEN proposals.status
                     ELSE EXCLUDED.status
                 END,
                 langgraph_thread_id = COALESCE(EXCLUDED.langgraph_thread_id, proposals.langgraph_thread_id),
@@ -1386,8 +1392,23 @@ class DatabaseService {
             proposalData.lessonsApplied ? JSON.stringify(proposalData.lessonsApplied) : null
         ];
 
-        const result = await this.query(query, values);
-        return result.rows[0];
+        try {
+            const result = await this.query(query, values);
+            return result.rows[0];
+        } catch (err) {
+            // Race condition: partial unique index (one PENDING_APPROVAL per case) caught a concurrent insert
+            if (err.code === '23505' && err.constraint === 'idx_proposals_one_pending_per_case') {
+                const existing = await this.query(
+                    `SELECT id FROM proposals WHERE case_id = $1 AND status = 'PENDING_APPROVAL' LIMIT 1`,
+                    [proposalData.caseId]
+                );
+                if (existing.rows[0]) {
+                    console.log(`[DB] Race condition caught: returning existing proposal #${existing.rows[0].id} for case ${proposalData.caseId}`);
+                    return await this.getProposalById(existing.rows[0].id);
+                }
+            }
+            throw err;
+        }
     }
 
     /**
