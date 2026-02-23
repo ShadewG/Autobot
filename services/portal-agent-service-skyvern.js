@@ -1147,6 +1147,19 @@ class PortalAgentServiceSkyvern {
                     `Skyvern says not automatable: ${failureReason}`, {
                     case_id: caseData.id, portal_url: portalUrl, error: failureReason
                 });
+                try {
+                    const caseAgencies = await database.getCaseAgencies(caseData.id);
+                    const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                    await notionService.addSubmissionComment(caseData.id, {
+                        portal_url: portalUrl,
+                        provider: caseData.portal_provider || null,
+                        account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        status: 'not_automatable',
+                        confirmation_number: null,
+                        notes: `Portal not automatable: ${String(failureReason).substring(0, 200)}`,
+                        agency_notion_page_id: primary?.agency_notion_page_id || null
+                    });
+                } catch (_) { /* non-critical */ }
                 return this._handleNotRealPortal(caseData, portalUrl, dryRun, failureReason);
             }
 
