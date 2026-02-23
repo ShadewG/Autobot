@@ -28,7 +28,7 @@ curl -X POST https://api.sendgrid.com/v3/mail/send \
 
 echo ""
 echo ""
-echo "Test 2: Sending from samuel@matcher.com"
+echo "Test 2: Sending from samuel@drinsanity.com"
 echo ""
 
 curl -X POST https://api.sendgrid.com/v3/mail/send \
@@ -39,13 +39,13 @@ curl -X POST https://api.sendgrid.com/v3/mail/send \
       "to": [{"email": "shadewofficial@gmail.com"}]
     }],
     "from": {
-      "email": "samuel@matcher.com",
-      "name": "MATCHER Legal"
+      "email": "samuel@drinsanity.com",
+      "name": "Dr Insanity"
     },
     "subject": "SendGrid Test 2",
     "content": [{
       "type": "text/plain",
-      "value": "Testing SendGrid from matcher.com"
+      "value": "Testing SendGrid from drinsanity.com"
     }]
   }' \
   -w "\n\nHTTP Status: %{http_code}\n"

@@ -1,7 +1,7 @@
 # SOP Compliance Analysis
 
 ## Overview
-Analysis of how the FOIA automation bot aligns with Matcher's SOPs from Notion.
+Analysis of how the FOIA automation bot aligns with Dr Insanity's SOPs from Notion.
 
 ---
 
@@ -58,9 +58,9 @@ Analysis of how the FOIA automation bot aligns with Matcher's SOPs from Notion.
 
 **Bot Status**: ✅ **COMPLIANT**
 - Name: Samuel Hylton
-- Email: Samuel@matcher.com
+- Email: Samuel@drinsanity.com
 - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
-- Uses "Matcher" (not "MATCHER LEGAL DEPARTMENT")
+- Uses "Dr Insanity" (not "DR INSANITY LEGAL DEPARTMENT")
 
 **Evidence**: documentary-foia-prompts.js lines 16-22
 

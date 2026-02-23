@@ -49,7 +49,7 @@ async function generateInitialRequest() {
    - Jurisdiction: ${mockCase.state}
    - Agency: ${mockCase.agency_name}
    - Requester: Samuel Hylton
-   - Email: samuel@matcher.com
+   - Email: samuel@drinsanity.com
    - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
 
 2. INCIDENT DETAILS:
@@ -86,7 +86,7 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
     const request = response.choices[0].message.content;
 
     print('\n═══════════════════════════════════════════════════════', 'bold');
-    print('📤 FROM: Samuel Hylton <samuel@matcher.com>', 'green');
+    print('📤 FROM: Samuel Hylton <samuel@drinsanity.com>', 'green');
     print('📧 TO: ' + mockCase.agency_email, 'green');
     print('📋 SUBJECT: Public Records Request - Michael Rodriguez', 'green');
     print('═══════════════════════════════════════════════════════', 'bold');
@@ -213,7 +213,7 @@ Return ONLY the email body text, no subject line or metadata.`;
     const reply = replyResponse.choices[0].message.content;
 
     print('\n═══════════════════════════════════════════════════════', 'bold');
-    print('📤 FROM: Samuel Hylton <samuel@matcher.com>', 'green');
+    print('📤 FROM: Samuel Hylton <samuel@drinsanity.com>', 'green');
     print('📧 TO: ' + mockCase.agency_email, 'green');
     print('📋 SUBJECT: RE: Public Records Request', 'green');
     print('═══════════════════════════════════════════════════════', 'bold');

@@ -33,8 +33,8 @@ CLAUDE_MODEL=claude-3-7-sonnet-20250219  # Optional
 ### SendGrid (Email)
 ```bash
 SENDGRID_API_KEY=SG....          # Your SendGrid API key
-SENDGRID_FROM_EMAIL=samuel@matcher.com
-SENDGRID_FROM_NAME=MATCHER Legal Department
+SENDGRID_FROM_EMAIL=samuel@drinsanity.com
+SENDGRID_FROM_NAME=Dr Insanity
 ```
 
 ### Notion (Case Management)

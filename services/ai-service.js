@@ -58,7 +58,7 @@ class AIService {
                 if (user) {
                     userSignature = {
                         name: user.signature_name || user.name,
-                        title: user.signature_title || 'Documentary Researcher, Matcher',
+                        title: user.signature_title || 'Documentary Researcher, Dr Insanity',
                         phone: user.signature_phone || null
                     };
                 }
@@ -267,7 +267,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 
         // Get requester info from user signature, env, or defaults
         const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const requesterTitle = userSignature?.title || 'Documentary Researcher, Matcher';
+        const requesterTitle = userSignature?.title || 'Documentary Researcher, Dr Insanity';
         const requesterPhone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
 
         // Build signature block for the closing

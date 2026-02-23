@@ -232,7 +232,7 @@ function validateDraft(draft, analysis, fixture) {
     }
 
     // Check signature
-    if (!text.includes('Samuel Hylton') && !text.includes('Matcher')) {
+    if (!text.includes('Samuel Hylton') && !text.includes('Dr Insanity')) {
         warnings.push(`Draft missing proper signature`);
     }
 

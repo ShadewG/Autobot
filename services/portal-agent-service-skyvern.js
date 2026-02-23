@@ -699,7 +699,7 @@ class PortalAgentServiceSkyvern {
             name: process.env.REQUESTER_NAME || 'Samuel Hylton',
             email: preferredEmail || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
             phone: process.env.REQUESTER_PHONE || '209-800-7702',
-            organization: process.env.REQUESTER_ORG || 'Matcher / FOIA Request Team',
+            organization: process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team',
             title: process.env.REQUESTER_TITLE || 'Documentary Researcher',
             address: {
                 line1: process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
@@ -1756,7 +1756,7 @@ Use Set Extracted Information to return this JSON:
             state_abbr: 'WA',
             zip: '98199',
             zip_code: '98199',
-            organization: 'Matcher / FOIA Request Team'
+            organization: 'Dr Insanity / FOIA Request Team'
         };
     }
 

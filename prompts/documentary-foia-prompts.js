@@ -8,7 +8,7 @@ STYLE GUIDELINES:
 - Keep it simple and professional
 - Use natural, conversational language - don't force specific phrases
 - NO legal jargon or excessive citations
-- Use "Matcher" only (never "MATCHER LEGAL DEPARTMENT")
+- Use "Dr Insanity" only (never "DR INSANITY LEGAL DEPARTMENT")
 - Focus on getting video footage first, reports second
 - Be polite and respectful
 - Keep requests short and organized (200-400 words total)

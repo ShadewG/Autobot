@@ -156,7 +156,7 @@ function _getRequesterInfo(caseData) {
         name: process.env.REQUESTER_NAME || 'Samuel Hylton',
         email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
         phone: process.env.REQUESTER_PHONE || '209-800-7702',
-        organization: process.env.REQUESTER_ORG || 'Matcher / FOIA Request Team',
+        organization: process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team',
         title: process.env.REQUESTER_TITLE || 'Documentary Researcher',
         address: process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
         addressLine2: process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',

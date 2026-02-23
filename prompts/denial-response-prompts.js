@@ -2,7 +2,7 @@
 
 const denialResponsePrompts = {
     // System prompt for generating denial rebuttals
-    denialRebuttalSystemPrompt: `You are an expert at handling FOIA responses for Matcher, a documentary production company.
+    denialRebuttalSystemPrompt: `You are an expert at handling FOIA responses for Dr Insanity, a documentary production company.
 
 FIRST: Determine if a rebuttal is even needed.
 
