@@ -1191,6 +1191,22 @@ class PortalAgentServiceSkyvern {
 
             // ESCALATE: Retry exhausted or AI said don't retry
             console.log(`❌ Portal failed for case ${caseData.id} after ${retryContext ? 'retry' : 'AI declined retry'}`);
+            const failureStr = String(failureReason || 'Unknown error');
+
+            // Record portal failure memory before any early returns
+            try {
+                const caseAgencies = await database.getCaseAgencies(caseData.id);
+                const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                await notionService.addSubmissionComment(caseData.id, {
+                    portal_url: portalUrl,
+                    provider: caseData.portal_provider || null,
+                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    status: 'failed',
+                    confirmation_number: null,
+                    notes: `Error: ${failureStr.substring(0, 200)}`,
+                    agency_notion_page_id: primary?.agency_notion_page_id || null
+                });
+            } catch (_) { /* non-critical */ }
 
             // Try email fallback before escalating to human
             const emailSent = await this._fallbackToEmailIfPossible(caseData, portalUrl, failureReason);
@@ -1199,7 +1215,7 @@ class PortalAgentServiceSkyvern {
                 return { success: true, status: 'email_fallback_sent', runId: workflowRunId, engine: 'pdf_form_auto' };
             }
 
-            const truncatedReason = (failureReason || 'Unknown error').substring(0, 80);
+            const truncatedReason = failureStr.substring(0, 80);
             await database.updateCaseStatus(caseData.id, 'needs_human_review', {
                 substatus: `Portal failed: ${truncatedReason}`.substring(0, 100),
                 requires_human: true
@@ -1221,21 +1237,6 @@ class PortalAgentServiceSkyvern {
                 console.error('Failed to create proposal on portal failure:', proposalErr.message);
             }
             try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
-
-            // Record failed submission memory (helps future attempts)
-            try {
-                const caseAgencies = await database.getCaseAgencies(caseData.id);
-                const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
-                await notionService.addSubmissionComment(caseData.id, {
-                    portal_url: portalUrl,
-                    provider: caseData.portal_provider || null,
-                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-                    status: 'failed',
-                    confirmation_number: null,
-                    notes: `Error: ${(failureReason || '').substring(0, 200)}`,
-                    agency_notion_page_id: primary?.agency_notion_page_id || null
-                });
-            } catch (_) { /* non-critical */ }
 
             await database.logActivity(
                 'portal_stage_failed',
@@ -1261,10 +1262,25 @@ class PortalAgentServiceSkyvern {
                 engine: 'skyvern_workflow'
             };
         } catch (error) {
-            const message = error.response?.data?.message || error.response?.data?.error || error.message;
+            const message = String(error.response?.data?.message || error.response?.data?.error || error.message || 'Unknown crash');
             console.error('❌ Skyvern workflow API error:', message);
             // workflowRunLink may not be defined if error was thrown before assignment
             const safeRunLink = (typeof workflowRunLink !== 'undefined') ? workflowRunLink : null;
+
+            // Record crash memory before any early returns
+            try {
+                const caseAgencies = await database.getCaseAgencies(caseData.id);
+                const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                await notionService.addSubmissionComment(caseData.id, {
+                    portal_url: portalUrl,
+                    provider: caseData.portal_provider || null,
+                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    status: 'failed',
+                    confirmation_number: null,
+                    notes: `Crash: ${message.substring(0, 200)}`,
+                    agency_notion_page_id: primary?.agency_notion_page_id || null
+                });
+            } catch (_) { /* non-critical */ }
 
             // Try email fallback before escalating to human
             const emailSent = await this._fallbackToEmailIfPossible(caseData, portalUrl, message);
@@ -1293,20 +1309,6 @@ class PortalAgentServiceSkyvern {
                 });
                 await notionService.syncStatusToNotion(caseData.id);
             } catch (_) {}
-            // Record crashed submission memory
-            try {
-                const caseAgencies = await database.getCaseAgencies(caseData.id);
-                const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
-                await notionService.addSubmissionComment(caseData.id, {
-                    portal_url: portalUrl,
-                    provider: caseData.portal_provider || null,
-                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-                    status: 'failed',
-                    confirmation_number: null,
-                    notes: `Crash: ${(message || '').substring(0, 200)}`,
-                    agency_notion_page_id: primary?.agency_notion_page_id || null
-                });
-            } catch (_) { /* non-critical */ }
 
             await database.logActivity(
                 'portal_stage_failed',

@@ -1822,13 +1822,22 @@ Look for a records division email, FOIA email, or general agency email that acce
                 const s = (m.status || '').toLowerCase();
                 return s === 'completed' || s === 'succeeded' || s === 'success';
             });
+            const lastEntry = memories[memories.length - 1];
+
             if (successful.length === 0) {
-                const lastFail = memories[memories.length - 1];
-                return `Previous submission attempt on ${lastFail.date?.split('T')[0] || '?'} via ${lastFail.provider || lastFail.portal || '?'} — status: ${lastFail.status || 'unknown'}. ${lastFail.notes || ''}`.trim();
+                return `Previous submission attempt on ${lastEntry.date?.split('T')[0] || '?'} via ${lastEntry.provider || lastEntry.portal || '?'} — status: ${lastEntry.status || 'unknown'}. ${lastEntry.notes || ''}`.trim();
             }
 
-            const last = successful[successful.length - 1];
-            return `Previously submitted successfully on ${last.date?.split('T')[0] || '?'} via ${last.provider || last.portal || '?'} (account: ${last.account || '?'}, confirmation: ${last.confirmation || 'N/A'}). ${last.notes || ''}`.trim();
+            const lastSuccess = successful[successful.length - 1];
+            let summary = `Previously submitted successfully on ${lastSuccess.date?.split('T')[0] || '?'} via ${lastSuccess.provider || lastSuccess.portal || '?'} (account: ${lastSuccess.account || '?'}, confirmation: ${lastSuccess.confirmation || 'N/A'}).`;
+
+            // Append recent failure context if the most recent attempt was a failure
+            const lastStatus = (lastEntry.status || '').toLowerCase();
+            if (lastEntry !== lastSuccess && lastStatus !== 'completed' && lastStatus !== 'succeeded' && lastStatus !== 'success') {
+                summary += ` However, most recent attempt on ${lastEntry.date?.split('T')[0] || '?'} failed: ${lastEntry.notes || lastEntry.status || 'unknown'}.`;
+            }
+
+            return summary.trim();
         } catch (error) {
             console.error(`Failed to get submission memory summary for case ${caseId}:`, error.message);
             return null;
