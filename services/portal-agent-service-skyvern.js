@@ -995,8 +995,24 @@ class PortalAgentServiceSkyvern {
                         last_portal_task_url: workflowRunLink
                     });
                 }
-                // Try email fallback before escalating to human
                 const timeoutReason = `Polling timeout — check Skyvern run${workflowRunLink ? ': ' + workflowRunLink : ''}`;
+
+                // Record timeout memory before any early returns
+                try {
+                    const caseAgencies = await database.getCaseAgencies(caseData.id);
+                    const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                    await notionService.addSubmissionComment(caseData.id, {
+                        portal_url: portalUrl,
+                        provider: caseData.portal_provider || null,
+                        account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        status: 'timeout',
+                        confirmation_number: null,
+                        notes: timeoutReason,
+                        agency_notion_page_id: primary?.agency_notion_page_id || null
+                    });
+                } catch (_) { /* non-critical */ }
+
+                // Try email fallback before escalating to human
                 const emailSent = await this._fallbackToEmailIfPossible(caseData, portalUrl, timeoutReason);
                 if (emailSent) {
                     try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
