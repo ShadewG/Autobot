@@ -79,7 +79,17 @@ async function decideNextActionNode(state) {
     // not get blocked here — "no response needed" means no reply to an agency message,
     // but we still need to send proactive follow-ups for unanswered requests.
     const isFollowupTrigger = triggerType === 'SCHEDULED_FOLLOWUP' || triggerType === 'time_based_followup' || triggerType === 'followup_trigger';
-    if (requiresResponse === false && !(isFollowupTrigger || classification === 'NO_RESPONSE')) {
+    // OVERRIDE: When the AI explicitly recommends a response-requiring action (send_rebuttal,
+    // respond to denial, etc.) but also sets requires_action=false, trust the action over the
+    // flag. This contradiction happens frequently with denials — the AI recognizes the denial
+    // is challengeable but still marks requires_action=false.
+    const responseRequiringActions = ['send_rebuttal', 'negotiate_fee', 'pay_fee', 'challenge'];
+    const actionOverridesNoResponse = responseRequiringActions.includes(suggestedAction)
+      || (suggestedAction === 'respond' && classification === 'DENIAL');
+    if (actionOverridesNoResponse) {
+      logs.push(`Override: suggestedAction=${suggestedAction} overrides requires_response=false for ${classification}`);
+    }
+    if (requiresResponse === false && !actionOverridesNoResponse && !(isFollowupTrigger || classification === 'NO_RESPONSE')) {
       reasoning.push(`No response needed: ${reasonNoResponse || 'Analysis determined no email required'}`);
       logs.push(`Skipping email draft: requires_response=false (${classification})`);
 
