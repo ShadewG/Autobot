@@ -716,9 +716,18 @@ class PortalAgentServiceSkyvern {
         };
     }
 
-    _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun }) {
+    async _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun }) {
         const caseInfo = this._buildWorkflowCaseInfo(caseData, portalUrl, dryRun);
         const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email);
+
+        // Inject previous submission memory if available
+        try {
+            const memorySummary = await notionService.getSubmissionMemorySummary(caseData.id);
+            if (memorySummary) {
+                caseInfo.previous_submission_notes = memorySummary;
+                console.log(`📚 Injected submission memory for case ${caseData.id}: ${memorySummary.substring(0, 100)}...`);
+            }
+        } catch (_) { /* non-critical */ }
 
         // Always send login credentials — either from saved account or defaults.
         // This ensures Skyvern uses OUR password when creating accounts, not a random one.
@@ -908,7 +917,7 @@ class PortalAgentServiceSkyvern {
         }
 
         const totpIdentifier = process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
-        const parameters = this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun });
+        const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun });
         if (retryContext?.navigation_goal) {
             parameters.navigation_goal = retryContext.navigation_goal;
             console.log(`🔄 Retry with AI guidance: ${retryContext.navigation_goal}`);
@@ -1050,6 +1059,22 @@ class PortalAgentServiceSkyvern {
                 // Dismiss only submission-related proposals; keep rebuttals, fee negotiations, etc.
                 try { await database.dismissPendingProposals(caseData.id, 'Portal submission completed', ['SUBMIT_PORTAL', 'SEND_FOLLOWUP', 'SEND_INITIAL_REQUEST']); } catch (_) {}
                 try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
+                // Record submission memory on the Notion page (case + PD)
+                try {
+                    const caseAgencies = await database.getCaseAgencies(caseData.id);
+                    const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                    await notionService.addSubmissionComment(caseData.id, {
+                        portal_url: portalUrl,
+                        provider: caseData.portal_provider || null,
+                        account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        status: finalResult.status || 'completed',
+                        confirmation_number: extractedData?.confirmation_number || caseData.portal_request_number || null,
+                        agency_notion_page_id: primary?.agency_notion_page_id || null
+                    });
+                } catch (memErr) {
+                    console.warn('Submission memory comment failed (non-critical):', memErr.message);
+                }
 
                 // Auto-save portal account if we didn't have one — so future cases reuse it
                 if (!portalAccount) {
@@ -1196,6 +1221,21 @@ class PortalAgentServiceSkyvern {
                 console.error('Failed to create proposal on portal failure:', proposalErr.message);
             }
             try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
+            // Record failed submission memory (helps future attempts)
+            try {
+                const caseAgencies = await database.getCaseAgencies(caseData.id);
+                const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                await notionService.addSubmissionComment(caseData.id, {
+                    portal_url: portalUrl,
+                    provider: caseData.portal_provider || null,
+                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    status: 'failed',
+                    confirmation_number: null,
+                    notes: `Error: ${(failureReason || '').substring(0, 200)}`,
+                    agency_notion_page_id: primary?.agency_notion_page_id || null
+                });
+            } catch (_) { /* non-critical */ }
 
             await database.logActivity(
                 'portal_stage_failed',

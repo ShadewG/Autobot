@@ -1684,6 +1684,137 @@ Look for a records division email, FOIA email, or general agency email that acce
         }
     }
 
+    /**
+     * Add a submission memory comment to the case's Notion page (and optionally the PD page).
+     * Tagged with [BOT:SUBMISSION] so we can filter them later.
+     */
+    async addSubmissionComment(caseId, submissionInfo) {
+        try {
+            const caseData = await db.getCaseById(caseId);
+            const hasValidCasePage = caseData?.notion_page_id && !caseData.notion_page_id.startsWith('test-');
+
+            const date = new Date().toISOString().split('T')[0];
+            const lines = [
+                `[BOT:SUBMISSION] ${date}`,
+                `Portal: ${submissionInfo.portal_url || '-'}`,
+                `Provider: ${submissionInfo.provider || '-'}`,
+                `Account: ${submissionInfo.account_email || '-'}`,
+                `Status: ${submissionInfo.status || 'completed'}`,
+                `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
+            ];
+            if (submissionInfo.notes) lines.push(`Notes: ${submissionInfo.notes}`);
+            const text = lines.join('\n');
+
+            // Comment on the case Notion page
+            if (hasValidCasePage) {
+                await this.notion.comments.create({
+                    parent: { page_id: caseData.notion_page_id },
+                    rich_text: [{ type: 'text', text: { content: text } }]
+                });
+                console.log(`📝 Submission comment added to case #${caseId} Notion page`);
+            }
+
+            // Also comment on the PD's Notion page if linked
+            if (submissionInfo.agency_notion_page_id) {
+                const pdLines = [
+                    `[BOT:SUBMISSION] ${date} — Case #${caseId} (${caseData?.case_name || ''})`,
+                    `Portal: ${submissionInfo.portal_url || '-'}`,
+                    `Provider: ${submissionInfo.provider || '-'}`,
+                    `Account: ${submissionInfo.account_email || '-'}`,
+                    `Status: ${submissionInfo.status || 'completed'}`,
+                    `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
+                ];
+                if (submissionInfo.notes) pdLines.push(`Notes: ${submissionInfo.notes}`);
+
+                await this.notion.comments.create({
+                    parent: { page_id: submissionInfo.agency_notion_page_id },
+                    rich_text: [{ type: 'text', text: { content: pdLines.join('\n') } }]
+                });
+                console.log(`📝 Submission comment added to PD Notion page for case #${caseId}`);
+            }
+        } catch (error) {
+            console.error(`Failed to add submission comment for case ${caseId}:`, error.message);
+        }
+    }
+
+    /**
+     * Retrieve past submission memory from a PD's Notion page comments.
+     * Returns structured info about previous submissions to the same department.
+     */
+    async getSubmissionMemory(agencyNotionPageId) {
+        if (!agencyNotionPageId) return [];
+        try {
+            // Paginate through all comments (Notion default page size is 100)
+            let allResults = [];
+            let startCursor;
+            do {
+                const params = { block_id: agencyNotionPageId };
+                if (startCursor) params.start_cursor = startCursor;
+                const page = await this.notion.comments.list(params);
+                allResults = allResults.concat(page.results || []);
+                startCursor = page.has_more ? page.next_cursor : null;
+            } while (startCursor);
+
+            const submissionComments = allResults
+                .filter(c => {
+                    const text = c.rich_text?.map(t => t.plain_text).join('') || '';
+                    return text.startsWith('[BOT:SUBMISSION]');
+                })
+                .map(c => {
+                    const text = c.rich_text?.map(t => t.plain_text).join('') || '';
+                    const parsed = {};
+                    for (const line of text.split('\n')) {
+                        const match = line.match(/^(\w[\w\s#]*?):\s*(.+)$/);
+                        if (match) parsed[match[1].trim().toLowerCase().replace(/\s+/g, '_')] = match[2].trim();
+                    }
+                    return {
+                        raw: text,
+                        date: c.created_time,
+                        portal: parsed.portal || null,
+                        provider: parsed.provider || null,
+                        account: parsed.account || null,
+                        status: parsed.status || null,
+                        confirmation: parsed['confirmation_#'] || null,
+                        notes: parsed.notes || null
+                    };
+                })
+                .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+            return submissionComments;
+        } catch (error) {
+            console.error(`Failed to read submission memory for page ${agencyNotionPageId}:`, error.message);
+            return [];
+        }
+    }
+
+    /**
+     * Get a summary string of past submissions for injection into Skyvern workflow context.
+     */
+    async getSubmissionMemorySummary(caseId) {
+        try {
+            const caseAgencies = await db.getCaseAgencies(caseId);
+            const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+            if (!primary?.agency_notion_page_id) return null;
+
+            const memories = await this.getSubmissionMemory(primary.agency_notion_page_id);
+            if (memories.length === 0) return null;
+
+            const successful = memories.filter(m => {
+                const s = (m.status || '').toLowerCase();
+                return s === 'completed' || s === 'succeeded' || s === 'success';
+            });
+            if (successful.length === 0) {
+                const lastFail = memories[memories.length - 1];
+                return `Previous submission attempt on ${lastFail.date?.split('T')[0] || '?'} via ${lastFail.provider || lastFail.portal || '?'} — status: ${lastFail.status || 'unknown'}. ${lastFail.notes || ''}`.trim();
+            }
+
+            const last = successful[successful.length - 1];
+            return `Previously submitted successfully on ${last.date?.split('T')[0] || '?'} via ${last.provider || last.portal || '?'} (account: ${last.account || '?'}, confirmation: ${last.confirmation || 'N/A'}). ${last.notes || ''}`.trim();
+        } catch (error) {
+            console.error(`Failed to get submission memory summary for case ${caseId}:`, error.message);
+            return null;
+        }
+    }
+
     async getPagePropertyNames(pageId) {
         const cacheEntry = this.pagePropertyCache.get(pageId);
         const now = Date.now();
