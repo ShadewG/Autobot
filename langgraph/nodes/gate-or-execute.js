@@ -22,12 +22,15 @@ const logger = require('../../services/logger');
 function generateProposalKey(state) {
   const {
     caseId, latestInboundMessageId, proposalActionType,
-    adjustmentCount, caseAgencyId
+    adjustmentCount, caseAgencyId, runId
   } = state;
 
   // Include caseAgencyId when targeting a specific agency
   const agencyPart = caseAgencyId ? `:ca${caseAgencyId}` : '';
-  return `${caseId}:${latestInboundMessageId || 'scheduled'}${agencyPart}:${proposalActionType}:${adjustmentCount || 0}`;
+  // Use runId as disambiguator for scheduled followups (which lack a messageId)
+  // This prevents key collisions between repeated scheduled runs
+  const messagePart = latestInboundMessageId || (runId ? `run-${runId}` : 'scheduled');
+  return `${caseId}:${messagePart}${agencyPart}:${proposalActionType}:${adjustmentCount || 0}`;
 }
 
 /**

@@ -193,7 +193,7 @@ async function classifyInboundNode(state) {
 
     // Extract portal_url (single canonical field)
     const portalUrl = analysis.portal_url || null;
-    const feeAmount = analysis.fee_amount || null;
+    const feeAmount = analysis.fee_amount != null ? analysis.fee_amount : null;
 
     // Save analysis to DB
     await db.saveResponseAnalysis({
@@ -229,6 +229,21 @@ async function classifyInboundNode(state) {
       requiresResponse = true;
     }
 
+    // Normalize freeform suggestedAction to known enum values
+    // The AI sometimes returns long instruction strings instead of expected values
+    let suggestedAction = analysis.suggested_action || null;
+    if (suggestedAction && suggestedAction.length > 30) {
+      // Freeform string — try to extract intent
+      const sa = suggestedAction.toLowerCase();
+      if (sa.includes('rebuttal') || sa.includes('challenge') || sa.includes('appeal')) suggestedAction = 'send_rebuttal';
+      else if (sa.includes('portal') || sa.includes('submit')) suggestedAction = 'use_portal';
+      else if (sa.includes('negotiate') || sa.includes('fee')) suggestedAction = 'negotiate_fee';
+      else if (sa.includes('wait') || sa.includes('monitor')) suggestedAction = 'wait';
+      else if (sa.includes('respond') || sa.includes('reply')) suggestedAction = 'respond';
+      else suggestedAction = 'respond'; // Default: if AI wrote instructions, it wants us to respond
+      logger.info('Normalized freeform suggestedAction', { caseId, original: analysis.suggested_action?.slice(0, 80), normalized: suggestedAction });
+    }
+
     return {
       classification,
       classificationConfidence: analysis.confidence_score || analysis.confidence || 0.8,
@@ -238,7 +253,7 @@ async function classifyInboundNode(state) {
       denialSubtype: analysis.denial_subtype || null,
       requiresResponse,
       portalUrl,
-      suggestedAction: analysis.suggested_action || null,
+      suggestedAction,
       reasonNoResponse: analysis.reason_no_response || null,
       unansweredAgencyQuestion: unansweredQuestion,
       logs: [
@@ -254,7 +269,16 @@ async function classifyInboundNode(state) {
     return {
       errors: [`Classification failed: ${error.message}`],
       classification: 'UNKNOWN',
-      classificationConfidence: 0
+      classificationConfidence: 0,
+      // Explicitly clear fields to prevent stale values from prior runs
+      // leaking through preserving reducers in state
+      requiresResponse: undefined,
+      suggestedAction: undefined,
+      reasonNoResponse: undefined,
+      portalUrl: undefined,
+      extractedFeeAmount: undefined,
+      denialSubtype: undefined,
+      sentiment: undefined
     };
   }
 }

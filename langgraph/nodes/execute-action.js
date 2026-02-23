@@ -684,6 +684,25 @@ async function executeActionNode(state) {
         };
       }
 
+      // Validate delivery channel (email required for reformulation)
+      if (!targetEmail) {
+        logs.push('BLOCKED: No agency_email for reformulated request');
+        await db.updateProposal(proposalId, {
+          status: 'BLOCKED',
+          execution_key: null
+        });
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          requires_human: true,
+          pause_reason: 'No agency email for reformulated request'
+        });
+        return {
+          actionExecuted: false,
+          gatedForReview: true,
+          errors: ['No agency email — cannot send reformulated request'],
+          logs
+        };
+      }
+
       const thread = await db.getThreadByCaseId(caseId);
       const delayMinutes = Math.floor(Math.random() * 480) + 120;
       const delayMs = delayMinutes * 60 * 1000;

@@ -534,15 +534,43 @@ async function decideNextActionNode(state) {
             logs: [...logs, 'Request withdrawn by user'],
             proposalReasoning: reasoning
           };
+
+        default:
+          reasoning.push(`Unknown human decision action: ${humanDecision.action}`);
+          logger.warn('Unknown human decision action', { caseId, action: humanDecision.action });
+          return {
+            humanDecision: null,  // Clear to prevent infinite re-routing
+            proposalActionType: ESCALATE,
+            canAutoExecute: false,
+            requiresHuman: true,
+            pauseReason: 'SENSITIVE',
+            proposalReasoning: reasoning,
+            logs: [...logs, `Unknown decision action "${humanDecision.action}" — escalating`],
+            nextNode: 'gate_or_execute'
+          };
       }
     }
 
     // === Deterministic routing based on classification ===
 
     // 1. FEE QUOTE handling
-    if (classification === 'FEE_QUOTE' && extractedFeeAmount != null) {
+    if (classification === 'FEE_QUOTE') {
       // Coerce fee amount to number for comparisons
-      const fee = Number(extractedFeeAmount);
+      const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
+
+      // Guard: if fee is missing, NaN, or negative, gate for human review
+      if (fee === null || !isFinite(fee) || fee < 0) {
+        reasoning.push(`Fee quote detected but amount is invalid or missing (raw: ${extractedFeeAmount})`);
+        return {
+          proposalActionType: NEGOTIATE_FEE,
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: 'FEE_QUOTE',
+          proposalReasoning: reasoning,
+          logs: [...logs, `Fee amount invalid (${extractedFeeAmount}) — gating for human review`],
+          nextNode: 'draft_response'
+        };
+      }
       reasoning.push(`Fee quote received: $${fee}`);
 
       // CRITICAL CHECK: Did the agency also deny critical records (BWC/video) in this message?
@@ -1024,8 +1052,11 @@ async function decideNextActionNode(state) {
     return {
       errors: [`Decision failed: ${error.message}`],
       proposalActionType: ESCALATE,
+      canAutoExecute: false,
       requiresHuman: true,
-      pauseReason: 'SENSITIVE'
+      pauseReason: 'SENSITIVE',
+      nextNode: 'gate_or_execute',  // Explicit routing prevents stale nextNode from prior run
+      proposalReasoning: [`Error during decision: ${error.message}`, 'Escalating to human review']
     };
   }
 }
