@@ -71,6 +71,7 @@ class NotionService {
         this.statusAutoValue = process.env.NOTION_STATUS_AUTO_VALUE || 'Auto';
         this.databaseSchema = null;
         this.databaseSchemaFetchedAt = 0;
+        this.submissionMemoryCache = new Map(); // pageId -> { data, fetchedAt }
         this.enableAINormalization = process.env.ENABLE_NOTION_AI_NORMALIZATION !== 'false';
     }
 
@@ -1702,7 +1703,7 @@ Look for a records division email, FOIA email, or general agency email that acce
                 `Status: ${submissionInfo.status || 'completed'}`,
                 `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
             ];
-            if (submissionInfo.notes) lines.push(`Notes: ${submissionInfo.notes}`);
+            if (submissionInfo.notes) lines.push(`Notes: ${submissionInfo.notes.replace(/\n/g, ' | ')}`);
             const text = lines.join('\n');
 
             // Comment on the case Notion page
@@ -1724,13 +1725,14 @@ Look for a records division email, FOIA email, or general agency email that acce
                     `Status: ${submissionInfo.status || 'completed'}`,
                     `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
                 ];
-                if (submissionInfo.notes) pdLines.push(`Notes: ${submissionInfo.notes}`);
+                if (submissionInfo.notes) pdLines.push(`Notes: ${submissionInfo.notes.replace(/\n/g, ' | ')}`);
 
                 await this.notion.comments.create({
                     parent: { page_id: submissionInfo.agency_notion_page_id },
                     rich_text: [{ type: 'text', text: { content: pdLines.join('\n') } }]
                 });
                 console.log(`📝 Submission comment added to PD Notion page for case #${caseId}`);
+                this.submissionMemoryCache.delete(submissionInfo.agency_notion_page_id);
             }
         } catch (error) {
             console.error(`Failed to add submission comment for case ${caseId}:`, error.message);
@@ -1743,6 +1745,13 @@ Look for a records division email, FOIA email, or general agency email that acce
      */
     async getSubmissionMemory(agencyNotionPageId) {
         if (!agencyNotionPageId) return [];
+
+        // Check cache (5 min TTL)
+        const cached = this.submissionMemoryCache.get(agencyNotionPageId);
+        if (cached && (Date.now() - cached.fetchedAt) < 5 * 60 * 1000) {
+            return cached.data;
+        }
+
         try {
             // Paginate through all comments (Notion default page size is 100)
             let allResults = [];
@@ -1779,6 +1788,7 @@ Look for a records division email, FOIA email, or general agency email that acce
                     };
                 })
                 .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+            this.submissionMemoryCache.set(agencyNotionPageId, { data: submissionComments, fetchedAt: Date.now() });
             return submissionComments;
         } catch (error) {
             console.error(`Failed to read submission memory for page ${agencyNotionPageId}:`, error.message);
