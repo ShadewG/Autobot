@@ -681,10 +681,10 @@ class SendGridService {
         const scored = await Promise.all(candidates.map(async (c) => {
             let score = 0;
 
-            // Request number match (instant winner) — supports comma-separated list
+            // Request number match (instant winner) — supports comma-separated list, case-insensitive
             if (requestNumber && c.portal_request_number) {
-                const storedNums = c.portal_request_number.replace(/\s/g, '').split(',');
-                if (storedNums.includes(requestNumber)) {
+                const storedNums = c.portal_request_number.replace(/\s/g, '').split(',').map(n => n.toUpperCase());
+                if (storedNums.includes(requestNumber.toUpperCase())) {
                     score += 100;
                 }
             }
@@ -1080,6 +1080,7 @@ class SendGridService {
         } else if (provider === 'civicplus') {
             // Request number from subject — require keyword anchor to avoid matching bare dates
             const reqMatch = subjectStr.match(/(?:Request|Tracking|Ref|Confirmation)[:\s#]+([A-Z]{1,5}-\d{2,4}-\d+)/i)
+                          || subjectStr.match(/(?:Request|Tracking|Ref|Confirmation)[:\s#]+(\d{4,})/i)
                           || subjectStr.match(/#([A-Z0-9]+-\d+|\d{4,})/i);
             if (reqMatch) {
                 signals.requestNumber = reqMatch[1];
@@ -1210,33 +1211,35 @@ class SendGridService {
             }
         }
 
-        // Priority 3: Agency name match (NextRequest, CivicPlus)
+        // Priority 3: Agency name match (NextRequest, CivicPlus) — scoped by provider
         if (signals.agencyName) {
             const exactMatch = await db.query(
                 `SELECT * FROM cases
                  WHERE LOWER(agency_name) = LOWER($1)
+                   AND ($3::text IS NULL OR portal_provider = $3)
                    AND status = ANY($2)
                  ORDER BY
                    CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
                    updated_at DESC
                  LIMIT 1`,
-                [signals.agencyName, activeStatuses]
+                [signals.agencyName, activeStatuses, signals.provider || null]
             );
             if (exactMatch.rows.length > 0) {
                 console.log(`Portal match: agency name "${signals.agencyName}" → case #${exactMatch.rows[0].id}`);
                 return exactMatch.rows[0];
             }
 
-            // Fuzzy: LIKE %name%
+            // Fuzzy: LIKE %name% — still scoped by provider
             const fuzzyMatch = await db.query(
                 `SELECT * FROM cases
                  WHERE LOWER(agency_name) LIKE $1
+                   AND ($3::text IS NULL OR portal_provider = $3)
                    AND status = ANY($2)
                  ORDER BY
                    CASE WHEN status = 'portal_in_progress' THEN 0 ELSE 1 END,
                    updated_at DESC
                  LIMIT 1`,
-                [`%${signals.agencyName.toLowerCase()}%`, activeStatuses]
+                [`%${signals.agencyName.toLowerCase()}%`, activeStatuses, signals.provider || null]
             );
             if (fuzzyMatch.rows.length > 0) {
                 console.log(`Portal match: fuzzy agency name "${signals.agencyName}" → case #${fuzzyMatch.rows[0].id}`);

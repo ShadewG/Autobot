@@ -1731,9 +1731,9 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
 
         log.info(`Approving proposal ${proposalId}`);
 
-        // Update proposal with human decision
+        // Mark decision received (terminal-protected) before queueing resume
         await db.updateProposal(proposalId, {
-            status: 'APPROVED',
+            status: 'DECISION_RECEIVED',
             humanDecision: 'APPROVE',
             humanDecidedAt: new Date()
         });
@@ -2168,10 +2168,10 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
                     last_fee_quote_amount: effectiveCaseData.last_fee_quote_amount
                 },
                 analysis: analysis ? {
-                    classification: analysis.classification,
+                    classification: analysis.intent,
                     suggested_action: analysis.suggested_action,
                     confidence: analysis.confidence_score,
-                    fee_amount: analysis.fee_amount
+                    fee_amount: analysis.extracted_fee_amount
                 } : null,
                 config: {
                     fee_threshold: FEE_THRESHOLD,

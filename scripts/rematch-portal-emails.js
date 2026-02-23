@@ -75,6 +75,15 @@ function extractPortalMatchingSignals(provider, fromFull, fromEmail, subject, te
                 break;
             }
         }
+    } else if (provider === 'civicplus') {
+        const reqMatch = subjectStr.match(/(?:Request|Tracking|Ref|Confirmation)[:\s#]+([A-Z]{1,5}-\d{2,4}-\d+)/i)
+                      || subjectStr.match(/(?:Request|Tracking|Ref|Confirmation)[:\s#]+(\d{4,})/i)
+                      || subjectStr.match(/#([A-Z0-9]+-\d+|\d{4,})/i);
+        if (reqMatch) signals.requestNumber = reqMatch[1];
+
+        const fromFullStr = fromFull || '';
+        const civicMatch = fromFullStr.match(/^["']?(.+?)(?:\s+(?:via\s+)?CivicPlus|\s*<)/i);
+        if (civicMatch) signals.agencyName = civicMatch[1].trim().replace(/^["']|["']$/g, '');
     }
     return signals;
 }
@@ -211,7 +220,7 @@ async function run() {
 
                 if (signals.requestNumber) {
                     await pool.query(
-                        'UPDATE cases SET portal_request_number = $1 WHERE id = $2 AND portal_request_number IS NULL',
+                        `UPDATE cases SET portal_request_number = $1 WHERE id = $2 AND (portal_request_number IS NULL OR portal_request_number = '')`,
                         [signals.requestNumber, result.case.id]
                     );
                 }
