@@ -4076,7 +4076,7 @@
             showCorrStatus('Logging correspondence...', 'info');
 
             try {
-                const resp = await fetch(`/api/run-engine/cases/${caseId}/add-correspondence`, {
+                const resp = await fetch(`/api/cases/${caseId}/add-correspondence`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(body)
