@@ -1240,7 +1240,16 @@ class SendGridService {
                 if (!signals.agencyName || !caseRow.agency_name) return true; // can't verify, accept
                 const sigAgency = signals.agencyName.toLowerCase();
                 const caseAgency = caseRow.agency_name.toLowerCase();
-                return caseAgency.includes(sigAgency) || sigAgency.includes(caseAgency);
+                // Full string containment (handles exact or near-exact names)
+                if (caseAgency.includes(sigAgency) || sigAgency.includes(caseAgency)) return true;
+                // Word-level matching: strip common filler words (police, department, sheriff, etc.)
+                // and check if core jurisdiction words overlap (e.g. "Winnebago" in both)
+                const filler = /\b(the|of|and|via|for|public|records|request|police|pd|department|dept|sheriff|sheriffs|office|county|city|town|township|state|district|division|bureau)\b/g;
+                const toCore = (s) => s.replace(filler, '').replace(/[^a-z\s]/g, ' ').trim().split(/\s+/).filter(w => w.length >= 3);
+                const sigCore = toCore(sigAgency);
+                const caseCore = toCore(caseAgency);
+                if (sigCore.length === 0 || caseCore.length === 0) return true; // all filler, can't verify
+                return sigCore.some(w => caseCore.includes(w));
             };
 
             const reqMatch = await db.query(
