@@ -1293,6 +1293,21 @@ class PortalAgentServiceSkyvern {
                 });
                 await notionService.syncStatusToNotion(caseData.id);
             } catch (_) {}
+            // Record crashed submission memory
+            try {
+                const caseAgencies = await database.getCaseAgencies(caseData.id);
+                const primary = caseAgencies?.find(a => a.is_primary) || caseAgencies?.[0];
+                await notionService.addSubmissionComment(caseData.id, {
+                    portal_url: portalUrl,
+                    provider: caseData.portal_provider || null,
+                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    status: 'failed',
+                    confirmation_number: null,
+                    notes: `Crash: ${(message || '').substring(0, 200)}`,
+                    agency_notion_page_id: primary?.agency_notion_page_id || null
+                });
+            } catch (_) { /* non-critical */ }
+
             await database.logActivity(
                 'portal_stage_failed',
                 `Skyvern workflow crashed for ${caseData.case_name}: ${message}`,

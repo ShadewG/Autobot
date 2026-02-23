@@ -1692,7 +1692,7 @@ Look for a records division email, FOIA email, or general agency email that acce
     async addSubmissionComment(caseId, submissionInfo) {
         const caseData = await db.getCaseById(caseId).catch(() => null);
         const hasValidCasePage = caseData?.notion_page_id && !caseData.notion_page_id.startsWith('test-');
-        const sanitizeNotes = (n) => n ? n.replace(/[\r\n]+/g, ' | ') : null;
+        const sanitizeNotes = (n) => n ? String(n).replace(/[\r\n]+/g, ' | ') : null;
 
         const date = new Date().toISOString().split('T')[0];
         const lines = [
@@ -1793,8 +1793,8 @@ Look for a records division email, FOIA email, or general agency email that acce
                     };
                 })
                 .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-            // Cap cache at 200 entries — evict oldest on overflow
-            if (this.submissionMemoryCache.size >= 200) {
+            // Cap cache at 200 unique keys — only evict when inserting a new key
+            if (!this.submissionMemoryCache.has(agencyNotionPageId) && this.submissionMemoryCache.size >= 200) {
                 const oldest = this.submissionMemoryCache.keys().next().value;
                 this.submissionMemoryCache.delete(oldest);
             }
