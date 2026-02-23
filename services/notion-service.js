@@ -1690,33 +1690,38 @@ Look for a records division email, FOIA email, or general agency email that acce
      * Tagged with [BOT:SUBMISSION] so we can filter them later.
      */
     async addSubmissionComment(caseId, submissionInfo) {
-        try {
-            const caseData = await db.getCaseById(caseId);
-            const hasValidCasePage = caseData?.notion_page_id && !caseData.notion_page_id.startsWith('test-');
+        const caseData = await db.getCaseById(caseId).catch(() => null);
+        const hasValidCasePage = caseData?.notion_page_id && !caseData.notion_page_id.startsWith('test-');
+        const sanitizeNotes = (n) => n ? n.replace(/[\r\n]+/g, ' | ') : null;
 
-            const date = new Date().toISOString().split('T')[0];
-            const lines = [
-                `[BOT:SUBMISSION] ${date}`,
-                `Portal: ${submissionInfo.portal_url || '-'}`,
-                `Provider: ${submissionInfo.provider || '-'}`,
-                `Account: ${submissionInfo.account_email || '-'}`,
-                `Status: ${submissionInfo.status || 'completed'}`,
-                `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
-            ];
-            if (submissionInfo.notes) lines.push(`Notes: ${submissionInfo.notes.replace(/\n/g, ' | ')}`);
-            const text = lines.join('\n');
+        const date = new Date().toISOString().split('T')[0];
+        const lines = [
+            `[BOT:SUBMISSION] ${date}`,
+            `Portal: ${submissionInfo.portal_url || '-'}`,
+            `Provider: ${submissionInfo.provider || '-'}`,
+            `Account: ${submissionInfo.account_email || '-'}`,
+            `Status: ${submissionInfo.status || 'completed'}`,
+            `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
+        ];
+        if (submissionInfo.notes) lines.push(`Notes: ${sanitizeNotes(submissionInfo.notes)}`);
+        const text = lines.join('\n');
 
-            // Comment on the case Notion page
-            if (hasValidCasePage) {
+        // Comment on the case Notion page (independent of PD comment)
+        if (hasValidCasePage) {
+            try {
                 await this.notion.comments.create({
                     parent: { page_id: caseData.notion_page_id },
                     rich_text: [{ type: 'text', text: { content: text } }]
                 });
                 console.log(`📝 Submission comment added to case #${caseId} Notion page`);
+            } catch (err) {
+                console.error(`Failed to add case submission comment for case ${caseId}:`, err.message);
             }
+        }
 
-            // Also comment on the PD's Notion page if linked
-            if (submissionInfo.agency_notion_page_id) {
+        // Comment on the PD's Notion page if linked (separate try so case failure doesn't block this)
+        if (submissionInfo.agency_notion_page_id) {
+            try {
                 const pdLines = [
                     `[BOT:SUBMISSION] ${date} — Case #${caseId} (${caseData?.case_name || ''})`,
                     `Portal: ${submissionInfo.portal_url || '-'}`,
@@ -1725,7 +1730,7 @@ Look for a records division email, FOIA email, or general agency email that acce
                     `Status: ${submissionInfo.status || 'completed'}`,
                     `Confirmation #: ${submissionInfo.confirmation_number || '-'}`,
                 ];
-                if (submissionInfo.notes) pdLines.push(`Notes: ${submissionInfo.notes.replace(/\n/g, ' | ')}`);
+                if (submissionInfo.notes) pdLines.push(`Notes: ${sanitizeNotes(submissionInfo.notes)}`);
 
                 await this.notion.comments.create({
                     parent: { page_id: submissionInfo.agency_notion_page_id },
@@ -1733,9 +1738,9 @@ Look for a records division email, FOIA email, or general agency email that acce
                 });
                 console.log(`📝 Submission comment added to PD Notion page for case #${caseId}`);
                 this.submissionMemoryCache.delete(submissionInfo.agency_notion_page_id);
+            } catch (err) {
+                console.error(`Failed to add PD submission comment for case ${caseId}:`, err.message);
             }
-        } catch (error) {
-            console.error(`Failed to add submission comment for case ${caseId}:`, error.message);
         }
     }
 
@@ -1788,6 +1793,11 @@ Look for a records division email, FOIA email, or general agency email that acce
                     };
                 })
                 .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+            // Cap cache at 200 entries — evict oldest on overflow
+            if (this.submissionMemoryCache.size >= 200) {
+                const oldest = this.submissionMemoryCache.keys().next().value;
+                this.submissionMemoryCache.delete(oldest);
+            }
             this.submissionMemoryCache.set(agencyNotionPageId, { data: submissionComments, fetchedAt: Date.now() });
             return submissionComments;
         } catch (error) {
