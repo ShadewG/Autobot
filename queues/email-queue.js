@@ -335,6 +335,13 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         // Analyze the response — with full thread context
         const analysis = await aiService.analyzeResponse(messageData, caseData, { threadMessages });
 
+        // Mark message as processed immediately after analysis — before any routing branches
+        // that may return early (Run Engine, legacy LangGraph, portal_url block, etc.)
+        await db.query(
+            'UPDATE messages SET processed_at = COALESCE(processed_at, NOW()) WHERE id = $1',
+            [messageId]
+        );
+
         console.log(`📊 Analysis complete:`);
         console.log(`   Intent: ${analysis.intent}`);
         console.log(`   Requires action: ${analysis.requires_action}`);
@@ -586,16 +593,6 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             console.log(`   autoReplyEnabled: ${autoReplyEnabled}`);
             console.log(`   caseNeedsHuman: ${caseNeedsHuman}`);
             console.log(`   Full analysis object:`, JSON.stringify(analysis, null, 2));
-        }
-
-        // Ensure message is always marked as processed (catch-all for deterministic/simple paths)
-        const alreadyMarked = await db.query('SELECT processed_at FROM messages WHERE id = $1', [messageId]);
-        if (!alreadyMarked.rows[0]?.processed_at) {
-            await db.query(
-                'UPDATE messages SET processed_at = NOW() WHERE id = $1',
-                [messageId]
-            );
-            console.log(`✅ Marked message ${messageId} as processed (analysis complete)`);
         }
 
         return analysis;

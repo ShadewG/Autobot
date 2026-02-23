@@ -468,6 +468,9 @@ async function processInboundMessageJob(job) {
   await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
 
   try {
+    // Capture timestamp before graph runs — used as upper bound for bulk marking
+    const graphStartedAt = new Date();
+
     // Invoke FOIA Case Graph (Inbound Response) with timeout fail-safe
     const result = await withTimeout(
       invokeFOIACaseGraph(caseId, 'INBOUND_MESSAGE', {
@@ -485,11 +488,15 @@ async function processInboundMessageJob(job) {
     await db.markMessageProcessed(messageId, runId, null);
 
     // Mark ALL other unprocessed inbound messages for this case as processed too —
-    // the graph already saw them all when it ran for this case
+    // the graph already saw them all when it ran for this case.
+    // Only marks messages that existed before the graph started (avoids marking
+    // messages that arrived during execution and were never seen by the graph).
     await db.query(
       `UPDATE messages SET processed_at = NOW(), processed_run_id = $2
-       WHERE case_id = $1 AND direction = 'inbound' AND processed_at IS NULL AND last_error IS NULL AND id != $3`,
-      [caseId, runId, messageId]
+       WHERE case_id = $1 AND direction = 'inbound' AND processed_at IS NULL
+         AND last_error IS NULL AND id != $3
+         AND COALESCE(received_at, created_at) < $4`,
+      [caseId, runId, messageId, graphStartedAt]
     );
 
     // Update run based on result

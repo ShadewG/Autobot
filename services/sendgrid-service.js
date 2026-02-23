@@ -777,28 +777,18 @@ class SendGridService {
                 const portalMatch = await this.matchCaseByPortalSignals(signals);
                 if (portalMatch) {
                     console.log(`Matched inbound email by portal signals (${portalInfo.provider}): case #${portalMatch.id}`);
-                    // Persist request number if we extracted one
+                    // Persist request number if we extracted one (atomic to avoid race conditions)
                     if (signals.requestNumber) {
                         try {
-                            if (!portalMatch.portal_request_number) {
-                                // No request number stored yet — set it
-                                await db.query(
-                                    'UPDATE cases SET portal_request_number = $1 WHERE id = $2',
-                                    [signals.requestNumber, portalMatch.id]
-                                );
-                            } else if (portalMatch.portal_request_number !== signals.requestNumber) {
-                                // Different request number — store as additional
-                                // Uses comma-separated list in portal_request_number
-                                const existing = portalMatch.portal_request_number;
-                                const nums = existing.split(',').map(s => s.trim());
-                                if (!nums.includes(signals.requestNumber)) {
-                                    await db.query(
-                                        'UPDATE cases SET portal_request_number = $1 WHERE id = $2',
-                                        [`${existing},${signals.requestNumber}`, portalMatch.id]
-                                    );
-                                    console.log(`Added additional request number ${signals.requestNumber} to case #${portalMatch.id} (was: ${existing})`);
-                                }
-                            }
+                            await db.query(
+                                `UPDATE cases SET portal_request_number = CASE
+                                    WHEN portal_request_number IS NULL OR portal_request_number = '' THEN $1
+                                    WHEN $1 = ANY(string_to_array(portal_request_number, ',')) THEN portal_request_number
+                                    ELSE portal_request_number || ',' || $1
+                                 END
+                                 WHERE id = $2`,
+                                [signals.requestNumber, portalMatch.id]
+                            );
                         } catch (e) {
                             console.warn('Failed to save portal_request_number:', e.message);
                         }
@@ -1184,7 +1174,7 @@ class SendGridService {
             const reqMatch = await db.query(
                 `SELECT * FROM cases
                  WHERE (portal_request_number = $1
-                        OR portal_request_number LIKE '%' || $1 || '%')
+                        OR $1 = ANY(string_to_array(portal_request_number, ',')))
                    AND status = ANY($2)
                  ORDER BY
                    CASE WHEN portal_request_number = $1 THEN 0 ELSE 1 END,
@@ -1201,7 +1191,7 @@ class SendGridService {
             const reqFallback = await db.query(
                 `SELECT * FROM cases
                  WHERE (portal_request_number = $1
-                        OR portal_request_number LIKE '%' || $1 || '%')
+                        OR $1 = ANY(string_to_array(portal_request_number, ',')))
                  ORDER BY updated_at DESC
                  LIMIT 1`,
                 [signals.requestNumber]
