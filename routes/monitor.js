@@ -382,19 +382,6 @@ router.get('/', async (req, res) => {
             LIMIT $1
         `, [limit]);
 
-        // Get recent webhook events (if table exists)
-        let webhookLogs = [];
-        try {
-            const webhookResult = await db.query(`
-                SELECT * FROM webhook_logs
-                ORDER BY created_at DESC
-                LIMIT $1
-            `, [limit]);
-            webhookLogs = webhookResult.rows;
-        } catch (e) {
-            // Table might not exist
-        }
-
         // Get queue status
         let queueStatus = { generation: {}, email: {} };
         try {
@@ -444,8 +431,7 @@ router.get('/', async (req, res) => {
             case_stats: statsResult.rows,
             inbound,
             outbound,
-            activity: activityResult.rows,
-            webhook_logs: webhookLogs
+            activity: activityResult.rows
         });
     } catch (error) {
         console.error('Monitor error:', error);
