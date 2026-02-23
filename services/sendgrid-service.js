@@ -1232,7 +1232,17 @@ class SendGridService {
         }
 
         // Priority 2: Request number match (supports comma-separated list)
+        // NRs are NOT globally unique on NextRequest — different agencies can share
+        // the same sequential number (e.g. 26-428 for both Winnebago and Augusta).
+        // When we have an agency name signal, verify it matches the case's agency.
         if (signals.requestNumber) {
+            const agencyMatchesCase = (caseRow) => {
+                if (!signals.agencyName || !caseRow.agency_name) return true; // can't verify, accept
+                const sigAgency = signals.agencyName.toLowerCase();
+                const caseAgency = caseRow.agency_name.toLowerCase();
+                return caseAgency.includes(sigAgency) || sigAgency.includes(caseAgency);
+            };
+
             const reqMatch = await db.query(
                 `SELECT * FROM cases
                  WHERE (portal_request_number = $1
@@ -1241,12 +1251,15 @@ class SendGridService {
                  ORDER BY
                    CASE WHEN portal_request_number = $1 THEN 0 ELSE 1 END,
                    updated_at DESC
-                 LIMIT 1`,
+                 LIMIT 5`,
                 [signals.requestNumber, activeStatuses]
             );
-            if (reqMatch.rows.length > 0) {
-                console.log(`Portal match: request number "${signals.requestNumber}" → case #${reqMatch.rows[0].id}`);
-                return reqMatch.rows[0];
+            for (const candidate of reqMatch.rows) {
+                if (agencyMatchesCase(candidate)) {
+                    console.log(`Portal match: request number "${signals.requestNumber}" → case #${candidate.id}`);
+                    return candidate;
+                }
+                console.warn(`Portal match rejected: NR "${signals.requestNumber}" → case #${candidate.id} (${candidate.agency_name}), but email agency "${signals.agencyName}" doesn't match`);
             }
 
             // Fallback: any status
@@ -1255,12 +1268,15 @@ class SendGridService {
                  WHERE (portal_request_number = $1
                         OR $1 = ANY(string_to_array(REPLACE(portal_request_number, ' ', ''), ',')))
                  ORDER BY updated_at DESC
-                 LIMIT 1`,
+                 LIMIT 5`,
                 [signals.requestNumber]
             );
-            if (reqFallback.rows.length > 0) {
-                console.log(`Portal match (any-status): request number "${signals.requestNumber}" → case #${reqFallback.rows[0].id}`);
-                return reqFallback.rows[0];
+            for (const candidate of reqFallback.rows) {
+                if (agencyMatchesCase(candidate)) {
+                    console.log(`Portal match (any-status): request number "${signals.requestNumber}" → case #${candidate.id}`);
+                    return candidate;
+                }
+                console.warn(`Portal match rejected (any-status): NR "${signals.requestNumber}" → case #${candidate.id} (${candidate.agency_name}), but email agency "${signals.agencyName}" doesn't match`);
             }
         }
 
