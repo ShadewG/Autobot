@@ -2589,9 +2589,10 @@
                 filtered = filtered.filter(c => normalizeStatus(c.status) === activeStatusFilter);
             }
             if (searchQ) {
+                const searchWords = searchQ.split(/\s+/).filter(Boolean);
                 filtered = filtered.filter(c => {
                     const hay = [c.case_name, c.agency_name, c.status, c.user_handle, String(c.id), ...(c.tags || [])].join(' ').toLowerCase();
-                    return hay.includes(searchQ);
+                    return searchWords.every(w => hay.includes(w));
                 });
             }
             if (tagFilter) {
