@@ -315,7 +315,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
     console.log(`🔍 Processing analysis job: ${job.id}`);
     console.log(`   Message ID: ${job.data.messageId}, Case ID: ${job.data.caseId}`);
 
-    const { messageId, caseId } = job.data;
+    let { messageId, caseId } = job.data;
 
     try {
         // Idempotency guard: skip if already analyzed

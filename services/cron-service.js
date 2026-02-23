@@ -3,6 +3,7 @@ const notionService = require('./notion-service');
 const followupScheduler = require('./followup-scheduler');  // Phase 6: New Run Engine scheduler
 const { generateQueue } = require('../queues/email-queue');
 const db = require('./database');
+const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const stuckResponseDetector = require('./stuck-response-detector');
 const agencyNotionSync = require('./agency-notion-sync');
 const pdContactService = require('./pd-contact-service');
@@ -689,7 +690,7 @@ class CronService {
 
                     // AI triage: determine the right action
                     const triage = await aiService.triageStuckCase(caseData, messages, priorProposals);
-                    const actionType = triage.actionType || 'ESCALATE';
+                    let actionType = triage.actionType || 'ESCALATE';
 
                     // Generate an actual email draft (not just the triage summary)
                     let draftSubject = null;
@@ -754,7 +755,7 @@ class CronService {
                     if (!draftBodyText) {
                         // Draft generation failed — don't create email action with triage text as body.
                         // Force ESCALATE so a human writes the draft.
-                        if (['SEND_CLARIFICATION', 'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'NEGOTIATE_FEE'].includes(actionType)) {
+                        if (DRAFT_REQUIRED_ACTIONS.includes(actionType)) {
                             console.warn(`Draft generation failed for case ${caseData.id} — downgrading ${actionType} to ESCALATE`);
                             actionType = 'ESCALATE';
                         }

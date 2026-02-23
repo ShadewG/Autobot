@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
+const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 
 class DatabaseService {
     constructor() {
@@ -1296,11 +1297,6 @@ class DatabaseService {
         }
 
         // DRAFT VALIDATION: Block proposals for email actions that have no draft
-        const DRAFT_REQUIRED_ACTIONS = [
-            'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_CLARIFICATION',
-            'ACCEPT_FEE', 'NEGOTIATE_FEE', 'DECLINE_FEE',
-            'REFORMULATE_REQUEST', 'RESPOND_PARTIAL_APPROVAL'
-        ];
         const incomingStatus = proposalData.status || 'PENDING_APPROVAL';
         const draftBody = typeof proposalData.draftBodyText === 'string' ? proposalData.draftBodyText.trim() : '';
         if (DRAFT_REQUIRED_ACTIONS.includes(proposalData.actionType)

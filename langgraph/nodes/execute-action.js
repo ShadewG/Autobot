@@ -982,13 +982,16 @@ async function executeActionNode(state) {
   });
 
   // Dismiss other pending proposals for this case — the executed action supersedes them
-  try {
-    const dismissed = await db.dismissPendingProposals(caseId, `Superseded by executed ${proposalActionType}`);
-    if (dismissed.length > 0) {
-      logs.push(`Dismissed ${dismissed.length} superseded proposals`);
+  // Skip for RESEARCH_AGENCY which creates a follow-up proposal during execution
+  if (proposalActionType !== 'RESEARCH_AGENCY') {
+    try {
+      const dismissed = await db.dismissPendingProposals(caseId, `Superseded by executed ${proposalActionType}`);
+      if (dismissed.length > 0) {
+        logs.push(`Dismissed ${dismissed.length} superseded proposals`);
+      }
+    } catch (dismissErr) {
+      console.error(`Failed to dismiss stale proposals for case ${caseId}:`, dismissErr.message);
     }
-  } catch (dismissErr) {
-    console.error(`Failed to dismiss stale proposals for case ${caseId}:`, dismissErr.message);
   }
 
   return {
