@@ -329,11 +329,21 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         }
 
         const messageData = await db.getMessageById(messageId);
-        const caseData = await db.getCaseById(caseId);
+        if (!messageData) {
+            console.error(`❌ Message ${messageId} not found`);
+            throw new Error(`Message ${messageId} not found`);
+        }
 
-        if (!messageData || !caseData) {
-            console.error(`❌ Message or case not found - Message: ${!!messageData}, Case: ${!!caseData}`);
-            throw new Error('Message or case not found');
+        // Verify message belongs to this case — self-heal if wrong
+        if (messageData.case_id && Number(messageData.case_id) !== Number(caseId)) {
+            console.error(`[Analysis] Message ${messageId} belongs to case ${messageData.case_id}, not ${caseId} — fixing`);
+            caseId = messageData.case_id;
+        }
+
+        let caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            console.error(`❌ Case ${caseId} not found`);
+            throw new Error(`Case ${caseId} not found`);
         }
 
         console.log(`📧 Analyzing message from: ${messageData.from_email}`);

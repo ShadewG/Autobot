@@ -166,6 +166,14 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
       });
     }
 
+    // Verify message belongs to this case
+    if (message.case_id && Number(message.case_id) !== Number(caseId)) {
+      return res.status(400).json({
+        success: false,
+        error: `Message ${messageId} belongs to case ${message.case_id}, not case ${caseId}`
+      });
+    }
+
     // Check message already processed
     if (message.processed_at) {
       return res.status(409).json({

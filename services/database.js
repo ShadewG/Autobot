@@ -1295,12 +1295,29 @@ class DatabaseService {
             }
         }
 
+        // DRAFT VALIDATION: Block proposals for email actions that have no draft
+        const DRAFT_REQUIRED_ACTIONS = [
+            'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_CLARIFICATION',
+            'ACCEPT_FEE', 'NEGOTIATE_FEE', 'DECLINE_FEE',
+            'REFORMULATE_REQUEST', 'RESPOND_PARTIAL_APPROVAL'
+        ];
+        const incomingStatus = proposalData.status || 'PENDING_APPROVAL';
+        const draftBody = typeof proposalData.draftBodyText === 'string' ? proposalData.draftBodyText.trim() : '';
+        if (DRAFT_REQUIRED_ACTIONS.includes(proposalData.actionType)
+            && incomingStatus === 'PENDING_APPROVAL'
+            && !draftBody) {
+            const originalAction = proposalData.actionType;
+            console.warn(`[DB] Blocking ${originalAction} proposal for case ${proposalData.caseId}: empty draft body`);
+            proposalData.actionType = 'ESCALATE';
+            proposalData.draftSubject = proposalData.draftSubject || `Action needed: case ${proposalData.caseId}`;
+            proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
+        }
+
         // DEDUP GUARD: Prevent duplicate PENDING_APPROVAL proposals for the same case.
         // Multiple code paths (LangGraph, cron sweeps, portal failures) create proposals
         // with different proposal_key formats, so ON CONFLICT alone isn't sufficient.
         // Only blocks when the INCOMING proposal would be PENDING_APPROVAL — allows
         // EXECUTED/APPROVED audit records through even if a pending proposal exists.
-        const incomingStatus = proposalData.status || 'PENDING_APPROVAL';
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const existing = await this.query(
                 `SELECT id, action_type, proposal_key FROM proposals

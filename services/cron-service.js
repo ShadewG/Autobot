@@ -752,8 +752,14 @@ class CronService {
 
                     // Fallback: if draft generation failed or action doesn't have a draft path
                     if (!draftBodyText) {
+                        // Draft generation failed — don't create email action with triage text as body.
+                        // Force ESCALATE so a human writes the draft.
+                        if (['SEND_CLARIFICATION', 'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'NEGOTIATE_FEE'].includes(actionType)) {
+                            console.warn(`Draft generation failed for case ${caseData.id} — downgrading ${actionType} to ESCALATE`);
+                            actionType = 'ESCALATE';
+                        }
                         draftSubject = `Action needed: ${caseData.case_name}`;
-                        draftBodyText = `${triage.summary}\n\nRecommendation: ${triage.recommendation}`;
+                        draftBodyText = `AI triage recommends: ${triage.recommendation || triage.summary}\n\n(Draft generation failed — manual action required)`;
                     }
 
                     await db.upsertProposal({

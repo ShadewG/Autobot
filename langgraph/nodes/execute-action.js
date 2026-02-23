@@ -981,6 +981,16 @@ async function executeActionNode(state) {
     result: executionResult
   });
 
+  // Dismiss other pending proposals for this case — the executed action supersedes them
+  try {
+    const dismissed = await db.dismissPendingProposals(caseId, `Superseded by executed ${proposalActionType}`);
+    if (dismissed.length > 0) {
+      logs.push(`Dismissed ${dismissed.length} superseded proposals`);
+    }
+  } catch (dismissErr) {
+    console.error(`Failed to dismiss stale proposals for case ${caseId}:`, dismissErr.message);
+  }
+
   return {
     actionExecuted: true,
     executionResult,
