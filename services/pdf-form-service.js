@@ -151,18 +151,22 @@ async function downloadPdf(url, caseId) {
 /**
  * Build requester info from env vars (mirrors _buildWorkflowPersonalInfo).
  */
-function _getRequesterInfo(caseData) {
+async function _getRequesterInfo(caseData) {
+    let user = null;
+    if (caseData.user_id) {
+        user = await database.getUserById(caseData.user_id);
+    }
     return {
-        name: process.env.REQUESTER_NAME || 'Samuel Hylton',
+        name: user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Samuel Hylton',
         email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-        phone: process.env.REQUESTER_PHONE || '209-800-7702',
-        organization: process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team',
-        title: process.env.REQUESTER_TITLE || 'Documentary Researcher',
-        address: process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
-        addressLine2: process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
-        city: process.env.REQUESTER_CITY || 'Seattle',
-        state: process.env.REQUESTER_STATE || caseData.state || 'WA',
-        zip: process.env.REQUESTER_ZIP || '98199'
+        phone: user?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702',
+        organization: user?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team',
+        title: user?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher',
+        address: user?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
+        addressLine2: user?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
+        city: user?.address_city || process.env.REQUESTER_CITY || 'Seattle',
+        state: user?.address_state || process.env.REQUESTER_STATE || caseData.state || 'WA',
+        zip: user?.address_zip || process.env.REQUESTER_ZIP || '98199'
     };
 }
 
@@ -173,7 +177,7 @@ function _getRequesterInfo(caseData) {
  * 3. Last resort: generate a standalone FOIA request letter PDF
  */
 async function fillPdfForm(pdfBuffer, caseData) {
-    const requester = _getRequesterInfo(caseData);
+    const requester = await _getRequesterInfo(caseData);
 
     let pdfDoc;
     try {
@@ -698,7 +702,7 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
         filledBuffer = await fillPdfForm(pdfBuffer, caseData);
     } else {
         // No PDF to download — just generate a letter
-        const requester = _getRequesterInfo(caseData);
+        const requester = await _getRequesterInfo(caseData);
         filledBuffer = await _generateFoiaLetterPdf(caseData, requester);
     }
 
@@ -725,7 +729,7 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
     });
 
     // 6. Generate cover email draft via AI
-    const requester = _getRequesterInfo(caseData);
+    const requester = await _getRequesterInfo(caseData);
     const emailDraft = await _generateCoverEmail(caseData, requester, portalUrl);
 
     console.log(`✅ PDF form fallback complete for case ${caseData.id}`);

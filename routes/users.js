@@ -144,6 +144,24 @@ router.patch('/:id', express.json(), async (req, res) => {
         if (req.body.signature_phone !== undefined) {
             updates.signature_phone = req.body.signature_phone.trim() || null;
         }
+        if (req.body.signature_organization !== undefined) {
+            updates.signature_organization = req.body.signature_organization.trim() || null;
+        }
+        if (req.body.address_street !== undefined) {
+            updates.address_street = req.body.address_street.trim() || null;
+        }
+        if (req.body.address_street2 !== undefined) {
+            updates.address_street2 = req.body.address_street2.trim() || null;
+        }
+        if (req.body.address_city !== undefined) {
+            updates.address_city = req.body.address_city.trim() || null;
+        }
+        if (req.body.address_state !== undefined) {
+            updates.address_state = req.body.address_state.trim() || null;
+        }
+        if (req.body.address_zip !== undefined) {
+            updates.address_zip = req.body.address_zip.trim() || null;
+        }
 
         const updated = await db.updateUser(id, updates);
         res.json({ success: true, user: updated });

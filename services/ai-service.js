@@ -59,6 +59,7 @@ class AIService {
                     userSignature = {
                         name: user.signature_name || user.name,
                         title: user.signature_title || 'Documentary Researcher, Dr Insanity',
+                        organization: user.signature_organization || null,
                         phone: user.signature_phone || null
                     };
                 }

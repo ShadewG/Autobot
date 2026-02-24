@@ -1019,6 +1019,7 @@
                 <option value="unowned">Unowned</option>
             </select>
             <button onclick="openSignatureSettings()" title="Edit email signature" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px;">Signature</button>
+            <a id="editProfileLink" href="profile.html" title="Edit user profile" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:6px;font-size:12px;cursor:pointer;margin-left:4px;text-decoration:none;display:inline-block;">Edit Profile</a>
             <span class="runtime-badge live" id="runtimeMode">Execution: LIVE</span>
             <span class="runtime-badge" id="shadowMode">Shadow: OFF</span>
             <span class="runtime-badge sse-disconnected" id="sseBadge">SSE: --</span>
@@ -2021,7 +2022,23 @@
                 });
                 // Restore saved selection
                 if (currentUserId) select.value = currentUserId;
+                updateEditProfileLink();
             } catch (_) {}
+        }
+
+        function updateEditProfileLink() {
+            const link = document.getElementById('editProfileLink');
+            if (!link) return;
+            const uid = document.getElementById('userFilter')?.value;
+            if (uid && uid !== 'unowned') {
+                link.href = `profile.html?id=${uid}`;
+                link.style.opacity = '1';
+                link.style.pointerEvents = 'auto';
+            } else {
+                link.href = 'profile.html';
+                link.style.opacity = '0.4';
+                link.style.pointerEvents = 'none';
+            }
         }
 
         function onUserFilterChange() {
@@ -2029,6 +2046,7 @@
             currentUserId = select.value;
             localStorage.setItem('monitorUserFilter', currentUserId);
             updateUrlHash();
+            updateEditProfileLink();
             collapseCase();
             loadData();
             loadDailyStats();

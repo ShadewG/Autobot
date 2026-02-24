@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Edit Profile - Autobot</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, monospace; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 720px; margin: 0 auto; }
+        h1 { font-size: 18px; margin-bottom: 16px; color: #58a6ff; }
+        a { color: #58a6ff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        .nav { margin-bottom: 16px; font-size: 13px; }
+        .section { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+        .section h2 { font-size: 13px; color: #8b949e; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.5px; }
+        .row { display: flex; gap: 12px; margin-bottom: 10px; }
+        .row > div { flex: 1; }
+        label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
+        input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 10px; border-radius: 4px; font-size: 13px; font-family: inherit; }
+        input:focus { outline: none; border-color: #58a6ff; }
+        input:disabled { opacity: 0.5; cursor: not-allowed; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+        .badge.active { background: #23863633; color: #3fb950; }
+        .badge.inactive { background: #da363333; color: #f85149; }
+        .email-preview { color: #8b949e; font-size: 12px; margin-top: 4px; }
+        .sig-preview { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 12px; font-size: 13px; line-height: 1.6; white-space: pre-line; color: #8b949e; min-height: 80px; }
+        .sig-name { color: #c9d1d9; font-weight: 600; }
+        button { background: #238636; border: none; color: #fff; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-size: 13px; font-family: inherit; }
+        button:hover { background: #2ea043; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .actions { display: flex; justify-content: flex-end; gap: 10px; }
+        #toast { position: fixed; bottom: 20px; right: 20px; background: #238636; color: #fff; padding: 10px 16px; border-radius: 6px; font-size: 13px; display: none; z-index: 100; }
+        #toast.error { background: #da3633; }
+        .loading { text-align: center; color: #8b949e; padding: 40px; }
+    </style>
+</head>
+<body>
+    <div class="nav"><a href="/monitor.html">Monitor</a> / <a href="/users.html">Users</a> / Edit Profile</div>
+    <h1>Edit Profile <span id="statusBadge"></span></h1>
+
+    <div id="loadingState" class="loading">Loading...</div>
+
+    <div id="profileForm" style="display:none;">
+        <!-- Identity -->
+        <div class="section">
+            <h2>Identity</h2>
+            <div class="row">
+                <div>
+                    <label for="name">Display Name</label>
+                    <input type="text" id="name" placeholder="e.g. Sam Hylton">
+                </div>
+                <div>
+                    <label for="email_handle">Email Handle</label>
+                    <input type="text" id="email_handle" placeholder="e.g. sam" oninput="updatePreviews()">
+                </div>
+            </div>
+            <div class="email-preview" id="emailPreview"></div>
+        </div>
+
+        <!-- Signature -->
+        <div class="section">
+            <h2>Signature</h2>
+            <div class="row">
+                <div>
+                    <label for="signature_name">Signature Name</label>
+                    <input type="text" id="signature_name" placeholder="Name used in emails" oninput="updatePreviews()">
+                </div>
+                <div>
+                    <label for="signature_title">Title</label>
+                    <input type="text" id="signature_title" placeholder="e.g. Documentary Researcher" oninput="updatePreviews()">
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label for="signature_organization">Organization</label>
+                    <input type="text" id="signature_organization" placeholder="e.g. Dr Insanity / FOIA Request Team" oninput="updatePreviews()">
+                </div>
+                <div>
+                    <label for="signature_phone">Phone</label>
+                    <input type="text" id="signature_phone" placeholder="e.g. 209-800-7702" oninput="updatePreviews()">
+                </div>
+            </div>
+            <label style="margin-bottom:4px;">Signature Preview</label>
+            <div class="sig-preview" id="sigPreview"></div>
+        </div>
+
+        <!-- Mailing Address -->
+        <div class="section">
+            <h2>Mailing Address</h2>
+            <div class="row">
+                <div>
+                    <label for="address_street">Street Address</label>
+                    <input type="text" id="address_street" placeholder="e.g. 3021 21st Ave W">
+                </div>
+            </div>
+            <div class="row">
+                <div>
+                    <label for="address_street2">Address Line 2</label>
+                    <input type="text" id="address_street2" placeholder="e.g. Apt 202">
+                </div>
+            </div>
+            <div class="row">
+                <div style="flex:2">
+                    <label for="address_city">City</label>
+                    <input type="text" id="address_city" placeholder="e.g. Seattle">
+                </div>
+                <div>
+                    <label for="address_state">State</label>
+                    <input type="text" id="address_state" placeholder="e.g. WA">
+                </div>
+                <div>
+                    <label for="address_zip">ZIP Code</label>
+                    <input type="text" id="address_zip" placeholder="e.g. 98199">
+                </div>
+            </div>
+        </div>
+
+        <!-- Save -->
+        <div class="actions">
+            <button onclick="saveProfile()" id="saveBtn">Save Changes</button>
+        </div>
+    </div>
+
+    <div id="toast"></div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const userId = params.get('id');
+
+        const FIELDS = [
+            'name', 'email_handle',
+            'signature_name', 'signature_title', 'signature_organization', 'signature_phone',
+            'address_street', 'address_street2', 'address_city', 'address_state', 'address_zip'
+        ];
+
+        function showToast(msg, isError = false) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.className = isError ? 'error' : '';
+            t.style.display = 'block';
+            setTimeout(() => t.style.display = 'none', 3000);
+        }
+
+        function updatePreviews() {
+            // Email preview
+            const handle = document.getElementById('email_handle').value.toLowerCase().trim();
+            const emailPrev = document.getElementById('emailPreview');
+            emailPrev.textContent = '';
+            const prefix = document.createTextNode('Email: ');
+            const strong = document.createElement('strong');
+            strong.style.color = '#58a6ff';
+            strong.textContent = handle ? handle + '@foib-request.com' : 'handle@foib-request.com';
+            emailPrev.appendChild(prefix);
+            emailPrev.appendChild(strong);
+
+            // Signature preview — built with safe DOM methods
+            const sigName = document.getElementById('signature_name').value.trim() || document.getElementById('name').value.trim() || 'Name';
+            const sigTitle = document.getElementById('signature_title').value.trim();
+            const sigOrg = document.getElementById('signature_organization').value.trim();
+            const sigPhone = document.getElementById('signature_phone').value.trim();
+
+            const preview = document.getElementById('sigPreview');
+            preview.textContent = '';
+
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'sig-name';
+            nameSpan.textContent = sigName;
+            preview.appendChild(nameSpan);
+
+            [sigTitle, sigOrg, sigPhone].forEach(val => {
+                if (val) {
+                    preview.appendChild(document.createTextNode('\n'));
+                    const span = document.createElement('span');
+                    span.textContent = val;
+                    preview.appendChild(span);
+                }
+            });
+        }
+
+        async function loadProfile() {
+            if (!userId) {
+                document.getElementById('loadingState').textContent = 'No user ID specified. Use ?id=N';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/users/' + encodeURIComponent(userId));
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Failed to load user');
+
+                const user = data.user;
+                document.title = user.name + ' - Edit Profile';
+
+                // Status badge
+                const badge = document.getElementById('statusBadge');
+                const badgeSpan = document.createElement('span');
+                badgeSpan.className = 'badge ' + (user.active ? 'active' : 'inactive');
+                badgeSpan.textContent = user.active ? 'Active' : 'Inactive';
+                badge.textContent = '';
+                badge.appendChild(badgeSpan);
+
+                // Fill fields
+                for (const f of FIELDS) {
+                    const el = document.getElementById(f);
+                    if (el) el.value = user[f] || '';
+                }
+
+                document.getElementById('loadingState').style.display = 'none';
+                document.getElementById('profileForm').style.display = 'block';
+                updatePreviews();
+            } catch (err) {
+                document.getElementById('loadingState').textContent = 'Error: ' + err.message;
+            }
+        }
+
+        async function saveProfile() {
+            const btn = document.getElementById('saveBtn');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const body = {};
+                for (const f of FIELDS) {
+                    const el = document.getElementById(f);
+                    if (el) body[f] = el.value;
+                }
+
+                const res = await fetch('/api/users/' + encodeURIComponent(userId), {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+
+                // Update fields from response
+                const user = data.user;
+                for (const f of FIELDS) {
+                    const el = document.getElementById(f);
+                    if (el) el.value = user[f] || '';
+                }
+                updatePreviews();
+                showToast('Profile saved');
+            } catch (err) {
+                showToast(err.message, true);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save Changes';
+            }
+        }
+
+        loadProfile();
+    </script>
+</body>
+</html>

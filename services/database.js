@@ -948,7 +948,7 @@ class DatabaseService {
     }
 
     async updateUser(id, updates) {
-        const allowed = ['name', 'email_handle', 'active', 'signature_name', 'signature_title', 'signature_phone'];
+        const allowed = ['name', 'email_handle', 'active', 'signature_name', 'signature_title', 'signature_phone', 'signature_organization', 'address_street', 'address_street2', 'address_city', 'address_state', 'address_zip'];
         const entries = Object.entries(updates).filter(([key]) => allowed.includes(key));
         if (entries.length === 0) return this.getUserById(id);
 
