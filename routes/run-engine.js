@@ -167,7 +167,7 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
     }
 
     // Verify message belongs to this case
-    if (message.case_id && Number(message.case_id) !== Number(caseId)) {
+    if (message.case_id && String(message.case_id) !== String(caseId)) {
       return res.status(400).json({
         success: false,
         error: `Message ${messageId} belongs to case ${message.case_id}, not case ${caseId}`

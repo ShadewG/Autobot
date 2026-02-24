@@ -335,7 +335,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         }
 
         // Verify message belongs to this case — self-heal if wrong
-        if (messageData.case_id && Number(messageData.case_id) !== Number(caseId)) {
+        if (messageData.case_id && String(messageData.case_id) !== String(caseId)) {
             console.error(`[Analysis] Message ${messageId} belongs to case ${messageData.case_id}, not ${caseId} — fixing`);
             caseId = messageData.case_id;
         }

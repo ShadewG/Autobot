@@ -32,6 +32,7 @@ const WITHDRAW = 'WITHDRAW';
 const RESEARCH_AGENCY = 'RESEARCH_AGENCY';          // Re-research correct agency/contact
 const REFORMULATE_REQUEST = 'REFORMULATE_REQUEST';  // Rewrite request differently
 const SUBMIT_PORTAL = 'SUBMIT_PORTAL';              // Submit via portal (already used in code, now canonical)
+const SEND_PDF_EMAIL = 'SEND_PDF_EMAIL';            // Portal fallback: send PDF attachment via email
 
 /**
  * All valid action types
@@ -51,7 +52,8 @@ const ACTION_TYPES = [
   WITHDRAW,
   RESEARCH_AGENCY,
   REFORMULATE_REQUEST,
-  SUBMIT_PORTAL
+  SUBMIT_PORTAL,
+  SEND_PDF_EMAIL
 ];
 
 /**
@@ -77,7 +79,8 @@ const ALWAYS_GATE_ACTIONS = [
   WITHDRAW,
   RESEARCH_AGENCY,
   REFORMULATE_REQUEST,
-  SUBMIT_PORTAL
+  SUBMIT_PORTAL,
+  SEND_PDF_EMAIL
 ];
 
 /**
@@ -108,7 +111,8 @@ const ACTION_LABELS = {
   [WITHDRAW]: 'Withdraw Request',
   [RESEARCH_AGENCY]: 'Research Correct Agency',
   [REFORMULATE_REQUEST]: 'Reformulate Request',
-  [SUBMIT_PORTAL]: 'Submit via Portal'
+  [SUBMIT_PORTAL]: 'Submit via Portal',
+  [SEND_PDF_EMAIL]: 'Send PDF via Email'
 };
 
 /**
@@ -220,6 +224,7 @@ module.exports = {
   RESEARCH_AGENCY,
   REFORMULATE_REQUEST,
   SUBMIT_PORTAL,
+  SEND_PDF_EMAIL,
 
   // Lists
   ACTION_TYPES,

@@ -1305,6 +1305,8 @@ class DatabaseService {
             const originalAction = proposalData.actionType;
             console.warn(`[DB] Blocking ${originalAction} proposal for case ${proposalData.caseId}: empty draft body`);
             proposalData.actionType = 'ESCALATE';
+            proposalData.requiresHuman = true;
+            proposalData.canAutoExecute = false;
             proposalData.draftSubject = proposalData.draftSubject || `Action needed: case ${proposalData.caseId}`;
             proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
         }
