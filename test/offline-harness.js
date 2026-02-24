@@ -12,6 +12,7 @@
  *   node test/offline-harness.js --verbose          # Show full state after each node
  *   node test/offline-harness.js --node=decide      # Test decide_next_action node only
  *   node test/offline-harness.js --graph            # Run through compiled graph (integration)
+ *   node test/offline-harness.js --interactive      # Interactive sandbox mode
  */
 
 // ============================================================================
@@ -47,6 +48,7 @@ const VERBOSE = !!flags.verbose;
 const SCENARIO_FILTER = flags.scenario || null;
 const NODE_ONLY = flags.node || null;
 const GRAPH_MODE = !!flags.graph;
+const INTERACTIVE = !!flags.interactive;
 
 // ============================================================================
 // Load Scenarios
@@ -565,10 +567,518 @@ async function runScenarioGraphLevel(scenario, index) {
 }
 
 // ============================================================================
+// Interactive Mode
+// ============================================================================
+
+const readline = require('readline');
+
+/**
+ * Input adapter that works for both TTY (interactive) and piped stdin.
+ * For piped input, we pre-buffer all lines up front so they're available
+ * synchronously, avoiding readline's close-before-read race condition.
+ */
+async function createInput() {
+  const isTTY = process.stdin.isTTY;
+
+  if (isTTY) {
+    // Interactive terminal — use readline normally
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    return {
+      ask(question) {
+        return new Promise((resolve) => {
+          rl.question(question, (answer) => resolve(answer.trim()));
+        });
+      },
+      close() { rl.close(); },
+      onClose(fn) { rl.on('close', fn); },
+    };
+  }
+
+  // Piped input — read all lines up front
+  const lines = [];
+  await new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on('line', (line) => lines.push(line));
+    rl.on('close', resolve);
+  });
+  let cursor = 0;
+  return {
+    ask(question) {
+      process.stdout.write(question);
+      const answer = cursor < lines.length ? lines[cursor++].trim() : '';
+      process.stdout.write(answer + '\n');
+      return Promise.resolve(answer);
+    },
+    close() {},
+    onClose() {},
+  };
+}
+
+async function pickOne(input, prompt, options) {
+  console.log('');
+  console.log(prompt);
+  for (let i = 0; i < options.length; i++) {
+    const suffix = options[i].default ? ' (default)' : '';
+    console.log(`  ${i + 1}. ${options[i].label}${suffix}`);
+  }
+  const defaultIdx = options.findIndex((o) => o.default);
+  const raw = await input.ask('> ');
+  if (raw === '' && defaultIdx >= 0) return options[defaultIdx].value;
+  const idx = parseInt(raw, 10) - 1;
+  if (idx >= 0 && idx < options.length) return options[idx].value;
+  return defaultIdx >= 0 ? options[defaultIdx].value : options[0].value;
+}
+
+async function askWithDefault(input, prompt, defaultVal) {
+  const raw = await input.ask(`${prompt} [${defaultVal}]: `);
+  return raw === '' ? defaultVal : raw;
+}
+
+async function askYesNo(input, prompt, defaultYes) {
+  const hint = defaultYes ? '(Y/n)' : '(y/N)';
+  const raw = await input.ask(`${prompt} ${hint}: `);
+  if (raw === '') return defaultYes;
+  return raw.toLowerCase().startsWith('y');
+}
+
+async function askNumber(input, prompt, defaultVal) {
+  const raw = await input.ask(`${prompt} [${defaultVal}]: `);
+  if (raw === '') return defaultVal;
+  const num = parseFloat(raw);
+  return isNaN(num) ? defaultVal : num;
+}
+
+/**
+ * Build a complete scenario object from interactive user input.
+ * Returns the same shape as the file-based scenarios, minus `expected`
+ * (since we're exploring, not asserting).
+ */
+async function buildInteractiveScenario(input) {
+  const caseId = 9001;
+  let nextMsgId = 9001;
+  let nextAnalysisId = 9501;
+
+  // 1. Reply type
+  const replyType = await pickOne(input, 'What type of agency reply?', [
+    { label: 'Denial', value: 'denial' },
+    { label: 'Fee quote', value: 'fee_quote' },
+    { label: 'Clarification request', value: 'clarification' },
+    { label: 'Records ready', value: 'records_ready' },
+    { label: 'Portal redirect', value: 'portal_redirect' },
+    { label: 'Hostile response', value: 'hostile' },
+    { label: 'Acknowledgment', value: 'acknowledgment' },
+    { label: 'Partial approval', value: 'partial_approval' },
+    { label: 'No response (followup trigger)', value: 'no_response' },
+  ]);
+
+  // 2. Type-specific questions
+  let denialSubtype = null;
+  let feeAmount = null;
+  let portalUrl = null;
+  let classification, sentiment, keyPoints, requiresResponse, suggestedAction;
+  let bodyText, messageSubject;
+  let analysisIntent;
+  let constraintsToAdd = [];
+  let followup = null;
+  let triggerType = 'agency_reply';
+
+  switch (replyType) {
+    case 'denial': {
+      denialSubtype = await pickOne(input, 'Denial subtype?', [
+        { label: 'Generic / unknown', value: null, default: true },
+        { label: 'Ongoing investigation', value: 'ongoing_investigation' },
+        { label: 'Privacy exemption', value: 'privacy_exemption' },
+        { label: 'No records found', value: 'no_records_found' },
+        { label: 'Wrong agency', value: 'wrong_agency' },
+        { label: 'Overly broad', value: 'overly_broad' },
+        { label: 'Excessive fees', value: 'excessive_fees' },
+        { label: 'Retention expired', value: 'retention_expired' },
+      ]);
+      classification = 'DENIAL';
+      sentiment = 'negative';
+      analysisIntent = 'denial';
+      // Build key_points based on subtype
+      const subtypeKeyPoints = {
+        ongoing_investigation: [
+          'Records sealed per court order',
+          'Ongoing investigation exemption applies',
+          'Privacy exemption cited',
+        ],
+        privacy_exemption: [
+          'Privacy exemption cited',
+          'Personal information redacted under state law',
+        ],
+        no_records_found: ['No responsive records found after diligent search'],
+        wrong_agency: ['Agency does not maintain requested records', 'Suggested alternate agency'],
+        overly_broad: ['Request deemed overly broad', 'Agency asks to narrow scope'],
+        excessive_fees: ['Estimated fees exceed reasonable threshold', 'Fee waiver denied'],
+        retention_expired: ['Records destroyed per retention schedule', 'Retention period expired'],
+      };
+      keyPoints = subtypeKeyPoints[denialSubtype] || [
+        'Request has been denied',
+        'Records are not available at this time',
+      ];
+      if (denialSubtype === 'ongoing_investigation') {
+        constraintsToAdd = ['SEALED_RECORDS', 'ONGOING_INVESTIGATION'];
+      }
+      requiresResponse = true;
+      suggestedAction = null;
+      bodyText = `Your request is denied. ${keyPoints[0]}.`;
+      messageSubject = 'RE: FOIA Request - Denial';
+      break;
+    }
+    case 'fee_quote': {
+      feeAmount = await askNumber(input, 'Fee amount ($)', 50);
+      classification = 'FEE_QUOTE';
+      sentiment = 'neutral';
+      analysisIntent = 'fee_request';
+      keyPoints = [`Fee estimate provided: $${feeAmount.toFixed(2)}`, 'Records located and ready upon payment'];
+      constraintsToAdd = ['FEE_REQUIRED'];
+      requiresResponse = true;
+      suggestedAction = null;
+      bodyText = `The estimated cost for processing your request is $${feeAmount.toFixed(2)}. Please remit payment to proceed.`;
+      messageSubject = 'RE: FOIA Request - Fee Estimate';
+      break;
+    }
+    case 'clarification': {
+      classification = 'CLARIFICATION_REQUEST';
+      sentiment = 'neutral';
+      analysisIntent = 'question';
+      keyPoints = [
+        'Agency requests specific date range',
+        'Agency requests incident number',
+        'Willing to process once details provided',
+      ];
+      constraintsToAdd = ['ID_REQUIRED'];
+      requiresResponse = true;
+      suggestedAction = null;
+      bodyText = 'Could you please provide the specific date range and incident number for the records you are seeking?';
+      messageSubject = 'RE: FOIA Request - Additional Information Needed';
+      break;
+    }
+    case 'records_ready': {
+      classification = 'RECORDS_READY';
+      sentiment = 'positive';
+      analysisIntent = 'records_ready';
+      keyPoints = ['Records are available for download', 'Download link provided'];
+      requiresResponse = false;
+      suggestedAction = 'download';
+      bodyText = 'The records responsive to your request are now available for download.';
+      messageSubject = 'RE: FOIA Request - Records Available';
+      break;
+    }
+    case 'portal_redirect': {
+      portalUrl = await askWithDefault(input, 'Portal URL', 'https://foia.agency.gov');
+      classification = 'PORTAL_REDIRECT';
+      sentiment = 'neutral';
+      analysisIntent = 'portal_redirect';
+      keyPoints = ['Agency requires portal submission', `Portal URL: ${portalUrl}`, 'Email requests not accepted'];
+      requiresResponse = false;
+      suggestedAction = 'use_portal';
+      bodyText = `All FOIA requests must be submitted through our online portal at ${portalUrl}.`;
+      messageSubject = 'RE: FOIA Request - Portal Submission Required';
+      break;
+    }
+    case 'hostile': {
+      classification = 'HOSTILE';
+      sentiment = 'hostile';
+      analysisIntent = 'hostile';
+      keyPoints = [
+        'Agency characterizes request as frivolous',
+        'Agency refuses to search records',
+        'Agency demands no further contact',
+      ];
+      requiresResponse = true;
+      suggestedAction = null;
+      bodyText = 'Stop sending us these frivolous requests. We have no obligation to process this. Do not contact this office again.';
+      messageSubject = 'RE: FOIA Request';
+      break;
+    }
+    case 'acknowledgment': {
+      classification = 'ACKNOWLEDGMENT';
+      sentiment = 'neutral';
+      analysisIntent = 'acknowledgment';
+      keyPoints = ['Agency acknowledges receipt of request', 'Processing timeline provided'];
+      requiresResponse = false;
+      suggestedAction = 'wait';
+      bodyText = 'We have received your FOIA request and it is being processed. Please allow 10 business days for a response.';
+      messageSubject = 'RE: FOIA Request - Acknowledgment';
+      break;
+    }
+    case 'partial_approval': {
+      classification = 'PARTIAL_APPROVAL';
+      sentiment = 'neutral';
+      analysisIntent = 'partial_approval';
+      keyPoints = [
+        'Some records released',
+        'Other records withheld',
+        'Active case review cited for withholding',
+      ];
+      requiresResponse = true;
+      suggestedAction = null;
+      bodyText = 'We are releasing some records responsive to your request. However, certain records have been withheld.';
+      messageSubject = 'RE: FOIA Request - Partial Release';
+      break;
+    }
+    case 'no_response': {
+      triggerType = 'followup_trigger';
+      classification = null;
+      sentiment = null;
+      analysisIntent = null;
+      keyPoints = null;
+      requiresResponse = null;
+      suggestedAction = null;
+      bodyText = null;
+      messageSubject = null;
+      followup = { followup_count: 0 };
+      break;
+    }
+  }
+
+  // 3. Common questions
+  const agencyName = await askWithDefault(input, 'Agency name', 'Springfield PD');
+  const state = await askWithDefault(input, 'State', 'IL');
+  const hasPortal = await askYesNo(input, 'Has portal?', false);
+  const autopilotMode = await pickOne(input, 'Autopilot mode?', [
+    { label: 'SUPERVISED', value: 'SUPERVISED', default: true },
+    { label: 'AUTO', value: 'AUTO' },
+  ]);
+
+  // 4. Build scenario
+  const messages = [];
+  const analyses = [];
+
+  if (triggerType !== 'followup_trigger') {
+    messages.push({
+      id: nextMsgId,
+      case_id: caseId,
+      direction: 'inbound',
+      from_email: `records@agency.gov`,
+      subject: messageSubject,
+      body_text: bodyText,
+      message_id: `<msg-${nextMsgId}@agency.gov>`,
+    });
+
+    analyses.push({
+      id: nextAnalysisId,
+      message_id: nextMsgId,
+      case_id: caseId,
+      intent: analysisIntent,
+      confidence_score: 0.93,
+      sentiment: sentiment,
+      key_points: keyPoints,
+      extracted_fee_amount: feeAmount,
+      full_analysis_json: {
+        denial_subtype: denialSubtype,
+        constraints_to_add: constraintsToAdd,
+        ...(portalUrl ? { portal_url: portalUrl } : {}),
+      },
+      requires_action: requiresResponse !== false,
+    });
+  }
+
+  const classifyStub =
+    triggerType === 'followup_trigger'
+      ? null
+      : {
+          classification,
+          confidence: 0.93,
+          sentiment,
+          key_points: keyPoints,
+          ...(denialSubtype ? { denial_subtype: denialSubtype } : {}),
+          ...(feeAmount != null ? { fee_amount: feeAmount } : {}),
+          ...(requiresResponse === false ? { requires_response: false } : {}),
+          ...(suggestedAction ? { suggested_action: suggestedAction } : {}),
+          ...(portalUrl ? { portal_url: portalUrl } : {}),
+        };
+
+  return {
+    name: `interactive-${replyType}`,
+    description: `Interactive: ${classification || 'NO_RESPONSE'} from ${agencyName}`,
+
+    seed: {
+      case: {
+        id: caseId,
+        agency_name: agencyName,
+        agency_email: 'records@agency.gov',
+        status: 'awaiting_response',
+        state,
+        subject_name: 'Test Subject',
+        case_name: `${agencyName} - Test Subject FOIA`,
+        requested_records: ['Incident reports', 'Body camera footage'],
+        constraints_jsonb: [],
+        scope_items_jsonb: [
+          { name: 'Incident reports', status: 'pending' },
+          { name: 'Body camera footage', status: 'pending' },
+        ],
+        autopilot_mode: autopilotMode,
+        portal_url: hasPortal ? 'https://portal.agency.gov' : null,
+      },
+      messages,
+      analyses,
+      followup,
+    },
+
+    llmStubs: {
+      classify: classifyStub,
+      draft: classifyStub
+        ? {
+            subject: `Re: ${messageSubject || 'FOIA Request'}`,
+            body: 'Stubbed response body for interactive testing',
+          }
+        : {
+            subject: `Follow-up: ${agencyName} - Test Subject FOIA`,
+            body: 'Stubbed response body for interactive testing',
+          },
+    },
+
+    stateOverrides: {
+      triggerType,
+      latestInboundMessageId: triggerType === 'followup_trigger' ? null : nextMsgId,
+    },
+
+    // No expected — interactive mode doesn't assert
+    expected: {},
+  };
+}
+
+async function runInteractive() {
+  console.log('');
+  console.log(`${BOLD}=== Interactive Agent Sandbox ===${RESET}`);
+  console.log(`${DIM}Build custom scenarios and watch the agent route them in real time${RESET}`);
+
+  const input = await createInput();
+
+  // Ctrl+C / pipe close — set flag so the loop can exit gracefully
+  let rlClosed = false;
+  input.onClose(() => {
+    rlClosed = true;
+  });
+
+  let runCount = 0;
+  let running = true;
+
+  while (running) {
+    try {
+      const scenario = await buildInteractiveScenario(input);
+
+      console.log('');
+      console.log(`${BOLD}Running pipeline...${RESET}`);
+
+      // Reuse existing runner but skip pass/fail output
+      // Reset and seed mock DB
+      mocks.db.reset();
+      mocks.db.seed(scenario.seed);
+
+      const overrides = scenario.stateOverrides || {};
+      let state = createInitialState(
+        scenario.seed.case.id,
+        overrides.triggerType || 'agency_reply',
+        {
+          messageId: overrides.latestInboundMessageId || null,
+          runId: overrides.runId || null,
+          autopilotMode: scenario.seed.case.autopilot_mode || 'SUPERVISED',
+          llmStubs: scenario.llmStubs || null,
+          scheduledKey: overrides.scheduledKey || null,
+          caseAgencyId: overrides.caseAgencyId || null,
+        }
+      );
+
+      if (overrides.classification) state.classification = overrides.classification;
+      if (overrides.sentiment) state.sentiment = overrides.sentiment;
+
+      state.constraints = state.constraints || [];
+      state.scopeItems = state.scopeItems || [];
+      state.proposalReasoning = state.proposalReasoning || [];
+      state.riskFlags = state.riskFlags || [];
+      state.warnings = state.warnings || [];
+
+      const nodes = [
+        { name: 'load_context', fn: loadContextNode },
+        { name: 'classify_inbound', fn: classifyInboundNode },
+        { name: 'update_constraints', fn: updateConstraintsNode },
+        { name: 'decide_next_action', fn: decideNextActionNode },
+      ];
+
+      console.log('');
+      for (const node of nodes) {
+        const prevState = { ...state };
+        try {
+          const output = await node.fn(state);
+          state = mergeState(state, output);
+          printNodeResult(node.name, state, prevState);
+        } catch (err) {
+          console.log(`  ${RED}[${node.name}] ERROR: ${err.message}${RESET}`);
+          state.errors = [...(state.errors || []), `${node.name}: ${err.message}`];
+          break;
+        }
+        if (state.isComplete) break;
+      }
+
+      // Draft + safety if needed
+      if (!state.isComplete && state.proposalActionType && state.nextNode === 'draft_response') {
+        const prevDraft = { ...state };
+        try {
+          const draftOutput = await draftResponseNode(state);
+          state = mergeState(state, draftOutput);
+          printNodeResult('draft_response', state, prevDraft);
+        } catch (err) {
+          console.log(`  ${RED}[draft_response] ERROR: ${err.message}${RESET}`);
+        }
+
+        if (state.draftBodyText || state.draftSubject) {
+          const prevSafety = { ...state };
+          try {
+            const safetyOutput = await safetyCheckNode(state);
+            state = mergeState(state, safetyOutput);
+            printNodeResult('safety_check', state, prevSafety);
+          } catch (err) {
+            console.log(`  ${RED}[safety_check] ERROR: ${err.message}${RESET}`);
+          }
+        }
+      }
+
+      // Print final result
+      const action = state.proposalActionType || 'NONE';
+      const human = state.requiresHuman ? 'requiresHuman=true' : 'requiresHuman=false';
+      const auto = state.canAutoExecute ? 'canAutoExecute=true' : 'canAutoExecute=false';
+      const complete = state.isComplete ? ', isComplete=true' : '';
+
+      console.log('');
+      console.log(`  ${BOLD}RESULT:${RESET} ${action} (${human}, ${auto}${complete})`);
+
+      if (state.errors?.length) {
+        console.log('');
+        for (const err of state.errors) {
+          console.log(`  ${RED}ERROR: ${err}${RESET}`);
+        }
+      }
+
+      runCount++;
+      console.log('');
+      const again = await askYesNo(input, 'Run another?', true);
+      if (!again) running = false;
+    } catch (err) {
+      // readline closed (Ctrl+C during prompt)
+      if (err.code === 'ERR_USE_AFTER_CLOSE') break;
+      console.error(`${RED}Error: ${err.message}${RESET}`);
+    }
+  }
+
+  input.close();
+  console.log(`\n${DIM}Ran ${runCount} interactive scenario${runCount !== 1 ? 's' : ''}.${RESET}`);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
 async function main() {
+  // Interactive mode — entirely separate flow
+  if (INTERACTIVE) {
+    return runInteractive();
+  }
+
   console.log('');
   console.log(`${BOLD}Offline Test Harness for LangGraph Agent${RESET}`);
   console.log(`${DIM}Running with mocked services — no external dependencies${RESET}`);
