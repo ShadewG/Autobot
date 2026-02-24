@@ -814,9 +814,21 @@ async function processResumeRunJob(job) {
       // We must NOT overwrite it here, or we'd mark failed executions as EXECUTED.
       if (originalProposalId && humanDecision?.action) {
         switch (humanDecision.action) {
-          case 'APPROVE':
-            // execute-action.js handles status — don't overwrite
+          case 'APPROVE': {
+            // execute-action.js handles status — don't overwrite.
+            // But verify it actually moved out of PENDING_APPROVAL (catch routing anomalies).
+            const currentProposal = await db.getProposalById(originalProposalId);
+            if (currentProposal && currentProposal.status === 'PENDING_APPROVAL') {
+              log.warn('Proposal still PENDING_APPROVAL after APPROVE completion — marking EXECUTED as fallback', {
+                originalProposalId, runId
+              });
+              await db.updateProposal(originalProposalId, {
+                status: 'EXECUTED',
+                executed_at: new Date()
+              });
+            }
             break;
+          }
           case 'DISMISS':
             await db.updateProposal(originalProposalId, {
               status: 'DISMISSED',

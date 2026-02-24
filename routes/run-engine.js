@@ -339,9 +339,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
     if (action === 'DISMISS' || action === 'WITHDRAW') {
       await db.updateProposal(proposalId, {
         human_decision: humanDecision,
-        status: 'DISMISSED'
+        status: action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED'
       });
-      logger.info('Proposal dismissed/withdrawn', { proposalId, action });
+      logger.info(`Proposal ${action.toLowerCase()}ed`, { proposalId, action });
       return res.json({
         success: true,
         message: `Proposal ${action.toLowerCase()}ed`,

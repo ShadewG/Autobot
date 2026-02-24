@@ -55,8 +55,15 @@ async function gateOrExecuteNode(state) {
     if (state.proposalId) {
       const existingProposal = await db.getProposalById(state.proposalId);
       if (existingProposal?.action_type) {
-        proposalActionType = existingProposal.action_type;
-        logs.push(`Recovered action_type from proposalId ${state.proposalId}: ${proposalActionType}`);
+        // Validate the proposal belongs to this case (guard against stale/corrupt proposalId)
+        if (existingProposal.case_id === caseId) {
+          proposalActionType = existingProposal.action_type;
+          logs.push(`Recovered action_type from proposalId ${state.proposalId}: ${proposalActionType}`);
+        } else {
+          logger.warn('proposalId in state belongs to different case — ignoring', {
+            caseId, proposalId: state.proposalId, proposalCaseId: existingProposal.case_id
+          });
+        }
       }
     }
     // Priority 2: Fall back to latest pending proposal (less specific — could pick wrong one)
