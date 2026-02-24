@@ -870,6 +870,13 @@
         .runtime-badge.sse-connected { color: #3fb950; border-color: #2f6f44; }
         .runtime-badge.sse-disconnected { color: #f85149; border-color: #da3633; }
 
+        /* SSE live update highlight */
+        .sse-highlight { animation: sseFlash 3s ease-out; }
+        @keyframes sseFlash {
+            0% { background-color: rgba(63, 185, 80, 0.25); }
+            100% { background-color: transparent; }
+        }
+
         /* Find PD Contact button */
         .btn-pd-contact {
             background: #6e40c9;
@@ -1752,10 +1759,17 @@
             return Math.floor(diff/86400) + 'd ago';
         }
 
-        // Truncate text
+        // Escape HTML entities to prevent XSS
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        }
+
+        // Truncate text (HTML-safe)
         function truncate(text, len = 50) {
             if (!text) return '-';
-            return text.length > len ? text.slice(0, len) + '...' : text;
+            const safe = escapeHtml(text);
+            return safe.length > len ? safe.slice(0, len) + '...' : safe;
         }
 
         // Format proposal reasoning from JSON steps into readable text
@@ -4864,23 +4878,25 @@
             setTimeout(() => { if (toast.parentElement) toast.remove(); }, 8000);
         }
 
-        // === SSE connection ===
+        // === SSE connection (real-time data push) ===
         let sseSource = null;
+        let _sseReconnectTimer = null;
         function connectSSE() {
+            if (_sseReconnectTimer) { clearTimeout(_sseReconnectTimer); _sseReconnectTimer = null; }
             if (sseSource) { sseSource.close(); sseSource = null; }
             const badge = document.getElementById('sseBadge');
             try {
                 const sseUrl = '/api/monitor/events' + (currentUserId ? '?user_id=' + encodeURIComponent(currentUserId) : '');
                 sseSource = new EventSource(sseUrl);
                 sseSource.onopen = () => {
-                    badge.textContent = 'SSE: ON';
+                    badge.textContent = 'SSE: LIVE';
                     badge.className = 'runtime-badge sse-connected';
                 };
+                // Default handler — toast notifications (existing behavior)
                 sseSource.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
                         showToast(data.type || 'info', data.message || 'Notification', data);
-                        // If this is a PD contact lookup result, finish the pending lookup
                         if (_pdLookupPending && data.case_id === _pdLookupPending.caseId) {
                             const msg = (data.message || '').toLowerCase();
                             if (msg.includes('found contacts') || msg.includes('no contacts found') || (msg.includes('contact') && msg.includes('failed'))) {
@@ -4889,17 +4905,135 @@
                         }
                     } catch (_) {}
                 };
+                // Named event: case status changed
+                sseSource.addEventListener('case_update', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSECaseUpdate(data);
+                    } catch (_) {}
+                });
+                // Named event: new message
+                sseSource.addEventListener('message_new', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSENewMessage(data);
+                    } catch (_) {}
+                });
+                // Named event: proposal created/updated
+                sseSource.addEventListener('proposal_update', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSEProposalUpdate(data);
+                    } catch (_) {}
+                });
+                // Named event: activity log entry
+                sseSource.addEventListener('activity_new', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSENewActivity(data);
+                    } catch (_) {}
+                });
                 sseSource.onerror = () => {
                     badge.textContent = 'SSE: OFF';
                     badge.className = 'runtime-badge sse-disconnected';
                     sseSource.close();
                     sseSource = null;
-                    setTimeout(connectSSE, 5000);
+                    _sseReconnectTimer = setTimeout(connectSSE, 5000);
                 };
             } catch (_) {
                 badge.textContent = 'SSE: OFF';
                 badge.className = 'runtime-badge sse-disconnected';
-                setTimeout(connectSSE, 5000);
+                _sseReconnectTimer = setTimeout(connectSSE, 5000);
+            }
+        }
+
+        // === SSE incremental update handlers ===
+        // Debounce full reload — multiple SSE events in quick succession trigger ONE loadData
+        let _sseReloadTimer = null;
+        function scheduleFullReload(delayMs = 2000) {
+            if (_sseReloadTimer) clearTimeout(_sseReloadTimer);
+            _sseReloadTimer = setTimeout(() => {
+                _sseReloadTimer = null;
+                // Bypass interaction check — SSE reloads should always complete
+                isManualRefresh = true;
+                loadData();
+            }, delayMs);
+        }
+
+        function updateTimestamp() {
+            const el = document.getElementById('lastUpdate');
+            if (el) el.textContent = `Updated: ${new Date().toLocaleTimeString()} (live)`;
+        }
+
+        function handleSSECaseUpdate(data) {
+            // Update inline if the case row exists, then schedule a full reload for stats
+            updateTimestamp();
+            scheduleFullReload();
+        }
+
+        function handleSSENewMessage(data) {
+            // Prepend to the appropriate message table
+            const tbody = document.getElementById('allMessages');
+            if (tbody) {
+                const dir = data.direction || 'inbound';
+                const time = data.received_at || data.sent_at || data.timestamp;
+                const row = document.createElement('tr');
+                row.className = 'clickable-row sse-highlight';
+                row.setAttribute('data-message-id', data.id);
+                row.setAttribute('onclick', `openMessage(${data.id})`);
+                row.innerHTML = `
+                    <td class="timestamp">${relativeTime(time)}</td>
+                    <td>${directionBadge(dir, data.message_type)}</td>
+                    <td>${truncate(data.from_email || '', 30)}</td>
+                    <td>${truncate(data.to_email || '', 30)}</td>
+                    <td class="email-subject">${truncate(data.subject || '', 60)}</td>
+                    <td>${data.case_id ? `<a class="case-link" href="#" onclick="openCase(${data.case_id});return false;">#${data.case_id}</a>` : '-'}</td>
+                `;
+                tbody.insertBefore(row, tbody.firstChild);
+                // Remove highlight after animation
+                setTimeout(() => row.classList.remove('sse-highlight'), 3000);
+                // Keep table at 100 rows max
+                while (tbody.children.length > 100) tbody.removeChild(tbody.lastChild);
+            }
+            updateTimestamp();
+            // Also reload inbound/outbound tabs
+            scheduleFullReload(3000);
+        }
+
+        function handleSSEProposalUpdate(data) {
+            updateTimestamp();
+            // If case inspector is open for this case, refresh it
+            if (typeof refreshCaseInspector === 'function' && data.case_id) {
+                refreshCaseInspector(data.case_id);
+            }
+            scheduleFullReload();
+        }
+
+        function handleSSENewActivity(data) {
+            const tbody = document.getElementById('activityLog');
+            if (tbody) {
+                const detail = formatActivityDetail(data.metadata || {}, data.event_type);
+                const row = document.createElement('tr');
+                row.className = 'sse-highlight';
+                row.innerHTML = `
+                    <td class="timestamp">${relativeTime(data.created_at || data.timestamp)}</td>
+                    <td>${eventBadge(data.event_type)}</td>
+                    <td>${truncate(data.description || '', 60)}</td>
+                    <td>${data.case_id ? `<a class="case-link" href="#" onclick="openCase(${data.case_id});return false;">#${data.case_id}</a>` : '-'}</td>
+                    <td style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;">${detail}</td>
+                `;
+                tbody.insertBefore(row, tbody.firstChild);
+                setTimeout(() => row.classList.remove('sse-highlight'), 3000);
+                while (tbody.children.length > 100) tbody.removeChild(tbody.lastChild);
+            }
+            updateTimestamp();
+        }
+
+        // Refresh the case inspector panel if it's open for a specific case
+        function refreshCaseInspector(caseId) {
+            const inspector = document.getElementById('caseInspector');
+            if (inspector && inspector.dataset.caseId === String(caseId)) {
+                openCase(caseId);
             }
         }
 
@@ -5066,7 +5200,8 @@
 
         function startAutoRefresh() {
             if (refreshTimer) clearInterval(refreshTimer);
-            refreshTimer = setInterval(loadData, 10000);
+            // SSE handles real-time updates; polling is a fallback for reconnects/missed events
+            refreshTimer = setInterval(loadData, 60000);
         }
 
         function isInteracting() {

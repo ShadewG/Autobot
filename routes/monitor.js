@@ -2065,9 +2065,28 @@ router.get('/events', (req, res) => {
     };
     eventBus.on('notification', onNotification);
 
+    // Data update events — push incremental changes for dashboard
+    const onDataUpdate = async (data) => {
+        // Apply same user filtering as notifications
+        const caseId = data.case_id || data.caseId;
+        if (caseId && (userId || unownedOnly)) {
+            try {
+                const c = await db.getCaseById(caseId);
+                if (userId && c?.user_id !== userId) return;
+                if (unownedOnly && c?.user_id != null) return;
+            } catch (_) {
+                return;
+            }
+        }
+        // Send as named SSE event so client can use addEventListener
+        res.write(`event: ${data.event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    eventBus.on('data_update', onDataUpdate);
+
     req.on('close', () => {
         clearInterval(heartbeat);
         eventBus.off('notification', onNotification);
+        eventBus.off('data_update', onDataUpdate);
     });
 });
 

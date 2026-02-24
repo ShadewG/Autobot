@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
+const { emitDataUpdate } = require('./event-bus');
 
 class DatabaseService {
     constructor() {
@@ -210,6 +211,17 @@ class DatabaseService {
         const result = await this.query(query, values);
         const updatedCase = result.rows[0];
 
+        // Push real-time update to dashboard SSE clients
+        if (updatedCase) {
+            emitDataUpdate('case_update', {
+                case_id: caseId,
+                status,
+                substatus: additionalFields.substatus || null,
+                agency_name: updatedCase.agency_name,
+                case_name: updatedCase.case_name
+            });
+        }
+
         // Fire-and-forget Notion sync on every status change (lazy require avoids circular dep)
         try {
             const notionService = require('./notion-service');
@@ -232,17 +244,15 @@ class DatabaseService {
      */
     async _dispatchStatusAction(caseId, status) {
         try {
-            const { generateQueue, emailQueue } = require('../queues/email-queue');
-
             switch (status) {
                 case 'ready_to_send': {
-                    if (!generateQueue) break;
-                    await generateQueue.add('generate-and-send', { caseId }, {
-                        jobId: `generate-${caseId}`,
-                        attempts: 2,
-                        backoff: { type: 'exponential', delay: 30000 }
-                    });
-                    console.log(`[reactive] Case ${caseId} → ready_to_send: queued generation`);
+                    const { dispatchReadyToSend } = require('./dispatch-helper');
+                    const result = await dispatchReadyToSend(caseId, { source: 'reactive' });
+                    if (result.dispatched) {
+                        console.log(`[reactive] Case ${caseId} → ready_to_send: dispatched run ${result.runId}`);
+                    } else {
+                        console.log(`[reactive] Case ${caseId} → ready_to_send: skipped (${result.reason})`);
+                    }
                     break;
                 }
                 // Future reactive hooks can be added here:
@@ -250,8 +260,8 @@ class DatabaseService {
                 // case 'portal_submitted': queue portal status check
             }
         } catch (err) {
-            // Duplicate job IDs are expected and fine
-            if (err.message?.includes('duplicate')) return;
+            // one_active_per_case constraint = expected concurrent dispatch race
+            if (err.code === '23505' && String(err.constraint || '').includes('one_active_per_case')) return;
             throw err;
         }
     }
@@ -302,7 +312,17 @@ class DatabaseService {
         const values = [caseId, ...entries.map(([, value]) => value)];
         const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
-        return result.rows[0];
+        const updated = result.rows[0];
+        if (updated && updates.status) {
+            emitDataUpdate('case_update', {
+                case_id: caseId,
+                status: updated.status,
+                substatus: updated.substatus,
+                agency_name: updated.agency_name,
+                case_name: updated.case_name
+            });
+        }
+        return updated;
     }
 
     // Email Threads
@@ -387,7 +407,19 @@ class DatabaseService {
         ];
         const result = await this.query(query, values);
         if (result.rows.length > 0) {
-            return result.rows[0];
+            const msg = result.rows[0];
+            emitDataUpdate('message_new', {
+                id: msg.id,
+                case_id: msg.case_id,
+                direction: msg.direction,
+                from_email: msg.from_email,
+                to_email: msg.to_email,
+                subject: msg.subject,
+                message_type: msg.message_type,
+                received_at: msg.received_at,
+                sent_at: msg.sent_at
+            });
+            return msg;
         }
 
         // Fetch existing message when conflict occurred
@@ -680,7 +712,18 @@ class DatabaseService {
             metadata.user_id || null
         ];
         const result = await this.query(query, values);
-        return result.rows[0];
+        const row = result.rows[0];
+        if (row) {
+            emitDataUpdate('activity_new', {
+                id: row.id,
+                event_type: row.event_type,
+                case_id: row.case_id,
+                description: row.description,
+                metadata: row.metadata,
+                created_at: row.created_at
+            });
+        }
+        return row;
     }
 
     async getRecentActivity(limit = 50) {
@@ -969,6 +1012,15 @@ class DatabaseService {
         if (result.rows.length > 0) {
             const types = actionTypes ? ` (types: ${actionTypes.join(', ')})` : ' (all)';
             console.log(`[DB] Dismissed ${result.rows.length} proposals for case ${caseId}${types}: ${reason}`);
+            // Push SSE update for each dismissed proposal
+            for (const row of result.rows) {
+                emitDataUpdate('proposal_update', {
+                    id: row.id,
+                    case_id: caseId,
+                    action_type: row.action_type,
+                    status: 'DISMISSED'
+                });
+            }
         }
         return result.rows;
     }
@@ -1441,7 +1493,17 @@ class DatabaseService {
 
         try {
             const result = await this.query(query, values);
-            return result.rows[0];
+            const proposal = result.rows[0];
+            if (proposal) {
+                emitDataUpdate('proposal_update', {
+                    id: proposal.id,
+                    case_id: proposal.case_id,
+                    action_type: proposal.action_type,
+                    status: proposal.status,
+                    created: true
+                });
+            }
+            return proposal;
         } catch (err) {
             // Race condition: partial unique index (one PENDING_APPROVAL per case) caught a concurrent insert
             if (err.code === '23505' && err.constraint === 'idx_proposals_one_pending_per_case') {
@@ -1526,7 +1588,17 @@ class DatabaseService {
         const values = [proposalId, ...entries.map(([, value]) => value)];
         const query = `UPDATE proposals SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
-        return result.rows[0];
+        const proposal = result.rows[0];
+        if (proposal) {
+            emitDataUpdate('proposal_update', {
+                id: proposal.id,
+                case_id: proposal.case_id,
+                action_type: proposal.action_type,
+                status: proposal.status,
+                updated_at: proposal.updated_at
+            });
+        }
+        return proposal;
     }
 
     /**
