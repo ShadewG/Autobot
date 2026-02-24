@@ -3442,6 +3442,7 @@
             if (sub.includes('fee') || sub.includes('quote') || sub.includes('cost')) return 'FEE_QUOTE';
             if (c.last_fee_quote_amount) return 'FEE_QUOTE';
             if (sub.includes('denial') || sub.includes('denied') || sub.includes('reject')) return 'DENIAL';
+            if (sub.includes('sensitive') || c.pause_reason === 'SENSITIVE') return 'SENSITIVE';
             if (sub.includes('clarif') || sub.includes('question') || sub.includes('details needed') || sub.includes('more info')) return 'CLARIFICATION';
             if (sub.includes('missing') || sub.includes('contact') || sub.includes('info needed')) return 'MISSING_INFO';
             if (status === 'needs_contact_info') return 'MISSING_INFO';
@@ -3468,6 +3469,11 @@
                 { id: 'narrow_scope', label: 'Narrow Scope & Retry' },
                 { id: 'call_agency', label: 'Call Agency' },
                 { id: 'close', label: 'Close Request' },
+                { id: 'put_on_hold', label: 'Put on Hold' },
+            ],
+            SENSITIVE: [
+                { id: 'escalate', label: 'Escalate', primary: true },
+                { id: 'call_agency', label: 'Call Agency' },
                 { id: 'put_on_hold', label: 'Put on Hold' },
             ],
             CLARIFICATION: [
@@ -3573,6 +3579,7 @@
             PORTAL_FAILED: 'Portal Failed',
             FEE_QUOTE: 'Fee Quote',
             DENIAL: 'Denial',
+            SENSITIVE: 'Sensitive Case',
             CLARIFICATION: 'Clarification Needed',
             MISSING_INFO: 'Missing Info',
             GENERAL: 'Needs Review',
