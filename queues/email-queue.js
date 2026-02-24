@@ -689,6 +689,13 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
             return { success: true, case_id: caseId, skipped: true, reason: caseData.status };
         }
 
+        // Guard against overlap with Run Engine: skip if an agent_run is active for this case
+        const activeRun = await db.getActiveRunForCase(caseId);
+        if (activeRun) {
+            console.log(`Case ${caseId} has active run #${activeRun.id} — skipping legacy generation`);
+            return { success: true, case_id: caseId, skipped: true, reason: 'active_run_exists' };
+        }
+
         const portalUrl = normalizePortalUrl(caseData.portal_url);
         const contactEmail = pickBestEmail(caseData);
         let portalHandled = false;

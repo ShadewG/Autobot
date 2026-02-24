@@ -5,17 +5,17 @@ const pdContactService = require('./pd-contact-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
-// Lazy-load generateQueue to avoid circular dependency
-let _generateQueue = null;
-function getGenerateQueue() {
-    if (_generateQueue === null) {
+// Lazy-load dispatch helper to avoid circular dependency
+let _dispatchReadyToSend = null;
+function getDispatchFn() {
+    if (!_dispatchReadyToSend) {
         try {
-            _generateQueue = require('../queues/email-queue').generateQueue;
+            _dispatchReadyToSend = require('./dispatch-helper').dispatchReadyToSend;
         } catch (e) {
-            _generateQueue = false; // Mark as unavailable
+            _dispatchReadyToSend = false;
         }
     }
-    return _generateQueue || null;
+    return _dispatchReadyToSend || null;
 }
 
 const STATE_ABBREVIATIONS = {
@@ -1491,12 +1491,14 @@ Look for a records division email, FOIA email, or general agency email that acce
                         }
 
                         if (existing.status === 'ready_to_send') {
-                            // Check if case has been queued - if not, re-queue it
                             if (!existing.queued_at) {
-                                console.log(`Case ready_to_send but never queued - re-queuing: ${notionCase.case_name}`);
+                                const dispatch = getDispatchFn();
+                                if (dispatch) {
+                                    try { await dispatch(existing.id, { source: 'notion_sync' }); } catch (e) {
+                                        if (e.code !== '23505') console.warn(`[notion_sync] Dispatch failed for case ${existing.id}:`, e.message);
+                                    }
+                                }
                                 syncedCases.push(existing);
-                            } else {
-                                console.log(`Case already ready to send and queued (skipping): ${notionCase.case_name}`);
                             }
                             continue;
                         }
@@ -1509,15 +1511,11 @@ Look for a records division email, FOIA email, or general agency email that acce
                             status: 'ready_to_send'
                         });
 
-                        // Reactively dispatch to generate queue so the case is picked up immediately
-                        const gq = getGenerateQueue();
-                        if (gq) {
-                            try {
-                                await gq.add('generate-and-send', { caseId: existing.id }, {
-                                    jobId: `generate-${existing.id}-sync-${Date.now()}`
-                                });
-                            } catch (queueErr) {
-                                console.warn(`Failed to queue generation for re-synced case ${existing.id}:`, queueErr.message);
+                        // Dispatch via Run Engine so the case is picked up immediately
+                        const dispatch = getDispatchFn();
+                        if (dispatch) {
+                            try { await dispatch(existing.id, { source: 'notion_sync' }); } catch (e) {
+                                console.warn(`Failed to dispatch re-synced case ${existing.id}:`, e.message);
                             }
                         }
 

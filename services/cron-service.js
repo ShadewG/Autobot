@@ -1,7 +1,7 @@
 const { CronJob } = require('cron');
 const notionService = require('./notion-service');
 const followupScheduler = require('./followup-scheduler');  // Phase 6: New Run Engine scheduler
-const { generateQueue } = require('../queues/email-queue');
+// generateQueue import removed — ready_to_send sweep now uses Run Engine via dispatch-helper
 const db = require('./database');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const stuckResponseDetector = require('./stuck-response-detector');
@@ -93,28 +93,26 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        // Safety net: queue any orphaned ready_to_send cases every 10 minutes
+        // Safety net: dispatch any orphaned ready_to_send cases every 10 minutes via Run Engine
         // Catches cases that entered ready_to_send before reactive dispatch, or where dispatch failed
         this.jobs.readyToSendSweep = new CronJob('*/10 * * * *', async () => {
-            if (!generateQueue) return;
             try {
                 const readyCases = await db.getCasesByStatus('ready_to_send');
                 if (readyCases.length === 0) return;
-                let queued = 0;
+                const { dispatchReadyToSend } = require('./dispatch-helper');
+                let dispatched = 0;
                 for (const c of readyCases) {
                     try {
-                        await generateQueue.add('generate-and-send', { caseId: c.id }, {
-                            jobId: `generate-${c.id}-${Date.now()}`,
-                            attempts: 2,
-                            backoff: { type: 'exponential', delay: 30000 }
-                        });
-                        queued++;
+                        const result = await dispatchReadyToSend(c.id, { source: 'cron_sweep' });
+                        if (result.dispatched) dispatched++;
                     } catch (e) {
-                        if (!e.message?.includes('duplicate')) throw e;
+                        if (!(e.code === '23505' && String(e.constraint || '').includes('one_active_per_case'))) {
+                            console.error(`[sweep] Failed to dispatch case ${c.id}:`, e.message);
+                        }
                     }
                 }
-                if (queued > 0) {
-                    console.log(`[sweep] Queued ${queued} orphaned ready_to_send cases`);
+                if (dispatched > 0) {
+                    console.log(`[sweep] Dispatched ${dispatched} ready_to_send cases via Run Engine`);
                 }
             } catch (error) {
                 console.error('Error in ready_to_send sweep:', error);
