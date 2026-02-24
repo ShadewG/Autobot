@@ -1152,7 +1152,7 @@ class DatabaseService {
         const values = [
             entry.message_id,
             entry.case_id,
-            entry.generated_reply || entry.draft_body_text || entry.draft_body_html || '',
+            entry.generated_reply,
             entry.confidence_score || null,
             entry.status || 'pending',
             entry.requires_approval !== false,
@@ -1161,8 +1161,8 @@ class DatabaseService {
             entry.last_regenerated_at || null,
             proposalKey,
             entry.action_type || 'SEND_EMAIL',
-            entry.proposal_short || entry.draft_subject || null,
-            entry.reasoning_jsonb || (Array.isArray(entry.reasoning) ? JSON.stringify(entry.reasoning) : null),
+            entry.proposal_short || null,
+            entry.reasoning_jsonb || null,
             entry.warnings_jsonb || null,
             entry.constraints_applied_jsonb || null
         ];

@@ -112,25 +112,21 @@ async function draftInitialRequestNode(state) {
     const requiresHuman = !canAutoExecute;
     const pauseReason = requiresHuman ? 'INITIAL_REQUEST' : null;
 
-    // Create proposal record
-    const proposal = await db.createOrUpdateProposal({
-      case_id: caseId,
-      proposal_key: proposalKey,
-      action_type: 'SEND_INITIAL_REQUEST',
-      trigger_message_id: null,  // No trigger message for initial request
-      draft_subject: subject,
-      draft_body_text: bodyText,
-      draft_body_html: bodyHtml,
+    // Create proposal record (use upsertProposal to write to proposals table, not legacy auto_reply_queue)
+    const proposal = await db.upsertProposal({
+      proposalKey,
+      caseId,
+      runId,
+      triggerMessageId: null,
+      actionType: 'SEND_INITIAL_REQUEST',
+      draftSubject: subject,
+      draftBodyText: bodyText,
+      draftBodyHtml: bodyHtml,
       reasoning,
-      can_auto_execute: canAutoExecute,
-      requires_human: requiresHuman,
+      canAutoExecute,
+      requiresHuman,
       status: requiresHuman ? 'PENDING_APPROVAL' : 'DRAFT'
     });
-
-    // Link proposal to run if run_id provided
-    if (runId && proposal?.id) {
-      await db.linkProposalToRun(proposal.id, runId, pauseReason);
-    }
 
     logs.push(`Created proposal ${proposal.id} with key ${proposalKey}`);
 
