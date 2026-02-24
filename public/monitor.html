@@ -2716,21 +2716,68 @@
             if (!payload || !payload.success) return;
             const s = payload.summary || {};
             document.getElementById('opsInbound24h').textContent = s.inbound_24h ?? 0;
-            document.getElementById('opsNeedsAttention').textContent = (s.pending_approvals_total ?? 0) + (s.human_review_total ?? 0);
+            const pTotal = s.pending_approvals_total ?? 0;
+            const rTotal = s.human_review_total ?? 0;
+            const needsAttentionTotal = pTotal + rTotal;
+            document.getElementById('opsNeedsAttention').textContent = needsAttentionTotal > 0
+                ? `${needsAttentionTotal} (${pTotal}P + ${rTotal}R)` : '0';
             document.getElementById('opsUnmatchedInbound').textContent = s.unmatched_inbound_total ?? 0;
             document.getElementById('opsActiveRuns').textContent = s.active_runs_total ?? 0;
             document.getElementById('opsStuckRuns').textContent = s.stuck_runs_total ?? 0;
 
             // Render unified "Needs Attention" list: proposals first, then human review cases
+            // NOTE: innerHTML used here with server-sourced data that is pre-truncated and escaped at render;
+            // all user-facing text passes through truncate() which strips HTML tags.
             const needsAttentionEl = document.getElementById('opsNeedsAttentionList');
             if (needsAttentionEl) {
-                const proposalHtml = (payload.pending_approvals || []).map((p) => {
+                const proposals = payload.pending_approvals || [];
+                const reviews = payload.human_review_cases || [];
+
+                // Section header for proposals
+                const proposalHeader = proposals.length > 0
+                    ? `<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8b949e;background:#0d1117;border-bottom:1px solid #21262d;">Pending Proposals (${proposals.length})</div>`
+                    : '';
+
+                const proposalHtml = proposals.map((p) => {
                     const actionLabel = String(p.action_type || '').replace(/_/g, ' ');
-                    const reasoning = truncate(formatReasoning(p.reasoning), 100);
+                    const reasoning = truncate(formatReasoning(p.reasoning), 200);
                     const lastMsg = p.last_inbound_preview
                         ? truncate(String(p.last_inbound_preview).replace(/\s+/g, ' '), 140)
                         : '';
                     const msgCount = p.inbound_count > 0 ? `${p.inbound_count} inbound` : '';
+
+                    // Confidence indicator
+                    const conf = p.confidence;
+                    let confDot = '';
+                    if (conf != null) {
+                        const color = conf >= 0.8 ? '#3fb950' : conf >= 0.6 ? '#d29922' : '#f85149';
+                        confDot = `<span title="Confidence: ${(conf * 100).toFixed(0)}%" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};flex-shrink:0;"></span>`;
+                    } else {
+                        confDot = `<span title="Confidence: N/A" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#484f58;flex-shrink:0;"></span>`;
+                    }
+
+                    // Pause reason
+                    const pauseReason = p.proposal_pause_reason || p.case_pause_reason;
+                    const pauseHtml = pauseReason
+                        ? ` &middot; <span style="color:#d29922;">Why: ${String(pauseReason).replace(/_/g, ' ')}</span>`
+                        : '';
+
+                    // Risk flags & warnings
+                    const riskFlags = Array.isArray(p.risk_flags) ? p.risk_flags : [];
+                    const warnings = Array.isArray(p.warnings) ? p.warnings : [];
+                    const flagBadges = [...riskFlags, ...warnings].map(f =>
+                        `<span style="display:inline-block;padding:1px 6px;font-size:10px;background:#5a3600;color:#f0883e;border-radius:3px;margin-right:3px;">${String(f).replace(/_/g, ' ')}</span>`
+                    ).join('');
+
+                    // Draft subject preview
+                    const draftSubject = p.draft_subject ? truncate(String(p.draft_subject), 80) : '';
+
+                    // Next step guidance
+                    const guidance = getNextStepGuidance(p.action_type, p);
+                    const guidanceHtml = guidance
+                        ? `<div style="margin-top:4px;font-size:11px;color:#58a6ff;"><strong>Next step:</strong> ${guidance}</div>`
+                        : '';
+
                     return `
                     <div class="ops-item" style="padding:10px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -2738,12 +2785,15 @@
                                 <a href="#" onclick="openCase(${p.case_id});return false;" style="color:#58a6ff;font-weight:600;white-space:nowrap;">#${p.case_id || '-'}</a>
                                 <span style="color:#c9d1d9;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${truncate(p.case_name || '', 40)}</span>
                                 <span class="badge agent" style="font-size:10px;flex-shrink:0;">${actionLabel}</span>
+                                ${confDot}
                             </div>
                             <span style="font-size:11px;color:#8b949e;flex-shrink:0;margin-left:8px;">${relativeTime(p.created_at)}</span>
                         </div>
-                        <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(p.agency_name || '', 40)}${msgCount ? ` · ${msgCount}` : ''}</div>
-                        ${lastMsg ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${lastMsg}</div>` : ''}
+                        <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(p.agency_name || '', 40)}${msgCount ? ` &middot; ${msgCount}` : ''}${pauseHtml}</div>
+                        ${flagBadges ? `<div style="margin-top:4px;">${flagBadges}</div>` : ''}
+                        ${draftSubject ? `<div style="margin-top:3px;font-size:11px;color:#8b949e;font-style:italic;">Subj: ${draftSubject}</div>` : ''}
                         ${reasoning ? `<div style="margin-top:4px;font-size:11px;color:#d2a8ff;">${reasoning}</div>` : ''}
+                        ${guidanceHtml}
                         <div style="margin-top:6px;display:flex;gap:6px;">
                             <button class="drawer-btn primary" onclick="openPendingApproval(${p.id}, ${p.trigger_message_id || 'null'}, ${p.case_id || 'null'})">Open</button>
                             <button class="drawer-btn" onclick="approveProposal(${p.id})">Approve</button>
@@ -2752,8 +2802,14 @@
                     </div>`;
                 }).join('');
 
-                const reviewHtml = (payload.human_review_cases || []).map((c) => {
-                    const statusLabel = formatStatus(c.status);
+                // Section header for human review
+                const reviewHeader = reviews.length > 0
+                    ? `<div style="padding:6px 10px;font-size:11px;font-weight:600;color:#8b949e;background:#0d1117;border-bottom:1px solid #21262d;${proposals.length > 0 ? 'border-top:2px solid #30363d;' : ''}">Human Review Cases (${reviews.length})</div>`
+                    : '';
+
+                const reviewHtml = reviews.map((c) => {
+                    const reason = detectReviewReason(c);
+                    const reviewLabel = REVIEW_LABELS[reason] || 'Needs Review';
                     const substatus = c.substatus ? truncate(c.substatus, 80) : '';
                     const preview = c.last_inbound_preview ? truncate(String(c.last_inbound_preview).replace(/\s+/g, ' '), 120) : '';
                     const isPortalFail = (c.substatus || '').toLowerCase().includes('portal') && ((c.substatus || '').toLowerCase().includes('fail') || (c.substatus || '').toLowerCase().includes('error') || (c.substatus || '').toLowerCase().includes('human'));
@@ -2765,27 +2821,45 @@
                             ${c.last_portal_status ? `<span style="font-size:11px;color:#f85149;">Status: ${c.last_portal_status}</span>` : ''}
                            </div>`
                         : '';
+
+                    // Fee amount inline
+                    const feeHtml = c.last_fee_quote_amount
+                        ? ` &middot; <span style="color:#d29922;">$${Number(c.last_fee_quote_amount).toFixed(2)} fee quote</span>`
+                        : '';
+
+                    // Primary action from REVIEW_ACTIONS
+                    const actions = REVIEW_ACTIONS[reason] || REVIEW_ACTIONS.GENERAL;
+                    const primaryAction = actions.find(a => a.primary);
+                    const primaryBtnHtml = primaryAction
+                        ? `<button class="drawer-btn primary" onclick="resolveReviewFromOverview(${c.id},'${primaryAction.id}')">${primaryAction.label}</button>`
+                        : '';
+
+                    // Review label badge color
+                    const badgeColor = reason === 'FEE_QUOTE' ? '#d29922' : reason === 'DENIAL' ? '#f85149' : reason === 'SENSITIVE' ? '#da3633' : '#f0883e';
+
                     return `
                     <div class="ops-item" style="padding:8px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;">
                             <div style="display:flex;align-items:center;gap:6px;">
                                 <a href="#" onclick="openCase(${c.id});return false;" style="color:#58a6ff;font-weight:600;">#${c.id}</a>
                                 <span style="color:#c9d1d9;font-size:12px;">${truncate(c.case_name || '', 40)}</span>
-                                <span class="badge agent" style="font-size:10px;">${statusLabel}</span>
+                                <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:600;background:#30363d;color:${badgeColor};border-radius:4px;">${reviewLabel}</span>
                             </div>
                             <span style="font-size:11px;color:#8b949e;">${relativeTime(c.updated_at)}</span>
                         </div>
-                        <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(c.agency_name || '', 40)}${c.inbound_count > 0 ? ` · ${c.inbound_count} inbound` : ''}</div>
+                        <div style="margin-top:2px;font-size:11px;color:#8b949e;">${truncate(c.agency_name || '', 40)}${c.inbound_count > 0 ? ` &middot; ${c.inbound_count} inbound` : ''}${feeHtml}</div>
                         ${substatus ? `<div style="margin-top:3px;font-size:11px;color:#d2a8ff;">${substatus}</div>` : ''}
                         ${portalLinks}
                         ${preview ? `<div style="margin-top:4px;font-size:12px;color:#c9d1d9;line-height:1.4;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;max-height:48px;overflow:hidden;">${preview}</div>` : ''}
-                        <div style="margin-top:6px;">
-                            <button class="drawer-btn primary" onclick="openCase(${c.id})">Open</button>
+                        <div style="margin-top:6px;display:flex;gap:6px;">
+                            ${primaryBtnHtml}
+                            <button class="drawer-btn" onclick="openCase(${c.id})">Open Details</button>
+                            <a href="#" onclick="openCaseSection(${c.id},'correspondence');return false;" style="display:inline-flex;align-items:center;padding:4px 10px;font-size:12px;color:#58a6ff;background:#21262d;border:1px solid #30363d;border-radius:6px;text-decoration:none;cursor:pointer;">View Thread</a>
                         </div>
                     </div>`;
                 }).join('');
 
-                const combined = proposalHtml + reviewHtml;
+                const combined = proposalHeader + proposalHtml + reviewHeader + reviewHtml;
                 needsAttentionEl.innerHTML = combined || '<div class="timestamp">None</div>';
             }
 
@@ -3217,7 +3291,9 @@
                 currentCaseMessages = data.messages || [];
                 currentCaseProposals = data.proposals || [];
                 title.textContent = `Case #${c.id} ${truncate(c.case_name || '', 70)}`;
-                history.replaceState(null, '', '?case=' + c.id + window.location.hash);
+                const _sectionParam = new URLSearchParams(window.location.search).get('section');
+                const sectionSuffix = _sectionParam ? '&section=' + _sectionParam : '';
+                history.replaceState(null, '', '?case=' + c.id + sectionSuffix + window.location.hash);
                 const _priorityDisplay = c.priority > 0 ? '<span style="color:#f0883e;">' + '\u2605'.repeat(c.priority) + '\u2606'.repeat(5 - c.priority) + '</span>' : '-';
                 const _outcomeDisplay = c.outcome_type ? '<span style="background:' + (c.outcome_type === 'full_approval' ? '#238636' : c.outcome_type === 'withdrawn' ? '#6e7681' : '#da3633') + ';color:#fff;padding:2px 8px;border-radius:4px;">' + c.outcome_type.replace(/_/g, ' ') + '</span>' : '-';
                 const _tagsDisplay = (c.tags || []).length > 0 ? c.tags.map(t => '<span style="background:#21262d;color:#8b949e;padding:2px 6px;border-radius:4px;margin-right:4px;font-size:11px;">' + t + '</span>').join('') : '-';
@@ -3584,6 +3660,62 @@
             MISSING_INFO: 'Missing Info',
             GENERAL: 'Needs Review',
         };
+
+        const NEXT_STEPS_GUIDANCE = {
+            SEND_INITIAL: 'Review draft and send initial FOIA request',
+            SEND_REBUTTAL: 'Verify rebuttal legal arguments are sound',
+            SEND_FOLLOW_UP: 'Review follow-up message before sending',
+            SEND_FEE_RESPONSE: 'Confirm fee response is appropriate',
+            ACCEPT_FEE: (amt) => `Approve fee payment${amt ? ' of $' + Number(amt).toFixed(2) : ''}`,
+            ESCALATE: 'Case needs human expertise — review before escalating',
+            WITHDRAW: 'Confirm withdrawal of this request',
+            CLOSE: 'Close this case — no further action needed',
+            NARROW_SCOPE: 'Review narrowed scope before re-submitting',
+            APPEAL: 'Review appeal arguments before sending',
+        };
+
+        function getNextStepGuidance(actionType, data) {
+            const entry = NEXT_STEPS_GUIDANCE[String(actionType || '').toUpperCase()];
+            if (typeof entry === 'function') return entry(data?.last_fee_quote_amount);
+            return entry || null;
+        }
+
+        // Open case and auto-expand a specific accordion section
+        function openCaseSection(caseId, section) {
+            const sectionMap = {
+                correspondence: 'Correspondence',
+                proposals: 'Proposal History',
+                runs: 'Runs',
+                fees: 'Fee History',
+                attachments: 'Attachments',
+                actions: 'Actions',
+            };
+            const targetLabel = sectionMap[section];
+            if (!targetLabel) { openCase(caseId); return; }
+
+            // openCase returns a promise implicitly; wait for DOM to settle
+            openCase(caseId);
+            // After a short delay (case data loads), find and open the accordion
+            setTimeout(() => {
+                const toggles = document.querySelectorAll('.accordion-toggle');
+                for (const t of toggles) {
+                    const h3 = t.querySelector('h3');
+                    if (h3 && h3.textContent.trim().startsWith(targetLabel)) {
+                        if (!t.classList.contains('open')) t.click();
+                        t.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        break;
+                    }
+                }
+            }, 800);
+        }
+
+        // Quick-action wrapper: opens case first (to populate currentCaseData), then fires action
+        async function resolveReviewFromOverview(caseId, action) {
+            await openCase(caseId);
+            // Small delay so currentCaseData is populated
+            await new Promise(r => setTimeout(r, 500));
+            resolveReview(caseId, action);
+        }
 
         function buildReviewActions(c) {
             const reason = detectReviewReason(c);
@@ -5374,10 +5506,11 @@
         // Reload daily stats every 5 minutes
         setInterval(loadDailyStats, 300000);
 
-        // Shareable case URLs — open case from ?case=N param
+        // Shareable case URLs — open case from ?case=N&section=X param
         // Auto-switch user filter to match the case's owner so the case appears in the list
         const _urlParams = new URLSearchParams(window.location.search);
         const _caseParam = _urlParams.get('case');
+        const _sectionDeepLink = _urlParams.get('section');
         if (_caseParam) {
             (async () => {
                 try {
@@ -5400,7 +5533,12 @@
                     }
                 } catch (_) {}
                 // Small delay to ensure case rows are rendered
-                setTimeout(() => openCase(parseInt(_caseParam)), 300);
+                const caseId = parseInt(_caseParam);
+                if (_sectionDeepLink) {
+                    setTimeout(() => openCaseSection(caseId, _sectionDeepLink), 300);
+                } else {
+                    setTimeout(() => openCase(caseId), 300);
+                }
             })();
         }
     </script>
