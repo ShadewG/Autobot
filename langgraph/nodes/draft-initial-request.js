@@ -92,7 +92,7 @@ async function draftInitialRequestNode(state) {
     // Build body text
     const bodyText = draftResult.body || draftResult.requestText || draftResult.request_text;
 
-    if (!bodyText || typeof bodyText !== 'string') {
+    if (!bodyText || typeof bodyText !== 'string' || !bodyText.trim()) {
       throw new Error(`AI returned empty/invalid body for case ${caseId} — draftResult keys: ${Object.keys(draftResult).join(', ')}`);
     }
 

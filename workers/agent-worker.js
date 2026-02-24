@@ -446,7 +446,8 @@ async function processInitialRequestJob(job) {
   } catch (error) {
     log.error('Initial request job failed', { runId, caseId, error: error.message, attempt: job.attemptsMade + 1 });
 
-    const isFinalAttempt = job.attemptsMade >= job.opts.attempts - 1;
+    const totalAttempts = Number(job.opts?.attempts) || 1;
+    const isFinalAttempt = job.attemptsMade >= totalAttempts - 1;
 
     // Persist run status — wrapped so escalation still runs even if DB write fails
     try {
@@ -462,13 +463,20 @@ async function processInitialRequestJob(job) {
     // On final attempt: escalate case so it's never silently lost
     if (isFinalAttempt) {
       try {
-        await db.updateCaseStatus(caseId, 'needs_human_review', {
-          substatus: `PIPELINE_FAILURE: ${error.message}`,
-          requires_human: true
-        });
-        notify('warning', `Case ${caseId} pipeline failed after ${job.attemptsMade + 1} attempts — needs human review`, {
-          case_id: caseId, run_id: runId, error: error.message
-        });
+        // Only escalate if case hasn't already advanced past the early pipeline
+        const currentCase = await db.getCaseById(caseId);
+        const earlyStatuses = ['ready_to_send', 'drafting', 'pending_review', 'new'];
+        if (currentCase && earlyStatuses.includes(currentCase.status)) {
+          await db.updateCaseStatus(caseId, 'needs_human_review', {
+            substatus: `PIPELINE_FAILURE: ${error.message}`,
+            requires_human: true
+          });
+          notify('warning', `Case ${caseId} pipeline failed after ${job.attemptsMade + 1} attempts — needs human review`, {
+            case_id: caseId, run_id: runId, error: error.message
+          });
+        } else {
+          log.info('Skipping escalation — case already advanced', { caseId, currentStatus: currentCase?.status });
+        }
       } catch (escalateErr) {
         log.error('Failed to escalate case', { caseId, error: escalateErr.message });
       }
