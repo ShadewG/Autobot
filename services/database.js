@@ -1281,7 +1281,23 @@ class DatabaseService {
             RETURNING *
         `;
         const result = await this.query(query, [runId, JSON.stringify(nodeProgress)]);
-        return result.rows[0];
+        const updatedRun = result.rows[0];
+
+        // Emit run_status for live node-progress updates
+        if (updatedRun) {
+            try {
+                emitDataUpdate('run_status', {
+                    run_id: updatedRun.id,
+                    case_id: updatedRun.case_id,
+                    status: updatedRun.status,
+                    current_node: nodeName,
+                    started_at: updatedRun.started_at,
+                    ended_at: updatedRun.ended_at
+                });
+            } catch (_) {}
+        }
+
+        return updatedRun;
     }
 
     /**

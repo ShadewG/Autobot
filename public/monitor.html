@@ -3294,7 +3294,10 @@
             latestCasePortalTasks = [];
             currentCaseMessages = [];
             currentCaseProposals = [];
-            stopPortalPolling();
+            // Only stop portal polling if switching to a different case
+            if (_portalPollCaseId && String(_portalPollCaseId) !== String(caseId)) {
+                stopPortalPolling();
+            }
 
             try {
                 const res = await fetch(`/api/monitor/case/${caseId}`);
@@ -4120,20 +4123,22 @@
 
         let _portalPollStopped = false;
         let _portalPollCaseId = null;
+        let _portalPollSession = 0;
         function startPortalLinkPolling(caseId) {
             const resultDiv = document.getElementById('caseInspectorActionResult');
             stopPortalPolling();
             _portalPollStopped = false;
             _portalPollCaseId = caseId;
             _portalPollBackoff = 3000;
+            const session = ++_portalPollSession;
             let attempts = 0;
 
             const pollOnce = async () => {
-                if (_portalPollStopped) return;
+                if (_portalPollStopped || session !== _portalPollSession) return;
                 attempts += 1;
                 try {
                     const res = await fetch(`/api/monitor/case/${caseId}`);
-                    if (_portalPollStopped) return;
+                    if (_portalPollStopped || session !== _portalPollSession) return;
                     const data = await res.json();
                     if (!res.ok || !data.success) return scheduleNext();
                     const c = data.case || {};
@@ -4156,7 +4161,7 @@
             };
 
             function scheduleNext() {
-                if (_portalPollStopped) return;
+                if (_portalPollStopped || session !== _portalPollSession) return;
                 _portalPollBackoff = Math.min(_portalPollBackoff * 1.5, 30000);
                 portalLinkPollTimer = setTimeout(pollOnce, _portalPollBackoff);
             }
@@ -5098,20 +5103,22 @@
         }
 
         let _runPollStopped = false;
+        let _runPollSession = 0; // session token to prevent stale closure races
         async function pollRunStatus(runId) {
             if (!runId) return;
             stopRunPolling();
             _runPollStopped = false;
             _runPollBackoff = 2000;
+            const session = ++_runPollSession;
 
             const terminalStatuses = new Set(['completed', 'paused', 'failed']);
             const runStatusText = document.getElementById('runStatusText');
 
             const pollOnce = async () => {
-                if (_runPollStopped) return;
+                if (_runPollStopped || session !== _runPollSession) return;
                 try {
                     const res = await fetch(`/api/runs/${runId}`);
-                    if (_runPollStopped) return; // check after async gap
+                    if (_runPollStopped || session !== _runPollSession) return;
                     const data = await res.json();
                     if (!data.success) throw new Error(data.error || 'Run fetch failed');
                     const run = data.run || {};
@@ -5127,7 +5134,7 @@
                     stopRunPolling();
                     return;
                 }
-                if (_runPollStopped) return;
+                if (_runPollStopped || session !== _runPollSession) return;
                 _runPollBackoff = Math.min(_runPollBackoff * 2, 30000);
                 runPollTimer = setTimeout(pollOnce, _runPollBackoff);
             };
