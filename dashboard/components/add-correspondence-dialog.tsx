@@ -63,9 +63,13 @@ export function AddCorrespondenceDialog({
   useEffect(() => {
     if (!result?.runId || !isPolling) return;
 
+    let inflight = false;
     const pollStatus = async () => {
+      if (inflight) return;
+      inflight = true;
       try {
         const response = await fetch(`/api/runs/${result.runId}`);
+        if (!response.ok) return;
         const data = await response.json();
         if (data.run) {
           const newStatus = data.run.status;
@@ -76,6 +80,8 @@ export function AddCorrespondenceDialog({
         }
       } catch (err) {
         console.error('Error polling run status:', err);
+      } finally {
+        inflight = false;
       }
     };
 
@@ -109,12 +115,16 @@ export function AddCorrespondenceDialog({
       const data = await response.json();
 
       if (response.status === 409) {
-        setResult({
-          messageId: data.existing_message_id || 0,
-          runId: null,
-          runStatus: 'duplicate',
-          error: data.error || 'Duplicate correspondence already logged'
-        });
+        if (data.reason === 'active_run') {
+          setError(data.error || 'Case has an active run. Wait for it to complete.');
+        } else {
+          setResult({
+            messageId: data.existing_message_id || 0,
+            runId: null,
+            runStatus: 'duplicate',
+            error: data.error || 'Duplicate correspondence already logged'
+          });
+        }
         return;
       }
 

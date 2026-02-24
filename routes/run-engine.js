@@ -1503,8 +1503,8 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
 
     if (!summary || typeof summary !== 'string') {
       validationErrors.push({ field: 'summary', error: 'required (string)' });
-    } else if (summary.length < 10) {
-      validationErrors.push({ field: 'summary', error: 'too short (min 10 chars)' });
+    } else if (summary.trim().length < 10) {
+      validationErrors.push({ field: 'summary', error: 'too short (min 10 chars after trimming)' });
     }
 
     if (validationErrors.length > 0) {
@@ -1543,6 +1543,7 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
       logger.info('Duplicate correspondence detected', { caseId, existingMessageId: existing.id, dedupeKey });
       return res.status(409).json({
         success: false,
+        reason: 'duplicate',
         error: 'Duplicate correspondence already logged',
         existing_message_id: existing.id,
         dedupe_key: dedupeKey
@@ -1555,6 +1556,7 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
       if (existingRun) {
         return res.status(409).json({
           success: false,
+          reason: 'active_run',
           error: 'Case has an active agent run. Wait for it to complete or cancel it first.',
           active_run: { id: existingRun.id, status: existingRun.status, started_at: existingRun.started_at }
         });
@@ -1607,9 +1609,11 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
 
     const message = messageResult.rows[0];
 
-    // Update case for inbound correspondence only
+    // Update case status based on direction
     if (direction === 'inbound') {
       await db.updateCase(caseId, { last_response_date: message.received_at, status: 'responded' });
+    } else if (direction === 'outbound') {
+      await db.updateCase(caseId, { status: 'awaiting_response' });
     }
 
     await db.logActivity('correspondence_logged', `Logged ${direction} ${typeLabel}`, {
