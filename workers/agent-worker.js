@@ -468,7 +468,7 @@ async function processInitialRequestJob(job) {
         const earlyStatuses = ['ready_to_send', 'drafting', 'pending_review', 'new'];
         if (currentCase && earlyStatuses.includes(currentCase.status)) {
           await db.updateCaseStatus(caseId, 'needs_human_review', {
-            substatus: `PIPELINE_FAILURE: ${error.message}`,
+            substatus: `PIPELINE_FAILURE: ${error.message}`.slice(0, 100),
             requires_human: true
           });
           notify('warning', `Case ${caseId} pipeline failed after ${job.attemptsMade + 1} attempts — needs human review`, {
