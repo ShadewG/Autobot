@@ -80,12 +80,22 @@ async function draftInitialRequestNode(state) {
       draftResult = await aiService.generateFOIARequest(caseData);
     }
 
+    // Guard: AI service returned nothing
+    if (!draftResult || typeof draftResult !== 'object') {
+      throw new Error(`AI returned null/invalid result for case ${caseId}`);
+    }
+
     // Build subject line
     const subject = draftResult.subject ||
       `Public Records Request - ${caseData.subject_name || 'Records Request'}`;
 
     // Build body text
     const bodyText = draftResult.body || draftResult.requestText || draftResult.request_text;
+
+    if (!bodyText || typeof bodyText !== 'string') {
+      throw new Error(`AI returned empty/invalid body for case ${caseId} — draftResult keys: ${Object.keys(draftResult).join(', ')}`);
+    }
+
     const bodyHtml = draftResult.body_html || `<div style="font-family: Arial, sans-serif;">${bodyText.replace(/\n/g, '<br>')}</div>`;
 
     // Reasoning

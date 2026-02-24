@@ -100,7 +100,8 @@ async function enqueueInitialRequestJob(runId, caseId, options = {}) {
     llmStubs: options.llmStubs
   }, {
     jobId,
-    attempts: 1,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 30000 },
     removeOnComplete: { count: 100, age: 86400 },
     removeOnFail: { count: 200, age: 604800 }
   });

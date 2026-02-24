@@ -583,14 +583,7 @@ router.post('/notion', express.json(), async (req, res) => {
                 if (newCase && newCase.id) {
                     console.log(`[notion-webhook] Imported new case ${newCase.id} from page ${pageId}`);
                     notify('info', `Notion webhook: imported case ${newCase.id}`, { case_id: newCase.id, page_id: pageId });
-
-                    // If the imported case is ready_to_send, dispatch immediately
-                    if (newCase.status === 'ready_to_send') {
-                        const { dispatchReadyToSend } = require('../services/dispatch-helper');
-                        const result = await dispatchReadyToSend(newCase.id, { source: 'notion_webhook' });
-                        console.log(`[notion-webhook] New case ${newCase.id}: ${result.dispatched ? `dispatched run ${result.runId}` : `skipped (${result.reason})`}`);
-                        return res.status(200).json({ success: true, case_id: newCase.id, action: 'imported_and_dispatched', ...result });
-                    }
+                    // Don't dispatch here — createCase already triggers reactive dispatch via _dispatchStatusAction
                     return res.status(200).json({ success: true, case_id: newCase.id, action: 'imported', status: newCase.status });
                 }
             } catch (importErr) {

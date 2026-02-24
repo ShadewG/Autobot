@@ -29,6 +29,7 @@ const caseLockService = require('../services/case-lock-service');
 const reaperService = require('../services/reaper-service');
 const notionService = require('../services/notion-service');
 const discordService = require('../services/discord-service');
+const { notify } = require('../services/event-bus');
 
 // Try to load logger from services (primary) or utils (fallback)
 let logger;
@@ -372,13 +373,14 @@ async function processInitialRequestJob(job) {
   log.info('Processing run-initial-request job', {
     jobId: job.id,
     runId,
-    caseId
+    caseId,
+    attempt: job.attemptsMade + 1
   });
 
-  // Update run status to running
-  await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
-
   try {
+    // Update run status to running inside try — if this fails, catch block handles it
+    await db.updateAgentRun(runId, { status: 'running', started_at: new Date() });
+
     // Invoke Initial Request Graph with timeout fail-safe
     const result = await withTimeout(
       invokeInitialRequestGraph(caseId, {
@@ -417,43 +419,60 @@ async function processInitialRequestJob(job) {
     }
 
     if (result.status === 'completed') {
-      await db.updateAgentRun(runId, {
-        status: 'completed',
-        ended_at: new Date()
-      });
+      const graphErrors = result.result?.errors || [];
+      const proposalId = result.result?.proposalId || null;
 
+      if (!proposalId) {
+        const errorMsg = graphErrors.length > 0
+          ? `Graph completed with errors but no proposal: ${graphErrors.join('; ')}`
+          : 'Graph completed without errors but produced no proposal';
+
+        log.error('Initial request: no proposal produced', { runId, caseId, graphErrors, attempt: job.attemptsMade + 1 });
+        throw new Error(errorMsg);
+      }
+
+      // Valid completion: proposal exists
+      await db.updateAgentRun(runId, { status: 'completed', ended_at: new Date() });
       await notionService.syncStatusToNotion(caseId);
-
-      log.info('Initial request completed', { runId, caseId });
-
-      return {
-        success: true,
-        status: 'completed',
-        threadId: result.threadId
-      };
+      log.info('Initial request completed', { runId, caseId, proposalId });
+      return { success: true, status: 'completed', proposalId, threadId: result.threadId };
     }
 
-    // Defensive fallback: never leave run in "running" on unknown statuses
-    await db.updateAgentRun(runId, {
-      status: 'completed',
-      ended_at: new Date(),
-      error: `Non-standard graph status: ${result.status || 'unknown'}`
-    });
-
-    log.warn('Initial request returned non-standard status; forcing completion', {
-      runId, caseId, status: result.status
-    });
-
-    return { success: true, status: result.status };
+    // Unknown status — this is a bug, not a success
+    const errorMsg = `Unexpected graph status: ${result.status || 'undefined'}`;
+    log.error('Initial request: unexpected graph status', { runId, caseId, status: result.status });
+    throw new Error(errorMsg);
 
   } catch (error) {
-    log.error('Initial request job failed', { runId, caseId, error: error.message });
+    log.error('Initial request job failed', { runId, caseId, error: error.message, attempt: job.attemptsMade + 1 });
 
-    await db.updateAgentRun(runId, {
-      status: 'failed',
-      ended_at: new Date(),
-      error: error.message
-    });
+    const isFinalAttempt = job.attemptsMade >= job.opts.attempts - 1;
+
+    // Persist run status — wrapped so escalation still runs even if DB write fails
+    try {
+      await db.updateAgentRun(runId, {
+        status: isFinalAttempt ? 'failed' : 'running',
+        ended_at: isFinalAttempt ? new Date() : undefined,
+        error: error.message
+      });
+    } catch (dbErr) {
+      log.error('Failed to update agent run status', { runId, error: dbErr.message });
+    }
+
+    // On final attempt: escalate case so it's never silently lost
+    if (isFinalAttempt) {
+      try {
+        await db.updateCaseStatus(caseId, 'needs_human_review', {
+          substatus: `PIPELINE_FAILURE: ${error.message}`,
+          requires_human: true
+        });
+        notify('warning', `Case ${caseId} pipeline failed after ${job.attemptsMade + 1} attempts — needs human review`, {
+          case_id: caseId, run_id: runId, error: error.message
+        });
+      } catch (escalateErr) {
+        log.error('Failed to escalate case', { caseId, error: escalateErr.message });
+      }
+    }
 
     throw error;
   }
