@@ -16,7 +16,7 @@ function getEnqueueFn() {
  *
  * @param {number} caseId
  * @param {object} options
- * @param {string} options.source - 'reactive' | 'cron_sweep' | 'notion_sync'
+ * @param {string} options.source - 'reactive' | 'cron_sweep' | 'notion_sync' | 'notion_webhook'
  * @returns {{ dispatched: boolean, reason?: string, runId?: number }}
  */
 async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {

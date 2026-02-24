@@ -458,6 +458,79 @@ router.post('/events', express.json(), async (req, res) => {
 });
 
 /**
+ * Notion Database Automation Webhook
+ *
+ * Receives a POST from Notion when a case's status changes to "Ready To Send".
+ * Syncs the case into our DB and dispatches it through the Run Engine immediately.
+ *
+ * Setup in Notion:
+ *   Database automation → When Status changes to "Ready To Send" → Send webhook
+ *   URL: https://<domain>/webhooks/notion
+ *   Include properties: (any — we extract page_id from the payload)
+ */
+router.post('/notion', express.json(), async (req, res) => {
+    try {
+        const payload = req.body?.data || req.body;
+
+        // Extract page ID — Notion sends it as `id` or `page_id` in the data object
+        const pageId = (payload?.id || payload?.page_id || '')
+            .replace(/-/g, '');
+
+        if (!pageId || pageId.length < 30) {
+            console.warn('[notion-webhook] No valid page_id in payload:', JSON.stringify(req.body).substring(0, 500));
+            return res.status(200).json({ success: false, reason: 'no_page_id' });
+        }
+
+        console.log(`[notion-webhook] Received webhook for page ${pageId}`);
+
+        await db.logActivity('notion_webhook_received', `Notion webhook for page ${pageId}`, {
+            page_id: pageId,
+            ip: req.ip
+        });
+
+        // Sync this single case from Notion
+        const notionService = require('../services/notion-service');
+        const cases = await notionService.syncCasesFromNotion('Ready To Send');
+
+        // Find the case that matches this page ID
+        const existing = await db.getCaseByNotionId(pageId);
+
+        if (!existing) {
+            // Page may be new — try importing it directly
+            try {
+                const newCase = await notionService.processSinglePage(pageId);
+                if (newCase && newCase.id) {
+                    console.log(`[notion-webhook] Imported new case ${newCase.id} from page ${pageId}`);
+                }
+            } catch (importErr) {
+                console.warn(`[notion-webhook] Failed to import page ${pageId}:`, importErr.message);
+            }
+            return res.status(200).json({ success: true, action: 'import_attempted' });
+        }
+
+        // If case is ready_to_send, dispatch through Run Engine
+        if (existing.status === 'ready_to_send') {
+            const { dispatchReadyToSend } = require('../services/dispatch-helper');
+            try {
+                const result = await dispatchReadyToSend(existing.id, { source: 'notion_webhook' });
+                console.log(`[notion-webhook] Case ${existing.id}: ${result.dispatched ? `dispatched run ${result.runId}` : `skipped (${result.reason})`}`);
+                return res.status(200).json({ success: true, case_id: existing.id, ...result });
+            } catch (dispatchErr) {
+                console.error(`[notion-webhook] Dispatch failed for case ${existing.id}:`, dispatchErr.message);
+                return res.status(200).json({ success: false, case_id: existing.id, error: dispatchErr.message });
+            }
+        }
+
+        console.log(`[notion-webhook] Case ${existing.id} is '${existing.status}', not ready_to_send`);
+        res.status(200).json({ success: true, case_id: existing.id, status: existing.status, action: 'no_dispatch' });
+    } catch (error) {
+        console.error('[notion-webhook] Error:', error);
+        // Always return 200 to Notion so it doesn't retry endlessly
+        res.status(200).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * Test webhook endpoint
  */
 router.post('/test', express.json(), async (req, res) => {
