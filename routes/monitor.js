@@ -928,7 +928,7 @@ router.get('/live-overview', async (req, res) => {
                 c.status AS case_status,
                 c.portal_url,
                 c.pause_reason AS case_pause_reason,
-                c.last_fee_quote_amount,
+                (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id) AS message_count,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview,
@@ -1052,7 +1052,7 @@ router.get('/live-overview', async (req, res) => {
                 c.last_portal_run_id,
                 c.last_portal_status,
                 c.pause_reason,
-                c.last_fee_quote_amount,
+                (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
                 c.agency_email,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
