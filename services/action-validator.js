@@ -31,13 +31,19 @@ const POLICY_RULES = {
      * PORTAL_CASE_EMAIL: Block email actions on cases with portal_url
      */
     PORTAL_CASE_EMAIL: {
-        description: 'Cannot send email for portal-based cases',
+        description: 'Cannot send email for portal-based cases (except replies)',
         check: (caseData, proposal) => {
             const hasPortalUrl = !!caseData.portal_url;
             const isEmailAction = proposal.action_type?.startsWith('SEND_') ||
                                   proposal.response_type?.includes('email');
 
             if (hasPortalUrl && isEmailAction) {
+                // Allow rebuttals/clarifications — portal email replies are valid
+                // (NextRequest and similar portals say "Reply to this email or sign in")
+                const replyActions = ['SEND_REBUTTAL', 'SEND_CLARIFICATION', 'RESPOND_PARTIAL_APPROVAL'];
+                if (replyActions.includes(proposal.action_type)) {
+                    return { violated: false };
+                }
                 return {
                     violated: true,
                     action: 'BLOCK',
@@ -360,12 +366,15 @@ async function isActionBlocked(caseId, actionType) {
         return { blocked: true, reason: 'Case not found' };
     }
 
-    // Quick check: email actions on portal cases
+    // Quick check: email actions on portal cases (allow reply actions)
     if (caseData.portal_url && actionType?.startsWith('SEND_')) {
-        return {
-            blocked: true,
-            reason: `Portal case - ${actionType} blocked`
-        };
+        const replyActions = ['SEND_REBUTTAL', 'SEND_CLARIFICATION', 'RESPOND_PARTIAL_APPROVAL'];
+        if (!replyActions.includes(actionType)) {
+            return {
+                blocked: true,
+                reason: `Portal case - ${actionType} blocked`
+            };
+        }
     }
 
     return { blocked: false };

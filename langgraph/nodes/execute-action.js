@@ -941,6 +941,39 @@ async function executeActionNode(state) {
       break;
     }
 
+    case 'CLOSE_CASE': {
+      // Close the case — denial accepted as unchallengeable
+      await db.updateCaseStatus(caseId, 'completed', {
+        substatus: 'Denial accepted — unchallengeable',
+        requires_human: false,
+        pause_reason: null
+      });
+
+      await db.updateCase(caseId, {
+        outcome_type: 'denial_accepted',
+        outcome_recorded: new Date()
+      });
+
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: 'CLOSE_CASE',
+        status: 'SENT',
+        provider: 'none',
+        providerPayload: { reason: 'Denial accepted — unchallengeable' }
+      });
+
+      executionResult = { action: 'case_closed', reason: 'denial_accepted' };
+      await db.updateProposal(proposalId, {
+        status: 'EXECUTED',
+        executedAt: new Date()
+      });
+      logs.push('Case closed — denial accepted as unchallengeable');
+      break;
+    }
+
     case 'NONE': {
       // Create execution record for audit trail
       await createExecutionRecord({

@@ -327,6 +327,12 @@ ${adjustmentInstruction ? `\nAdditional instruction: ${adjustmentInstruction}` :
         return { logs };
       }
 
+      case 'CLOSE_CASE': {
+        // No draft needed for case closure
+        logs.push('No draft needed for case closure');
+        return { logs };
+      }
+
       case 'NONE': {
         logs.push('No draft needed - no action required');
         return { logs };

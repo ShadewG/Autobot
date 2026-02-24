@@ -20,6 +20,7 @@ const {
   DECLINE_FEE,
   ESCALATE,
   NONE,
+  CLOSE_CASE,
   RESEARCH_AGENCY,
   REFORMULATE_REQUEST,
   validateActionType
@@ -39,7 +40,8 @@ async function assessDenialStrength(caseData) {
 
   const strongIndicators = [
     'exemption', 'statute', 'law enforcement', 'ongoing investigation',
-    'privacy', 'confidential', 'sealed'
+    'privacy', 'confidential', 'sealed', 'court', 'pending litigation',
+    'active case'
   ];
 
   const strongCount = keyPoints.filter(p =>
@@ -771,9 +773,23 @@ async function decideNextActionNode(state) {
 
         case 'ongoing_investigation':
         case 'privacy_exemption': {
-          // Challenge the exemption with legal arguments
+          // Challenge the exemption with legal arguments — unless unchallengeable
           const denialStrength = await assessDenialStrength(caseData);
           reasoning.push(`Exemption-based denial (${resolvedSubtype}), strength: ${denialStrength}`);
+
+          if (denialStrength === 'strong') {
+            reasoning.push('Strong/unchallengeable denial — recommending CLOSE_CASE for human decision');
+            return {
+              proposalActionType: CLOSE_CASE,
+              canAutoExecute: false,
+              requiresHuman: true,
+              pauseReason: 'DENIAL',
+              gateOptions: ['APPROVE', 'ADJUST', 'DISMISS'],
+              proposalReasoning: reasoning,
+              logs: [...logs, `Strong exemption denial (${resolvedSubtype}) — recommending case closure`],
+              nextNode: 'gate_or_execute'
+            };
+          }
 
           const canAuto = autopilotMode === 'AUTO' && denialStrength === 'weak';
           return {
@@ -818,6 +834,20 @@ async function decideNextActionNode(state) {
           const denialStrength = await assessDenialStrength(caseData);
           reasoning.push(`Unknown subtype, denial strength: ${denialStrength} — using legacy routing`);
 
+          if (denialStrength === 'strong' && autopilotMode !== 'AUTO') {
+            reasoning.push('Strong unchallengeable denial — recommending CLOSE_CASE for human decision');
+            return {
+              proposalActionType: CLOSE_CASE,
+              canAutoExecute: false,
+              requiresHuman: true,
+              pauseReason: 'DENIAL',
+              gateOptions: ['APPROVE', 'ADJUST', 'DISMISS'],
+              proposalReasoning: reasoning,
+              logs: [...logs, 'Strong denial — recommending case closure'],
+              nextNode: 'gate_or_execute'
+            };
+          }
+
           if (denialStrength === 'weak' && autopilotMode === 'AUTO') {
             reasoning.push('Weak denial, preparing rebuttal');
             return {
@@ -829,7 +859,7 @@ async function decideNextActionNode(state) {
               nextNode: 'draft_response'
             };
           } else {
-            reasoning.push('Strong/medium denial or supervised mode, gating for human review');
+            reasoning.push('Medium denial or supervised mode, gating for human review');
             return {
               proposalActionType: SEND_REBUTTAL,
               canAutoExecute: false,
