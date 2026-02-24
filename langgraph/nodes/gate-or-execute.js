@@ -66,7 +66,21 @@ async function gateOrExecuteNode(state) {
         }
       }
     }
-    // Priority 2: Fall back to latest pending proposal (less specific — could pick wrong one)
+    // Priority 2: Find pending proposal scoped to this run (disambiguates multiple pending proposals)
+    if (!proposalActionType && runId) {
+      const runProposal = await db.query(
+        `SELECT action_type, id FROM proposals
+         WHERE case_id = $1 AND run_id = $2
+           AND status IN ('PENDING_APPROVAL', 'DRAFT')
+         ORDER BY created_at DESC LIMIT 1`,
+        [caseId, runId]
+      );
+      if (runProposal.rows[0]?.action_type) {
+        proposalActionType = runProposal.rows[0].action_type;
+        logs.push(`Recovered action_type from run ${runId} proposal #${runProposal.rows[0].id}: ${proposalActionType}`);
+      }
+    }
+    // Priority 3: Fall back to latest pending proposal (least specific)
     if (!proposalActionType) {
       const pendingProposal = await db.getLatestPendingProposal(caseId);
       if (pendingProposal?.action_type) {
