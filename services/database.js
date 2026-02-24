@@ -293,7 +293,23 @@ class DatabaseService {
         const values = [caseId, ...entries.map(([, value]) => value)];
         const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
-        return result.rows[0];
+        const updatedCase = result.rows[0];
+
+        // Emit portal_status SSE event when portal fields change
+        if (updatedCase) {
+            try {
+                emitDataUpdate('portal_status', {
+                    case_id: caseId,
+                    portal_status: updatedCase.last_portal_status,
+                    portal_task_url: updatedCase.last_portal_task_url,
+                    portal_run_id: updatedCase.last_portal_run_id,
+                    portal_recording_url: updatedCase.last_portal_recording_url,
+                    portal_request_number: updatedCase.portal_request_number
+                });
+            } catch (_) {}
+        }
+
+        return updatedCase;
     }
 
     async updateCase(caseId, updates = {}) {
@@ -1216,7 +1232,23 @@ class DatabaseService {
 
         const query = `UPDATE agent_runs SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
-        return result.rows[0];
+        const updatedRun = result.rows[0];
+
+        // Emit run_status SSE event when status changes
+        if (updatedRun && updates.status) {
+            try {
+                emitDataUpdate('run_status', {
+                    run_id: updatedRun.id,
+                    case_id: updatedRun.case_id,
+                    status: updatedRun.status,
+                    current_node: updatedRun.metadata?.current_node || null,
+                    started_at: updatedRun.started_at,
+                    ended_at: updatedRun.ended_at
+                });
+            } catch (_) {}
+        }
+
+        return updatedRun;
     }
 
     /**

@@ -3294,10 +3294,7 @@
             latestCasePortalTasks = [];
             currentCaseMessages = [];
             currentCaseProposals = [];
-            if (portalLinkPollTimer) {
-                clearTimeout(portalLinkPollTimer);
-                portalLinkPollTimer = null;
-            }
+            stopPortalPolling();
 
             try {
                 const res = await fetch(`/api/monitor/case/${caseId}`);
@@ -4121,17 +4118,22 @@
             }
         }
 
+        let _portalPollStopped = false;
+        let _portalPollCaseId = null;
         function startPortalLinkPolling(caseId) {
             const resultDiv = document.getElementById('caseInspectorActionResult');
-            if (portalLinkPollTimer) { clearTimeout(portalLinkPollTimer); portalLinkPollTimer = null; }
-            _portalPollBackoff = 3000; // reset backoff
+            stopPortalPolling();
+            _portalPollStopped = false;
+            _portalPollCaseId = caseId;
+            _portalPollBackoff = 3000;
             let attempts = 0;
 
-            // SSE handles real-time updates via handleSSEPortalStatus() — this is fallback only
             const pollOnce = async () => {
+                if (_portalPollStopped) return;
                 attempts += 1;
                 try {
                     const res = await fetch(`/api/monitor/case/${caseId}`);
+                    if (_portalPollStopped) return;
                     const data = await res.json();
                     if (!res.ok || !data.success) return scheduleNext();
                     const c = data.case || {};
@@ -4139,14 +4141,14 @@
                     const recording = c.last_portal_recording_url;
                     if (task || recording) {
                         showPortalLinks(resultDiv, task, recording);
-                        portalLinkPollTimer = null;
+                        stopPortalPolling();
                         openCase(caseId);
                         return;
                     }
                     if (attempts >= 30) {
                         resultDiv.className = 'send-result';
                         resultDiv.textContent = 'Portal queued. Skyvern link not available yet. Refresh shortly.';
-                        portalLinkPollTimer = null;
+                        stopPortalPolling();
                         return;
                     }
                 } catch (_) {}
@@ -4154,22 +4156,35 @@
             };
 
             function scheduleNext() {
+                if (_portalPollStopped) return;
                 _portalPollBackoff = Math.min(_portalPollBackoff * 1.5, 30000);
                 portalLinkPollTimer = setTimeout(pollOnce, _portalPollBackoff);
             }
 
-            // Only start fallback polling if SSE is not connected
+            // SSE handles real-time updates — only start fallback if SSE is not connected
             if (!sseSource || sseSource.readyState !== EventSource.OPEN) {
                 portalLinkPollTimer = setTimeout(pollOnce, _portalPollBackoff);
             }
         }
+        function stopPortalPolling() {
+            _portalPollStopped = true;
+            _portalPollCaseId = null;
+            if (portalLinkPollTimer) { clearTimeout(portalLinkPollTimer); portalLinkPollTimer = null; }
+        }
 
+        function sanitizeUrl(url) {
+            if (!url) return '';
+            try { const u = new URL(url); return ['http:', 'https:'].includes(u.protocol) ? url : ''; }
+            catch { return ''; }
+        }
         function showPortalLinks(resultDiv, taskUrl, recordingUrl) {
             const parts = [];
-            if (taskUrl) parts.push(`<a class="case-link" href="${escapeHtml(taskUrl)}" target="_blank">Skyvern Run</a>`);
-            if (recordingUrl) parts.push(`<a class="case-link" href="${escapeHtml(recordingUrl)}" target="_blank">Recording</a>`);
+            const safeTask = sanitizeUrl(taskUrl);
+            const safeRecording = sanitizeUrl(recordingUrl);
+            if (safeTask) parts.push(`<a class="case-link" href="${escapeHtml(safeTask)}" target="_blank">Skyvern Run</a>`);
+            if (safeRecording) parts.push(`<a class="case-link" href="${escapeHtml(safeRecording)}" target="_blank">Recording</a>`);
             resultDiv.className = 'send-result success';
-            resultDiv.innerHTML = `Portal submission started. ${parts.join(' | ')}`;
+            resultDiv.innerHTML = parts.length ? `Portal submission started. ${parts.join(' | ')}` : 'Portal submission started.';
         }
 
         async function loadProposals(messageId, runId = null, caseId = null) {
@@ -4309,10 +4324,7 @@
         function closeDrawer() {
             document.getElementById('drawerBackdrop').classList.remove('active');
             document.getElementById('messageDrawer').classList.remove('active');
-            if (runPollTimer) {
-                clearTimeout(runPollTimer);
-                runPollTimer = null;
-            }
+            stopRunPolling();
         }
 
         // =====================================================================
@@ -5085,41 +5097,47 @@
             return null;
         }
 
+        let _runPollStopped = false;
         async function pollRunStatus(runId) {
             if (!runId) return;
-            if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
-            _runPollBackoff = 2000; // reset backoff
+            stopRunPolling();
+            _runPollStopped = false;
+            _runPollBackoff = 2000;
 
             const terminalStatuses = new Set(['completed', 'paused', 'failed']);
             const runStatusText = document.getElementById('runStatusText');
 
-            // SSE handles real-time updates via handleSSERunStatus() — this is fallback only
             const pollOnce = async () => {
+                if (_runPollStopped) return;
                 try {
                     const res = await fetch(`/api/runs/${runId}`);
+                    if (_runPollStopped) return; // check after async gap
                     const data = await res.json();
                     if (!data.success) throw new Error(data.error || 'Run fetch failed');
                     const run = data.run || {};
                     if (runStatusText) runStatusText.textContent = `${run.status || '-'} | node=${run?.metadata?.current_node || '-'} | started=${formatTime(run.started_at)} | ended=${formatTime(run.ended_at)}`;
                     if (terminalStatuses.has(run.status)) {
                         appendLog(`Run ${runId} reached terminal state: ${run.status}`);
-                        runPollTimer = null;
+                        stopRunPolling();
                         if (currentMessage) await loadProposals(currentMessage.id, runId);
-                        return; // don't schedule next poll
+                        return;
                     }
                 } catch (error) {
                     appendLog(`Run poll error: ${error.message || error}`);
-                    runPollTimer = null;
-                    return; // don't schedule next poll on error
+                    stopRunPolling();
+                    return;
                 }
-                // Schedule next poll with exponential backoff (2s → 4s → 8s → 16s → max 30s)
+                if (_runPollStopped) return;
                 _runPollBackoff = Math.min(_runPollBackoff * 2, 30000);
                 runPollTimer = setTimeout(pollOnce, _runPollBackoff);
             };
 
+            // Always do one immediate fetch for initial state
             await pollOnce();
-            // pollOnce self-schedules next poll via setTimeout if run is non-terminal;
-            // no additional scheduling needed here
+        }
+        function stopRunPolling() {
+            _runPollStopped = true;
+            if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
         }
 
         async function simulateInbound() {
@@ -5221,6 +5239,13 @@
                     badge.className = 'runtime-badge sse-disconnected';
                     sseSource.close();
                     sseSource = null;
+                    // SSE dropped — kick in fallback polling for any active watchers
+                    if (currentRunId && !_runPollStopped && !runPollTimer) {
+                        pollRunStatus(currentRunId);
+                    }
+                    if (_portalPollCaseId && !_portalPollStopped && !portalLinkPollTimer) {
+                        startPortalLinkPolling(_portalPollCaseId);
+                    }
                     _sseReconnectTimer = setTimeout(connectSSE, 5000);
                 };
             } catch (_) {
@@ -5315,8 +5340,8 @@
         function handleSSERunStatus(data) {
             const runId = data.run_id;
             if (!runId) return;
-            // Only process if we're actively watching this run
-            if (typeof currentRunId !== 'undefined' && currentRunId === runId) {
+            // Use String comparison to avoid int/string mismatch
+            if (currentRunId && String(currentRunId) === String(runId)) {
                 const terminalStatuses = new Set(['completed', 'paused', 'failed']);
                 const runStatusText = document.getElementById('runStatusText');
                 if (runStatusText) {
@@ -5324,13 +5349,10 @@
                 }
                 if (terminalStatuses.has(data.status)) {
                     appendLog(`Run ${runId} reached terminal state: ${data.status} (via SSE)`);
-                    // Stop fallback polling
-                    if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
-                    // Reload proposals
+                    stopRunPolling();
                     if (currentMessage) loadProposals(currentMessage.id, runId);
                 }
             }
-            // Also refresh case inspector if open for this case
             if (data.case_id) refreshCaseInspector(data.case_id);
             updateTimestamp();
         }
@@ -5338,16 +5360,14 @@
         function handleSSEPortalStatus(data) {
             const caseId = data.case_id;
             if (!caseId) return;
-            // Check if we're watching this case for portal links
             const resultDiv = document.getElementById('caseInspectorActionResult');
             const inspector = document.getElementById('caseInspector');
-            if (inspector && inspector.dataset.caseId === String(caseId) && resultDiv) {
+            if (inspector && String(inspector.dataset.caseId) === String(caseId) && resultDiv) {
                 const taskUrl = data.portal_task_url || (data.portal_run_id ? `https://app.skyvern.com/workflows/wpid_461535111447599002/${data.portal_run_id}` : null);
                 const recordingUrl = data.portal_recording_url;
                 if (taskUrl || recordingUrl) {
                     showPortalLinks(resultDiv, taskUrl, recordingUrl);
-                    // Stop fallback polling
-                    if (portalLinkPollTimer) { clearTimeout(portalLinkPollTimer); portalLinkPollTimer = null; }
+                    stopPortalPolling();
                     openCase(caseId);
                 }
             }

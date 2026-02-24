@@ -14,7 +14,7 @@ function notify(type, message, meta = {}) {
 
 /**
  * Emit a real-time data update for SSE consumers.
- * @param {'case_update'|'message_new'|'proposal_update'|'activity_new'|'stats_update'} eventType
+ * @param {'case_update'|'message_new'|'proposal_update'|'activity_new'|'stats_update'|'run_status'|'portal_status'} eventType
  * @param {object} payload - The data to push to clients
  */
 function emitDataUpdate(eventType, payload) {
