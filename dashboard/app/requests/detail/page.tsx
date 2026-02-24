@@ -69,12 +69,14 @@ import {
   RotateCcw,
   Activity,
   ClipboardPaste,
+  Phone,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
 import { AutopilotSelector } from "@/components/autopilot-selector";
 import { SafetyHints } from "@/components/safety-hints";
 import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
+import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
 
 // Gate icons and colors
 const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; label: string }> = {
@@ -222,6 +224,7 @@ function RequestDetailContent() {
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
   const [isRunningInbound, setIsRunningInbound] = useState(false);
   const [showPasteInboundDialog, setShowPasteInboundDialog] = useState(false);
+  const [showCorrespondenceDialog, setShowCorrespondenceDialog] = useState(false);
 
   // Fetch agent runs for the Runs tab
   const { data: runsData, mutate: mutateRuns } = useSWR<{ runs: AgentRun[] }>(
@@ -671,15 +674,26 @@ function RequestDetailContent() {
                         <Mail className="h-4 w-4" />
                         Conversation
                       </CardTitle>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs"
-                        onClick={() => setShowPasteInboundDialog(true)}
-                      >
-                        <ClipboardPaste className="h-3 w-3 mr-1" />
-                        Paste Email
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setShowCorrespondenceDialog(true)}
+                        >
+                          <Phone className="h-3 w-3 mr-1" />
+                          Log Call
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setShowPasteInboundDialog(true)}
+                        >
+                          <ClipboardPaste className="h-3 w-3 mr-1" />
+                          Paste Email
+                        </Button>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -780,15 +794,26 @@ function RequestDetailContent() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">Conversation</CardTitle>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => setShowPasteInboundDialog(true)}
-                    >
-                      <ClipboardPaste className="h-3 w-3 mr-1" />
-                      Paste Email
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setShowCorrespondenceDialog(true)}
+                      >
+                        <Phone className="h-3 w-3 mr-1" />
+                        Log Call
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setShowPasteInboundDialog(true)}
+                      >
+                        <ClipboardPaste className="h-3 w-3 mr-1" />
+                        Paste Email
+                      </Button>
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -1140,6 +1165,14 @@ function RequestDetailContent() {
       <PasteInboundDialog
         open={showPasteInboundDialog}
         onOpenChange={setShowPasteInboundDialog}
+        caseId={parseInt(id || '0')}
+        onSuccess={() => mutate()}
+      />
+
+      {/* Add Correspondence Dialog */}
+      <AddCorrespondenceDialog
+        open={showCorrespondenceDialog}
+        onOpenChange={setShowCorrespondenceDialog}
         caseId={parseInt(id || '0')}
         onSuccess={() => mutate()}
       />
