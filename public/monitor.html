@@ -1608,6 +1608,24 @@
         </div>
     </div>
 
+    <!-- Confirmation Modal for destructive quick actions -->
+    <div id="confirmActionModal" class="drawer-backdrop" style="display:none;" onclick="closeConfirmModal()">
+        <div class="drawer" style="right:auto;left:50%;transform:translateX(-50%);width:min(480px,92vw);max-height:60vh;" onclick="event.stopPropagation()">
+            <div class="drawer-header">
+                <div class="drawer-title" id="confirmModalTitle">Confirm Action</div>
+                <button class="drawer-close" onclick="closeConfirmModal()">Close</button>
+            </div>
+            <div class="drawer-section">
+                <div id="confirmModalBody" style="font-size:13px;color:#c9d1d9;line-height:1.5;margin-bottom:12px;"></div>
+                <div id="confirmModalContext" style="font-size:12px;color:#8b949e;background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:8px 10px;margin-bottom:14px;display:none;"></div>
+                <div class="drawer-actions" style="margin-top:10px;">
+                    <button class="drawer-btn primary" id="confirmModalConfirmBtn" autofocus>Confirm</button>
+                    <button class="drawer-btn" onclick="closeConfirmModal()">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Message Drawer -->
     <div id="drawerBackdrop" class="drawer-backdrop" onclick="closeDrawer()"></div>
     <div id="messageDrawer" class="drawer">
@@ -3132,6 +3150,8 @@
         let matchModalSelectedCaseId = null;
         let portalLinkPollTimer = null;
         let runPollTimer = null;
+        let _runPollBackoff = 2000;    // exponential backoff for run polling fallback
+        let _portalPollBackoff = 3000; // exponential backoff for portal polling fallback
         let aiLogLines = [];
 
         function appendLog(line) {
@@ -3275,7 +3295,7 @@
             currentCaseMessages = [];
             currentCaseProposals = [];
             if (portalLinkPollTimer) {
-                clearInterval(portalLinkPollTimer);
+                clearTimeout(portalLinkPollTimer);
                 portalLinkPollTimer = null;
             }
 
@@ -3709,11 +3729,98 @@
             }, 800);
         }
 
+        // --- Confirmation modal for high-stakes quick actions ---
+        const HIGH_STAKES_ACTIONS = {
+            accept_fee: (c) => ({
+                title: 'Accept Fee Quote',
+                body: `Accept the fee and proceed with case <strong>#${c.id}</strong> — ${_escHtml(c.case_name || 'Unnamed')}?`,
+                context: c.last_fee_quote_amount
+                    ? `Fee amount: $${Number(c.last_fee_quote_amount).toFixed(2)}`
+                    : null,
+            }),
+            appeal: (c) => ({
+                title: 'Appeal Denial',
+                body: `Send an appeal for the denial of case <strong>#${c.id}</strong> — ${_escHtml(c.case_name || 'Unnamed')}?`,
+                context: c.substatus ? `Reason: ${c.substatus}` : null,
+            }),
+            close: (c) => ({
+                title: 'Close Case',
+                body: `Close case <strong>#${c.id}</strong> — ${_escHtml(c.case_name || 'Unnamed')}? This will end all processing.`,
+                context: null,
+            }),
+            escalate: (c) => ({
+                title: 'Escalate Case',
+                body: `Escalate case <strong>#${c.id}</strong> — ${_escHtml(c.case_name || 'Unnamed')} for manual human handling?`,
+                context: c.substatus ? `Context: ${c.substatus}` : null,
+            }),
+        };
+
+        let _confirmModalResolve = null;
+
+        function _escHtml(str) {
+            const d = document.createElement('div');
+            d.textContent = str;
+            return d.innerHTML;
+        }
+
+        function showConfirmModal(title, bodyHtml, contextText) {
+            // Resolve any prior pending modal to prevent hanging promises
+            if (_confirmModalResolve) { const r = _confirmModalResolve; _confirmModalResolve = null; r(false); }
+
+            const modal = document.getElementById('confirmActionModal');
+            document.getElementById('confirmModalTitle').textContent = title;
+            document.getElementById('confirmModalBody').innerHTML = bodyHtml;
+            const ctxEl = document.getElementById('confirmModalContext');
+            if (contextText) {
+                ctxEl.textContent = contextText;
+                ctxEl.style.display = 'block';
+            } else {
+                ctxEl.style.display = 'none';
+            }
+            modal.style.display = 'flex';
+            return new Promise((resolve) => {
+                _confirmModalResolve = resolve;
+                const confirmBtn = document.getElementById('confirmModalConfirmBtn');
+                confirmBtn.onclick = () => {
+                    _confirmModalResolve = null; // clear before hiding to prevent double-resolve
+                    document.getElementById('confirmActionModal').style.display = 'none';
+                    resolve(true);
+                };
+                setTimeout(() => confirmBtn.focus(), 50);
+            });
+        }
+
+        function closeConfirmModal() {
+            document.getElementById('confirmActionModal').style.display = 'none';
+            if (_confirmModalResolve) {
+                const r = _confirmModalResolve;
+                _confirmModalResolve = null;
+                r(false);
+            }
+        }
+
+        // Escape key closes confirmation modal (stopImmediatePropagation prevents cascading to other Escape handlers)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.getElementById('confirmActionModal').style.display !== 'none') {
+                e.stopImmediatePropagation();
+                closeConfirmModal();
+            }
+        });
+
         // Quick-action wrapper: opens case first (to populate currentCaseData), then fires action
+        // High-stakes actions (fee acceptance, appeals, close, escalate) require confirmation
         async function resolveReviewFromOverview(caseId, action) {
             await openCase(caseId);
             // Small delay so currentCaseData is populated
             await new Promise(r => setTimeout(r, 500));
+
+            const stakesFn = HIGH_STAKES_ACTIONS[action];
+            if (stakesFn && currentCaseData) {
+                const { title, body, context } = stakesFn(currentCaseData);
+                const confirmed = await showConfirmModal(title, body, context);
+                if (!confirmed) return;
+            }
+
             resolveReview(caseId, action);
         }
 
@@ -4016,36 +4123,53 @@
 
         function startPortalLinkPolling(caseId) {
             const resultDiv = document.getElementById('caseInspectorActionResult');
-            if (portalLinkPollTimer) clearInterval(portalLinkPollTimer);
+            if (portalLinkPollTimer) { clearTimeout(portalLinkPollTimer); portalLinkPollTimer = null; }
+            _portalPollBackoff = 3000; // reset backoff
             let attempts = 0;
-            portalLinkPollTimer = setInterval(async () => {
+
+            // SSE handles real-time updates via handleSSEPortalStatus() — this is fallback only
+            const pollOnce = async () => {
                 attempts += 1;
                 try {
                     const res = await fetch(`/api/monitor/case/${caseId}`);
                     const data = await res.json();
-                    if (!res.ok || !data.success) return;
+                    if (!res.ok || !data.success) return scheduleNext();
                     const c = data.case || {};
                     const task = c.last_portal_task_url || (c.last_portal_run_id ? `https://app.skyvern.com/workflows/wpid_461535111447599002/${c.last_portal_run_id}` : null);
                     const recording = c.last_portal_recording_url;
                     if (task || recording) {
-                        const parts = [];
-                        if (task) parts.push(`<a class="case-link" href="${task}" target="_blank">Skyvern Run</a>`);
-                        if (recording) parts.push(`<a class="case-link" href="${recording}" target="_blank">Recording</a>`);
-                        resultDiv.className = 'send-result success';
-                        resultDiv.innerHTML = `Portal submission started. ${parts.join(' | ')}`;
-                        clearInterval(portalLinkPollTimer);
+                        showPortalLinks(resultDiv, task, recording);
                         portalLinkPollTimer = null;
                         openCase(caseId);
                         return;
                     }
-                    if (attempts >= 20) {
+                    if (attempts >= 30) {
                         resultDiv.className = 'send-result';
                         resultDiv.textContent = 'Portal queued. Skyvern link not available yet. Refresh shortly.';
-                        clearInterval(portalLinkPollTimer);
                         portalLinkPollTimer = null;
+                        return;
                     }
                 } catch (_) {}
-            }, 3000);
+                scheduleNext();
+            };
+
+            function scheduleNext() {
+                _portalPollBackoff = Math.min(_portalPollBackoff * 1.5, 30000);
+                portalLinkPollTimer = setTimeout(pollOnce, _portalPollBackoff);
+            }
+
+            // Only start fallback polling if SSE is not connected
+            if (!sseSource || sseSource.readyState !== EventSource.OPEN) {
+                portalLinkPollTimer = setTimeout(pollOnce, _portalPollBackoff);
+            }
+        }
+
+        function showPortalLinks(resultDiv, taskUrl, recordingUrl) {
+            const parts = [];
+            if (taskUrl) parts.push(`<a class="case-link" href="${escapeHtml(taskUrl)}" target="_blank">Skyvern Run</a>`);
+            if (recordingUrl) parts.push(`<a class="case-link" href="${escapeHtml(recordingUrl)}" target="_blank">Recording</a>`);
+            resultDiv.className = 'send-result success';
+            resultDiv.innerHTML = `Portal submission started. ${parts.join(' | ')}`;
         }
 
         async function loadProposals(messageId, runId = null, caseId = null) {
@@ -4186,7 +4310,7 @@
             document.getElementById('drawerBackdrop').classList.remove('active');
             document.getElementById('messageDrawer').classList.remove('active');
             if (runPollTimer) {
-                clearInterval(runPollTimer);
+                clearTimeout(runPollTimer);
                 runPollTimer = null;
             }
         }
@@ -4963,11 +5087,13 @@
 
         async function pollRunStatus(runId) {
             if (!runId) return;
-            if (runPollTimer) clearInterval(runPollTimer);
+            if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
+            _runPollBackoff = 2000; // reset backoff
 
             const terminalStatuses = new Set(['completed', 'paused', 'failed']);
             const runStatusText = document.getElementById('runStatusText');
 
+            // SSE handles real-time updates via handleSSERunStatus() — this is fallback only
             const pollOnce = async () => {
                 try {
                     const res = await fetch(`/api/runs/${runId}`);
@@ -4977,19 +5103,23 @@
                     if (runStatusText) runStatusText.textContent = `${run.status || '-'} | node=${run?.metadata?.current_node || '-'} | started=${formatTime(run.started_at)} | ended=${formatTime(run.ended_at)}`;
                     if (terminalStatuses.has(run.status)) {
                         appendLog(`Run ${runId} reached terminal state: ${run.status}`);
-                        clearInterval(runPollTimer);
                         runPollTimer = null;
                         if (currentMessage) await loadProposals(currentMessage.id, runId);
+                        return; // don't schedule next poll
                     }
                 } catch (error) {
                     appendLog(`Run poll error: ${error.message || error}`);
-                    clearInterval(runPollTimer);
                     runPollTimer = null;
+                    return; // don't schedule next poll on error
                 }
+                // Schedule next poll with exponential backoff (2s → 4s → 8s → 16s → max 30s)
+                _runPollBackoff = Math.min(_runPollBackoff * 2, 30000);
+                runPollTimer = setTimeout(pollOnce, _runPollBackoff);
             };
 
             await pollOnce();
-            runPollTimer = setInterval(pollOnce, 2000);
+            // pollOnce self-schedules next poll via setTimeout if run is non-terminal;
+            // no additional scheduling needed here
         }
 
         async function simulateInbound() {
@@ -5070,6 +5200,20 @@
                     try {
                         const data = JSON.parse(event.data);
                         handleSSENewActivity(data);
+                    } catch (_) {}
+                });
+                // Named event: agent run status change
+                sseSource.addEventListener('run_status', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSERunStatus(data);
+                    } catch (_) {}
+                });
+                // Named event: portal status change
+                sseSource.addEventListener('portal_status', (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleSSEPortalStatus(data);
                     } catch (_) {}
                 });
                 sseSource.onerror = () => {
@@ -5164,6 +5308,48 @@
                 tbody.insertBefore(row, tbody.firstChild);
                 setTimeout(() => row.classList.remove('sse-highlight'), 3000);
                 while (tbody.children.length > 100) tbody.removeChild(tbody.lastChild);
+            }
+            updateTimestamp();
+        }
+
+        function handleSSERunStatus(data) {
+            const runId = data.run_id;
+            if (!runId) return;
+            // Only process if we're actively watching this run
+            if (typeof currentRunId !== 'undefined' && currentRunId === runId) {
+                const terminalStatuses = new Set(['completed', 'paused', 'failed']);
+                const runStatusText = document.getElementById('runStatusText');
+                if (runStatusText) {
+                    runStatusText.textContent = `${data.status || '-'} | node=${data.current_node || '-'} | started=${formatTime(data.started_at)} | ended=${formatTime(data.ended_at)}`;
+                }
+                if (terminalStatuses.has(data.status)) {
+                    appendLog(`Run ${runId} reached terminal state: ${data.status} (via SSE)`);
+                    // Stop fallback polling
+                    if (runPollTimer) { clearTimeout(runPollTimer); runPollTimer = null; }
+                    // Reload proposals
+                    if (currentMessage) loadProposals(currentMessage.id, runId);
+                }
+            }
+            // Also refresh case inspector if open for this case
+            if (data.case_id) refreshCaseInspector(data.case_id);
+            updateTimestamp();
+        }
+
+        function handleSSEPortalStatus(data) {
+            const caseId = data.case_id;
+            if (!caseId) return;
+            // Check if we're watching this case for portal links
+            const resultDiv = document.getElementById('caseInspectorActionResult');
+            const inspector = document.getElementById('caseInspector');
+            if (inspector && inspector.dataset.caseId === String(caseId) && resultDiv) {
+                const taskUrl = data.portal_task_url || (data.portal_run_id ? `https://app.skyvern.com/workflows/wpid_461535111447599002/${data.portal_run_id}` : null);
+                const recordingUrl = data.portal_recording_url;
+                if (taskUrl || recordingUrl) {
+                    showPortalLinks(resultDiv, taskUrl, recordingUrl);
+                    // Stop fallback polling
+                    if (portalLinkPollTimer) { clearTimeout(portalLinkPollTimer); portalLinkPollTimer = null; }
+                    openCase(caseId);
+                }
             }
             updateTimestamp();
         }
