@@ -12,10 +12,11 @@ function getDispatchFn() {
         try {
             _dispatchReadyToSend = require('./dispatch-helper').dispatchReadyToSend;
         } catch (e) {
-            _dispatchReadyToSend = false;
+            console.warn('[notion] Failed to load dispatch-helper, will retry next call:', e.message);
+            return null;
         }
     }
-    return _dispatchReadyToSend || null;
+    return _dispatchReadyToSend;
 }
 
 const STATE_ABBREVIATIONS = {

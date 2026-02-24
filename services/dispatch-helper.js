@@ -1,6 +1,5 @@
 const db = require('./database');
 const { notify } = require('./event-bus');
-const logger = require('./logger');
 
 // Lazy-load to avoid circular deps
 let _enqueueInitialRequestJob = null;
@@ -41,15 +40,23 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
         return { dispatched: false, reason: 'active_run_exists', runId: existingRun.id };
     }
 
-    // 3. Create agent_run record
-    const run = await db.createAgentRunFull({
-        case_id: caseId,
-        trigger_type: 'initial_request',
-        status: 'queued',
-        autopilot_mode: 'SUPERVISED',
-        langgraph_thread_id: `initial:${caseId}:${Date.now()}`,
-        metadata: { source }
-    });
+    // 3. Create agent_run record (catch unique constraint race from concurrent dispatchers)
+    let run;
+    try {
+        run = await db.createAgentRunFull({
+            case_id: caseId,
+            trigger_type: 'initial_request',
+            status: 'queued',
+            autopilot_mode: 'SUPERVISED',
+            langgraph_thread_id: `initial:${caseId}:${Date.now()}`,
+            metadata: { source }
+        });
+    } catch (err) {
+        if (err.code === '23505' && String(err.constraint || '').includes('one_active_per_case')) {
+            return { dispatched: false, reason: 'active_run_exists' };
+        }
+        throw err;
+    }
 
     // 4. Enqueue to agent-queue (clean up run on failure)
     try {
@@ -67,13 +74,17 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
         throw enqueueErr;
     }
 
-    // 5. Log + notify
-    await db.logActivity('dispatch_run_created', `Auto-dispatched initial request for case ${caseData.case_name}`, {
-        case_id: caseId,
-        run_id: run.id,
-        source
-    });
-    notify('info', `Case ${caseId} dispatched (${source})`, { case_id: caseId, run_id: run.id });
+    // 5. Log + notify (fire-and-forget — don't fail dispatch on side-effect errors)
+    try {
+        await db.logActivity('dispatch_run_created', `Auto-dispatched initial request for case ${caseData.case_name}`, {
+            case_id: caseId,
+            run_id: run.id,
+            source
+        });
+        notify('info', `Case ${caseId} dispatched (${source})`, { case_id: caseId, run_id: run.id });
+    } catch (sideEffectErr) {
+        console.warn(`[dispatch] Side-effect failed for case ${caseId}:`, sideEffectErr.message);
+    }
 
     return { dispatched: true, runId: run.id };
 }

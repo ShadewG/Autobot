@@ -919,10 +919,16 @@ router.get('/live-overview', async (req, res) => {
                 p.created_at,
                 p.trigger_message_id,
                 p.reasoning,
+                p.draft_subject,
+                p.pause_reason AS proposal_pause_reason,
+                p.risk_flags,
+                p.warnings,
                 c.case_name,
                 c.agency_name,
                 c.status AS case_status,
                 c.portal_url,
+                c.pause_reason AS case_pause_reason,
+                c.last_fee_quote_amount,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id) AS message_count,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview,
@@ -932,7 +938,10 @@ router.get('/live-overview', async (req, res) => {
             LEFT JOIN cases c ON c.id = p.case_id
             WHERE p.status = 'PENDING_APPROVAL'
             ${caseUserFilter}
-            ORDER BY p.created_at DESC
+            ORDER BY
+                CASE WHEN p.risk_flags IS NOT NULL AND array_length(p.risk_flags, 1) > 0 THEN 0
+                     WHEN p.confidence < 0.6 THEN 1 ELSE 2 END ASC,
+                p.created_at DESC
             LIMIT $1
         `, [limit]);
 
@@ -1042,13 +1051,19 @@ router.get('/live-overview', async (req, res) => {
                 c.last_portal_task_url,
                 c.last_portal_run_id,
                 c.last_portal_status,
+                c.pause_reason,
+                c.last_fee_quote_amount,
+                c.agency_email,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (SELECT LEFT(m2.body_text, 150) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
             FROM cases c
             WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
               AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status = 'PENDING_APPROVAL')
               ${caseUserFilter}
-            ORDER BY c.updated_at ASC
+            ORDER BY
+                CASE c.pause_reason WHEN 'FEE_QUOTE' THEN 0 WHEN 'DENIAL' THEN 1
+                     WHEN 'SENSITIVE' THEN 2 ELSE 3 END ASC,
+                c.updated_at ASC
             LIMIT $1
         `, [limit]);
 
