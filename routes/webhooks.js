@@ -458,6 +458,75 @@ router.post('/events', express.json(), async (req, res) => {
 });
 
 /**
+ * Extract a Notion page ID (32 hex chars) from a webhook payload.
+ * Tries every plausible location since Notion's automation webhook format isn't well-documented.
+ */
+function extractNotionPageId(body) {
+    if (!body || typeof body !== 'object') return null;
+
+    const UUID_RE = /[a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12}/i;
+
+    // 1. Direct top-level fields
+    for (const key of ['id', 'page_id', 'pageId', 'page']) {
+        const val = body[key];
+        if (typeof val === 'string' && val.replace(/-/g, '').length >= 30) {
+            return val.replace(/-/g, '');
+        }
+    }
+
+    // 2. Nested under data (developer API webhook format)
+    if (body.data && typeof body.data === 'object') {
+        for (const key of ['id', 'page_id', 'pageId']) {
+            const val = body.data[key];
+            if (typeof val === 'string' && val.replace(/-/g, '').length >= 30) {
+                return val.replace(/-/g, '');
+            }
+        }
+    }
+
+    // 3. entity.id (developer API webhook format: { entity: { id, type } })
+    if (body.entity?.id) {
+        const val = body.entity.id;
+        if (typeof val === 'string' && val.replace(/-/g, '').length >= 30) {
+            return val.replace(/-/g, '');
+        }
+    }
+
+    // 4. Look for a URL field that contains a Notion page URL
+    for (const key of ['url', 'page_url', 'URL', 'notion_url']) {
+        const val = body[key] || body.data?.[key];
+        if (typeof val === 'string' && val.includes('notion.so')) {
+            const match = val.match(/([a-f0-9]{32})$/i) || val.match(UUID_RE);
+            if (match) return match[0].replace(/-/g, '');
+        }
+    }
+
+    // 5. Deep scan: look for any UUID-shaped value in top-level or one-level-deep fields
+    const candidates = [];
+    for (const [key, val] of Object.entries(body)) {
+        if (typeof val === 'string') {
+            const match = val.match(UUID_RE);
+            if (match) candidates.push({ key, id: match[0].replace(/-/g, '') });
+        }
+        if (val && typeof val === 'object' && !Array.isArray(val)) {
+            for (const [subKey, subVal] of Object.entries(val)) {
+                if (typeof subVal === 'string') {
+                    const match = subVal.match(UUID_RE);
+                    if (match) candidates.push({ key: `${key}.${subKey}`, id: match[0].replace(/-/g, '') });
+                }
+            }
+        }
+    }
+
+    // Prefer candidates from fields that look like IDs
+    const idCandidate = candidates.find(c => /id|page/i.test(c.key));
+    if (idCandidate) return idCandidate.id;
+    if (candidates.length > 0) return candidates[0].id;
+
+    return null;
+}
+
+/**
  * Notion Database Automation Webhook
  *
  * Receives a POST from Notion when a case's status changes to "Ready To Send".
@@ -470,24 +539,31 @@ router.post('/events', express.json(), async (req, res) => {
  */
 router.post('/notion', express.json(), async (req, res) => {
     try {
-        const payload = req.body?.data || req.body;
+        // Log the FULL raw payload so we can see Notion's exact format
+        const rawPayload = JSON.stringify(req.body);
+        console.log(`[notion-webhook] === RAW PAYLOAD ===`);
+        console.log(`[notion-webhook] ${rawPayload.substring(0, 3000)}`);
+        console.log(`[notion-webhook] === END PAYLOAD ===`);
 
-        // Extract page ID — Notion sends it as `id` or `page_id` in the data object
-        const rawId = (payload?.id || payload?.page_id || '').trim();
-        const strippedId = rawId.replace(/-/g, '');
+        // Extract page ID — try every plausible location since Notion's format isn't documented
+        const strippedId = extractNotionPageId(req.body);
 
-        if (!strippedId || strippedId.length < 30) {
-            console.warn('[notion-webhook] No valid page_id in payload:', JSON.stringify(req.body).substring(0, 500));
-            return res.status(200).json({ success: false, reason: 'no_page_id' });
+        if (!strippedId) {
+            console.warn('[notion-webhook] Could not extract page_id from payload');
+            // Log to activity so we can inspect in the dashboard
+            await db.logActivity('notion_webhook_unknown_format', 'Webhook received but could not parse page_id', {
+                payload_preview: rawPayload.substring(0, 2000),
+                ip: req.ip
+            });
+            return res.status(200).json({ success: false, reason: 'no_page_id', payload_keys: Object.keys(req.body || {}) });
         }
 
         // Format as UUID with hyphens (how our DB stores notion_page_id)
         const pageId = strippedId.length === 32
             ? `${strippedId.slice(0,8)}-${strippedId.slice(8,12)}-${strippedId.slice(12,16)}-${strippedId.slice(16,20)}-${strippedId.slice(20)}`
-            : rawId;
+            : strippedId;
 
-        console.log(`[notion-webhook] Received webhook for page ${pageId}`);
-        console.log(`[notion-webhook] Full payload: ${JSON.stringify(req.body).substring(0, 1000)}`);
+        console.log(`[notion-webhook] Extracted page ID: ${pageId}`);
 
         await db.logActivity('notion_webhook_received', `Notion webhook for page ${pageId}`, {
             page_id: pageId,
