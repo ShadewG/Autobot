@@ -154,7 +154,11 @@ async function downloadPdf(url, caseId) {
 async function _getRequesterInfo(caseData) {
     let user = null;
     if (caseData.user_id) {
-        user = await database.getUserById(caseData.user_id);
+        try {
+            user = await database.getUserById(caseData.user_id);
+        } catch (err) {
+            console.warn(`Failed to load user ${caseData.user_id} for requester info, using env defaults:`, err.message);
+        }
     }
     return {
         name: user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Samuel Hylton',

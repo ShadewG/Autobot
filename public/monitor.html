@@ -2063,6 +2063,7 @@
                 localStorage.setItem('monitorUserFilter', currentUserId);
                 const select = document.getElementById('userFilter');
                 if (select) select.value = currentUserId;
+                updateEditProfileLink();
                 collapseCase();
                 loadData();
                 loadDailyStats();
