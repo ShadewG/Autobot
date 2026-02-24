@@ -473,39 +473,70 @@ router.post('/notion', express.json(), async (req, res) => {
         const payload = req.body?.data || req.body;
 
         // Extract page ID — Notion sends it as `id` or `page_id` in the data object
-        const pageId = (payload?.id || payload?.page_id || '')
-            .replace(/-/g, '');
+        const rawId = (payload?.id || payload?.page_id || '').trim();
+        const strippedId = rawId.replace(/-/g, '');
 
-        if (!pageId || pageId.length < 30) {
+        if (!strippedId || strippedId.length < 30) {
             console.warn('[notion-webhook] No valid page_id in payload:', JSON.stringify(req.body).substring(0, 500));
             return res.status(200).json({ success: false, reason: 'no_page_id' });
         }
 
+        // Format as UUID with hyphens (how our DB stores notion_page_id)
+        const pageId = strippedId.length === 32
+            ? `${strippedId.slice(0,8)}-${strippedId.slice(8,12)}-${strippedId.slice(12,16)}-${strippedId.slice(16,20)}-${strippedId.slice(20)}`
+            : rawId;
+
         console.log(`[notion-webhook] Received webhook for page ${pageId}`);
+        console.log(`[notion-webhook] Full payload: ${JSON.stringify(req.body).substring(0, 1000)}`);
 
         await db.logActivity('notion_webhook_received', `Notion webhook for page ${pageId}`, {
             page_id: pageId,
             ip: req.ip
         });
 
-        // Sync this single case from Notion
-        const notionService = require('../services/notion-service');
-        const cases = await notionService.syncCasesFromNotion('Ready To Send');
+        // Look up case by Notion page ID (try both hyphenated and stripped formats)
+        let existing = await db.getCaseByNotionId(pageId);
+        if (!existing) existing = await db.getCaseByNotionId(strippedId);
 
-        // Find the case that matches this page ID
-        const existing = await db.getCaseByNotionId(pageId);
+        const notionService = require('../services/notion-service');
 
         if (!existing) {
-            // Page may be new — try importing it directly
+            // Page not in our DB yet — import it directly
             try {
-                const newCase = await notionService.processSinglePage(pageId);
+                const newCase = await notionService.processSinglePage(strippedId);
                 if (newCase && newCase.id) {
                     console.log(`[notion-webhook] Imported new case ${newCase.id} from page ${pageId}`);
+                    notify('info', `Notion webhook: imported case ${newCase.id}`, { case_id: newCase.id, page_id: pageId });
+
+                    // If the imported case is ready_to_send, dispatch immediately
+                    if (newCase.status === 'ready_to_send') {
+                        const { dispatchReadyToSend } = require('../services/dispatch-helper');
+                        const result = await dispatchReadyToSend(newCase.id, { source: 'notion_webhook' });
+                        console.log(`[notion-webhook] New case ${newCase.id}: ${result.dispatched ? `dispatched run ${result.runId}` : `skipped (${result.reason})`}`);
+                        return res.status(200).json({ success: true, case_id: newCase.id, action: 'imported_and_dispatched', ...result });
+                    }
+                    return res.status(200).json({ success: true, case_id: newCase.id, action: 'imported', status: newCase.status });
                 }
             } catch (importErr) {
                 console.warn(`[notion-webhook] Failed to import page ${pageId}:`, importErr.message);
             }
-            return res.status(200).json({ success: true, action: 'import_attempted' });
+            return res.status(200).json({ success: true, action: 'import_attempted', page_id: pageId });
+        }
+
+        // Re-sync existing case from Notion to pick up latest property changes
+        try {
+            const freshData = await notionService.fetchPageById(strippedId);
+            if (freshData) {
+                await db.updateCase(existing.id, {
+                    agency_name: freshData.agency_name || existing.agency_name,
+                    agency_email: freshData.agency_email || existing.agency_email,
+                    status: freshData.status === 'ready_to_send' ? 'ready_to_send' : existing.status
+                });
+                // Refresh from DB after update
+                existing = await db.getCaseById(existing.id);
+            }
+        } catch (syncErr) {
+            console.warn(`[notion-webhook] Re-sync failed for case ${existing.id}:`, syncErr.message);
         }
 
         // If case is ready_to_send, dispatch through Run Engine
@@ -514,6 +545,7 @@ router.post('/notion', express.json(), async (req, res) => {
             try {
                 const result = await dispatchReadyToSend(existing.id, { source: 'notion_webhook' });
                 console.log(`[notion-webhook] Case ${existing.id}: ${result.dispatched ? `dispatched run ${result.runId}` : `skipped (${result.reason})`}`);
+                notify('info', `Notion webhook: case ${existing.id} dispatched`, { case_id: existing.id, page_id: pageId });
                 return res.status(200).json({ success: true, case_id: existing.id, ...result });
             } catch (dispatchErr) {
                 console.error(`[notion-webhook] Dispatch failed for case ${existing.id}:`, dispatchErr.message);
