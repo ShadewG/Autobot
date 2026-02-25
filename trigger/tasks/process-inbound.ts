@@ -54,17 +54,13 @@ export const processInbound = task({
   retry: { maxAttempts: 2 },
 
   onFailure: async ({ payload, error }) => {
-    // Clean up orphaned proposals when the task fails after all retries.
-    // Without this, PENDING_APPROVAL proposals from failed runs become zombies.
+    // Flag case for human review when the task fails after all retries.
+    // We do NOT dismiss proposals here to avoid clobbering a concurrent run's proposals.
+    // Orphaned proposals are handled by the resolve-review token completion and dedup guard.
     if (!payload || typeof payload !== "object") return;
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
-      await db.query(
-        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')`,
-        [caseId]
-      );
       await db.updateCaseStatus(caseId, "needs_human_review", {
         requires_human: true,
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,

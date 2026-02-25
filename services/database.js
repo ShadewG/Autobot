@@ -338,7 +338,7 @@ class DatabaseService {
         const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
         const updated = result.rows[0];
-        if (updated && updates.status) {
+        if (updated && (updates.status || updates.requires_human != null || updates.substatus)) {
             emitDataUpdate('case_update', {
                 case_id: caseId,
                 status: updated.status,

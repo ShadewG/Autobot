@@ -3890,6 +3890,10 @@
                 }
             }
 
+            // Disable all review action buttons to prevent double-clicks
+            const reviewBtns = document.querySelectorAll('#caseInspector button[onclick*="resolveReview"]');
+            reviewBtns.forEach(btn => { btn.disabled = true; btn.style.opacity = '0.5'; });
+
             try {
                 actionResult.style.display = 'block';
                 actionResult.className = 'send-result';
@@ -3905,14 +3909,21 @@
                 if (!res.ok || !data.success) throw new Error(data.error || 'Failed');
 
                 actionResult.className = 'send-result success';
-                actionResult.textContent = `✓ ${data.message}${data.job_id ? ` (job: ${data.job_id})` : ''}`;
+                actionResult.textContent = data.immediate
+                    ? `✓ ${data.message}`
+                    : `✓ ${data.message} — agent processing in background`;
 
-                // Refresh case after a moment
+                // Refresh queue immediately so case disappears
+                loadData();
+
+                // Refresh case detail after a moment
                 setTimeout(() => openCase(caseId), 1500);
             } catch (err) {
                 actionResult.style.display = 'block';
                 actionResult.className = 'send-result error';
                 actionResult.textContent = `✗ ${err.message}`;
+                // Re-enable buttons on error
+                reviewBtns.forEach(btn => { btn.disabled = false; btn.style.opacity = '1'; });
             }
         }
 
@@ -4616,6 +4627,11 @@
 
         async function proposeDecision(proposalId, action, routeMode = null) {
             appendLog(`${action} proposal ${proposalId}${routeMode ? ` (route=${routeMode})` : ''}...`);
+
+            // Disable all proposal buttons to prevent double-clicks
+            const proposalBtns = document.querySelectorAll('#caseInspector button[onclick*="Proposal"]');
+            proposalBtns.forEach(btn => { btn.disabled = true; btn.style.opacity = '0.5'; });
+
             try {
                 const payload = { action };
                 if (routeMode) payload.route_mode = routeMode;
@@ -4623,6 +4639,7 @@
                     const instruction = prompt('Adjustment instruction:');
                     if (!instruction || !instruction.trim()) {
                         appendLog('Adjust cancelled: instruction required.');
+                        proposalBtns.forEach(btn => { btn.disabled = false; btn.style.opacity = '1'; });
                         return;
                     }
                     payload.instruction = instruction.trim();
@@ -4644,10 +4661,13 @@
                     currentRunId = data.run.id;
                     pollRunStatus(currentRunId);
                 }
+                // Refresh queue immediately
+                loadData();
                 if (currentMessage) await loadProposals(currentMessage.id);
-                setTimeout(loadData, 1000);
             } catch (err) {
                 appendLog(`Decision error: ${err.message || err}`);
+                // Re-enable buttons on error
+                proposalBtns.forEach(btn => { btn.disabled = false; btn.style.opacity = '1'; });
             }
         }
 

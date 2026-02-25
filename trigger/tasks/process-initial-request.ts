@@ -42,11 +42,6 @@ export const processInitialRequest = task({
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
-      await db.query(
-        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')`,
-        [caseId]
-      );
       await db.updateCaseStatus(caseId, "needs_human_review", {
         requires_human: true,
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
@@ -145,8 +140,14 @@ export const processInitialRequest = task({
       }
       logger.info("Human decision received for initial request", { caseId, action: humanDecision.action });
 
-      // Validate proposal is still actionable
+      // Validate proposal is still actionable.
+      // If proposal was DISMISSED externally (e.g. resolve-review), exit cleanly.
       const currentProposal = await db.getProposalById(draft.proposalId);
+      if (currentProposal?.status === "DISMISSED") {
+        logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: draft.proposalId });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return { status: "dismissed_externally", proposalId: draft.proposalId };
+      }
       if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
         throw new Error(
           `Proposal ${draft.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
