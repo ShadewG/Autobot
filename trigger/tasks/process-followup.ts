@@ -36,7 +36,7 @@ async function waitForHumanDecision(
 
 export const processFollowup = task({
   id: "process-followup",
-  maxDuration: 300,
+  maxDuration: 600,
   retry: { maxAttempts: 2 },
 
   run: async (payload: FollowupPayload) => {
@@ -112,14 +112,20 @@ export const processFollowup = task({
         );
       }
 
-      if (result.output.action === "WITHDRAW") {
+      const humanDecision = result.output;
+      if (!humanDecision || !humanDecision.action) {
+        logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
+        throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);
+      }
+
+      if (humanDecision.action === "WITHDRAW") {
         await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
         return { status: "withdrawn", proposalId: gate.proposalId };
       }
 
-      if (result.output.action !== "APPROVE") {
+      if (humanDecision.action !== "APPROVE") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
         return { status: "dismissed", proposalId: gate.proposalId };
       }

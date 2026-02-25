@@ -34,7 +34,7 @@ async function waitForHumanDecision(
 
 export const processInitialRequest = task({
   id: "process-initial-request",
-  maxDuration: 300,
+  maxDuration: 600,
   retry: { maxAttempts: 2 },
 
   run: async (payload: InitialRequestPayload) => {
@@ -80,6 +80,10 @@ export const processInitialRequest = task({
       }
 
       const humanDecision = result.output;
+      if (!humanDecision || !humanDecision.action) {
+        logger.error("Invalid human decision output", { caseId, proposalId: draft.proposalId, output: result.output });
+        throw new Error(`Invalid human decision for proposal ${draft.proposalId}: missing action`);
+      }
       logger.info("Human decision received for initial request", { caseId, action: humanDecision.action });
 
       // Validate proposal is still actionable

@@ -50,7 +50,7 @@ async function waitForHumanDecision(
 
 export const processInbound = task({
   id: "process-inbound",
-  maxDuration: 300,
+  maxDuration: 600,
   retry: { maxAttempts: 2 },
 
   run: async (payload: InboundPayload) => {
@@ -161,6 +161,10 @@ export const processInbound = task({
       }
 
       const humanDecision = result.output;
+      if (!humanDecision || !humanDecision.action) {
+        logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
+        throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);
+      }
       logger.info("Human decision received", { caseId, action: humanDecision.action });
 
       // Compare-and-swap: validate proposal is still actionable
