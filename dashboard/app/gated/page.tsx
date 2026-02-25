@@ -23,6 +23,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn, formatRelativeTime } from "@/lib/utils";
+import type { ThreadMessage } from "@/lib/types";
+import { Thread } from "@/components/thread";
 import {
   Loader2,
   CheckCircle,
@@ -44,6 +46,7 @@ import {
   Phone,
   Mail,
   ArrowUpRight,
+  MessageSquare,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────
@@ -96,6 +99,7 @@ interface HumanReviewCase {
   agency_name: string;
   status: string;
   substatus: string | null;
+  pause_reason: string | null;
   updated_at: string;
   last_inbound_preview: string | null;
   inbound_count: number;
@@ -383,6 +387,9 @@ function MonitorPageContent() {
   const [adjustInstruction, setAdjustInstruction] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [showCorrespondence, setShowCorrespondence] = useState(false);
+  const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
+  const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("queue");
   const initialCaseApplied = useRef(false);
@@ -644,6 +651,23 @@ function MonitorPageContent() {
       alert(`Withdraw failed: ${err instanceof Error ? err.message : err}`);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const openCorrespondence = async (caseId: number) => {
+    setShowCorrespondence(true);
+    setCorrespondenceLoading(true);
+    setCorrespondenceMessages([]);
+    try {
+      const res = await fetch(`/api/requests/${caseId}/workspace`);
+      const data = await res.json();
+      if (data.success && data.thread_messages) {
+        setCorrespondenceMessages(data.thread_messages);
+      }
+    } catch (err) {
+      console.error("Failed to load correspondence:", err);
+    } finally {
+      setCorrespondenceLoading(false);
     }
   };
 
@@ -915,6 +939,12 @@ function MonitorPageContent() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => openCorrespondence(selectedItem.data.case_id)}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <MessageSquare className="h-3 w-3" /> Thread
+                </button>
                 <Link
                   href={`/requests/detail?id=${selectedItem.data.case_id}`}
                   className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
@@ -1038,7 +1068,18 @@ function MonitorPageContent() {
           {/* Inbound message preview */}
           {selectedItem.data.last_inbound_preview && (
             <div className="border p-3">
-              <SectionLabel>Inbound</SectionLabel>
+              <div className="flex items-center justify-between mb-1.5">
+                <SectionLabel>Inbound</SectionLabel>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => openCorrespondence(selectedItem.data.case_id)}
+                >
+                  <MessageSquare className="h-3 w-3 mr-1" />
+                  See Full Correspondence
+                </Button>
+              </div>
               {selectedItem.data.last_inbound_subject && (
                 <p className="text-xs mb-1.5">
                   <span className="text-muted-foreground">Subj:</span>{" "}
@@ -1170,6 +1211,12 @@ function MonitorPageContent() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button
+                  onClick={() => openCorrespondence(selectedItem.data.id)}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <MessageSquare className="h-3 w-3" /> Thread
+                </button>
                 <Link
                   href={`/requests/detail?id=${selectedItem.data.id}`}
                   className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
@@ -1228,7 +1275,18 @@ function MonitorPageContent() {
           {/* Inbound preview */}
           {selectedItem.data.last_inbound_preview && (
             <div className="border p-3">
-              <SectionLabel>Last Inbound</SectionLabel>
+              <div className="flex items-center justify-between mb-1.5">
+                <SectionLabel>Last Inbound</SectionLabel>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => openCorrespondence(selectedItem.data.id)}
+                >
+                  <MessageSquare className="h-3 w-3 mr-1" />
+                  See Full Correspondence
+                </Button>
+              </div>
               <div className="bg-background border p-2 max-h-48 overflow-auto">
                 <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
                   {selectedItem.data.last_inbound_preview}
@@ -1523,6 +1581,36 @@ function MonitorPageContent() {
               Adjust
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Correspondence Dialog ─────────── */}
+      <Dialog open={showCorrespondence} onOpenChange={setShowCorrespondence}>
+        <DialogContent className="bg-card border max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <MessageSquare className="h-4 w-4" />
+              Full Correspondence
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {correspondenceMessages.length > 0
+                ? `${correspondenceMessages.length} message${correspondenceMessages.length !== 1 ? "s" : ""} in thread`
+                : "Loading..."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-auto">
+            {correspondenceLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : correspondenceMessages.length > 0 ? (
+              <Thread messages={correspondenceMessages} />
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No messages found
+              </p>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
