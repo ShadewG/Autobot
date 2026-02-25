@@ -103,7 +103,13 @@ export async function createProposalAndGate(
 
   // Store token ID on proposal and reset status for the new gate
   // (upsert ON CONFLICT preserves EXECUTED status; we need PENDING_APPROVAL for the compare-and-swap)
-  await db.updateProposal(proposal.id, { waitpoint_token: tokenId, status: "PENDING_APPROVAL" });
+  // Also clear execution_key so claimProposalExecution can re-claim it
+  await db.updateProposal(proposal.id, {
+    waitpoint_token: tokenId,
+    status: "PENDING_APPROVAL",
+    executionKey: null,
+    executed_at: null,
+  });
 
   // Update case status to needs_human_review
   await db.updateCaseStatus(caseId, "needs_human_review", {
