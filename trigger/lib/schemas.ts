@@ -95,25 +95,19 @@ export const classificationSchema = z.object({
   jurisdiction_level: z
     .enum(["federal", "state", "local"])
     .nullable()
-    .optional()
     .describe("Jurisdiction level of the responding agency"),
 
   response_nature: z
     .enum(["substantive", "procedural", "administrative", "mixed"])
     .nullable()
-    .optional()
     .describe("Whether the response addresses the substance of the request or is procedural/administrative"),
 
   detected_exemption_citations: z
     .array(z.string())
-    .optional()
-    .default([])
     .describe("Any specific legal exemptions or statutes cited by the agency in their response"),
 
   decision_evidence_quotes: z
     .array(z.string())
-    .optional()
-    .default([])
     .describe("Key verbatim quotes from the agency response that support the classification decision"),
 
   constraints_to_add: z
@@ -169,7 +163,7 @@ export const decisionSchema = z.object({
   pauseReason: z.string().nullable().describe("Why human review is needed (e.g., 'FEE_QUOTE', 'DENIAL', 'SENSITIVE')"),
   confidence: z.number().min(0).max(1).describe("Confidence in this decision (0-1)"),
   adjustmentInstruction: z.string().nullable().describe("Specific instructions for drafting (e.g., 'negotiate fee down to $50')"),
-  researchLevel: z.enum(["none", "light", "medium", "deep"]).default("none")
+  researchLevel: z.enum(["none", "light", "medium", "deep"])
     .describe("How much research to do before drafting (none=skip, light=contacts, medium=+laws, deep=+full custodian chain)"),
 }).strict();
 
@@ -195,13 +189,13 @@ export const safetyReviewSchema = z.object({
   riskFlags: z.array(z.string()).describe("Critical risk flags (e.g., 'REQUESTS_EXEMPT_ITEM', 'CONTRADICTS_FEE_ACCEPTANCE', 'CONTAINS_PII')"),
   warnings: z.array(z.string()).describe("Non-critical warnings about the draft"),
   reasoning: z.string().describe("Explanation of the safety assessment"),
-  law_fit_valid: z.boolean().optional().default(true)
+  law_fit_valid: z.boolean()
     .describe("Whether the legal citations match the jurisdiction (e.g., not citing federal FOIA for a state agency)"),
-  law_fit_issues: z.array(z.string()).optional().default([])
+  law_fit_issues: z.array(z.string())
     .describe("Specific law-jurisdiction mismatches found"),
-  requester_consistency_valid: z.boolean().optional().default(true)
+  requester_consistency_valid: z.boolean()
     .describe("Whether the draft is consistent with prior requester positions (e.g., not negotiating after accepting fee)"),
-  requester_consistency_issues: z.array(z.string()).optional().default([])
+  requester_consistency_issues: z.array(z.string())
     .describe("Specific consistency issues with prior requester actions"),
 }).strict();
 
