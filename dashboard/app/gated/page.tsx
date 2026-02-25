@@ -8,6 +8,7 @@ import { useUserFilter } from "@/components/user-filter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -154,6 +155,12 @@ type QueueItem =
 
 type TabId = "queue" | "inbound" | "calls";
 
+interface SuggestedCase {
+  id: number;
+  case_name: string;
+  agency_name: string;
+}
+
 interface InboundMessage {
   id: number;
   from_email: string;
@@ -166,6 +173,8 @@ interface InboundMessage {
   intent: string | null;
   sentiment: string | null;
   suggested_action: string | null;
+  key_points: string[] | null;
+  suggested_cases: SuggestedCase[] | null;
 }
 
 interface InboundResponse {
@@ -462,6 +471,10 @@ function MonitorPageContent() {
   const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
+  const [inboundFilter, setInboundFilter] = useState<"all" | "unmatched" | "matched">("all");
+  const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null);
+  const [matchingMessageId, setMatchingMessageId] = useState<number | null>(null);
+  const [manualCaseId, setManualCaseId] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("queue");
   const [reviewInstruction, setReviewInstruction] = useState("");
   const initialCaseApplied = useRef(false);
@@ -723,6 +736,25 @@ function MonitorPageContent() {
       alert(`Withdraw failed: ${err instanceof Error ? err.message : err}`);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleMatchToCase = async (messageId: number, caseId: number) => {
+    try {
+      const res = await fetch(`/api/monitor/message/${messageId}/match-case`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: caseId }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      setMatchingMessageId(null);
+      setManualCaseId("");
+      mutateInbound();
+    } catch (err) {
+      alert(`Match failed: ${err instanceof Error ? err.message : err}`);
     }
   };
 
@@ -1622,106 +1654,218 @@ function MonitorPageContent() {
       </>)}
 
       {/* ── Inbound Tab ────────────────────── */}
-      {activeTab === "inbound" && (
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
-              Recent Inbound Messages
-            </span>
-            <Button variant="ghost" size="sm" onClick={() => mutateInbound()} title="Refresh">
-              <RefreshCw className="h-3 w-3" />
-            </Button>
-          </div>
-          {!inboundData ? (
-            <div className="flex items-center justify-center h-40">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      {activeTab === "inbound" && (() => {
+        const filteredInbound = (inboundData?.inbound || []).filter((msg) => {
+          if (inboundFilter === "unmatched") return !msg.case_id;
+          if (inboundFilter === "matched") return !!msg.case_id;
+          return true;
+        });
+        const unmatchedCount = (inboundData?.inbound || []).filter(m => !m.case_id).length;
+
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                {(["all", "unmatched", "matched"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setInboundFilter(f)}
+                    className={cn(
+                      "text-[10px] uppercase tracking-widest px-2 py-1 border-b-2 -mb-px transition-colors",
+                      inboundFilter === f
+                        ? "text-foreground border-foreground"
+                        : "text-muted-foreground border-transparent hover:text-foreground"
+                    )}
+                  >
+                    {f}
+                    {f === "unmatched" && unmatchedCount > 0 && (
+                      <Badge variant="outline" className="h-4 px-1 text-[10px] leading-none ml-1 text-amber-400 border-amber-700/50">
+                        {unmatchedCount}
+                      </Badge>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => mutateInbound()} title="Refresh">
+                <RefreshCw className="h-3 w-3" />
+              </Button>
             </div>
-          ) : inboundData.inbound.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-sm text-muted-foreground">
-              No inbound messages found.
-            </div>
-          ) : (
-            <div className="border">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b bg-muted/30">
-                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Case</th>
-                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">From</th>
-                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Subject</th>
-                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Intent</th>
-                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Action</th>
-                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Tone</th>
-                    <th className="text-right px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">When</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {inboundData.inbound.map((msg) => (
-                    <tr key={msg.id} className="border-b last:border-b-0 hover:bg-muted/20">
-                      <td className="px-3 py-2">
-                        {msg.case_id ? (
-                          <Link
-                            href={`/requests/detail?id=${msg.case_id}`}
-                            className="text-blue-400 hover:underline flex items-center gap-1"
-                          >
-                            #{msg.case_id}
-                            <ArrowUpRight className="h-2.5 w-2.5" />
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 max-w-[160px] truncate" title={msg.from_email}>
-                        {msg.from_email}
-                      </td>
-                      <td className="px-3 py-2 max-w-[200px] truncate" title={msg.subject}>
-                        {msg.subject}
-                      </td>
-                      <td className="px-3 py-2">
-                        {msg.intent ? (
-                          <Badge variant="outline" className="text-[10px]">
-                            {msg.intent.replace(/_/g, " ")}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {msg.suggested_action ? (
-                          <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-700/50">
-                            {msg.suggested_action.replace(/_/g, " ")}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {msg.sentiment ? (
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px]",
-                              msg.sentiment === "HOSTILE" && "text-red-400 border-red-700/50",
-                              msg.sentiment === "FRUSTRATED" && "text-orange-400 border-orange-700/50",
-                              msg.sentiment === "COOPERATIVE" && "text-green-400 border-green-700/50"
+            {!inboundData ? (
+              <div className="flex items-center justify-center h-40">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : filteredInbound.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-40 text-sm text-muted-foreground">
+                No {inboundFilter === "all" ? "" : inboundFilter + " "}messages found.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {filteredInbound.map((msg) => {
+                  const isExpanded = expandedMessageId === msg.id;
+                  const isMatching = matchingMessageId === msg.id;
+                  const isUnmatched = !msg.case_id;
+
+                  return (
+                    <div
+                      key={msg.id}
+                      className={cn(
+                        "border transition-colors",
+                        isUnmatched && "border-amber-700/30 bg-amber-950/5",
+                        isExpanded && "ring-1 ring-foreground/20"
+                      )}
+                    >
+                      {/* Row header — clickable to expand */}
+                      <button
+                        className="w-full text-left px-3 py-2 flex items-center gap-3 hover:bg-muted/20"
+                        onClick={() => setExpandedMessageId(isExpanded ? null : msg.id)}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            {msg.case_id ? (
+                              <Link
+                                href={`/requests/detail?id=${msg.case_id}`}
+                                className="text-[10px] text-blue-400 hover:underline flex items-center gap-0.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                #{msg.case_id} <ArrowUpRight className="h-2.5 w-2.5" />
+                              </Link>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-700/50">
+                                UNMATCHED
+                              </Badge>
                             )}
-                          >
-                            {msg.sentiment}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right text-muted-foreground whitespace-nowrap">
-                        {formatRelativeTime(msg.received_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
+                            {msg.intent && (
+                              <Badge variant="outline" className="text-[10px]">
+                                {msg.intent.replace(/_/g, " ")}
+                              </Badge>
+                            )}
+                            {msg.sentiment && msg.sentiment !== "neutral" && (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-[10px]",
+                                  msg.sentiment === "HOSTILE" && "text-red-400 border-red-700/50",
+                                  msg.sentiment === "FRUSTRATED" && "text-orange-400 border-orange-700/50",
+                                  msg.sentiment === "COOPERATIVE" && "text-green-400 border-green-700/50"
+                                )}
+                              >
+                                {msg.sentiment}
+                              </Badge>
+                            )}
+                            <span className="text-[10px] text-muted-foreground ml-auto whitespace-nowrap">
+                              {formatRelativeTime(msg.received_at)}
+                            </span>
+                          </div>
+                          <p className="text-xs truncate">
+                            <span className="text-muted-foreground">{msg.from_email}</span>
+                            {" — "}
+                            {msg.subject || "(no subject)"}
+                          </p>
+                        </div>
+                        <ChevronRight className={cn(
+                          "h-3 w-3 text-muted-foreground transition-transform flex-shrink-0",
+                          isExpanded && "rotate-90"
+                        )} />
+                      </button>
+
+                      {/* Expanded content */}
+                      {isExpanded && (
+                        <div className="border-t px-3 py-3 space-y-3">
+                          {/* AI Summary */}
+                          {msg.key_points && msg.key_points.length > 0 && (
+                            <div className="border-l-2 border-muted pl-2">
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">AI Summary</p>
+                              {msg.key_points.map((point, i) => (
+                                <p key={i} className="text-xs text-foreground/80">- {point}</p>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Case info if matched */}
+                          {msg.case_id && msg.case_name && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] text-muted-foreground">Linked to:</span>
+                              <Link
+                                href={`/requests/detail?id=${msg.case_id}`}
+                                className="text-xs text-blue-400 hover:underline"
+                              >
+                                #{msg.case_id} — {msg.case_name} ({msg.agency_name})
+                              </Link>
+                            </div>
+                          )}
+
+                          {/* Email body */}
+                          <div className="bg-background border p-3 max-h-64 overflow-auto">
+                            <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
+                              {msg.body_text || "(no body text)"}
+                            </pre>
+                          </div>
+
+                          {/* Match to case — only for unmatched */}
+                          {isUnmatched && (
+                            <div className="border border-amber-700/30 bg-amber-950/10 p-3 space-y-2">
+                              <p className="text-[10px] text-amber-400 uppercase tracking-wider font-semibold">
+                                Link to Case
+                              </p>
+
+                              {/* Suggested matches */}
+                              {msg.suggested_cases && msg.suggested_cases.length > 0 && (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] text-muted-foreground">Suggested (same email domain):</p>
+                                  {msg.suggested_cases.map((sc) => (
+                                    <button
+                                      key={sc.id}
+                                      className="w-full text-left px-2 py-1.5 border hover:bg-muted/30 flex items-center justify-between group"
+                                      onClick={() => handleMatchToCase(msg.id, sc.id)}
+                                    >
+                                      <span className="text-xs">
+                                        <span className="text-muted-foreground">#{sc.id}</span>{" "}
+                                        {sc.case_name} — <span className="text-muted-foreground">{sc.agency_name}</span>
+                                      </span>
+                                      <span className="text-[10px] text-green-400 opacity-0 group-hover:opacity-100">
+                                        Link
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Manual case ID */}
+                              <div className="flex items-center gap-2">
+                                <Input
+                                  placeholder="Case ID..."
+                                  value={isMatching ? manualCaseId : ""}
+                                  onChange={(e) => {
+                                    setMatchingMessageId(msg.id);
+                                    setManualCaseId(e.target.value);
+                                  }}
+                                  onFocus={() => setMatchingMessageId(msg.id)}
+                                  className="h-7 text-xs w-28 bg-background"
+                                />
+                                <Button
+                                  size="sm"
+                                  className="h-7 text-xs"
+                                  disabled={!isMatching || !manualCaseId.trim()}
+                                  onClick={() => {
+                                    const id = parseInt(manualCaseId);
+                                    if (id) handleMatchToCase(msg.id, id);
+                                  }}
+                                >
+                                  Link
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Phone Calls Tab ────────────────── */}
       {activeTab === "calls" && (

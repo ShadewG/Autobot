@@ -465,6 +465,8 @@ router.get('/inbound', async (req, res) => {
                 ? `AND EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id AND c2.user_id IS NULL)`
                 : '';
 
+        const suggestedCasesUserFilter = userId ? `AND c2.user_id = ${userId}` : unownedOnly ? 'AND c2.user_id IS NULL' : '';
+
         const result = await db.query(`
             SELECT
                 m.id,
@@ -481,7 +483,19 @@ router.get('/inbound', async (req, res) => {
                 c.portal_url,
                 ra.intent,
                 ra.sentiment,
-                ra.suggested_action
+                ra.suggested_action,
+                ra.key_points,
+                CASE WHEN c.id IS NULL THEN (
+                    SELECT json_agg(json_build_object('id', sc.id, 'case_name', sc.case_name, 'agency_name', sc.agency_name))
+                    FROM (
+                        SELECT DISTINCT c2.id, c2.case_name, c2.agency_name
+                        FROM cases c2
+                        WHERE c2.agency_email IS NOT NULL
+                          AND split_part(c2.agency_email, '@', 2) = split_part(m.from_email, '@', 2)
+                          ${suggestedCasesUserFilter}
+                        LIMIT 5
+                    ) sc
+                ) ELSE NULL END AS suggested_cases
             FROM messages m
             LEFT JOIN email_threads t ON m.thread_id = t.id
             LEFT JOIN cases c ON t.case_id = c.id
