@@ -257,6 +257,19 @@ function getPauseReason(item: QueueItem): string | null {
   return item.data.status || null;
 }
 
+type ReviewCategory = "fee" | "portal" | "denial" | "general";
+
+function categorizeReview(review: HumanReviewCase): ReviewCategory {
+  const pr = (review.pause_reason || "").toUpperCase();
+  const sub = (review.substatus || "").toUpperCase();
+  const status = (review.status || "").toUpperCase();
+
+  if (pr.includes("FEE") || sub.includes("FEE") || status.includes("FEE") || review.last_fee_quote_amount != null) return "fee";
+  if (pr.includes("PORTAL") || sub.includes("PORTAL") || status.includes("PORTAL") || review.portal_url) return "portal";
+  if (pr.includes("DENIAL") || sub.includes("DENIAL") || sub.includes("DENIED")) return "denial";
+  return "general";
+}
+
 /* ─────────────────────────────────────────────
    SSE Hook
    ───────────────────────────────────────────── */
@@ -392,6 +405,7 @@ function MonitorPageContent() {
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("queue");
+  const [reviewInstruction, setReviewInstruction] = useState("");
   const initialCaseApplied = useRef(false);
 
   // ── Deep linking & user filter ─────────────
@@ -668,6 +682,46 @@ function MonitorPageContent() {
       console.error("Failed to load correspondence:", err);
     } finally {
       setCorrespondenceLoading(false);
+    }
+  };
+
+  const handleResolveReview = async (action: string, instruction?: string) => {
+    if (!selectedItem || selectedItem.type !== "review") return;
+    setIsSubmitting(true);
+    setLastAction(null);
+    try {
+      const res = await fetch(`/api/requests/${selectedItem.data.id}/resolve-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, instruction: instruction || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      const labels: Record<string, string> = {
+        reprocess: "Re-processing case",
+        put_on_hold: "Put on hold",
+        close: "Closed",
+        accept_fee: "Accepting fee",
+        negotiate_fee: "Negotiating fee",
+        decline_fee: "Declining fee",
+        appeal: "Drafting appeal",
+        narrow_scope: "Narrowing scope",
+        retry_portal: "Retrying portal",
+        send_via_email: "Switching to email",
+        mark_sent: "Marked as sent",
+      };
+      setLastAction(labels[action] || `Resolved: ${action}`);
+      setReviewInstruction("");
+      mutate();
+      if (currentIndex >= queue.length - 1 && currentIndex > 0) {
+        setCurrentIndex(currentIndex - 1);
+      }
+    } catch (err) {
+      alert(`Resolve failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1300,27 +1354,158 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Actions for human review */}
-          <div className="border-t pt-4">
-            <div className="flex gap-2">
-              <Link
-                href={`/requests/detail?id=${selectedItem.data.id}`}
-                className="flex-1"
-              >
-                <Button className="w-full bg-purple-700 hover:bg-purple-600 text-white">
-                  <ExternalLink className="h-3 w-3 mr-1.5" />
-                  Open Case to Resolve
-                </Button>
-              </Link>
-              <Button
-                variant="destructive"
-                onClick={handleWithdraw}
-                disabled={isSubmitting}
-              >
-                <Ban className="h-3 w-3 mr-1" /> WITHDRAW
-              </Button>
-            </div>
-          </div>
+          {/* Inline resolution actions */}
+          {(() => {
+            const category = categorizeReview(selectedItem.data);
+            return (
+              <div className="border-t pt-4 space-y-3">
+                <SectionLabel>Resolve</SectionLabel>
+
+                {/* Context-specific primary actions */}
+                {category === "fee" && (
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1 bg-green-700 hover:bg-green-600 text-white"
+                      onClick={() => handleResolveReview("accept_fee")}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <CheckCircle className="h-3 w-3 mr-1.5" />}
+                      ACCEPT FEE
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => handleResolveReview("negotiate_fee")}
+                      disabled={isSubmitting}
+                    >
+                      NEGOTIATE
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleResolveReview("decline_fee")}
+                      disabled={isSubmitting}
+                    >
+                      DECLINE
+                    </Button>
+                  </div>
+                )}
+
+                {category === "portal" && (
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1 bg-blue-700 hover:bg-blue-600 text-white"
+                      onClick={() => handleResolveReview("retry_portal")}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1.5" />}
+                      RETRY PORTAL
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => handleResolveReview("send_via_email")}
+                      disabled={isSubmitting}
+                    >
+                      <Mail className="h-3 w-3 mr-1" /> EMAIL INSTEAD
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleResolveReview("mark_sent")}
+                      disabled={isSubmitting}
+                    >
+                      MARK SENT
+                    </Button>
+                  </div>
+                )}
+
+                {category === "denial" && (
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1 bg-purple-700 hover:bg-purple-600 text-white"
+                      onClick={() => handleResolveReview("appeal")}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <FileText className="h-3 w-3 mr-1.5" />}
+                      SEND APPEAL
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => handleResolveReview("narrow_scope")}
+                      disabled={isSubmitting}
+                    >
+                      NARROW & RETRY
+                    </Button>
+                  </div>
+                )}
+
+                {category === "general" && (
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1 bg-purple-700 hover:bg-purple-600 text-white"
+                      onClick={() => handleResolveReview("reprocess")}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1.5" />}
+                      RE-PROCESS
+                    </Button>
+                  </div>
+                )}
+
+                {/* Custom instruction */}
+                <div className="flex gap-2">
+                  <Textarea
+                    placeholder="Custom instruction (optional)..."
+                    value={reviewInstruction}
+                    onChange={(e) => setReviewInstruction(e.target.value)}
+                    className="text-xs bg-background min-h-[60px] flex-1"
+                  />
+                  <Button
+                    variant="outline"
+                    className="self-end"
+                    onClick={() => handleResolveReview("custom", reviewInstruction)}
+                    disabled={isSubmitting || !reviewInstruction.trim()}
+                  >
+                    <Send className="h-3 w-3 mr-1" /> SEND
+                  </Button>
+                </div>
+
+                {/* Secondary actions */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => handleResolveReview("put_on_hold")}
+                    disabled={isSubmitting}
+                  >
+                    HOLD
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => {
+                      if (confirm(`Close case #${selectedItem.data.id}?`)) handleResolveReview("close");
+                    }}
+                    disabled={isSubmitting}
+                  >
+                    CLOSE
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={handleWithdraw}
+                    disabled={isSubmitting}
+                  >
+                    <Ban className="h-3 w-3 mr-1" /> WITHDRAW
+                  </Button>
+                  <Link href={`/requests/detail?id=${selectedItem.data.id}`}>
+                    <Button variant="ghost" className="text-xs text-muted-foreground">
+                      <ExternalLink className="h-3 w-3 mr-1" /> Full Case
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
