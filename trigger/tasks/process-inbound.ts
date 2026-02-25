@@ -263,7 +263,8 @@ export const processInbound = task({
     if (researchLevel !== "none") {
       research = await researchContext(
         caseId, decision.actionType, classification.classification,
-        classification.denialSubtype, researchLevel
+        classification.denialSubtype, researchLevel,
+        classification.referralContact, messageId
       );
     }
 

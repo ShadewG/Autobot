@@ -839,8 +839,12 @@ Return ONLY the email body text, no subject line.`;
     /**
      * Research whether a better portal/contact exists before first follow-up
      */
-    async researchAlternateContacts(caseData) {
+    async researchAlternateContacts(caseData, inboundMessageBody = null) {
         try {
+            const inboundContext = inboundMessageBody
+                ? `\n\n## Recent Agency Response (may contain referral information)\n${inboundMessageBody}\n\nIMPORTANT: If the agency response above contains a referral to another agency with specific contact info (email, phone, URL), prioritize that information. The agency is telling us exactly who to contact.\n`
+                : '';
+
             const prompt = `You are assisting with a public records (FOIA) automation system. Before sending the first follow-up, research whether there is a better official contact or online portal for this agency.
 
 Agency name: ${caseData.agency_name}
@@ -848,7 +852,7 @@ Current email on file: ${caseData.agency_email}
 Current portal URL (may be inaccurate): ${caseData.portal_url || 'none provided'}
 Jurisdiction: ${caseData.state}
 Incident or case title: ${caseData.case_name}
-
+${inboundContext}
 Your tasks:
 1. Determine if there is an official FOIA/Public Records portal for this agency (GovQA, NextRequest, JustFOIA, or similar). Only provide links that allow online request submission.
 2. If no reliable portal exists, identify the best direct records/email contact published by the agency.
@@ -859,6 +863,7 @@ Return a JSON object with:
   "portal_url": string | null,
   "portal_provider": string | null,
   "contact_email": string | null,
+  "contact_phone": string | null,
   "confidence": number between 0 and 1,
   "notes": string
 }

@@ -135,6 +135,17 @@ export const classificationSchema = z.object({
     })
     .nullable()
     .describe("Detailed fee breakdown if available"),
+
+  referral_contact: z
+    .object({
+      agency_name: z.string().nullable().describe("Name of the agency the response refers us to"),
+      email: z.string().nullable().describe("Email address provided for the correct agency/custodian"),
+      phone: z.string().nullable().describe("Phone number provided for the correct agency/custodian"),
+      url: z.string().nullable().describe("Website or portal URL provided for the correct agency/custodian"),
+      notes: z.string().nullable().describe("Any additional context about the referral (e.g., 'they handle 911 audio')"),
+    })
+    .nullable()
+    .describe("If the agency redirects to another agency/custodian, extract their contact information here. Only populate for wrong_agency or portal_redirect intents."),
 }).strict();
 
 export type ClassificationOutput = z.infer<typeof classificationSchema>;

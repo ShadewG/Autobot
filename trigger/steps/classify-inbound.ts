@@ -127,7 +127,8 @@ IMPORTANT: If attachments include PDFs or documents and the message references t
 6. **Evidence quotes**: Copy 1-3 short verbatim quotes (under 100 chars each) from the message that most clearly support your classification.
 7. **Unanswered question**: If the agency asked a question we haven't answered, state the question.
 8. **Jurisdiction**: Determine if agency is federal, state, or local.
-9. **Response nature**: Determine if response is substantive, procedural, administrative, or mixed.`;
+9. **Response nature**: Determine if response is substantive, procedural, administrative, or mixed.
+10. **Referral contact**: If intent is "wrong_agency" or "portal_redirect" and the agency provides contact info for the correct custodian (email, phone, name, URL), extract it into referral_contact. This is critical — we need the exact email/phone they provide so we can contact the right agency.`;
 }
 
 export async function classifyInbound(
@@ -362,5 +363,6 @@ export async function classifyInbound(
     response_nature: (aiResult as any).response_nature || null,
     detected_exemption_citations: (aiResult as any).detected_exemption_citations || [],
     decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
+    referralContact: (aiResult as any).referral_contact || null,
   };
 }

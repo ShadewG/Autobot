@@ -10,7 +10,7 @@ import { generateObject } from "ai";
 import { researchModel, researchOptions } from "../lib/ai";
 import { researchContextSchema } from "../lib/schemas";
 import db, { aiService, logger } from "../lib/db";
-import type { ResearchContext, ResearchLevel, Classification } from "../lib/types";
+import type { ResearchContext, ResearchLevel, Classification, ReferralContact } from "../lib/types";
 import { createHash } from "node:crypto";
 
 export function emptyResearchContext(): ResearchContext {
@@ -127,7 +127,9 @@ export async function researchContext(
   actionType: string,
   classification: Classification,
   denialSubtype: string | null,
-  level: ResearchLevel
+  level: ResearchLevel,
+  referralContact?: ReferralContact | null,
+  messageId?: number | null
 ): Promise<ResearchContext> {
   if (level === "none") return emptyResearchContext();
 
@@ -138,6 +140,58 @@ export async function researchContext(
     const requestedRecords = Array.isArray(caseData?.requested_records)
       ? caseData.requested_records.join(", ")
       : caseData?.requested_records || "";
+
+    // If we have referral contact info from the classification, use it directly
+    // This is the email/phone/agency that the responding agency explicitly told us to contact
+    if (referralContact && (referralContact.email || referralContact.url)) {
+      logger.info("Using referral contact from classification", {
+        caseId, referralAgency: referralContact.agency_name, referralEmail: referralContact.email,
+      });
+
+      const result: ResearchContext = {
+        level,
+        agency_hierarchy_verified: true,
+        likely_record_custodians: referralContact.agency_name
+          ? [`${referralContact.agency_name}${referralContact.notes ? ` (${referralContact.notes})` : ""}`]
+          : [],
+        official_records_submission_methods: [
+          ...(referralContact.email ? [`Email: ${referralContact.email}`] : []),
+          ...(referralContact.url ? [`Portal/Website: ${referralContact.url}`] : []),
+          ...(referralContact.phone ? [`Phone: ${referralContact.phone}`] : []),
+        ],
+        portal_url_verified: false,
+        state_law_notes: null,
+        record_type_handoff_notes: referralContact.notes,
+        rebuttal_support_points: [],
+        clarification_answer_support: null,
+        cached_at: new Date().toISOString(),
+      };
+
+      // Store as contact_research_notes so execute-action can find the agency
+      await db.updateCase(caseId, {
+        contact_research_notes: JSON.stringify({
+          contactResult: {
+            contact_email: referralContact.email,
+            portal_url: referralContact.url,
+            contact_phone: referralContact.phone,
+            notes: `Referral from ${agencyName}: ${referralContact.notes || "redirected to this agency"}`,
+            source: "agency_referral",
+            confidence: 0.95,
+          },
+          brief: {
+            summary: `${agencyName} explicitly referred us to ${referralContact.agency_name || "another agency"}`,
+            suggested_agencies: [{
+              name: referralContact.agency_name || "Referred Agency",
+              reason: referralContact.notes || `Referred by ${agencyName}`,
+              confidence: 0.95,
+            }],
+          },
+        }),
+      });
+
+      await persistResearch(caseId, result, "referral");
+      return result;
+    }
 
     // Check cache
     const cacheKey = buildCacheKey(agencyName, state, classification, denialSubtype, requestedRecords);
@@ -151,10 +205,24 @@ export async function researchContext(
     // Timeout budget: check if we've been running too long (180s of 300s limit)
     const taskStartTime = Date.now();
 
+    // Fetch inbound message body for context (helps AI research find the right agency)
+    let inboundMessageBody: string | null = null;
+    if (messageId) {
+      try {
+        const msg = await db.getMessageById(messageId);
+        if (msg?.body_text) {
+          inboundMessageBody = msg.body_text.substring(0, 2000);
+        }
+      } catch (e: any) {
+        logger.warn("Failed to fetch inbound message for research", { caseId, messageId, error: e.message });
+      }
+    }
+
     // === LIGHT: alternate contacts + portal verification ===
     let contactResult: any = null;
     try {
-      contactResult = await aiService.researchAlternateContacts(caseData);
+      // Pass inbound message body so AI can see referral info
+      contactResult = await aiService.researchAlternateContacts(caseData, inboundMessageBody);
     } catch (e: any) {
       logger.warn("researchAlternateContacts failed", { caseId, error: e.message });
     }

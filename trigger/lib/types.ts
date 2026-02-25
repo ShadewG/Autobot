@@ -115,6 +115,14 @@ export interface ScopeItem {
   confidence: number | null;
 }
 
+export interface ReferralContact {
+  agency_name: string | null;
+  email: string | null;
+  phone: string | null;
+  url: string | null;
+  notes: string | null;
+}
+
 export interface ClassificationResult {
   classification: Classification;
   confidence: number;
@@ -131,6 +139,7 @@ export interface ClassificationResult {
   response_nature?: ResponseNature | null;
   detected_exemption_citations?: string[];
   decision_evidence_quotes?: string[];
+  referralContact?: ReferralContact | null;
 }
 
 export interface DecisionResult {
