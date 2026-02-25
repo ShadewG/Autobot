@@ -393,6 +393,17 @@ export interface RequestsListResponse {
   completed: RequestListItem[];
 }
 
+export interface PendingProposal {
+  id: number;
+  action_type: string;
+  status: string;
+  draft_subject: string | null;
+  draft_body_text: string | null;
+  reasoning: string[];
+  waitpoint_token: string | null;
+  pause_reason: string | null;
+}
+
 export interface RequestWorkspaceResponse {
   success: boolean;
   request: RequestDetail;
@@ -402,6 +413,7 @@ export interface RequestWorkspaceResponse {
   agency_summary: AgencySummary;
   deadline_milestones?: DeadlineMilestone[];
   state_deadline?: StateDeadline;
+  pending_proposal?: PendingProposal | null;
 }
 
 export interface AgenciesListResponse {

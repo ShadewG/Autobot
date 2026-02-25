@@ -786,6 +786,16 @@ router.get('/:id/workspace', async (req, res) => {
         const stateDeadline = STATE_DEADLINES[caseData.state?.toUpperCase()] || null;
         const deadlineMilestones = buildDeadlineMilestones(caseData, timelineEvents, stateDeadline);
 
+        // Fetch latest pending Trigger.dev proposal (not from auto_reply_queue)
+        const pendingProposalResult = await db.query(`
+            SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason
+            FROM proposals
+            WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [requestId]);
+        const pendingProposal = pendingProposalResult.rows[0] || null;
+
         res.json({
             success: true,
             request: toRequestDetail(caseData),
@@ -794,7 +804,8 @@ router.get('/:id/workspace', async (req, res) => {
             next_action_proposal: nextActionProposal,
             agency_summary: agencySummary,
             deadline_milestones: deadlineMilestones,
-            state_deadline: stateDeadline
+            state_deadline: stateDeadline,
+            pending_proposal: pendingProposal
         });
     } catch (error) {
         console.error('Error fetching request workspace:', error);

@@ -41,7 +41,7 @@ import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
 import { requestsAPI, casesAPI, fetcher, type AgentRun } from "@/lib/api";
-import type { RequestWorkspaceResponse, NextAction, PauseReason } from "@/lib/types";
+import type { RequestWorkspaceResponse, NextAction, PauseReason, PendingProposal } from "@/lib/types";
 import { formatDate, cn } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -248,10 +248,45 @@ function RequestDetailContent() {
     }
   };
 
+  const handleApprovePending = async () => {
+    if (!data?.pending_proposal) return;
+    setIsApproving(true);
+    try {
+      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "APPROVE" }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      mutate();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
+  const handleDismissPending = async () => {
+    if (!data?.pending_proposal) return;
+    if (!confirm("Dismiss this draft? The AI will need to re-analyze.")) return;
+    try {
+      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "DISMISS" }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      mutate();
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
+
   const handleChallenge = (instruction: string) => {
     // Pre-fill the adjust modal with the challenge instruction
     setAdjustModalOpen(true);
-    // TODO: Could pre-fill the modal with the instruction
   };
 
   const handleSnooze = async (snoozeUntil: string) => {
@@ -451,6 +486,7 @@ function RequestDetailContent() {
     agency_summary,
     deadline_milestones,
     state_deadline,
+    pending_proposal,
   } = data;
 
   // Robust detection of whether request is paused (same pattern as DecisionPanel)
@@ -810,6 +846,60 @@ function RequestDetailContent() {
               {/* Decision Panel - sticky on right */}
               <div className="lg:col-span-4 min-w-0">
                 <div className="sticky top-44 space-y-4">
+                  {pending_proposal ? (
+                    <Card className="border-2 border-blue-700/50 bg-blue-500/5">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2 text-blue-300">
+                          <Send className="h-4 w-4" />
+                          Draft Pending Approval
+                          <Badge variant="outline" className="text-[10px] ml-auto">
+                            {pending_proposal.action_type.replace(/_/g, " ")}
+                          </Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        {pending_proposal.draft_subject && (
+                          <p className="text-xs font-medium truncate">
+                            {pending_proposal.draft_subject}
+                          </p>
+                        )}
+                        {pending_proposal.draft_body_text && (
+                          <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-[inherit] line-clamp-6 overflow-hidden max-h-32">
+                            {pending_proposal.draft_body_text}
+                          </pre>
+                        )}
+                        {Array.isArray(pending_proposal.reasoning) && pending_proposal.reasoning.length > 0 && (
+                          <ul className="text-xs text-muted-foreground space-y-1">
+                            {pending_proposal.reasoning.map((r, i) => (
+                              <li key={i} className="flex gap-1.5">
+                                <span className="text-blue-400 shrink-0">•</span>
+                                <span>{r}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="flex gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            className="flex-1"
+                            onClick={handleApprovePending}
+                            disabled={isApproving}
+                          >
+                            {isApproving ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Send className="h-3 w-3 mr-1.5" />}
+                            Send
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={handleDismissPending}
+                            disabled={isApproving}
+                          >
+                            Dismiss
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ) : (
                   <DecisionPanel
                     request={request}
                     nextAction={nextAction}
@@ -825,6 +915,7 @@ function RequestDetailContent() {
                     onResolveReview={handleResolveReview}
                     isLoading={isApproving || isRevising}
                   />
+                  )}
 
                   {/* Copilot info below decision panel for context */}
                   <CopilotPanel
