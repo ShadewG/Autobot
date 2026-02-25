@@ -99,7 +99,7 @@ export async function executeAction(
       bodyText,
       bodyHtml,
     });
-    await db.updateProposal(proposalId, { status: "PENDING_PORTAL", portalTaskId: portalResult.taskId });
+    await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
 
     if (portalQueue) {
       await portalQueue.add("portal-submit", {
@@ -142,7 +142,7 @@ export async function executeAction(
         const portalResult = await portalExecutor.createPortalTask({
           caseId, caseData, proposalId, runId, actionType, subject, bodyText, bodyHtml,
         });
-        await db.updateProposal(proposalId, { status: "PENDING_PORTAL", portalTaskId: portalResult.taskId });
+        await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
         return { actionExecuted: false, executionResult: { action: "portal_task_created", ...portalResult } };
       }
 
@@ -171,7 +171,7 @@ export async function executeAction(
         await db.updateProposal(proposalId, { status: "BLOCKED", execution_key: null });
         await db.updateCaseStatus(caseId, "needs_human_review", {
           requires_human: true,
-          pause_reason: `Email send failed: ${emailResult?.error || "unknown"}`,
+          pause_reason: `Email send failed: ${emailResult?.error || "unknown"}`.substring(0, 50),
         });
         return { actionExecuted: false, executionResult: { action: "email_failed" } };
       }
