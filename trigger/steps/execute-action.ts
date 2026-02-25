@@ -174,7 +174,8 @@ export async function executeAction(
         await db.updateProposal(proposalId, { status: "BLOCKED", execution_key: null });
         await db.updateCaseStatus(caseId, "needs_human_review", {
           requires_human: true,
-          pause_reason: `Email send failed: ${emailResult?.error || "unknown"}`.substring(0, 50),
+          pause_reason: "EMAIL_FAILED",
+          substatus: `Email send failed: ${emailResult?.error || "unknown"}`.substring(0, 100),
         });
         return { actionExecuted: false, executionResult: { action: "email_failed" } };
       }

@@ -160,7 +160,8 @@ export const decisionSchema = z.object({
   ]).describe("The best next action to take for this case"),
   reasoning: z.array(z.string()).describe("Step-by-step reasoning for this decision"),
   requiresHuman: z.boolean().describe("Whether this action needs human approval before execution"),
-  pauseReason: z.string().nullable().describe("Why human review is needed (e.g., 'FEE_QUOTE', 'DENIAL', 'SENSITIVE')"),
+  pauseReason: z.enum(["FEE_QUOTE", "SCOPE", "DENIAL", "ID_REQUIRED", "SENSITIVE", "CLOSE_ACTION"]).nullable()
+    .describe("Why human review is needed. Must be one of the allowed values."),
   confidence: z.number().min(0).max(1).describe("Confidence in this decision (0-1)"),
   adjustmentInstruction: z.string().nullable().describe("Specific instructions for drafting (e.g., 'negotiate fee down to $50')"),
   researchLevel: z.enum(["none", "light", "medium", "deep"])
