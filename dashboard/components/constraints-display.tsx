@@ -6,7 +6,7 @@ import type { Constraint } from "@/lib/types";
 import { AlertTriangle, Ban, FileX, DollarSign, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const CONSTRAINT_CONFIG: Record<Constraint['type'], {
+const CONSTRAINT_CONFIG: Record<string, {
   icon: React.ComponentType<{ className?: string }>;
   color: string;
   bgColor: string;
@@ -15,6 +15,19 @@ const CONSTRAINT_CONFIG: Record<Constraint['type'], {
   NOT_HELD: { icon: FileX, color: "text-orange-400", bgColor: "bg-orange-500/10" },
   REDACTION_REQUIRED: { icon: Shield, color: "text-yellow-400", bgColor: "bg-yellow-500/10" },
   FEE_REQUIRED: { icon: DollarSign, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  // Additional types the AI can assign
+  BWC_EXEMPT: { icon: Ban, color: "text-red-400", bgColor: "bg-red-500/10" },
+  ID_REQUIRED: { icon: Shield, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  INVESTIGATION_ACTIVE: { icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-500/10" },
+  RECORDS_NOT_HELD: { icon: FileX, color: "text-orange-400", bgColor: "bg-orange-500/10" },
+  PARTIAL_DENIAL: { icon: Ban, color: "text-orange-400", bgColor: "bg-orange-500/10" },
+  DENIAL_RECEIVED: { icon: Ban, color: "text-red-400", bgColor: "bg-red-500/10" },
+};
+
+const FALLBACK_CONSTRAINT_CONFIG = {
+  icon: AlertTriangle,
+  color: "text-muted-foreground",
+  bgColor: "bg-muted",
 };
 
 interface ConstraintsDisplayProps {
@@ -36,7 +49,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
           {constraints.length} constraint{constraints.length !== 1 ? 's' : ''} detected
         </span>
         {constraints.slice(0, 2).map((c, i) => {
-          const config = CONSTRAINT_CONFIG[c.type];
+          const config = CONSTRAINT_CONFIG[c.type] || FALLBACK_CONSTRAINT_CONFIG;
           const Icon = config.icon;
           return (
             <Tooltip key={i}>
@@ -68,7 +81,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
       </div>
       <div className="space-y-2">
         {constraints.map((constraint, index) => {
-          const config = CONSTRAINT_CONFIG[constraint.type];
+          const config = CONSTRAINT_CONFIG[constraint.type] || FALLBACK_CONSTRAINT_CONFIG;
           const Icon = config.icon;
 
           return (
