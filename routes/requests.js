@@ -385,6 +385,8 @@ function toRequestDetail(caseData) {
         portal_url: caseData.portal_url || null,
         portal_provider: caseData.portal_provider || null,
         portal_request_number: caseData.portal_request_number || null,
+        last_portal_task_url: caseData.last_portal_task_url || null,
+        last_portal_status: caseData.last_portal_status || null,
         notion_url: notionUrl,
         submitted_at: caseData.send_date || null,
         statutory_due_at: listItem.due_info.statutory_due_at,

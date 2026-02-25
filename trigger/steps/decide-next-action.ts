@@ -739,16 +739,13 @@ async function deterministicRouting(
     return noAction(["Portal redirect - task created"]);
   }
 
-  // WRONG_AGENCY
+  // WRONG_AGENCY — always research the correct agency
   if (classification === "WRONG_AGENCY") {
-    if (requiresResponse) {
-      return decision("RESEARCH_AGENCY", {
-        pauseReason: "DENIAL",
-        reasoning: ["Wrong agency with redirect info - researching correct custodian"],
-      });
-    }
-    await db.updateCaseStatus(caseId, "pending", { substatus: "wrong_agency" });
-    return noAction(["Wrong agency - flagged for redirect"]);
+    return decision("RESEARCH_AGENCY", {
+      pauseReason: "DENIAL",
+      researchLevel: "deep",
+      reasoning: ["Wrong agency - researching correct custodian"],
+    });
   }
 
   // PARTIAL_DELIVERY
@@ -870,8 +867,11 @@ export async function decideNextAction(
         return noAction([...reasoning, "Acknowledgment received, waiting"]);
       }
       if (suggestedAction === "find_correct_agency") {
-        await db.updateCaseStatus(caseId, "pending", { substatus: "wrong_agency" });
-        return noAction([...reasoning, "Wrong agency - flagged for redirect"]);
+        return decision("RESEARCH_AGENCY", {
+          pauseReason: "DENIAL",
+          researchLevel: "deep",
+          reasoning: [...reasoning, "Wrong agency - researching correct custodian"],
+        });
       }
       return noAction([...reasoning, "No email response needed"]);
     }

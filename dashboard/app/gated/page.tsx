@@ -107,6 +107,7 @@ interface HumanReviewCase {
   last_fee_quote_amount: number | null;
   portal_url: string | null;
   last_portal_status: string | null;
+  last_portal_task_url: string | null;
   user_id?: number | null;
 }
 
@@ -1601,18 +1602,30 @@ function MonitorPageContent() {
           )}
 
           {/* Portal info */}
-          {selectedItem.data.portal_url && (
+          {(selectedItem.data.portal_url || selectedItem.data.last_portal_task_url) && (
             <div className="border p-3">
               <SectionLabel>Portal</SectionLabel>
               <div className="flex items-center gap-2 flex-wrap">
-                <a
-                  href={selectedItem.data.portal_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-400 hover:underline flex items-center gap-1"
-                >
-                  <ExternalLink className="h-3 w-3" /> Open Portal
-                </a>
+                {selectedItem.data.portal_url && (
+                  <a
+                    href={selectedItem.data.portal_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" /> Open Portal
+                  </a>
+                )}
+                {selectedItem.data.last_portal_task_url && (
+                  <a
+                    href={selectedItem.data.last_portal_task_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-orange-400 hover:underline flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" /> Skyvern Run
+                  </a>
+                )}
                 {selectedItem.data.last_portal_status && (
                   <Badge variant="outline" className="text-[10px] text-red-400 border-red-700/50">
                     {selectedItem.data.last_portal_status}

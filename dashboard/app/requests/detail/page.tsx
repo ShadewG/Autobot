@@ -709,6 +709,21 @@ function RequestDetailContent() {
               </Badge>
             </div>
           )}
+          {request.last_portal_task_url && (
+            <a
+              href={request.last_portal_task_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-orange-400 hover:underline text-xs"
+            >
+              <ExternalLink className="h-3 w-3" /> Skyvern Run
+            </a>
+          )}
+          {request.last_portal_status && (
+            <Badge variant="outline" className="text-[10px] text-red-400 border-red-700/50">
+              {request.last_portal_status}
+            </Badge>
+          )}
           {request.pause_reason && (
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Pause Reason:</span>
