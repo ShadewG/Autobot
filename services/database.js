@@ -99,10 +99,11 @@ class DatabaseService {
                     ON cases(portal_request_number) WHERE portal_request_number IS NOT NULL
             `);
 
-            // Enforce at most one PENDING_APPROVAL proposal per case (prevents race conditions)
+            // Enforce at most one active proposal per case (prevents race conditions + duplicates)
             await this.query(`
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_pending_per_case
-                    ON proposals (case_id) WHERE status = 'PENDING_APPROVAL'
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_active_per_case
+                    ON proposals (case_id)
+                    WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
             `);
 
             console.log('Database schema initialized successfully');
@@ -1430,35 +1431,35 @@ class DatabaseService {
             proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
         }
 
-        // DEDUP GUARD: Prevent duplicate active proposals for the same case.
-        // If the incoming proposal has the SAME key as an existing active proposal, return
-        // the existing one (true dedup — same work). If the key is DIFFERENT, the new run's
-        // analysis supersedes the old one: dismiss the stale proposal and create the new one.
-        // Checks PENDING_APPROVAL + BLOCKED to prevent duplicates when old proposal is blocked.
+        // DEDUP GUARD: Enforce one active proposal per case.
+        // Checks ALL active statuses. Same key = true dedup (return existing).
+        // Different key = new analysis supersedes — dismiss ALL stale active proposals.
+        const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const existing = await this.query(
                 `SELECT id, action_type, proposal_key, status FROM proposals
-                 WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
-                 LIMIT 1`,
-                [proposalData.caseId]
+                 WHERE case_id = $1 AND status = ANY($2)
+                 ORDER BY created_at DESC`,
+                [proposalData.caseId, ACTIVE_PROPOSAL_STATUSES]
             );
 
             if (existing.rows.length > 0) {
-                const first = existing.rows[0];
-                if (first.proposal_key === proposalData.proposalKey) {
-                    // Same key = true dedup (same run/message/action), return existing
-                    console.log(`[DB] Dedup: returning existing proposal #${first.id} for case ${proposalData.caseId} ` +
-                        `(same key: ${first.proposal_key})`);
-                    return await this.getProposalById(first.id);
-                } else {
-                    // Different key = new run supersedes old analysis — dismiss stale proposal
-                    console.log(`[DB] Superseding stale proposal #${first.id} (${first.action_type}, key: ${first.proposal_key}) ` +
-                        `with new ${proposalData.actionType} for case ${proposalData.caseId}`);
-                    await this.query(
-                        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW() WHERE id = $1`,
-                        [first.id]
-                    );
+                // Check if any existing proposal has the same key (true dedup)
+                const sameKey = existing.rows.find(r => r.proposal_key === proposalData.proposalKey);
+                if (sameKey) {
+                    console.log(`[DB] Dedup: returning existing proposal #${sameKey.id} for case ${proposalData.caseId} ` +
+                        `(same key: ${sameKey.proposal_key})`);
+                    return await this.getProposalById(sameKey.id);
                 }
+                // Different key — dismiss ALL stale active proposals for this case
+                const staleIds = existing.rows.map(r => r.id);
+                console.log(`[DB] Superseding ${staleIds.length} stale proposals (${staleIds.join(', ')}) ` +
+                    `with new ${proposalData.actionType} for case ${proposalData.caseId}`);
+                await this.query(
+                    `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+                     WHERE id = ANY($1)`,
+                    [staleIds]
+                );
             }
         }
 
@@ -1582,10 +1583,15 @@ class DatabaseService {
             }
             return proposal;
         } catch (err) {
-            // Race condition: partial unique index (one PENDING_APPROVAL per case) caught a concurrent insert
-            if (err.code === '23505' && err.constraint === 'idx_proposals_one_pending_per_case') {
+            // Race condition: unique index caught a concurrent insert for same case
+            if (err.code === '23505' && (
+                err.constraint === 'idx_proposals_one_active_per_case' ||
+                err.constraint === 'idx_proposals_one_pending_per_case'  // legacy name
+            )) {
                 const existing = await this.query(
-                    `SELECT id FROM proposals WHERE case_id = $1 AND status = 'PENDING_APPROVAL' LIMIT 1`,
+                    `SELECT id FROM proposals WHERE case_id = $1
+                     AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                     ORDER BY created_at DESC LIMIT 1`,
                     [proposalData.caseId]
                 );
                 if (existing.rows[0]) {

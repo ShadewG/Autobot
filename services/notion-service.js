@@ -1427,9 +1427,18 @@ Look for a records division email, FOIA email, or general agency email that acce
 
             if (updates.portal_login_email) {
                 if (propSet.has('Portal Login Email')) {
-                    properties['Portal Login Email'] = {
-                        email: updates.portal_login_email
-                    };
+                    // Property type varies between databases — detect and adapt
+                    const portalEmailPropInfo = await this.getDatabasePropertyInfo('Portal Login Email');
+                    if (portalEmailPropInfo?.type === 'email') {
+                        properties['Portal Login Email'] = {
+                            email: updates.portal_login_email
+                        };
+                    } else {
+                        // rich_text fallback (most common)
+                        properties['Portal Login Email'] = {
+                            rich_text: [{ text: { content: updates.portal_login_email } }]
+                        };
+                    }
                 } else {
                     missingProps('Portal Login Email');
                 }
