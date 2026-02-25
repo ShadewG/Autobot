@@ -1412,10 +1412,9 @@ class DatabaseService {
         }
 
         // DEDUP GUARD: Prevent duplicate PENDING_APPROVAL proposals for the same case.
-        // Multiple code paths (LangGraph, cron sweeps, portal failures) create proposals
-        // with different proposal_key formats, so ON CONFLICT alone isn't sufficient.
-        // Only blocks when the INCOMING proposal would be PENDING_APPROVAL — allows
-        // EXECUTED/APPROVED audit records through even if a pending proposal exists.
+        // If the incoming proposal has the SAME key as an existing pending proposal, return
+        // the existing one (true dedup — same work). If the key is DIFFERENT, the new run's
+        // analysis supersedes the old one: dismiss the stale proposal and create the new one.
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const existing = await this.query(
                 `SELECT id, action_type, proposal_key FROM proposals
@@ -1426,10 +1425,20 @@ class DatabaseService {
 
             if (existing.rows.length > 0) {
                 const first = existing.rows[0];
-                console.log(`[DB] Skipping proposal for case ${proposalData.caseId}: ` +
-                    `${proposalData.actionType} not created — ${first.action_type} already pending ` +
-                    `(proposal #${first.id}, key: ${first.proposal_key})`);
-                return await this.getProposalById(first.id);
+                if (first.proposal_key === proposalData.proposalKey) {
+                    // Same key = true dedup (same run/message/action), return existing
+                    console.log(`[DB] Dedup: returning existing proposal #${first.id} for case ${proposalData.caseId} ` +
+                        `(same key: ${first.proposal_key})`);
+                    return await this.getProposalById(first.id);
+                } else {
+                    // Different key = new run supersedes old analysis — dismiss stale proposal
+                    console.log(`[DB] Superseding stale proposal #${first.id} (${first.action_type}, key: ${first.proposal_key}) ` +
+                        `with new ${proposalData.actionType} for case ${proposalData.caseId}`);
+                    await this.query(
+                        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW() WHERE id = $1`,
+                        [first.id]
+                    );
+                }
             }
         }
 
