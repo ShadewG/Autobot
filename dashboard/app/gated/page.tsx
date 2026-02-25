@@ -470,7 +470,7 @@ function MonitorPageContent() {
   const [showCorrespondence, setShowCorrespondence] = useState(false);
   const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
-  const [lastAction, setLastAction] = useState<string | null>(null);
+  const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [inboundFilter, setInboundFilter] = useState<"all" | "unmatched" | "matched">("all");
   const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null);
   const [matchingMessageId, setMatchingMessageId] = useState<number | null>(null);
@@ -502,7 +502,7 @@ function MonitorPageContent() {
     refreshInterval: 12000,
   });
 
-  // Build the queue: proposals first, then human review cases
+  // Build the queue: proposals first, then human review cases — filter out acted-on items
   const queue = useMemo<QueueItem[]>(() => {
     if (!overview) return [];
     const proposals: QueueItem[] = (overview.pending_approvals || []).map((p) => ({
@@ -513,8 +513,11 @@ function MonitorPageContent() {
       type: "review" as const,
       data: r,
     }));
-    return [...proposals, ...reviews];
-  }, [overview]);
+    return [...proposals, ...reviews].filter((item) => {
+      const key = item.type === "proposal" ? `p:${item.data.id}` : `r:${item.data.id}`;
+      return !removedIds.has(key);
+    });
+  }, [overview, removedIds]);
 
   // Clamp index when queue shrinks
   const safeIndex = queue.length === 0 ? 0 : Math.min(currentIndex, queue.length - 1);
@@ -621,10 +624,25 @@ function MonitorPageContent() {
 
   // ── Actions ────────────────────────────────
 
+  // Optimistically remove current item from queue and advance to next
+  const removeCurrentItem = useCallback(() => {
+    if (!selectedItem) return;
+    const key = selectedItem.type === "proposal" ? `p:${selectedItem.data.id}` : `r:${selectedItem.data.id}`;
+    setRemovedIds((prev) => new Set(prev).add(key));
+    // If we're at the end, move back; otherwise stay (next item slides in)
+    if (currentIndex >= queue.length - 1 && currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+  }, [selectedItem, currentIndex, queue.length]);
+
+  // Background revalidate + clear removedIds once server data is fresh
+  const revalidateQueue = useCallback(() => {
+    mutate().then(() => setRemovedIds(new Set()));
+  }, [mutate]);
+
   const handleApprove = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
     setIsSubmitting(true);
-    setLastAction(null);
     try {
       const res = await fetch(
         `/api/monitor/proposals/${selectedItem.data.id}/decision`,
@@ -638,12 +656,8 @@ function MonitorPageContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
-      setLastAction("Approved");
-      mutate();
-      // Advance index or stay (item removed from queue)
-      if (currentIndex >= queue.length - 1 && currentIndex > 0) {
-        setCurrentIndex(currentIndex - 1);
-      }
+      removeCurrentItem();
+      revalidateQueue();
     } catch (err) {
       alert(`Approve failed: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -654,7 +668,6 @@ function MonitorPageContent() {
   const handleDismiss = async (reason: string) => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
     setIsSubmitting(true);
-    setLastAction(null);
     try {
       const res = await fetch(
         `/api/monitor/proposals/${selectedItem.data.id}/decision`,
@@ -668,11 +681,8 @@ function MonitorPageContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
-      setLastAction(`Dismissed: ${reason}`);
-      mutate();
-      if (currentIndex >= queue.length - 1 && currentIndex > 0) {
-        setCurrentIndex(currentIndex - 1);
-      }
+      removeCurrentItem();
+      revalidateQueue();
     } catch (err) {
       alert(`Dismiss failed: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -684,7 +694,6 @@ function MonitorPageContent() {
     if (!selectedItem || selectedItem.type !== "proposal") return;
     if (!adjustInstruction.trim()) return;
     setIsSubmitting(true);
-    setLastAction(null);
     try {
       const res = await fetch(
         `/api/monitor/proposals/${selectedItem.data.id}/decision`,
@@ -701,10 +710,10 @@ function MonitorPageContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
-      setLastAction("Adjusted — regenerating draft");
       setShowAdjustModal(false);
       setAdjustInstruction("");
-      mutate();
+      removeCurrentItem();
+      revalidateQueue();
     } catch (err) {
       alert(`Adjust failed: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -730,8 +739,8 @@ function MonitorPageContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
-      setLastAction("Withdrawn");
-      mutate();
+      removeCurrentItem();
+      revalidateQueue();
     } catch (err) {
       alert(`Withdraw failed: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -778,7 +787,6 @@ function MonitorPageContent() {
   const handleResolveReview = async (action: string, instruction?: string) => {
     if (!selectedItem || selectedItem.type !== "review") return;
     setIsSubmitting(true);
-    setLastAction(null);
     try {
       const res = await fetch(`/api/requests/${selectedItem.data.id}/resolve-review`, {
         method: "POST",
@@ -789,25 +797,9 @@ function MonitorPageContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
-      const labels: Record<string, string> = {
-        reprocess: "Re-processing case",
-        put_on_hold: "Put on hold",
-        close: "Closed",
-        accept_fee: "Accepting fee",
-        negotiate_fee: "Negotiating fee",
-        decline_fee: "Declining fee",
-        appeal: "Drafting appeal",
-        narrow_scope: "Narrowing scope",
-        retry_portal: "Retrying portal",
-        send_via_email: "Switching to email",
-        mark_sent: "Marked as sent",
-      };
-      setLastAction(labels[action] || `Resolved: ${action}`);
       setReviewInstruction("");
-      mutate();
-      if (currentIndex >= queue.length - 1 && currentIndex > 0) {
-        setCurrentIndex(currentIndex - 1);
-      }
+      removeCurrentItem();
+      revalidateQueue();
     } catch (err) {
       alert(`Resolve failed: ${err instanceof Error ? err.message : err}`);
     } finally {
@@ -1009,20 +1001,6 @@ function MonitorPageContent() {
           </Button>
         </div>
       </div>
-
-      {/* ── Last Action Toast ──────────────── */}
-      {lastAction && (
-        <div className="border border-green-700/50 bg-green-500/10 text-green-300 text-xs p-2 mb-4 flex items-center gap-2">
-          <CheckCircle className="h-3 w-3" />
-          {lastAction}
-          <button
-            className="ml-auto text-green-400/60 hover:text-green-300"
-            onClick={() => setLastAction(null)}
-          >
-            dismiss
-          </button>
-        </div>
-      )}
 
       {/* ── Empty State ────────────────────── */}
       {queue.length === 0 && (
