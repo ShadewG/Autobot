@@ -75,7 +75,7 @@ export function CopilotPanel({
         {request.constraints && request.constraints.length > 0 && (
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Constraints Detected</CardTitle>
+              <CardTitle className="text-sm">Agency Requirements</CardTitle>
             </CardHeader>
             <CardContent>
               <ConstraintsDisplay constraints={request.constraints} />

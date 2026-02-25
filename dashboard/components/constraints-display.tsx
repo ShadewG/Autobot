@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Constraint } from "@/lib/types";
-import { AlertTriangle, Ban, FileX, DollarSign, Shield } from "lucide-react";
+import { AlertTriangle, Ban, FileX, DollarSign, Shield, Clock, Eye, Minimize2, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const CONSTRAINT_CONFIG: Record<string, {
@@ -11,21 +11,29 @@ const CONSTRAINT_CONFIG: Record<string, {
   color: string;
   bgColor: string;
 }> = {
+  // Blocking constraints — require action
   EXEMPTION: { icon: Ban, color: "text-red-400", bgColor: "bg-red-500/10" },
   NOT_HELD: { icon: FileX, color: "text-orange-400", bgColor: "bg-orange-500/10" },
   REDACTION_REQUIRED: { icon: Shield, color: "text-yellow-400", bgColor: "bg-yellow-500/10" },
   FEE_REQUIRED: { icon: DollarSign, color: "text-blue-400", bgColor: "bg-blue-500/10" },
-  // Additional types the AI can assign
   BWC_EXEMPT: { icon: Ban, color: "text-red-400", bgColor: "bg-red-500/10" },
   ID_REQUIRED: { icon: Shield, color: "text-blue-400", bgColor: "bg-blue-500/10" },
   INVESTIGATION_ACTIVE: { icon: AlertTriangle, color: "text-yellow-400", bgColor: "bg-yellow-500/10" },
-  RECORDS_NOT_HELD: { icon: FileX, color: "text-orange-400", bgColor: "bg-orange-500/10" },
   PARTIAL_DENIAL: { icon: Ban, color: "text-orange-400", bgColor: "bg-orange-500/10" },
   DENIAL_RECEIVED: { icon: Ban, color: "text-red-400", bgColor: "bg-red-500/10" },
+  PREPAYMENT_REQUIRED: { icon: DollarSign, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  CASH_OR_CHECK_ONLY: { icon: DollarSign, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  CERTIFICATION_REQUIRED: { icon: Shield, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  CERTIFICATION_NO_FINANCIAL_GAIN_REQUIRED: { icon: Shield, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  // Informational constraints — not blocking, just context
+  IN_PERSON_VIEWING_OPTION: { icon: Eye, color: "text-muted-foreground", bgColor: "bg-muted" },
+  SCOPE_NARROWING_SUGGESTED: { icon: Minimize2, color: "text-muted-foreground", bgColor: "bg-muted" },
+  RESPONSE_DEADLINE_10_BUSINESS_DAYS: { icon: Clock, color: "text-muted-foreground", bgColor: "bg-muted" },
+  WITHDRAWAL_IF_NO_RESPONSE_10_BUSINESS_DAYS: { icon: Clock, color: "text-orange-400", bgColor: "bg-orange-500/10" },
 };
 
 const FALLBACK_CONSTRAINT_CONFIG = {
-  icon: AlertTriangle,
+  icon: Info,
   color: "text-muted-foreground",
   bgColor: "bg-muted",
 };
@@ -44,9 +52,9 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
   if (compact) {
     return (
       <div className={cn("flex items-center gap-1 flex-wrap", className)}>
-        <AlertTriangle className="h-3 w-3 text-yellow-400" />
+        <Info className="h-3 w-3 text-muted-foreground" />
         <span className="text-xs text-muted-foreground">
-          {constraints.length} constraint{constraints.length !== 1 ? 's' : ''} detected
+          {constraints.length} requirement{constraints.length !== 1 ? 's' : ''}
         </span>
         {constraints.slice(0, 2).map((c, i) => {
           const config = CONSTRAINT_CONFIG[c.type] || FALLBACK_CONSTRAINT_CONFIG;
@@ -75,11 +83,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
 
   return (
     <div className={cn("space-y-2", className)}>
-      <div className="flex items-center gap-2 text-sm font-medium">
-        <AlertTriangle className="h-4 w-4 text-yellow-400" />
-        Constraints Detected
-      </div>
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {constraints.map((constraint, index) => {
           const config = CONSTRAINT_CONFIG[constraint.type] || FALLBACK_CONSTRAINT_CONFIG;
           const Icon = config.icon;
@@ -88,29 +92,22 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
             <div
               key={index}
               className={cn(
-                "rounded-lg p-3 border",
+                "rounded-md px-3 py-2 border",
                 config.bgColor
               )}
             >
               <div className="flex items-start gap-2">
-                <Icon className={cn("h-4 w-4 mt-0.5 flex-shrink-0", config.color)} />
+                <Icon className={cn("h-3.5 w-3.5 mt-0.5 flex-shrink-0", config.color)} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium">{constraint.description}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{constraint.source}</p>
+                  <p className="text-xs font-medium">{constraint.description}</p>
                   {constraint.affected_items?.length > 0 && (
-                    <div className="flex items-center gap-1 mt-2 flex-wrap">
-                      <span className="text-xs text-muted-foreground">Affects:</span>
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
                       {constraint.affected_items.map((item, i) => (
                         <Badge key={i} variant="outline" className="text-[10px]">
                           {item}
                         </Badge>
                       ))}
                     </div>
-                  )}
-                  {constraint.confidence < 0.9 && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Confidence: {Math.round(constraint.confidence * 100)}%
-                    </p>
                   )}
                 </div>
               </div>
