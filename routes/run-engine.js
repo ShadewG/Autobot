@@ -432,17 +432,28 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
-    // APPROVE/ADJUST on old proposals: send email directly if draft is present
+    // APPROVE on old proposals: send email directly if draft is present
+    // ADJUST falls through to pipeline re-trigger so the instruction can be applied
     const refreshedProposal = await db.getProposalById(proposalId);
-    if ((action === 'APPROVE' || action === 'ADJUST') && refreshedProposal.draft_body_text && refreshedProposal.draft_subject) {
-      await db.updateProposal(proposalId, {
-        human_decision: humanDecision,
-        status: 'DECISION_RECEIVED'
-      });
-
+    if (action === 'APPROVE' && refreshedProposal.draft_body_text && refreshedProposal.draft_subject) {
+      // Validate prerequisites before touching status (prevents stuck DECISION_RECEIVED state)
       const caseData = await db.getCaseById(caseId);
       if (!caseData.agency_email) {
         throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
+      }
+
+      // Atomic claim: only one approve wins (race condition guard)
+      const claimed = await db.query(
+        `UPDATE proposals SET status = 'DECISION_RECEIVED', human_decision = $1, updated_at = NOW()
+         WHERE id = $2 AND status IN ('PENDING_APPROVAL','BLOCKED')
+         RETURNING id`,
+        [JSON.stringify(humanDecision), proposalId]
+      );
+      if (claimed.rows.length === 0) {
+        return res.status(409).json({
+          success: false,
+          error: 'Proposal was already actioned by another request',
+        });
       }
 
       const latestInbound = await db.getLatestInboundMessage(caseId);
@@ -463,6 +474,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
 
       if (!emailResult || emailResult.success !== true) {
+        // Roll back to PENDING_APPROVAL so the user can retry
+        await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
         throw new Error(emailResult?.error || 'Email send failed');
       }
 
