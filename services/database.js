@@ -1434,7 +1434,11 @@ class DatabaseService {
         // DEDUP GUARD: Enforce one active proposal per case.
         // Checks ALL active statuses. Same key = true dedup (return existing).
         // Different key = new analysis supersedes — dismiss ALL stale active proposals.
+        // All active (non-terminal) proposal statuses — used for dedup and the DB unique constraint
         const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
+        // Guard only fires for PENDING_APPROVAL because all new proposals enter as PENDING_APPROVAL.
+        // Other active statuses (BLOCKED, DECISION_RECEIVED, PENDING_PORTAL) are transitions from PENDING_APPROVAL.
+        // The DB unique index (idx_proposals_one_active_per_case) is the ultimate safety net.
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const existing = await this.query(
                 `SELECT id, action_type, proposal_key, status FROM proposals
@@ -1452,13 +1456,14 @@ class DatabaseService {
                     return await this.getProposalById(sameKey.id);
                 }
                 // Different key — dismiss ALL stale active proposals for this case
+                // Status guard prevents clobbering a proposal that transitioned (e.g. to EXECUTED) between SELECT and UPDATE
                 const staleIds = existing.rows.map(r => r.id);
                 console.log(`[DB] Superseding ${staleIds.length} stale proposals (${staleIds.join(', ')}) ` +
                     `with new ${proposalData.actionType} for case ${proposalData.caseId}`);
                 await this.query(
                     `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-                     WHERE id = ANY($1)`,
-                    [staleIds]
+                     WHERE id = ANY($1) AND status = ANY($2)`,
+                    [staleIds, ACTIVE_PROPOSAL_STATUSES]
                 );
             }
         }

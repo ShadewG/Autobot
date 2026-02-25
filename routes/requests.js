@@ -1165,10 +1165,10 @@ router.post('/:id/resolve-review', async (req, res) => {
             ? `${baseInstruction}. Additional instructions: ${instruction}`
             : baseInstruction;
 
-        // Dismiss all stale BLOCKED/PENDING_APPROVAL proposals first, to prevent accumulation
+        // Dismiss all active proposals first — human is taking a new direction
         await db.query(
             `UPDATE proposals SET status = 'DISMISSED', human_decision = $1
-             WHERE case_id = $2 AND status IN ('PENDING_APPROVAL', 'BLOCKED')`,
+             WHERE case_id = $2 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')`,
             [JSON.stringify(`Superseded by human review action: ${action}`), requestId]
         );
 
