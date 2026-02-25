@@ -208,13 +208,34 @@ function ProposalCard({
 
         {/* Reasoning */}
         {proposal.reasoning && proposal.reasoning.length > 0 && (() => {
-          const items = formatReasoning(proposal.reasoning, 3);
+          const allItems = formatReasoning(proposal.reasoning);
+          const hasMore = allItems.length > 2;
           return (
-            <div className="text-xs text-muted-foreground">
-              <span className="font-medium">Reasoning: </span>
-              {items.slice(0, 2).join(" \u2022 ")}
-              {items.length > 2 && ` (+${items.length - 2} more)`}
-            </div>
+            <Collapsible>
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium">Reasoning: </span>
+                {allItems.slice(0, 2).join(" \u2022 ")}
+                {hasMore && (
+                  <CollapsibleTrigger asChild>
+                    <button className="text-primary hover:underline ml-1">
+                      (+{allItems.length - 2} more)
+                    </button>
+                  </CollapsibleTrigger>
+                )}
+              </div>
+              {hasMore && (
+                <CollapsibleContent className="mt-1">
+                  <ul className="text-xs text-muted-foreground space-y-0.5 pl-1">
+                    {allItems.map((item, i) => (
+                      <li key={i} className="flex gap-1.5">
+                        <span className="shrink-0">\u2022</span>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </CollapsibleContent>
+              )}
+            </Collapsible>
           );
         })()}
 

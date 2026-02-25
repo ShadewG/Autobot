@@ -123,8 +123,8 @@ router.get('/:id', async (req, res) => {
                 COUNT(*) as total_requests,
                 COUNT(*) FILTER (WHERE status = 'completed') as completed_requests,
                 COUNT(*) FILTER (WHERE status IN ('needs_human_review', 'needs_human_fee_approval')) as pending_review,
-                COUNT(*) FILTER (WHERE last_fee_quote_amount IS NOT NULL) as has_fees,
-                SUM(COALESCE(last_fee_quote_amount, 0)) as total_fees,
+                COUNT(*) FILTER (WHERE fee_quote_jsonb IS NOT NULL AND (fee_quote_jsonb->>'amount') IS NOT NULL) as has_fees,
+                SUM(COALESCE((fee_quote_jsonb->>'amount')::numeric, 0)) as total_fees,
                 AVG(
                     CASE WHEN last_response_date IS NOT NULL AND send_date IS NOT NULL
                     THEN EXTRACT(EPOCH FROM (last_response_date - send_date)) / 86400
@@ -203,7 +203,11 @@ router.get('/:id', async (req, res) => {
             fee_behavior: {
                 typical_fee_min: row.typical_fee_min ? parseFloat(row.typical_fee_min) : null,
                 typical_fee_max: row.typical_fee_max ? parseFloat(row.typical_fee_max) : null,
-                fee_waiver_success_rate: row.fee_waiver_success_rate ? parseFloat(row.fee_waiver_success_rate) : null
+                typical_fee_range: row.typical_fee_min && row.typical_fee_max
+                    ? `$${parseFloat(row.typical_fee_min).toFixed(0)}–$${parseFloat(row.typical_fee_max).toFixed(0)}`
+                    : row.typical_fee_min ? `$${parseFloat(row.typical_fee_min).toFixed(0)}+`
+                    : null,
+                waiver_success_rate: row.fee_waiver_success_rate ? parseFloat(row.fee_waiver_success_rate) : null,
             },
             comments: commentsResult.rows.map(c => ({
                 id: c.id,

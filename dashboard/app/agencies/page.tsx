@@ -36,8 +36,8 @@ export default function AgenciesPage() {
     const query = searchQuery.toLowerCase();
     return agencies.agencies.filter(
       (a) =>
-        a.name.toLowerCase().includes(query) ||
-        a.state.toLowerCase().includes(query)
+        a.name?.toLowerCase().includes(query) ||
+        a.state?.toLowerCase().includes(query)
     );
   };
 

@@ -67,7 +67,8 @@ function UserSettings({ user }: { user: User }) {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/users/${user.id}`, {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || '/api';
+      const res = await fetch(`${apiBase}/users/${user.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -75,6 +76,7 @@ function UserSettings({ user }: { user: User }) {
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Save failed");
       setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -225,6 +227,12 @@ function UserSettings({ user }: { user: User }) {
 
         {/* Save */}
         {error && <p className="text-xs text-destructive">{error}</p>}
+        {saved && (
+          <div className="flex items-center gap-2 text-xs text-green-400 bg-green-500/10 border border-green-700/30 rounded px-3 py-2">
+            <Check className="h-3 w-3" />
+            Settings saved successfully
+          </div>
+        )}
         <Button
           onClick={handleSave}
           disabled={saving}
@@ -245,7 +253,7 @@ function UserSettings({ user }: { user: User }) {
 
 export default function SettingsPage() {
   const { data, error, isLoading } = useSWR<{ success: boolean; users: User[] }>(
-    "/api/users",
+    "/users",
     fetcher
   );
 

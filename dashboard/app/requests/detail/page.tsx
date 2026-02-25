@@ -19,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogDescription,
@@ -137,6 +138,8 @@ function RequestDetailContent() {
   const [snoozeModalOpen, setSnoozeModalOpen] = useState(false);
   const [proposalState, setProposalState] = useState<ProposalState>("PENDING");
   const [isApproving, setIsApproving] = useState(false);
+  const [isResolving, setIsResolving] = useState(false);
+  const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
@@ -187,16 +190,17 @@ function RequestDetailContent() {
 
   const handleWithdraw = async () => {
     if (!id) return;
-    if (!confirm("Are you sure you want to withdraw this request? This will close it permanently.")) {
-      return;
-    }
+    setIsResolving(true);
     try {
       await requestsAPI.withdraw(id, "Withdrawn by user");
+      setWithdrawDialogOpen(false);
       mutate();
       router.push("/requests");
     } catch (error) {
       console.error("Error withdrawing request:", error);
       alert("Failed to withdraw request. Please try again.");
+    } finally {
+      setIsResolving(false);
     }
   };
 
@@ -235,6 +239,7 @@ function RequestDetailContent() {
 
   const handleResolveReview = async (action: string, instruction?: string) => {
     if (!id) return;
+    setIsResolving(true);
     try {
       // For submit_manually, also open the portal URL
       if (action === "submit_manually" && data?.request?.portal_url) {
@@ -245,6 +250,8 @@ function RequestDetailContent() {
     } catch (error: any) {
       console.error("Error resolving review:", error);
       alert(error.message || "Failed to resolve review. Please try again.");
+    } finally {
+      setIsResolving(false);
     }
   };
 
@@ -624,7 +631,7 @@ function RequestDetailContent() {
                 Snooze / Remind me
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleWithdraw}>
+              <DropdownMenuItem onClick={() => setWithdrawDialogOpen(true)}>
                 <Ban className="h-4 w-4 mr-2" />
                 Withdraw request
               </DropdownMenuItem>
@@ -923,12 +930,12 @@ function RequestDetailContent() {
                     onProceed={handleProceed}
                     onNegotiate={handleNegotiate}
                     onCustomAdjust={handleCustomAdjust}
-                    onWithdraw={handleWithdraw}
+                    onWithdraw={() => setWithdrawDialogOpen(true)}
                     onNarrowScope={handleNarrowScope}
                     onAppeal={handleAppeal}
                     onAddToPhoneQueue={handleAddToPhoneQueue}
                     onResolveReview={handleResolveReview}
-                    isLoading={isApproving || isRevising}
+                    isLoading={isApproving || isRevising || isResolving}
                   />
                   )}
 
@@ -1269,6 +1276,27 @@ function RequestDetailContent() {
         onOpenChange={setSnoozeModalOpen}
         onSnooze={handleSnooze}
       />
+
+      {/* Withdraw Confirmation Dialog */}
+      <Dialog open={withdrawDialogOpen} onOpenChange={setWithdrawDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Withdraw Request</DialogTitle>
+            <DialogDescription>
+              This will permanently close this FOIA request. The case will be marked as withdrawn and no further actions will be taken. Are you sure?
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setWithdrawDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleWithdraw} disabled={isResolving}>
+              {isResolving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Ban className="h-4 w-4 mr-1" />}
+              Withdraw Request
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Inbound Message Selection Dialog */}
       <Dialog open={showInboundDialog} onOpenChange={setShowInboundDialog}>

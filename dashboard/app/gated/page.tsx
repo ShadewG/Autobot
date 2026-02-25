@@ -1049,12 +1049,16 @@ function MonitorPageContent() {
           value={summary?.pending_approvals_total ?? 0}
           icon={FileText}
           color="text-blue-400"
+          onClick={() => setActiveTab("queue")}
+          active={activeTab === "queue"}
         />
         <StatBox
           label="Review"
           value={summary?.human_review_total ?? 0}
           icon={Shield}
           color="text-purple-400"
+          onClick={() => setActiveTab("queue")}
+          active={activeTab === "queue"}
         />
         <StatBox
           label="Inbound 24h"
@@ -1073,6 +1077,8 @@ function MonitorPageContent() {
               ? "text-orange-400"
               : "text-muted-foreground"
           }
+          onClick={() => setActiveTab("inbound")}
+          active={activeTab === "inbound"}
         />
         <StatBox
           label="Active Runs"
