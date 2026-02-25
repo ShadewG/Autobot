@@ -8,7 +8,7 @@
  */
 
 import { generateObject } from "ai";
-import { classifyModel } from "../lib/ai";
+import { classifyModel, classifyOptions } from "../lib/ai";
 import { classificationSchema, type ClassificationOutput } from "../lib/schemas";
 import db, { aiService, logger } from "../lib/db";
 import type { ClassificationResult, CaseContext, Classification } from "../lib/types";
@@ -201,6 +201,7 @@ export async function classifyInbound(
       model: classifyModel,
       schema: classificationSchema,
       prompt: buildClassificationPrompt(message, context.caseData, threadMessages),
+      providerOptions: classifyOptions,
     });
     aiResult = object;
   } catch (aiError: any) {
