@@ -201,13 +201,13 @@ router.get('/:id', async (req, res) => {
                 notarization_required: row.notarization_required || false
             },
             fee_behavior: {
-                typical_fee_min: row.typical_fee_min ? parseFloat(row.typical_fee_min) : null,
-                typical_fee_max: row.typical_fee_max ? parseFloat(row.typical_fee_max) : null,
-                typical_fee_range: row.typical_fee_min && row.typical_fee_max
+                typical_fee_min: row.typical_fee_min != null ? parseFloat(row.typical_fee_min) : null,
+                typical_fee_max: row.typical_fee_max != null ? parseFloat(row.typical_fee_max) : null,
+                typical_fee_range: row.typical_fee_min != null && row.typical_fee_max != null
                     ? `$${parseFloat(row.typical_fee_min).toFixed(0)}–$${parseFloat(row.typical_fee_max).toFixed(0)}`
-                    : row.typical_fee_min ? `$${parseFloat(row.typical_fee_min).toFixed(0)}+`
+                    : row.typical_fee_min != null ? `$${parseFloat(row.typical_fee_min).toFixed(0)}+`
                     : null,
-                waiver_success_rate: row.fee_waiver_success_rate ? parseFloat(row.fee_waiver_success_rate) : null,
+                waiver_success_rate: row.fee_waiver_success_rate != null ? parseFloat(row.fee_waiver_success_rate) : null,
             },
             comments: commentsResult.rows.map(c => ({
                 id: c.id,

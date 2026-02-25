@@ -126,13 +126,13 @@ export function formatReasoningItem(item: any): string {
   return String(item);
 }
 
-// Normalize an entire reasoning array, capping at maxItems (from the end).
+// Normalize an entire reasoning array, capping at maxItems (from the start).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function formatReasoning(reasoning: any[] | null | undefined, maxItems?: number): string[] {
   if (!Array.isArray(reasoning) || reasoning.length === 0) return [];
   const formatted = reasoning.map(formatReasoningItem);
   if (maxItems && formatted.length > maxItems) {
-    return formatted.slice(-maxItems);
+    return formatted.slice(0, maxItems);
   }
   return formatted;
 }
