@@ -603,34 +603,51 @@ class PortalAgentServiceSkyvern {
             return { success: true, skipped: true, reason: 'recent_success' };
         }
 
-        // ── Approval gate: require an approved proposal before any portal run ──
+        // ── Approval gate: require an in-flight approved proposal before any portal run ──
+        // Only APPROVED (just approved, execution starting) and PENDING_PORTAL (portal task created)
+        // qualify. EXECUTED means the run already completed — don't reuse old approvals.
         const approvedProposal = await database.query(
             `SELECT id, status FROM proposals
              WHERE case_id = $1
                AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_FEE_RESPONSE')
-               AND status IN ('APPROVED', 'PENDING_PORTAL', 'EXECUTED')
-               AND created_at > NOW() - INTERVAL '24 hours'
+               AND status IN ('APPROVED', 'PENDING_PORTAL')
              ORDER BY created_at DESC LIMIT 1`,
             [caseData.id]
         );
         if (approvedProposal.rows.length === 0) {
             console.log(`🛑 Portal submission blocked for case ${caseData.id} — no approved proposal found, creating one for review`);
-            try {
-                await database.upsertProposal({
-                    proposalKey: `${caseData.id}:portal_approval:SUBMIT_PORTAL:1`,
-                    caseId: caseData.id,
-                    actionType: 'SUBMIT_PORTAL',
-                    reasoning: [{ step: 'Portal submission requested', detail: `Automatic portal submission blocked — requires human approval. Portal: ${portalUrl}` }],
-                    confidence: 0.8,
-                    requiresHuman: true,
-                    canAutoExecute: false,
-                    draftSubject: `Portal submission: ${caseData.case_name || caseData.agency_name || 'Unknown'}`,
-                    draftBodyText: `Portal URL: ${portalUrl}\n\nThis portal submission was triggered automatically but requires human approval before Skyvern runs.${instructions ? '\n\nInstructions: ' + instructions : ''}`,
-                    status: 'PENDING_APPROVAL'
-                });
-            } catch (proposalErr) {
-                // Dedup constraint — proposal already exists, which is fine
-                console.warn('Could not create approval proposal (may already exist):', proposalErr.message);
+            // Check if there's already a PENDING_APPROVAL proposal for this case (don't create duplicates)
+            const existingPending = await database.query(
+                `SELECT id FROM proposals
+                 WHERE case_id = $1 AND action_type = 'SUBMIT_PORTAL'
+                   AND status = 'PENDING_APPROVAL'
+                 LIMIT 1`,
+                [caseData.id]
+            );
+            if (existingPending.rows.length === 0) {
+                try {
+                    // Direct INSERT to avoid upsertProposal dismissing unrelated active proposals
+                    await database.query(
+                        `INSERT INTO proposals (case_id, action_type, proposal_key, reasoning, confidence,
+                         requires_human, can_auto_execute, draft_subject, draft_body_text, status, created_at, updated_at)
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW())`,
+                        [
+                            caseData.id,
+                            'SUBMIT_PORTAL',
+                            `${caseData.id}:portal_gate:SUBMIT_PORTAL:${Date.now()}`,
+                            JSON.stringify([{ step: 'Portal submission requested', detail: `Automatic portal submission blocked — requires human approval. Portal: ${portalUrl}` }]),
+                            0.8,
+                            true,
+                            false,
+                            `Portal submission: ${caseData.case_name || caseData.agency_name || 'Unknown'}`,
+                            `Portal URL: ${portalUrl}\n\nThis portal submission was triggered automatically but requires human approval before Skyvern runs.${instructions ? '\n\nInstructions: ' + instructions : ''}`,
+                            'PENDING_APPROVAL'
+                        ]
+                    );
+                } catch (proposalErr) {
+                    // Constraint violation — another proposal was created concurrently, which is fine
+                    console.warn('Could not create approval proposal:', proposalErr.message);
+                }
             }
             await database.updateCaseStatus(caseData.id, 'needs_human_review', {
                 substatus: 'Portal submission requires approval',
