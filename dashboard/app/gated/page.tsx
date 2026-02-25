@@ -39,9 +39,11 @@ import {
   ChevronDown,
   Shield,
   FileText,
-  Inbox,
   AlertCircle,
   Activity,
+  Phone,
+  Mail,
+  ArrowUpRight,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────
@@ -146,6 +148,53 @@ type QueueItem =
   | { type: "proposal"; data: PendingProposal }
   | { type: "review"; data: HumanReviewCase };
 
+type TabId = "queue" | "inbound" | "calls";
+
+interface InboundMessage {
+  id: number;
+  from_email: string;
+  subject: string;
+  body_text: string | null;
+  received_at: string;
+  case_id: number | null;
+  case_name: string | null;
+  agency_name: string | null;
+  intent: string | null;
+  sentiment: string | null;
+  suggested_action: string | null;
+}
+
+interface InboundResponse {
+  success: boolean;
+  count: number;
+  inbound: InboundMessage[];
+}
+
+interface PhoneCallTask {
+  id: number;
+  case_id: number;
+  status: string;
+  reason: string | null;
+  agency_phone: string | null;
+  ai_briefing: string | null;
+  assigned_to: string | null;
+  case_name?: string | null;
+  agency_name?: string | null;
+  created_at?: string;
+}
+
+interface PhoneCallsResponse {
+  success: boolean;
+  count: number;
+  stats: {
+    pending: number;
+    claimed: number;
+    completed: number;
+    skipped: number;
+  };
+  tasks: PhoneCallTask[];
+}
+
 /* ─────────────────────────────────────────────
    Constants
    ───────────────────────────────────────────── */
@@ -208,7 +257,7 @@ function getPauseReason(item: QueueItem): string | null {
    SSE Hook
    ───────────────────────────────────────────── */
 
-function useSSE(onEvent: () => void) {
+function useSSE(url: string, onEvent: () => void) {
   const callbackRef = useRef(onEvent);
   callbackRef.current = onEvent;
 
@@ -232,7 +281,7 @@ function useSSE(onEvent: () => void) {
         source = null;
       }
 
-      const es = new EventSource("/api/monitor/events");
+      const es = new EventSource(url);
       source = es;
 
       es.onopen = () => {
@@ -267,7 +316,7 @@ function useSSE(onEvent: () => void) {
       if (source) source.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, []);
+  }, [url]);
 
   return connected;
 }
@@ -281,14 +330,25 @@ function StatBox({
   value,
   icon: Icon,
   color,
+  onClick,
+  active,
 }: {
   label: string;
   value: number | string;
   icon: React.ElementType;
   color?: string;
+  onClick?: () => void;
+  active?: boolean;
 }) {
   return (
-    <div className="border bg-card p-3">
+    <div
+      className={cn(
+        "border bg-card p-3",
+        onClick && "cursor-pointer hover:bg-muted/50 transition-colors",
+        active && "ring-1 ring-foreground"
+      )}
+      onClick={onClick}
+    >
       <div className="flex items-center gap-2 mb-1">
         <Icon className={cn("h-3.5 w-3.5", color || "text-muted-foreground")} />
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -324,6 +384,7 @@ function MonitorPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>("queue");
   const initialCaseApplied = useRef(false);
 
   // ── Deep linking & user filter ─────────────
@@ -403,10 +464,25 @@ function MonitorPageContent() {
     selectedProposalId ? `/api/proposals/${selectedProposalId}` : null
   );
 
+  // ── Inbound / Phone data (lazy: only fetch when tab is active) ──
+
+  const { data: inboundData, mutate: mutateInbound } = useSWR<InboundResponse>(
+    activeTab === "inbound" ? appendUser("/api/monitor/inbound?limit=100") : null,
+    { refreshInterval: 30000 }
+  );
+
+  const { data: phoneData, mutate: mutatePhone } = useSWR<PhoneCallsResponse>(
+    activeTab === "calls" ? appendUser("/api/phone-calls?status=pending&limit=50") : null,
+    { refreshInterval: 30000 }
+  );
+
   // ── SSE ────────────────────────────────────
 
-  const sseConnected = useSSE(() => {
+  const sseUrl = appendUser("/api/monitor/events");
+  const sseConnected = useSSE(sseUrl, () => {
     mutate();
+    if (activeTab === "inbound") mutateInbound();
+    if (activeTab === "calls") mutatePhone();
   });
 
   // ── Navigation ─────────────────────────────
@@ -643,6 +719,8 @@ function MonitorPageContent() {
           value={totalAttention}
           icon={AlertCircle}
           color={totalAttention > 0 ? "text-amber-400" : "text-green-400"}
+          onClick={() => setActiveTab("queue")}
+          active={activeTab === "queue"}
         />
         <StatBox
           label="Proposals"
@@ -659,8 +737,10 @@ function MonitorPageContent() {
         <StatBox
           label="Inbound 24h"
           value={summary?.inbound_24h ?? 0}
-          icon={Inbox}
+          icon={Mail}
           color="text-green-400"
+          onClick={() => setActiveTab("inbound")}
+          active={activeTab === "inbound"}
         />
         <StatBox
           label="Unmatched"
@@ -680,7 +760,36 @@ function MonitorPageContent() {
         />
       </div>
 
-      {/* ── Queue Header ───────────────────── */}
+      {/* ── Tab Bar ─────────────────────────── */}
+      <div className="flex items-center gap-0 border-b mb-4">
+        {([
+          { id: "queue" as TabId, label: "QUEUE", icon: AlertCircle, count: totalAttention },
+          { id: "inbound" as TabId, label: "INBOUND", icon: Mail, count: inboundData?.count },
+          { id: "calls" as TabId, label: "PHONE CALLS", icon: Phone, count: phoneData?.stats?.pending },
+        ]).map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "flex items-center gap-1.5 px-4 py-2 text-[10px] uppercase tracking-widest transition-colors border-b-2 -mb-px",
+              activeTab === tab.id
+                ? "text-foreground border-foreground"
+                : "text-muted-foreground border-transparent hover:text-foreground"
+            )}
+          >
+            <tab.icon className="h-3 w-3" />
+            {tab.label}
+            {tab.count != null && tab.count > 0 && (
+              <Badge variant="outline" className="h-4 px-1 text-[10px] leading-none ml-1">
+                {tab.count}
+              </Badge>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Queue Tab ────────────────────────── */}
+      {activeTab === "queue" && (<>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
@@ -1175,6 +1284,203 @@ function MonitorPageContent() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      </>)}
+
+      {/* ── Inbound Tab ────────────────────── */}
+      {activeTab === "inbound" && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
+              Recent Inbound Messages
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => mutateInbound()} title="Refresh">
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+          </div>
+          {!inboundData ? (
+            <div className="flex items-center justify-center h-40">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : inboundData.inbound.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-sm text-muted-foreground">
+              No inbound messages found.
+            </div>
+          ) : (
+            <div className="border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Case</th>
+                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">From</th>
+                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Subject</th>
+                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Intent</th>
+                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Action</th>
+                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">Tone</th>
+                    <th className="text-right px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">When</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {inboundData.inbound.map((msg) => (
+                    <tr key={msg.id} className="border-b last:border-b-0 hover:bg-muted/20">
+                      <td className="px-3 py-2">
+                        {msg.case_id ? (
+                          <Link
+                            href={`/requests/detail?id=${msg.case_id}`}
+                            className="text-blue-400 hover:underline flex items-center gap-1"
+                          >
+                            #{msg.case_id}
+                            <ArrowUpRight className="h-2.5 w-2.5" />
+                          </Link>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 max-w-[160px] truncate" title={msg.from_email}>
+                        {msg.from_email}
+                      </td>
+                      <td className="px-3 py-2 max-w-[200px] truncate" title={msg.subject}>
+                        {msg.subject}
+                      </td>
+                      <td className="px-3 py-2">
+                        {msg.intent ? (
+                          <Badge variant="outline" className="text-[10px]">
+                            {msg.intent.replace(/_/g, " ")}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {msg.suggested_action ? (
+                          <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-700/50">
+                            {msg.suggested_action.replace(/_/g, " ")}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {msg.sentiment ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px]",
+                              msg.sentiment === "HOSTILE" && "text-red-400 border-red-700/50",
+                              msg.sentiment === "FRUSTRATED" && "text-orange-400 border-orange-700/50",
+                              msg.sentiment === "COOPERATIVE" && "text-green-400 border-green-700/50"
+                            )}
+                          >
+                            {msg.sentiment}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right text-muted-foreground whitespace-nowrap">
+                        {formatRelativeTime(msg.received_at)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Phone Calls Tab ────────────────── */}
+      {activeTab === "calls" && (
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-muted-foreground uppercase tracking-widest">
+                Phone Call Queue
+              </span>
+              {phoneData?.stats && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-700/50">
+                    {phoneData.stats.pending} pending
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-700/50">
+                    {phoneData.stats.claimed} claimed
+                  </Badge>
+                  <Badge variant="outline" className="text-[10px] text-green-400 border-green-700/50">
+                    {phoneData.stats.completed} done
+                  </Badge>
+                </div>
+              )}
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => mutatePhone()} title="Refresh">
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+          </div>
+          {!phoneData ? (
+            <div className="flex items-center justify-center h-40">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : phoneData.tasks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-40 text-sm text-muted-foreground">
+              No pending phone calls.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {phoneData.tasks.map((task) => (
+                <div key={task.id} className="border p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-3.5 w-3.5 text-amber-400" />
+                      <Link
+                        href={`/requests/detail?id=${task.case_id}`}
+                        className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                      >
+                        #{task.case_id} {task.case_name || ""}
+                        <ArrowUpRight className="h-2.5 w-2.5" />
+                      </Link>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px]",
+                        task.status === "pending" && "text-amber-400 border-amber-700/50",
+                        task.status === "claimed" && "text-blue-400 border-blue-700/50",
+                        task.status === "completed" && "text-green-400 border-green-700/50"
+                      )}
+                    >
+                      {task.status.toUpperCase()}
+                    </Badge>
+                  </div>
+                  {task.agency_name && (
+                    <p className="text-xs text-muted-foreground mb-1">{task.agency_name}</p>
+                  )}
+                  {task.agency_phone && (
+                    <p className="text-xs mb-1">
+                      <span className="text-muted-foreground">Phone:</span>{" "}
+                      <span className="text-foreground font-mono">{task.agency_phone}</span>
+                    </p>
+                  )}
+                  {task.reason && (
+                    <p className="text-xs mb-2">
+                      <span className="text-muted-foreground">Reason:</span> {task.reason}
+                    </p>
+                  )}
+                  {task.ai_briefing && (
+                    <div className="bg-muted/30 border p-2 mt-2">
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">AI Briefing</p>
+                      <p className="text-xs text-foreground/80 whitespace-pre-wrap">{task.ai_briefing}</p>
+                    </div>
+                  )}
+                  {task.assigned_to && (
+                    <p className="text-[10px] text-muted-foreground mt-2">
+                      Assigned to: {task.assigned_to}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
