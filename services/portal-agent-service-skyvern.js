@@ -580,6 +580,29 @@ class PortalAgentServiceSkyvern {
             throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode is required');
         }
 
+        // ── Dedup guard: skip if case already advanced past submission ──
+        const freshCase = await database.getCaseById(caseData.id);
+        const portalSkipStatuses = ['sent', 'awaiting_response', 'responded', 'completed', 'needs_phone_call'];
+        if (freshCase && portalSkipStatuses.includes(freshCase.status)) {
+            console.log(`⏭️  Skipping portal for case ${caseData.id} — case already ${freshCase.status}`);
+            return { success: true, skipped: true, reason: `case_already_${freshCase.status}` };
+        }
+
+        // ── Dedup guard: skip if a successful portal submission happened recently ──
+        const recentSuccess = await database.query(
+            `SELECT id FROM activity_log
+             WHERE event_type = 'portal_stage_completed'
+               AND case_id = $1
+               AND metadata->>'engine' = 'skyvern_workflow'
+               AND created_at > NOW() - INTERVAL '1 hour'
+             LIMIT 1`,
+            [caseData.id]
+        );
+        if (recentSuccess.rows.length > 0) {
+            console.log(`⏭️  Skipping portal for case ${caseData.id} — successful submission within last hour`);
+            return { success: true, skipped: true, reason: 'recent_success' };
+        }
+
         const runId = uuidv4();
 
         console.log(`🤖 Starting Skyvern workflow for case: ${caseData.case_name}`);
@@ -1167,6 +1190,20 @@ class PortalAgentServiceSkyvern {
                     });
                 } catch (_) { /* non-critical */ }
                 return this._handleNotRealPortal(caseData, portalUrl, dryRun, failureReason);
+            }
+
+            // ── Re-check case status before any retry — prevents duplicate submissions
+            //    when Skyvern reports "failed" but the form was actually submitted ──
+            const _retrySkipStatuses = ['sent', 'awaiting_response', 'responded', 'completed', 'needs_phone_call'];
+            const freshCaseBeforeRetry = await database.getCaseById(caseData.id);
+            if (freshCaseBeforeRetry && _retrySkipStatuses.includes(freshCaseBeforeRetry.status)) {
+                console.log(`⏭️  Skipping retry for case ${caseData.id} — case already ${freshCaseBeforeRetry.status}`);
+                return {
+                    success: true,
+                    skipped: true,
+                    reason: `case_already_${freshCaseBeforeRetry.status}`,
+                    engine: 'skyvern_workflow'
+                };
             }
 
             // ACCOUNT EXISTS: If Skyvern created an account but then looped, save creds and retry with login

@@ -666,6 +666,11 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                 });
 
                 if (portalResult && portalResult.success) {
+                    // Dedup skip — Skyvern service detected already submitted, don't re-update status
+                    if (portalResult.skipped) {
+                        console.log(`Portal dedup skip for case ${caseId}: ${portalResult.reason}`);
+                        portalHandled = true;
+                    } else {
                     const submissionStatus = portalResult.submission_status || portalResult.status || 'submitted';
                     const portalEngine = portalResult.engine || 'skyvern';
                     const workflowUrl = portalResult.workflow_url || null;
@@ -723,6 +728,7 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                         sent_via_portal: true,
                         portal_engine: 'skyvern'
                     };
+                    } // end else (not skipped)
                 }
             } catch (error) {
                 portalError = error;
@@ -996,6 +1002,12 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
                 return result;
             }
             throw new Error(result?.error || 'Portal submission failed');
+        }
+
+        // Dedup skip — Skyvern service detected already submitted, don't re-update status
+        if (result.skipped) {
+            console.log(`Portal dedup skip for case ${caseId}: ${result.reason}`);
+            return result;
         }
 
         const engineUsed = result.engine || 'skyvern';

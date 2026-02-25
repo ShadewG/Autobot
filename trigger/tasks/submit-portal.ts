@@ -105,6 +105,21 @@ export const submitPortal = task({
       return { success: true, skipped: true, reason: caseData.status };
     }
 
+    // ── Dedup guard: skip if a successful portal submission happened recently ──
+    const recentSuccess = await db.query(
+      `SELECT id FROM activity_log
+       WHERE event_type = 'portal_stage_completed'
+         AND case_id = $1
+         AND metadata->>'engine' = 'skyvern_workflow'
+         AND created_at > NOW() - INTERVAL '1 hour'
+       LIMIT 1`,
+      [caseId]
+    );
+    if (recentSuccess.rows.length > 0) {
+      logger.warn("Portal submission skipped — successful submission within last hour", { caseId });
+      return { success: true, skipped: true, reason: "recent_success" };
+    }
+
     const targetUrl = portalUrl || caseData.portal_url;
     if (!targetUrl) {
       throw new Error(`No portal URL available for case ${caseId}`);
@@ -135,6 +150,12 @@ export const submitPortal = task({
           return result;
         }
         throw new Error(result?.error || "Portal submission failed");
+      }
+
+      // ── Dedup skip: Skyvern service detected this was already submitted — don't re-update status ──
+      if (result.skipped) {
+        logger.info("Portal submission was a dedup skip", { caseId, reason: result.reason });
+        return result;
       }
 
       // ── Success: update everything ──
