@@ -6,7 +6,7 @@
  */
 
 import { generateObject } from "ai";
-import { decisionModel } from "../lib/ai";
+import { decisionModel, decisionOptions } from "../lib/ai";
 import { decisionSchema, type DecisionOutput } from "../lib/schemas";
 import db, { logger } from "../lib/db";
 // @ts-ignore
@@ -162,6 +162,11 @@ function validateDecision(
     return { valid: false, reason: `AI decision confidence too low (${aiDecisionResult.confidence})` };
   }
 
+  // SEND_INITIAL_REQUEST is only valid for process-initial-request, not inbound routing
+  if (aiDecisionResult.action === "SEND_INITIAL_REQUEST") {
+    return { valid: false, reason: "SEND_INITIAL_REQUEST is not valid for inbound message routing" };
+  }
+
   if (classification === "HOSTILE" && aiDecisionResult.action !== "ESCALATE") {
     return { valid: false, reason: "HOSTILE classification must escalate" };
   }
@@ -237,6 +242,7 @@ async function aiDecision(params: {
       model: decisionModel,
       schema: decisionSchema,
       prompt,
+      providerOptions: decisionOptions,
     });
 
     const validation = validateDecision(object, {
