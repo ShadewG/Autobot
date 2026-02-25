@@ -154,7 +154,7 @@ export const processInbound = task({
       if (humanDecision.action === "WITHDRAW") {
         await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
-        await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: new Date() });
+        await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
         return { status: "withdrawn", proposalId: gate.proposalId };
       }
 

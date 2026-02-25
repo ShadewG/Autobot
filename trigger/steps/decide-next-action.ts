@@ -145,7 +145,7 @@ export async function decideNextAction(
       }
       if (suggestedAction === "download") {
         await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
-        await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: new Date() });
+        await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
         return noAction([...reasoning, "Records ready for download"]);
       }
       if (suggestedAction === "wait") {
@@ -260,7 +260,7 @@ export async function decideNextAction(
           return noAction(["Human dismissed proposal"]);
         case "WITHDRAW":
           await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
-          await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: new Date() });
+          await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
           return noAction(["Request withdrawn by user"]);
         default:
           return decision("ESCALATE", {
@@ -411,7 +411,7 @@ export async function decideNextAction(
     // RECORDS_READY
     if (classification === "RECORDS_READY") {
       await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
-      await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: new Date() });
+      await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
       return noAction(["Records ready - case completed"]);
     }
 

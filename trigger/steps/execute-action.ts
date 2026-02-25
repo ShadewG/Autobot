@@ -348,7 +348,7 @@ export async function executeAction(
 
     case "CLOSE_CASE": {
       await db.updateCaseStatus(caseId, "completed", { substatus: "Denial accepted", requires_human: false });
-      await db.updateCase(caseId, { outcome_type: "denial_accepted", outcome_recorded: new Date() });
+      await db.updateCase(caseId, { outcome_type: "denial_accepted", outcome_recorded: true });
       await createExecutionRecord({
         caseId, proposalId, runId, executionKey, actionType: "CLOSE_CASE",
         status: "SENT", provider: "none", providerPayload: { reason: "Denial accepted" },

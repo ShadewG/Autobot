@@ -15,7 +15,8 @@
  *   Then trigger via the dashboard or API
  */
 
-import "dotenv/config";
+import { config } from "dotenv";
+config({ path: ".env.test" });
 
 // Import steps directly (bypass Trigger.dev task wrapper for local testing)
 import { loadContext } from "../trigger/steps/load-context";
