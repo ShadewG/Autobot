@@ -650,9 +650,19 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
         if (portalUrl && isSupportedPortalUrl(portalUrl)) {
             console.log(`🌐 Attempting portal submission for case ${caseId} via ${portalUrl}`);
             try {
+                // Generate proper FOIA request text to pass as instructions
+                let portalInstructions = null;
+                try {
+                    const foiaResult = await aiService.generateFOIARequest(caseData);
+                    portalInstructions = foiaResult?.request_text || foiaResult?.body || foiaResult?.requestText || null;
+                } catch (genErr) {
+                    console.warn(`Could not generate FOIA text for portal submission (case ${caseId}):`, genErr.message);
+                }
+
                 const portalResult = await portalAgentSkyvern.submitToPortal(caseData, portalUrl, {
                     maxSteps: 50,
-                    dryRun: false
+                    dryRun: false,
+                    instructions: portalInstructions
                 });
 
                 if (portalResult && portalResult.success) {

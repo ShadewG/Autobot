@@ -559,7 +559,7 @@ class PortalAgentServiceSkyvern {
      * Submit to portal using Skyvern (workflow only)
      */
     async submitToPortal(caseData, portalUrl, options = {}) {
-        const { dryRun = false } = options;
+        const { dryRun = false, instructions = null } = options;
 
         // Early detection: document file URLs are not real portals — skip Skyvern entirely
         if (/\.(doc|docx|pdf|xls|xlsx|rtf|odt)(\?|#|$)/i.test(portalUrl)) {
@@ -606,7 +606,8 @@ class PortalAgentServiceSkyvern {
                 caseData,
                 portalUrl,
                 dryRun,
-                runId
+                runId,
+                instructions
             });
         } catch (error) {
             console.error('❌ Skyvern workflow submission failed:', error.message);
@@ -716,9 +717,14 @@ class PortalAgentServiceSkyvern {
         };
     }
 
-    async _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun }) {
+    async _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions = null }) {
         const caseInfo = this._buildWorkflowCaseInfo(caseData, portalUrl, dryRun);
         const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email);
+
+        // Include the drafted FOIA request text so Skyvern uses it instead of raw case_name
+        if (instructions) {
+            caseInfo.request_text = instructions;
+        }
 
         // Inject previous submission memory if available
         try {
@@ -899,7 +905,7 @@ class PortalAgentServiceSkyvern {
         }
     }
 
-    async _submitViaWorkflow({ caseData, portalUrl, dryRun, runId, retryContext = null }) {
+    async _submitViaWorkflow({ caseData, portalUrl, dryRun, runId, instructions = null, retryContext = null }) {
         if (!this.workflowId) {
             throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode requested');
         }
@@ -917,7 +923,7 @@ class PortalAgentServiceSkyvern {
         }
 
         const totpIdentifier = process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
-        const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun });
+        const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions });
         if (retryContext?.navigation_goal) {
             parameters.navigation_goal = retryContext.navigation_goal;
             console.log(`🔄 Retry with AI guidance: ${retryContext.navigation_goal}`);
