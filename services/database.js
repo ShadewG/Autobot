@@ -2306,7 +2306,7 @@ class DatabaseService {
         if (!agencyName) return null;
 
         try {
-            // First try exact match
+            // First try exact match (state-specific if state provided)
             let result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
@@ -2320,10 +2320,11 @@ class DatabaseService {
             }
 
             // Try normalized match (remove common suffixes)
+            // When state is provided, require state match — don't fall back to cross-state
             result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
-                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
+                WHERE ($2::text IS NULL OR state = $2)
                   AND LOWER(REGEXP_REPLACE(name, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
                     = LOWER(REGEXP_REPLACE($1, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
                 LIMIT 1
@@ -2334,10 +2335,11 @@ class DatabaseService {
             }
 
             // Try case-insensitive contains match as last resort
+            // When state is provided, require state match — never allow cross-state fuzzy matches
             result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
-                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
+                WHERE ($2::text IS NULL OR state = $2)
                   AND (
                     LOWER(name) LIKE LOWER('%' || $1 || '%')
                     OR LOWER($1) LIKE LOWER('%' || name || '%')

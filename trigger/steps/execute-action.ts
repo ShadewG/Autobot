@@ -355,7 +355,7 @@ export async function executeAction(
         break;
       }
 
-      await db.updateCaseStatus(caseId, "ready_to_send", { substatus: "research_followup_proposed", requires_human: true });
+      await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "research_followup_proposed", requires_human: true });
       await db.logActivity("research_followup_proposed", `Research complete - proposed ${followupActionType} to ${suggestedAgency.name}`, {
         caseId, proposalId, newAgency: suggestedAgency.name, actionType: followupActionType,
       });

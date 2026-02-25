@@ -107,6 +107,22 @@ export const submitPortal = task({
       return { success: true, skipped: true, reason: caseData.status };
     }
 
+    // ── WRONG_AGENCY guard: skip if case has WRONG_AGENCY constraint ──
+    const constraints = caseData.constraints_jsonb || caseData.constraints || [];
+    if (constraints.includes("WRONG_AGENCY")) {
+      logger.warn("Portal submission skipped — wrong agency", { caseId });
+      return { success: false, skipped: true, reason: "wrong_agency" };
+    }
+
+    // ── Cancelled task guard: skip if portal task was cancelled (e.g. by WRONG_AGENCY handler) ──
+    if (portalTaskId) {
+      const taskCheck = await db.query("SELECT status FROM portal_tasks WHERE id = $1", [portalTaskId]);
+      if (taskCheck.rows[0]?.status === "CANCELLED") {
+        logger.warn("Portal task was cancelled", { caseId, portalTaskId });
+        return { success: false, skipped: true, reason: "task_cancelled" };
+      }
+    }
+
     // ── Dedup guard: skip if a successful portal submission happened recently ──
     const recentSuccess = await db.query(
       `SELECT id FROM activity_log

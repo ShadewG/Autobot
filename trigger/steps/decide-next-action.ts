@@ -595,8 +595,29 @@ async function deterministicRouting(
           return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "deep", reasoning: [...reasoning, "No records - researching correct agency (deep)"] });
         }
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Already researched - reformulating request"] });
-      case "wrong_agency":
+      case "wrong_agency": {
+        // Atomic WRONG_AGENCY handling: cancel portal tasks, dismiss proposals, add constraint
+        await Promise.all([
+          db.query(
+            `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
+             WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+            [caseId]
+          ),
+          db.query(
+            `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+             WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
+             AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
+            [caseId]
+          ),
+        ]);
+        const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+        if (!currentConstraints.includes("WRONG_AGENCY")) {
+          await db.updateCase(caseId, {
+            constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+          });
+        }
         return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Wrong agency - researching correct one"] });
+      }
       case "overly_broad":
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", reasoning: [...reasoning, "Overly broad - narrowing scope"] });
       case "ongoing_investigation":
@@ -739,8 +760,28 @@ async function deterministicRouting(
     return noAction(["Portal redirect - task created"]);
   }
 
-  // WRONG_AGENCY — always research the correct agency
+  // WRONG_AGENCY — cancel in-flight work, add constraint, then research
   if (classification === "WRONG_AGENCY") {
+    await Promise.all([
+      db.query(
+        `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
+         WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+        [caseId]
+      ),
+      db.query(
+        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
+         AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
+        [caseId]
+      ),
+    ]);
+    const caseData = await db.getCaseById(caseId);
+    const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+    if (!currentConstraints.includes("WRONG_AGENCY")) {
+      await db.updateCase(caseId, {
+        constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+      });
+    }
     return decision("RESEARCH_AGENCY", {
       pauseReason: "DENIAL",
       researchLevel: "deep",
@@ -867,6 +908,27 @@ export async function decideNextAction(
         return noAction([...reasoning, "Acknowledgment received, waiting"]);
       }
       if (suggestedAction === "find_correct_agency") {
+        // Cancel in-flight portal work + add WRONG_AGENCY constraint
+        await Promise.all([
+          db.query(
+            `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
+             WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+            [caseId]
+          ),
+          db.query(
+            `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+             WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
+             AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
+            [caseId]
+          ),
+        ]);
+        const wrongAgencyCaseData = await db.getCaseById(caseId);
+        const waConstraints = wrongAgencyCaseData?.constraints_jsonb || wrongAgencyCaseData?.constraints || [];
+        if (!waConstraints.includes("WRONG_AGENCY")) {
+          await db.updateCase(caseId, {
+            constraints_jsonb: JSON.stringify([...waConstraints, "WRONG_AGENCY"]),
+          });
+        }
         return decision("RESEARCH_AGENCY", {
           pauseReason: "DENIAL",
           researchLevel: "deep",

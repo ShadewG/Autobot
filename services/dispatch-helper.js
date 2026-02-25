@@ -26,6 +26,15 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
         return { dispatched: false, reason: `unexpected_status_${caseData.status}` };
     }
 
+    // Don't dispatch if there's already a pending proposal waiting for human review
+    const pendingProposal = await db.query(
+        `SELECT id FROM proposals WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED') LIMIT 1`,
+        [caseId]
+    );
+    if (pendingProposal.rows.length > 0) {
+        return { dispatched: false, reason: 'pending_proposal_exists' };
+    }
+
     // 2. Dedup: skip if there's already an active run
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
