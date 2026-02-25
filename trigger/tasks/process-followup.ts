@@ -40,7 +40,21 @@ export const processFollowup = task({
   retry: { maxAttempts: 2 },
 
   run: async (payload: FollowupPayload) => {
-    const { runId, caseId, followupScheduleId } = payload;
+    const { caseId, followupScheduleId } = payload;
+
+    // Clear any stale agent_runs that would block the unique constraint
+    await db.query(
+      `UPDATE agent_runs SET status = 'failed', error = 'superseded by new trigger.dev run'
+       WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
+      [caseId]
+    );
+
+    // Create agent_run record in DB (provides FK for proposals)
+    const agentRun = await db.createAgentRun(caseId, "SCHEDULED_FOLLOWUP", {
+      followupScheduleId,
+      source: "trigger.dev",
+    });
+    const runId = agentRun.id;
 
     logger.info("process-followup started", { runId, caseId, followupScheduleId });
 
@@ -97,6 +111,7 @@ export const processFollowup = task({
 
     // Step 6: Wait if needed
     if (gate.shouldWait && gate.waitpointTokenId) {
+      await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
       const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
 
       if (!result.ok) {

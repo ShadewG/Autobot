@@ -54,7 +54,22 @@ export const processInbound = task({
   retry: { maxAttempts: 2 },
 
   run: async (payload: InboundPayload) => {
-    const { runId, caseId, messageId, autopilotMode } = payload;
+    const { caseId, messageId, autopilotMode } = payload;
+
+    // Clear any stale agent_runs that would block the unique constraint
+    await db.query(
+      `UPDATE agent_runs SET status = 'failed', error = 'superseded by new trigger.dev run'
+       WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
+      [caseId]
+    );
+
+    // Create agent_run record in DB (provides FK for proposals)
+    const agentRun = await db.createAgentRun(caseId, "INBOUND_MESSAGE", {
+      messageId,
+      autopilotMode,
+      source: "trigger.dev",
+    });
+    const runId = agentRun.id;
 
     logger.info("process-inbound started", { runId, caseId, messageId, autopilotMode });
 
@@ -139,6 +154,7 @@ export const processInbound = task({
 
     // Step 8: If human gate, wait for approval
     if (gate.shouldWait && gate.waitpointTokenId) {
+      await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
       logger.info("Waiting for human decision", {
         caseId, proposalId: gate.proposalId, tokenId: gate.waitpointTokenId,
       });

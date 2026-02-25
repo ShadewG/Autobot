@@ -38,7 +38,21 @@ export const processInitialRequest = task({
   retry: { maxAttempts: 2 },
 
   run: async (payload: InitialRequestPayload) => {
-    const { runId, caseId, autopilotMode } = payload;
+    const { caseId, autopilotMode } = payload;
+
+    // Clear any stale agent_runs that would block the unique constraint
+    await db.query(
+      `UPDATE agent_runs SET status = 'failed', error = 'superseded by new trigger.dev run'
+       WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
+      [caseId]
+    );
+
+    // Create agent_run record in DB (provides FK for proposals)
+    const agentRun = await db.createAgentRun(caseId, "INITIAL_REQUEST", {
+      autopilotMode,
+      source: "trigger.dev",
+    });
+    const runId = agentRun.id;
 
     logger.info("process-initial-request started", { runId, caseId, autopilotMode });
 
@@ -56,6 +70,7 @@ export const processInitialRequest = task({
 
     // If requires human review, wait for approval
     if (draft.requiresHuman) {
+      await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
       const tokenId = crypto.randomUUID();
       await db.updateProposal(draft.proposalId, { waitpoint_token: tokenId });
       await db.updateCaseStatus(caseId, "needs_human_review", {
