@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const sgMail = require('@sendgrid/mail');
-const { enqueueInboundMessageJob, enqueueResumeRunJob } = require('../queues/agent-queue');
+const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const { portalQueue } = require('../queues/email-queue');
 const crypto = require('crypto');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
@@ -62,15 +62,17 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
         langgraph_thread_id: `case:${caseData.id}:msg-${message.id}`
     });
 
-    const job = await enqueueInboundMessageJob(run.id, caseData.id, message.id, {
+    const handle = await tasks.trigger('process-inbound', {
+        runId: run.id,
+        caseId: caseData.id,
+        messageId: message.id,
         autopilotMode,
-        threadId: run.langgraph_thread_id
     });
 
     return {
         caseData,
         run,
-        job
+        job: { id: handle.id }
     };
 }
 
@@ -246,6 +248,29 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         };
     }
 
+    // Trigger.dev path: if proposal has waitpoint_token, complete it
+    if (proposal.waitpoint_token) {
+        await triggerWait.completeToken(proposal.waitpoint_token, {
+            action,
+            instruction: instruction || null,
+            reason: reason || null,
+        });
+
+        await db.updateProposal(proposalId, {
+            human_decision: humanDecision,
+            status: 'DECISION_RECEIVED'
+        });
+
+        notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
+        return {
+            success: true,
+            message: 'Decision received, Trigger.dev task resuming',
+            proposal_id: proposalId,
+            action,
+        };
+    }
+
+    // Legacy path: re-trigger through Trigger.dev (old LangGraph proposals)
     await db.updateProposal(proposalId, {
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
@@ -259,46 +284,30 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         langgraph_thread_id: `resume:${caseId}:proposal-${proposalId}`
     });
 
-    let job = null;
-    let fallbackUsed = false;
-
-    try {
-        job = await enqueueResumeRunJob(run.id, caseId, humanDecision, {
-            isInitialRequest: proposal.action_type === 'SEND_INITIAL_REQUEST',
-            originalProposalId: proposalId
+    let handle;
+    if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
+        handle = await tasks.trigger('process-initial-request', {
+            runId: run.id,
+            caseId,
+            autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
         });
-    } catch (enqueueErr) {
-        // Redis/queue unavailable — execute graph directly as fallback
-        console.error(`Queue enqueue failed for case ${caseId}, executing inline:`, enqueueErr.message);
-        fallbackUsed = true;
-
-        try {
-            const { processResumeRunJob } = require('../workers/agent-worker');
-            await processResumeRunJob({
-                id: `inline-${proposalId}`,
-                data: {
-                    runId: run.id,
-                    caseId,
-                    humanDecision,
-                    isInitialRequest: proposal.action_type === 'SEND_INITIAL_REQUEST',
-                    originalProposalId: proposalId
-                }
-            });
-        } catch (inlineErr) {
-            console.error(`Inline resume also failed for case ${caseId}:`, inlineErr.message);
-            // Don't throw — proposal is DECISION_RECEIVED, cron sweep will retry
-        }
+    } else {
+        handle = await tasks.trigger('process-inbound', {
+            runId: run.id,
+            caseId,
+            messageId: proposal.trigger_message_id,
+            autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+        });
     }
 
-    notify('info', `Proposal ${action.toLowerCase()} — ${fallbackUsed ? 'executed inline (queue unavailable)' : 'resume queued'} for case ${caseId}`, { case_id: caseId });
+    notify('info', `Proposal ${action.toLowerCase()} — re-triggered via Trigger.dev for case ${caseId}`, { case_id: caseId });
     return {
         success: true,
-        message: fallbackUsed ? 'Decision received, executed inline' : 'Decision received, resume queued',
+        message: 'Decision received, re-processing via Trigger.dev',
         run: { id: run.id, status: run.status },
         proposal_id: proposalId,
         action,
-        job_id: job?.id || null,
-        fallback: fallbackUsed
+        trigger_run_id: handle.id
     };
 }
 

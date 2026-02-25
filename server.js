@@ -83,11 +83,7 @@ app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency suppo
 const cronService = require('./services/cron-service');
 const discordService = require('./services/discord-service');
 const { emailWorker, analysisWorker, generateWorker, portalWorker } = require('./queues/email-queue');
-const { createAgentWorker } = require('./workers/agent-worker');
 const fs = require('fs');
-
-// LangGraph agent worker instance
-let agentWorker = null;
 
 /**
  * Run database migrations automatically
@@ -222,17 +218,8 @@ async function startServer() {
         console.log('   ✓ Analysis worker started');
         console.log('   ✓ Generate worker started');
 
-        // Start LangGraph agent worker
-        console.log('\nStarting LangGraph agent worker...');
-        agentWorker = createAgentWorker();
-        if (agentWorker) {
-            console.log('   ✓ LangGraph agent worker started');
-        } else {
-            console.log('   ⚠️ LangGraph agent worker not started (no Redis)');
-        }
-
         app.listen(PORT, '0.0.0.0', () => {
-            console.log(`\n🤖 Autobot MVP Server Running`);
+            console.log(`\n Autobot MVP Server Running`);
             console.log(`   Port: ${PORT}`);
             console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
             console.log(`   Database: ${process.env.DATABASE_URL ? 'Connected' : 'Not configured'}`);
@@ -241,12 +228,11 @@ async function startServer() {
             console.log(`   Health check: http://localhost:${PORT}/health`);
             console.log(`   API: http://localhost:${PORT}/api`);
             console.log(`   Webhooks: http://localhost:${PORT}/webhooks/inbound`);
-            console.log(`\n   ✓ Database migrations applied`);
-            console.log(`   ✓ Automated follow-ups enabled`);
-            console.log(`   ✓ BullMQ workers running`);
-            console.log(`   ✓ LangGraph agent enabled`);
-            console.log(`   ✓ Notion sync every 15 minutes`);
-            console.log(`   ✓ Adaptive learning system active`);
+            console.log(`\n   Agent pipeline: Trigger.dev (cloud)`);
+            console.log(`   BullMQ workers: email/analysis/portal only`);
+            console.log(`   Automated follow-ups enabled`);
+            console.log(`   Notion sync every 15 minutes`);
+            console.log(`   Adaptive learning system active`);
 
             // Log shadow mode status
             const shadowMode = require('./services/shadow-mode');
@@ -271,7 +257,6 @@ async function startServer() {
 process.on('SIGTERM', async () => {
     console.log('SIGTERM received, shutting down gracefully...');
     cronService.stop();
-    if (agentWorker) await agentWorker.close();
     await db.close();
     process.exit(0);
 });
@@ -279,7 +264,6 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
     console.log('SIGINT received, shutting down gracefully...');
     cronService.stop();
-    if (agentWorker) await agentWorker.close();
     await db.close();
     process.exit(0);
 });

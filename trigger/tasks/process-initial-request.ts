@@ -82,11 +82,11 @@ export const processInitialRequest = task({
       const humanDecision = result.output;
       logger.info("Human decision received for initial request", { caseId, action: humanDecision.action });
 
-      // Validate proposal still PENDING_APPROVAL
+      // Validate proposal is still actionable
       const currentProposal = await db.getProposalById(draft.proposalId);
-      if (currentProposal?.status !== "PENDING_APPROVAL") {
+      if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
         throw new Error(
-          `Proposal ${draft.proposalId} is ${currentProposal?.status}, not PENDING_APPROVAL`
+          `Proposal ${draft.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
         );
       }
 

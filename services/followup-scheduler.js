@@ -15,7 +15,7 @@
 const { CronJob } = require('cron');
 const db = require('./database');
 const logger = require('./logger');
-const { enqueueFollowupTriggerJob } = require('../queues/agent-queue');
+const { tasks } = require('@trigger.dev/sdk/v3');
 
 // Configuration
 const FOLLOWUP_CHECK_CRON = process.env.FOLLOWUP_CHECK_CRON || '*/15 * * * *'; // Every 15 minutes
@@ -180,23 +180,23 @@ class FollowupScheduler {
       WHERE id = $1
     `, [followupId, scheduledKey, run.id]);
 
-    // Enqueue the job
-    const job = await enqueueFollowupTriggerJob(run.id, caseId, followupId, {
-      autopilotMode,
-      threadId: run.langgraph_thread_id,
-      followupCount
+    // Trigger Trigger.dev task
+    const handle = await tasks.trigger('process-followup', {
+      runId: run.id,
+      caseId,
+      followupScheduleId: followupId,
     });
 
-    logger.info('Followup trigger enqueued', {
+    logger.info('Followup trigger task triggered', {
       followupId,
       caseId,
       runId: run.id,
-      jobId: job.id,
+      triggerRunId: handle.id,
       followupCount,
       autopilotMode
     });
 
-    return { run, job };
+    return { run, triggerRunId: handle.id };
   }
 
   /**

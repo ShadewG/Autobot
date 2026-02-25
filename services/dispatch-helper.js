@@ -1,14 +1,6 @@
 const db = require('./database');
 const { notify } = require('./event-bus');
-
-// Lazy-load to avoid circular deps
-let _enqueueInitialRequestJob = null;
-function getEnqueueFn() {
-    if (!_enqueueInitialRequestJob) {
-        _enqueueInitialRequestJob = require('../queues/agent-queue').enqueueInitialRequestJob;
-    }
-    return _enqueueInitialRequestJob;
-}
+const { tasks } = require('@trigger.dev/sdk/v3');
 
 /**
  * Dispatch a ready_to_send case through the Run Engine.
@@ -58,20 +50,20 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
         throw err;
     }
 
-    // 4. Enqueue to agent-queue (clean up run on failure)
+    // 4. Trigger Trigger.dev task (clean up run on failure)
     try {
-        const enqueue = getEnqueueFn();
-        await enqueue(run.id, caseId, {
+        await tasks.trigger('process-initial-request', {
+            runId: run.id,
+            caseId,
             autopilotMode: 'SUPERVISED',
-            threadId: run.langgraph_thread_id
         });
-    } catch (enqueueErr) {
+    } catch (triggerErr) {
         await db.updateAgentRun(run.id, {
             status: 'failed',
             ended_at: new Date(),
-            error: `Enqueue failed: ${enqueueErr.message}`
+            error: `Trigger failed: ${triggerErr.message}`
         });
-        throw enqueueErr;
+        throw triggerErr;
     }
 
     // 5. Log + notify (fire-and-forget — don't fail dispatch on side-effect errors)

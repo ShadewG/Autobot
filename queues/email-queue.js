@@ -17,18 +17,6 @@ const {
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 const { isValidEmail } = require('../utils/contact-utils');
 
-// LangGraph agent queue (lazy loaded to avoid circular deps)
-let agentQueueModule = null;
-function getAgentQueueModule() {
-    if (!agentQueueModule) {
-        agentQueueModule = require('./agent-queue');
-    }
-    return agentQueueModule;
-}
-
-// Feature flag for LangGraph migration - HARDCODED TO TRUE
-const USE_LANGGRAPH = true;
-
 // Feature flag for Run Engine (Phase 3) - new auditability layer
 const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
 
@@ -406,26 +394,24 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
         console.log(`\n🤖 Agent Status:`);
         console.log(`   Complex case: ${isComplexCase}`);
         console.log(`   Reason: ${analysis.intent}${feeAmount ? ` ($${feeAmount})` : ''}`);
-        console.log(`   LangGraph enabled: ${USE_LANGGRAPH}`);
+        console.log(`   Pipeline: Trigger.dev`);
 
         // If this is a complex case, let the agent handle it
         if (isComplexCase) {
             const agentLog = logger.forAgent(caseId, 'agency_reply');
 
-            // === RUN ENGINE PATH (Phase 3) ===
-            // Creates agent_run record for auditability, then queues LangGraph job
-            if (USE_RUN_ENGINE && USE_LANGGRAPH) {
-                agentLog.info('Using Run Engine for inbound message processing');
+            // === TRIGGER.DEV PATH ===
+            // Creates agent_run record for auditability, then triggers Trigger.dev task
+            if (USE_RUN_ENGINE) {
+                agentLog.info('Triggering Trigger.dev task for inbound message');
 
-                let runEngineEnqueued = false;
+                let triggerEnqueued = false;
                 let run = null;
                 try {
-                    const { enqueueInboundMessageJob } = getAgentQueueModule();
+                    const { tasks } = require('@trigger.dev/sdk/v3');
 
-                    // Determine autopilot mode from case or default
                     const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 
-                    // Create agent_run record and enqueue job
                     run = await db.createAgentRunFull({
                         case_id: caseId,
                         trigger_type: 'inbound_message',
@@ -435,21 +421,21 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                         langgraph_thread_id: `case:${caseId}:msg-${messageId}`
                     });
 
-                    const agentJob = await enqueueInboundMessageJob(run.id, caseId, messageId, {
+                    const handle = await tasks.trigger('process-inbound', {
+                        runId: run.id,
+                        caseId,
+                        messageId,
                         autopilotMode,
-                        threadId: run.langgraph_thread_id,
-                        analysisJobId: job.id
                     });
 
-                    runEngineEnqueued = true;
+                    triggerEnqueued = true;
 
-                    agentLog.info(`Run Engine job queued`, {
+                    agentLog.info(`Trigger.dev task triggered`, {
                         runId: run.id,
-                        jobId: agentJob.id,
+                        triggerRunId: handle.id,
                         autopilotMode
                     });
 
-                    // DB updates in separate try — enqueue already succeeded, don't fall through
                     try {
                         await db.query(
                             'UPDATE cases SET agent_handled = true WHERE id = $1',
@@ -460,67 +446,27 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                             [messageId, run.id]
                         );
                     } catch (dbError) {
-                        agentLog.error(`Post-enqueue DB update failed (run still active): ${dbError.message}`);
+                        agentLog.error(`Post-trigger DB update failed (task still active): ${dbError.message}`);
                     }
 
-                    // Don't run deterministic flow - LangGraph will handle everything
                     return analysis;
                 } catch (agentError) {
-                    // Only fall through if enqueue itself failed — not if DB updates failed
-                    if (runEngineEnqueued) {
-                        agentLog.error(`Post-enqueue error (run still active): ${agentError.message}`);
+                    if (triggerEnqueued) {
+                        agentLog.error(`Post-trigger error (task still active): ${agentError.message}`);
                         return analysis;
                     }
-                    agentLog.error(`Failed to queue Run Engine job: ${agentError.message}`);
-                    // Clean up orphaned run record
+                    agentLog.error(`Failed to trigger Trigger.dev task: ${agentError.message}`);
                     if (run) {
                         try {
-                            await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${agentError.message}` });
+                            await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${agentError.message}` });
                         } catch (cleanupErr) {
                             agentLog.error(`Failed to clean up orphaned run: ${cleanupErr.message}`);
                         }
                     }
-                    // Fall through to legacy agent or deterministic flow
                 }
             }
 
-            // === LEGACY LANGGRAPH PATH (fallback) ===
-            if (USE_LANGGRAPH && !USE_RUN_ENGINE) {
-                agentLog.info('Queuing to LangGraph agent (legacy path)');
-
-                let legacyEnqueued = false;
-                try {
-                    const { enqueueAgentJob } = getAgentQueueModule();
-                    const agentJob = await enqueueAgentJob(caseId, 'INBOUND_MESSAGE', {
-                        messageId: messageId,
-                        analysisJobId: job.id
-                    });
-
-                    legacyEnqueued = true;
-
-                    agentLog.info(`LangGraph agent job queued: ${agentJob.id}`);
-
-                    // DB updates in separate try
-                    try {
-                        await db.query(
-                            'UPDATE cases SET agent_handled = true WHERE id = $1',
-                            [caseId]
-                        );
-                    } catch (dbError) {
-                        agentLog.error(`Post-enqueue DB update failed (job still active): ${dbError.message}`);
-                    }
-
-                    // Don't run deterministic flow - LangGraph will handle everything
-                    return analysis;
-                } catch (agentError) {
-                    if (legacyEnqueued) {
-                        agentLog.error(`Post-enqueue error (job still active): ${agentError.message}`);
-                        return analysis;
-                    }
-                    agentLog.error(`Failed to queue LangGraph agent: ${agentError.message}`);
-                    // Fall through to legacy agent or deterministic flow
-                }
-            }
+            // Legacy LangGraph path removed — all agent work now goes through Trigger.dev
 
             // === LEGACY AGENT PATH ===
             agentLog.info('Delegating to legacy FOIA Agent for complex case handling');

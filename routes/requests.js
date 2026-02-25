@@ -985,12 +985,23 @@ router.post('/:id/resolve-review', async (req, res) => {
             previous_status: caseData.status
         });
 
-        // Enqueue agent job
-        const { enqueueAgentJob } = require('../queues/agent-queue');
-        const job = await enqueueAgentJob(requestId, 'HUMAN_REVIEW_RESOLUTION', {
-            reviewAction: action,
-            instruction: combinedInstruction
+        // Trigger Trigger.dev task for re-processing
+        const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+        const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
+        const triggerRun = await db.createAgentRunFull({
+            case_id: requestId,
+            trigger_type: 'human_review_resolution',
+            status: 'queued',
+            autopilot_mode: 'SUPERVISED',
+            langgraph_thread_id: `review:${requestId}:${Date.now()}`
         });
+        const handle = await triggerTasks.trigger('process-inbound', {
+            runId: triggerRun.id,
+            caseId: requestId,
+            messageId: latestMsg.rows[0]?.id || null,
+            autopilotMode: 'SUPERVISED',
+        });
+        const job = { id: handle.id };
 
         // Sync to Notion
         try {
@@ -1738,20 +1749,30 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
             humanDecidedAt: new Date()
         });
 
-        // Queue the resume job to continue the LangGraph execution
-        const { enqueueResumeJob } = require('../queues/agent-queue');
-        const job = await enqueueResumeJob(requestId, {
-            action: 'APPROVE',
-            proposalId: proposalId
-        });
-
-        log.info(`Resume job enqueued (job: ${job.id})`);
+        // Complete the Trigger.dev waitpoint token or handle legacy proposal
+        if (proposal.waitpoint_token) {
+            const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+            await triggerWait.completeToken(proposal.waitpoint_token, {
+                action: 'APPROVE',
+                proposalId: proposalId
+            });
+            log.info(`Trigger.dev waitpoint completed for approve on proposal ${proposalId}`);
+        } else {
+            // Legacy proposal — re-trigger inbound processing
+            const { tasks } = require('@trigger.dev/sdk/v3');
+            await tasks.trigger('process-inbound', {
+                runId: proposal.run_id || 0,
+                caseId: requestId,
+                messageId: proposal.message_id || 0,
+                autopilotMode: 'SUPERVISED'
+            });
+            log.info(`Re-triggered process-inbound for legacy proposal ${proposalId}`);
+        }
 
         res.json({
             success: true,
-            message: 'Proposal approved, graph resuming',
-            proposal_id: proposalId,
-            job_id: job.id
+            message: 'Proposal approved, execution resuming',
+            proposal_id: proposalId
         });
     } catch (error) {
         log.error(`Error approving proposal: ${error.message}`);
@@ -1806,22 +1827,32 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
             adjustmentCount: (proposal.adjustment_count || 0) + 1
         });
 
-        // Queue the resume job with adjustments
-        const { enqueueResumeJob } = require('../queues/agent-queue');
-        const job = await enqueueResumeJob(requestId, {
-            action: 'ADJUST',
-            proposalId: proposalId,
-            instruction: instruction,
-            adjustments: adjustments
-        });
-
-        log.info(`Adjust resume job enqueued (job: ${job.id})`);
+        // Complete the Trigger.dev waitpoint token or handle legacy proposal
+        if (proposal.waitpoint_token) {
+            const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+            await triggerWait.completeToken(proposal.waitpoint_token, {
+                action: 'ADJUST',
+                proposalId: proposalId,
+                instruction: instruction,
+                adjustments: adjustments
+            });
+            log.info(`Trigger.dev waitpoint completed for adjust on proposal ${proposalId}`);
+        } else {
+            // Legacy proposal — re-trigger inbound processing with adjustment context
+            const { tasks } = require('@trigger.dev/sdk/v3');
+            await tasks.trigger('process-inbound', {
+                runId: proposal.run_id || 0,
+                caseId: requestId,
+                messageId: proposal.message_id || 0,
+                autopilotMode: 'SUPERVISED'
+            });
+            log.info(`Re-triggered process-inbound for legacy adjust on proposal ${proposalId}`);
+        }
 
         res.json({
             success: true,
-            message: 'Adjustment requested, graph re-drafting',
-            proposal_id: proposalId,
-            job_id: job.id
+            message: 'Adjustment requested, re-drafting',
+            proposal_id: proposalId
         });
     } catch (error) {
         log.error(`Error adjusting proposal: ${error.message}`);
@@ -1868,21 +1899,24 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
             humanDecidedAt: new Date()
         });
 
-        // Queue the resume job to take different action
-        const { enqueueResumeJob } = require('../queues/agent-queue');
-        const job = await enqueueResumeJob(requestId, {
-            action: 'DISMISS',
-            proposalId: proposalId,
-            reason: reason
-        });
-
-        log.info(`Dismiss resume job enqueued (job: ${job.id})`);
+        // Complete the Trigger.dev waitpoint token or handle legacy proposal
+        if (proposal.waitpoint_token) {
+            const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+            await triggerWait.completeToken(proposal.waitpoint_token, {
+                action: 'DISMISS',
+                proposalId: proposalId,
+                reason: reason
+            });
+            log.info(`Trigger.dev waitpoint completed for dismiss on proposal ${proposalId}`);
+        } else {
+            // Legacy proposal — just mark as dismissed, no re-trigger needed
+            log.info(`Legacy proposal ${proposalId} dismissed (no waitpoint token)`);
+        }
 
         res.json({
             success: true,
-            message: 'Proposal dismissed, graph will decide next action',
-            proposal_id: proposalId,
-            job_id: job.id
+            message: 'Proposal dismissed',
+            proposal_id: proposalId
         });
     } catch (error) {
         log.error(`Error dismissing proposal: ${error.message}`);
@@ -1972,15 +2006,28 @@ router.post('/:id/invoke-agent', async (req, res) => {
 
         log.info(`Manual agent invocation requested`);
 
-        const { enqueueAgentJob } = require('../queues/agent-queue');
-        const job = await enqueueAgentJob(requestId, trigger_type || 'MANUAL', {});
+        const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+        const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
+        const triggerRun = await db.createAgentRunFull({
+            case_id: requestId,
+            trigger_type: trigger_type || 'MANUAL',
+            status: 'queued',
+            autopilot_mode: 'SUPERVISED',
+            langgraph_thread_id: `manual:${requestId}:${Date.now()}`
+        });
+        const handle = await triggerTasks.trigger('process-inbound', {
+            runId: triggerRun.id,
+            caseId: requestId,
+            messageId: latestMsg.rows[0]?.id || null,
+            autopilotMode: 'SUPERVISED',
+        });
 
-        log.info(`Agent job enqueued (job: ${job.id})`);
+        log.info(`Trigger.dev task triggered (run: ${handle.id})`);
 
         res.json({
             success: true,
-            message: 'Agent invoked',
-            job_id: job.id
+            message: 'Agent invoked via Trigger.dev',
+            trigger_run_id: handle.id
         });
     } catch (error) {
         log.error(`Error invoking agent: ${error.message}`);
@@ -2257,26 +2304,29 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
             // Live mode: actually re-run the agent
             log.warn('Live replay mode requested - queueing agent job');
 
-            const { enqueueAgentJob } = require('../queues/agent-queue');
-            const job = await enqueueAgentJob(requestId, `REPLAY_${originalRun.trigger_type}`, {
-                replayRunId: replayRun.id,
-                originalRunId: runId
+            const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+            const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
+            const handle = await triggerTasks.trigger('process-inbound', {
+                runId: replayRun.id,
+                caseId: requestId,
+                messageId: latestMsg.rows[0]?.id || null,
+                autopilotMode: 'SUPERVISED',
             });
 
             await db.updateAgentRun(replayRun.id, {
                 metadata: JSON.stringify({
                     ...replayRun.metadata,
-                    job_id: job.id
+                    trigger_run_id: handle.id
                 })
             });
 
             res.json({
                 success: true,
-                message: 'Live replay queued',
+                message: 'Live replay queued via Trigger.dev',
                 replay_run_id: replayRun.id,
                 original_run_id: runId,
                 mode: 'live',
-                job_id: job.id
+                trigger_run_id: handle.id
             });
         }
     } catch (error) {

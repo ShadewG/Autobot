@@ -15,11 +15,38 @@ export type Classification =
   | "HUMAN_REVIEW_RESOLUTION"
   | "UNKNOWN";
 
+export type DenialSubtype =
+  | "no_records" | "wrong_agency" | "overly_broad" | "ongoing_investigation"
+  | "privacy_exemption" | "excessive_fees" | "retention_expired"
+  | "glomar_ncnd" | "not_reasonably_described" | "no_duty_to_create"
+  | "privilege_attorney_work_product" | "juvenile_records" | "sealed_court_order"
+  | "third_party_confidential" | "records_not_yet_created";
+
+export type JurisdictionLevel = "federal" | "state" | "local";
+export type ResponseNature = "substantive" | "procedural" | "administrative" | "mixed";
+export type ResearchLevel = "none" | "light" | "medium" | "deep";
+
+export interface ResearchContext {
+  level: ResearchLevel;
+  agency_hierarchy_verified: boolean;
+  likely_record_custodians: string[];
+  official_records_submission_methods: string[];
+  portal_url_verified: boolean;
+  state_law_notes: string | null;
+  record_type_handoff_notes: string | null;
+  rebuttal_support_points: string[];
+  clarification_answer_support: string | null;
+  cached_at: string | null;
+}
+
 export type ActionType =
   | "SEND_INITIAL_REQUEST"
   | "SEND_FOLLOWUP"
   | "SEND_REBUTTAL"
   | "SEND_CLARIFICATION"
+  | "SEND_APPEAL"
+  | "SEND_FEE_WAIVER_REQUEST"
+  | "SEND_STATUS_UPDATE"
   | "RESPOND_PARTIAL_APPROVAL"
   | "ACCEPT_FEE"
   | "NEGOTIATE_FEE"
@@ -57,7 +84,7 @@ export interface InitialRequestPayload {
 export interface FollowupPayload {
   runId: number;
   caseId: number;
-  followupScheduleId: number;
+  followupScheduleId: number | null;
 }
 
 export interface CaseContext {
@@ -91,6 +118,10 @@ export interface ClassificationResult {
   suggestedAction: string | null;
   reasonNoResponse: string | null;
   unansweredAgencyQuestion: string | null;
+  jurisdiction_level?: JurisdictionLevel | null;
+  response_nature?: ResponseNature | null;
+  detected_exemption_citations?: string[];
+  decision_evidence_quotes?: string[];
 }
 
 export interface DecisionResult {
@@ -104,6 +135,7 @@ export interface DecisionResult {
   gateOptions?: string[];
   // For clarification override: redirect to a different inbound message
   overrideMessageId?: number;
+  researchLevel?: ResearchLevel;
 }
 
 export interface DraftResult {

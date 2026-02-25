@@ -17,11 +17,13 @@ import { safetyCheck } from "../steps/safety-check";
 import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
+import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger } from "../lib/db";
-import type { HumanDecision, InboundPayload } from "../lib/types";
+import type { HumanDecision, InboundPayload, ResearchContext } from "../lib/types";
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
+  "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
   "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
 ];
 
@@ -87,6 +89,22 @@ export const processInbound = task({
       return { status: "completed", action: "none", reasoning: decision.reasoning };
     }
 
+    // Step 4b: Research context (between decide and draft)
+    let research: ResearchContext = emptyResearchContext();
+    const researchLevel = determineResearchLevel(
+      decision.actionType,
+      classification.classification,
+      classification.denialSubtype,
+      decision.researchLevel,
+      !!(context.caseData.contact_research_notes)
+    );
+    if (researchLevel !== "none") {
+      research = await researchContext(
+        caseId, decision.actionType, classification.classification,
+        classification.denialSubtype, researchLevel
+      );
+    }
+
     // Step 5: Draft response (if action requires it)
     let draft: any = { subject: null, bodyText: null, bodyHtml: null, lessonsApplied: [] };
     const needsDraft = DRAFT_REQUIRED_ACTIONS.includes(decision.actionType) ||
@@ -96,13 +114,15 @@ export const processInbound = task({
       draft = await draftResponse(
         caseId, decision.actionType, constraints, scopeItems,
         classification.extractedFeeAmount, decision.adjustmentInstruction,
-        decision.overrideMessageId || messageId
+        decision.overrideMessageId || messageId,
+        research
       );
     }
 
     // Step 6: Safety check
     const safety = await safetyCheck(
-      draft.bodyText, draft.subject, decision.actionType, constraints, scopeItems
+      draft.bodyText, draft.subject, decision.actionType, constraints, scopeItems,
+      classification.jurisdiction_level, context.caseData.state
     );
 
     // Step 7: Create proposal + determine gate
@@ -141,11 +161,11 @@ export const processInbound = task({
       const humanDecision = result.output;
       logger.info("Human decision received", { caseId, action: humanDecision.action });
 
-      // Compare-and-swap: validate proposal still PENDING_APPROVAL
+      // Compare-and-swap: validate proposal is still actionable
       const currentProposal = await db.getProposalById(gate.proposalId);
-      if (currentProposal?.status !== "PENDING_APPROVAL") {
+      if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
         throw new Error(
-          `Proposal ${gate.proposalId} is ${currentProposal?.status}, not PENDING_APPROVAL`
+          `Proposal ${gate.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
         );
       }
 
@@ -166,12 +186,14 @@ export const processInbound = task({
           caseId, decision.actionType, constraints, scopeItems,
           classification.extractedFeeAmount,
           humanDecision.instruction || null,
-          decision.overrideMessageId || messageId
+          decision.overrideMessageId || messageId,
+          research
         );
 
         const adjustedSafety = await safetyCheck(
           adjustedDraft.bodyText, adjustedDraft.subject,
-          decision.actionType, constraints, scopeItems
+          decision.actionType, constraints, scopeItems,
+          classification.jurisdiction_level, context.caseData.state
         );
 
         const adjustedGate = await createProposalAndGate(

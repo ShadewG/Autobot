@@ -15,7 +15,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { enqueueInitialRequestJob, enqueueInboundMessageJob, enqueueResumeRunJob, enqueueFollowupTriggerJob } = require('../queues/agent-queue');
+const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const logger = require('../services/logger');
 
 /**
@@ -80,23 +80,23 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       }
     });
 
-    // Enqueue worker job (clean up orphaned run on failure)
-    let job;
+    // Trigger Trigger.dev task (clean up orphaned run on failure)
+    let handle;
     try {
-      job = await enqueueInitialRequestJob(run.id, caseId, {
+      handle = await tasks.trigger('process-initial-request', {
+        runId: run.id,
+        caseId,
         autopilotMode,
-        threadId: run.langgraph_thread_id,
-        llmStubs
       });
-    } catch (enqueueError) {
-      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
+    } catch (triggerError) {
+      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
     }
 
-    logger.info('Initial request job enqueued', {
+    logger.info('Initial request task triggered', {
       runId: run.id,
       caseId,
-      jobId: job.id
+      triggerRunId: handle.id
     });
 
     res.status(202).json({
@@ -108,7 +108,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
         status: run.status,
         thread_id: run.langgraph_thread_id
       },
-      job_id: job.id
+      trigger_run_id: handle.id
     });
 
   } catch (error) {
@@ -209,24 +209,25 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
       langgraph_thread_id: `case:${caseId}:msg-${messageId}`
     });
 
-    // Enqueue worker job (clean up orphaned run on failure)
-    let job;
+    // Trigger Trigger.dev task (clean up orphaned run on failure)
+    let handle;
     try {
-      job = await enqueueInboundMessageJob(run.id, caseId, messageId, {
+      handle = await tasks.trigger('process-inbound', {
+        runId: run.id,
+        caseId,
+        messageId,
         autopilotMode,
-        threadId: run.langgraph_thread_id,
-        llmStubs
       });
-    } catch (enqueueError) {
-      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
+    } catch (triggerError) {
+      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
     }
 
-    logger.info('Inbound message job enqueued', {
+    logger.info('Inbound message task triggered', {
       runId: run.id,
       caseId,
       messageId,
-      jobId: job.id
+      triggerRunId: handle.id
     });
 
     res.status(202).json({
@@ -238,7 +239,7 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
         message_id: messageId,
         thread_id: run.langgraph_thread_id
       },
-      job_id: job.id
+      trigger_run_id: handle.id
     });
 
   } catch (error) {
@@ -337,26 +338,36 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
     // === Trigger.dev path: complete waitpoint token ===
     if (proposal.waitpoint_token) {
-      const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+      // Resolve token ID: gate-or-execute stores a UUID idempotencyKey initially,
+      // waitForHumanDecision overwrites with real waitpoint_xxx ID.
+      // Handle both formats for robustness.
+      let tokenId = proposal.waitpoint_token;
+      if (!tokenId.startsWith('waitpoint_')) {
+        // Stored value is the UUID idempotencyKey — resolve to real Trigger.dev token
+        const token = await triggerWait.createToken({ idempotencyKey: tokenId, timeout: '30d' });
+        tokenId = token.id;
+        logger.info('Resolved UUID idempotencyKey to real token', {
+          proposalId, idempotencyKey: proposal.waitpoint_token, resolvedTokenId: tokenId,
+        });
+      }
 
-      // For ALL actions (APPROVE, ADJUST, DISMISS, WITHDRAW), complete the token
-      // The waiting Trigger.dev task handles each action type internally
-      await triggerWait.completeToken(proposal.waitpoint_token, {
-        action,
-        instruction: instruction || null,
-        reason: reason || null,
-      });
-
+      // Update DB first so the task sees DECISION_RECEIVED when it resumes
       await db.updateProposal(proposalId, {
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
+      });
+
+      await triggerWait.completeToken(tokenId, {
+        action,
+        instruction: instruction || null,
+        reason: reason || null,
       });
 
       logger.info('Trigger.dev waitpoint token completed', {
         proposalId,
         caseId,
         action,
-        tokenId: proposal.waitpoint_token,
+        tokenId,
       });
 
       return res.status(202).json({
@@ -367,15 +378,15 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
-    // === Legacy BullMQ path: for proposals without waitpoint_token ===
+    // === Legacy path: proposals without waitpoint_token (old LangGraph pipeline) ===
 
-    // For DISMISS/WITHDRAW, update proposal and return — no need to resume graph
+    // DISMISS/WITHDRAW: just update DB status
     if (action === 'DISMISS' || action === 'WITHDRAW') {
       await db.updateProposal(proposalId, {
         human_decision: humanDecision,
         status: action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED'
       });
-      logger.info(`Proposal ${action.toLowerCase()}ed`, { proposalId, action });
+      logger.info(`Legacy proposal ${action.toLowerCase()}ed`, { proposalId, action });
       return res.json({
         success: true,
         message: `Proposal ${action.toLowerCase()}ed`,
@@ -384,7 +395,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
-    // Create resume run record
+    // APPROVE/ADJUST on old proposals: re-trigger through Trigger.dev
     const run = await db.createAgentRunFull({
       case_id: caseId,
       trigger_type: 'resume',
@@ -393,45 +404,51 @@ router.post('/proposals/:id/decision', async (req, res) => {
       langgraph_thread_id: `resume:${caseId}:proposal-${proposalId}`
     });
 
-    // Determine which graph to resume based on proposal action type
-    const isInitialRequest = proposal.action_type === 'SEND_INITIAL_REQUEST';
-
-    // Enqueue resume job (clean up orphaned run on failure)
-    let job;
-    try {
-      job = await enqueueResumeRunJob(run.id, caseId, humanDecision, {
-        isInitialRequest,
-        originalProposalId: proposalId
-      });
-    } catch (enqueueError) {
-      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
-    }
-
-    // Fix G: Only mark DECISION_RECEIVED AFTER enqueue succeeds (prevents split-brain)
     await db.updateProposal(proposalId, {
       human_decision: humanDecision,
       status: 'DECISION_RECEIVED'
     });
 
-    logger.info('Resume job enqueued', {
+    // Re-trigger through Trigger.dev (fresh run, old LangGraph checkpoint is gone)
+    let handle;
+    try {
+      if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
+        handle = await tasks.trigger('process-initial-request', {
+          runId: run.id,
+          caseId,
+          autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+        });
+      } else {
+        handle = await tasks.trigger('process-inbound', {
+          runId: run.id,
+          caseId,
+          messageId: proposal.trigger_message_id,
+          autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+        });
+      }
+    } catch (triggerError) {
+      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
+    }
+
+    logger.info('Legacy proposal re-triggered via Trigger.dev', {
       runId: run.id,
       caseId,
       proposalId,
       action,
-      jobId: job.id
+      triggerRunId: handle.id
     });
 
     res.status(202).json({
       success: true,
-      message: 'Decision received, resume queued',
+      message: 'Decision received, re-processing via Trigger.dev',
       run: {
         id: run.id,
         status: run.status
       },
       proposal_id: proposalId,
       action,
-      job_id: job.id
+      trigger_run_id: handle.id
     });
 
   } catch (error) {
@@ -535,24 +552,23 @@ router.post('/cases/:id/run-followup', async (req, res) => {
       `, [followupSchedule.id, scheduledKey, run.id]);
     }
 
-    // Enqueue worker job (clean up orphaned run on failure)
-    let job;
+    // Trigger Trigger.dev task (clean up orphaned run on failure)
+    let handle;
     try {
-      job = await enqueueFollowupTriggerJob(run.id, caseId, followupSchedule?.id || null, {
-        autopilotMode,
-        threadId: run.langgraph_thread_id,
-        followupCount,
-        manualTrigger: true
+      handle = await tasks.trigger('process-followup', {
+        runId: run.id,
+        caseId,
+        followupScheduleId: followupSchedule?.id || null,
       });
-    } catch (enqueueError) {
-      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
+    } catch (triggerError) {
+      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
     }
 
-    logger.info('Follow-up trigger job enqueued', {
+    logger.info('Follow-up trigger task triggered', {
       runId: run.id,
       caseId,
-      jobId: job.id,
+      triggerRunId: handle.id,
       followupCount,
       manualTrigger: true
     });
@@ -569,7 +585,7 @@ router.post('/cases/:id/run-followup', async (req, res) => {
         count: followupCount,
         schedule_id: followupSchedule?.id || null
       },
-      job_id: job.id
+      trigger_run_id: handle.id
     });
 
   } catch (error) {
@@ -658,25 +674,24 @@ router.post('/followups/:id/trigger', async (req, res) => {
       WHERE id = $1
     `, [followupId, scheduledKey, run.id]);
 
-    // Enqueue worker job (clean up orphaned run on failure)
-    let job;
+    // Trigger Trigger.dev task (clean up orphaned run on failure)
+    let handle;
     try {
-      job = await enqueueFollowupTriggerJob(run.id, caseId, followupId, {
-        autopilotMode: mode,
-        threadId: run.langgraph_thread_id,
-        followupCount,
-        manualTrigger: true
+      handle = await tasks.trigger('process-followup', {
+        runId: run.id,
+        caseId,
+        followupScheduleId: followupId,
       });
-    } catch (enqueueError) {
-      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
+    } catch (triggerError) {
+      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
     }
 
-    logger.info('Follow-up trigger job enqueued', {
+    logger.info('Follow-up trigger task triggered', {
       runId: run.id,
       caseId,
       followupId,
-      jobId: job.id,
+      triggerRunId: handle.id,
       followupCount,
       manualTrigger: true
     });
@@ -694,7 +709,7 @@ router.post('/followups/:id/trigger', async (req, res) => {
         count: followupCount,
         autopilot_mode: mode
       },
-      job_id: job.id
+      trigger_run_id: handle.id
     });
 
   } catch (error) {
@@ -1183,47 +1198,49 @@ router.post('/runs/:id/retry', async (req, res) => {
       langgraph_thread_id: `retry:${originalRun.case_id}:run-${runId}:${Date.now()}`
     });
 
-    // Enqueue the appropriate job based on original trigger type (clean up orphaned run on failure)
-    let job;
+    // Trigger the appropriate Trigger.dev task based on original trigger type
+    let handle;
     const triggerType = originalRun.trigger_type?.toLowerCase() || 'manual';
 
     try {
       if (triggerType.includes('initial')) {
-        job = await enqueueInitialRequestJob(newRun.id, originalRun.case_id, {
-          autopilotMode: newRun.autopilot_mode,
-          threadId: newRun.langgraph_thread_id
+        handle = await tasks.trigger('process-initial-request', {
+          runId: newRun.id,
+          caseId: originalRun.case_id,
+          autopilotMode: newRun.autopilot_mode || 'SUPERVISED',
         });
-      } else if (triggerType.includes('inbound')) {
-        // Need the original message ID
+      } else if (triggerType.includes('inbound') || triggerType.includes('manual')) {
         const messageId = originalRun.message_id;
-        if (messageId) {
-          job = await enqueueInboundMessageJob(newRun.id, originalRun.case_id, messageId, {
-            autopilotMode: newRun.autopilot_mode,
-            threadId: newRun.langgraph_thread_id
-          });
-        } else {
-          // Fall back to manual trigger
-          job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
+        if (!messageId) {
+          await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: 'No message_id on original run — cannot retry' });
+          return res.status(400).json({ success: false, error: 'Original run has no message_id, cannot retry as inbound' });
         }
+        handle = await tasks.trigger('process-inbound', {
+          runId: newRun.id,
+          caseId: originalRun.case_id,
+          messageId,
+          autopilotMode: newRun.autopilot_mode || 'SUPERVISED',
+        });
       } else if (triggerType.includes('followup')) {
-        job = await enqueueFollowupTriggerJob(newRun.id, originalRun.case_id, null, {
-          autopilotMode: newRun.autopilot_mode,
-          threadId: newRun.langgraph_thread_id,
-          manualTrigger: true
+        handle = await tasks.trigger('process-followup', {
+          runId: newRun.id,
+          caseId: originalRun.case_id,
+          followupScheduleId: null,
         });
       } else {
-        // Generic manual trigger
-        job = await enqueueAgentJob(originalRun.case_id, 'RETRY_MANUAL', {});
+        await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: `Unsupported trigger type for retry: ${triggerType}` });
+        return res.status(400).json({ success: false, error: `Cannot retry trigger type: ${triggerType}` });
       }
-    } catch (enqueueError) {
-      await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
+    } catch (triggerError) {
+      await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
     }
 
-    logger.info('Agent run retry created', {
+    logger.info('Agent run retry created via Trigger.dev', {
       originalRunId: runId,
       newRunId: newRun.id,
-      triggerType: newRun.trigger_type
+      triggerType: newRun.trigger_type,
+      triggerRunId: handle.id
     });
 
     res.status(202).json({
@@ -1235,7 +1252,7 @@ router.post('/runs/:id/retry', async (req, res) => {
         status: newRun.status,
         trigger_type: newRun.trigger_type
       },
-      job_id: job?.id
+      trigger_run_id: handle.id
     });
 
   } catch (error) {
@@ -1443,22 +1460,25 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
         langgraph_thread_id: `case:${caseId}:msg-${message.id}`
       });
 
-      // Enqueue worker job (clean up orphaned run on failure)
+      // Trigger Trigger.dev task (clean up orphaned run on failure)
       try {
-        job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+        const handle = await tasks.trigger('process-inbound', {
+          runId: run.id,
+          caseId,
+          messageId: message.id,
           autopilotMode: autopilot_mode,
-          threadId: run.langgraph_thread_id
         });
-      } catch (enqueueError) {
-        await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-        throw enqueueError;
+        job = { id: handle.id };
+      } catch (triggerError) {
+        await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+        throw triggerError;
       }
 
-      logger.info('Email ingested and run triggered', {
+      logger.info('Email ingested and Trigger.dev task triggered', {
         caseId,
         messageId: message.id,
         runId: run.id,
-        jobId: job.id
+        triggerRunId: job.id
       });
     } else {
       logger.info('Email ingested (no run triggered)', {
@@ -1669,16 +1689,19 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
       });
 
       try {
-        job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+        const handle = await tasks.trigger('process-inbound', {
+          runId: run.id,
+          caseId,
+          messageId: message.id,
           autopilotMode: 'SUPERVISED',
-          threadId: run.langgraph_thread_id
         });
-      } catch (enqueueError) {
-        await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-        throw enqueueError;
+        job = { id: handle.id };
+      } catch (triggerError) {
+        await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+        throw triggerError;
       }
 
-      logger.info('Correspondence logged and run triggered', { caseId, messageId: message.id, runId: run.id });
+      logger.info('Correspondence logged and Trigger.dev task triggered', { caseId, messageId: message.id, runId: run.id });
     } else {
       logger.info('Correspondence logged (no run triggered)', { caseId, messageId: message.id });
     }
@@ -1844,24 +1867,25 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
       langgraph_thread_id: `case:${caseId}:msg-${message.id}`
     });
 
-    // Enqueue worker job (clean up orphaned run on failure)
-    let job;
+    // Trigger Trigger.dev task (clean up orphaned run on failure)
+    let handle;
     try {
-      job = await enqueueInboundMessageJob(run.id, caseId, message.id, {
+      handle = await tasks.trigger('process-inbound', {
+        runId: run.id,
+        caseId,
+        messageId: message.id,
         autopilotMode,
-        threadId: run.langgraph_thread_id,
-        llmStubs
       });
-    } catch (enqueueError) {
-      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Enqueue failed: ${enqueueError.message}` });
-      throw enqueueError;
+    } catch (triggerError) {
+      await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
+      throw triggerError;
     }
 
-    logger.info('Inbound-and-run completed', {
+    logger.info('Inbound-and-run completed via Trigger.dev', {
       caseId,
       messageId: message.id,
       runId: run.id,
-      jobId: job.id
+      triggerRunId: handle.id
     });
 
     res.status(202).json({
@@ -1871,7 +1895,7 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
         message_id: message.id,
         thread_id: thread.id,
         run_id: run.id,
-        job_id: job.id,
+        trigger_run_id: handle.id,
         classification: classification || null,
         extracted_fee: extracted_fee || null
       },

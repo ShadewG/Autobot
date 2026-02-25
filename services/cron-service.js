@@ -857,8 +857,8 @@ class CronService {
                         continue; // Already has a run in progress
                     }
 
-                    // Re-enqueue the resume job
-                    const { enqueueResumeRunJob } = require('../queues/agent-queue');
+                    // Re-trigger through Trigger.dev
+                    const { tasks } = require('@trigger.dev/sdk/v3');
                     const run = await db.createAgentRunFull({
                         case_id: proposal.case_id,
                         trigger_type: 'resume_retry',
@@ -867,9 +867,20 @@ class CronService {
                         langgraph_thread_id: `resume:${proposal.case_id}:proposal-${proposal.id}`
                     });
 
-                    await enqueueResumeRunJob(run.id, proposal.case_id, proposal.human_decision, {
-                        originalProposalId: proposal.id
-                    });
+                    if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
+                        await tasks.trigger('process-initial-request', {
+                            runId: run.id,
+                            caseId: proposal.case_id,
+                            autopilotMode: 'SUPERVISED',
+                        });
+                    } else {
+                        await tasks.trigger('process-inbound', {
+                            runId: run.id,
+                            caseId: proposal.case_id,
+                            messageId: proposal.trigger_message_id,
+                            autopilotMode: 'SUPERVISED',
+                        });
+                    }
 
                     stuckDecisionsRetried++;
                     console.log(`Retried stuck DECISION_RECEIVED proposal #${proposal.id} for case #${proposal.case_id}`);

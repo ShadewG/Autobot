@@ -15,8 +15,9 @@ import { safetyCheck } from "../steps/safety-check";
 import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
+import { researchContext, emptyResearchContext } from "../steps/research-context";
 import db, { logger } from "../lib/db";
-import type { FollowupPayload, HumanDecision } from "../lib/types";
+import type { FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -61,16 +62,24 @@ export const processFollowup = task({
       return { status: "completed", action: "none" };
     }
 
+    // Step 2b: Research context (lightweight for followups)
+    let research: ResearchContext = emptyResearchContext();
+    if (decision.researchLevel && decision.researchLevel !== "none") {
+      research = await researchContext(caseId, decision.actionType, "NO_RESPONSE", null, decision.researchLevel);
+    }
+
     // Step 3: Draft follow-up
     const draft = await draftResponse(
       caseId, decision.actionType, context.constraints, context.scopeItems,
-      null, decision.adjustmentInstruction, null
+      null, decision.adjustmentInstruction, null,
+      research
     );
 
     // Step 4: Safety check
     const safety = await safetyCheck(
       draft.bodyText, draft.subject, decision.actionType,
-      context.constraints, context.scopeItems
+      context.constraints, context.scopeItems,
+      null, null
     );
 
     // Step 5: Gate
@@ -91,11 +100,11 @@ export const processFollowup = task({
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
-      // Validate proposal still PENDING_APPROVAL
+      // Validate proposal is still actionable
       const currentProposal = await db.getProposalById(gate.proposalId);
-      if (currentProposal?.status !== "PENDING_APPROVAL") {
+      if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
         throw new Error(
-          `Proposal ${gate.proposalId} is ${currentProposal?.status}, not PENDING_APPROVAL`
+          `Proposal ${gate.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
         );
       }
 
