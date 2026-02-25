@@ -1308,151 +1308,87 @@ Look for a records division email, FOIA email, or general agency email that acce
             const propSet = new Set(availableProperties);
             const properties = {};
 
-            const missingProps = (name) => {
-                console.warn(`Skipping Notion update: property "${name}" not found on page ${pageId}`);
+            // Helper: set a property if it exists on the page
+            const setDate = (name, value) => {
+                if (!value) return;
+                if (propSet.has(name)) properties[name] = { date: { start: value } };
+            };
+            const setRichText = (name, value) => {
+                if (value === undefined) return;
+                if (propSet.has(name)) properties[name] = {
+                    rich_text: value ? [{ text: { content: String(value).substring(0, 2000) } }] : []
+                };
+            };
+            const setNumber = (name, value) => {
+                if (value === undefined || value === null) return;
+                if (propSet.has(name)) properties[name] = { number: value };
+            };
+            const setCheckbox = (name, value) => {
+                if (value === undefined) return;
+                if (propSet.has(name)) properties[name] = { checkbox: !!value };
+            };
+            const setUrl = (name, value) => {
+                if (!value) return;
+                if (propSet.has(name)) properties[name] = { url: value };
             };
 
             const liveStatusPropName = this.liveStatusProperty;
 
-            if (updates.send_date) {
-                if (propSet.has('Send Date')) {
-                    properties['Send Date'] = {
-                        date: { start: updates.send_date }
-                    };
-                } else {
-                    missingProps('Send Date');
-                }
+            // Request date (Notion property: "Request Date")
+            setDate('Request Date', updates.send_date);
 
-                if (propSet.has('Request Day')) {
-                    properties['Request Day'] = {
-                        date: { start: updates.send_date }
-                    };
+            // Last response date
+            setDate('Last Response', updates.last_response_date);
+
+            // AI Summary
+            setRichText('AI Summary', updates.ai_summary);
+
+            // Live Status (select or status type — auto-detect)
+            if (updates.live_status && propSet.has(liveStatusPropName)) {
+                const liveStatusPropertyInfo = await this.getDatabasePropertyInfo(liveStatusPropName);
+                if (liveStatusPropertyInfo?.type === 'status') {
+                    properties[liveStatusPropName] = { status: { name: updates.live_status } };
                 } else {
-                    missingProps('Request Day');
+                    properties[liveStatusPropName] = { select: { name: updates.live_status } };
                 }
             }
 
-            if (updates.last_response_date) {
-                if (propSet.has('Last Response')) {
-                    properties['Last Response'] = {
-                        date: { start: updates.last_response_date }
-                    };
-                } else {
-                    missingProps('Last Response');
-                }
-            }
+            // Live Substatus
+            setRichText('Live Substatus', updates.live_substatus);
 
-            if (updates.days_overdue !== undefined) {
-                if (propSet.has('Days Overdue')) {
-                    properties['Days Overdue'] = {
-                        number: updates.days_overdue
-                    };
-                } else {
-                    missingProps('Days Overdue');
-                }
-            }
+            // Portal fields
+            setRichText('Last Portal Status', updates.last_portal_status_text);
+            setDate('Last Portal Updated', updates.last_portal_updated_at);
+            setUrl('Portal Task URL', updates.portal_task_url);
+            setRichText('Portal Login Email', updates.portal_login_email);
 
-            if (updates.ai_summary) {
-                if (propSet.has('AI Summary')) {
-                    properties['AI Summary'] = {
-                        rich_text: [{
-                            text: { content: updates.ai_summary }
-                        }]
-                    };
-                } else {
-                    missingProps('AI Summary');
-                }
-            }
+            // Human review flag
+            setCheckbox('Needs Human Review', updates.needs_human_review);
 
-            if (updates.live_status) {
-                if (propSet.has(liveStatusPropName)) {
-                    const liveStatusPropertyInfo = await this.getDatabasePropertyInfo(liveStatusPropName);
-                    if (liveStatusPropertyInfo?.type === 'status') {
-                        properties[liveStatusPropName] = {
-                            status: { name: updates.live_status }
-                        };
-                    } else {
-                        properties[liveStatusPropName] = {
-                            select: { name: updates.live_status }
-                        };
-                    }
-                } else {
-                    missingProps(liveStatusPropName);
-                }
-            }
+            // --- Additional useful properties ---
 
-            if (updates.live_substatus !== undefined) {
-                if (propSet.has('Live Substatus')) {
-                    properties['Live Substatus'] = {
-                        rich_text: updates.live_substatus
-                            ? [{ text: { content: updates.live_substatus } }]
-                            : []
-                    };
-                } else {
-                    missingProps('Live Substatus');
-                }
-            }
+            // Request number (portal reference number)
+            setRichText('Request NR', updates.request_number);
 
-            if (updates.last_portal_status_text) {
-                if (propSet.has('Last Portal Status')) {
-                    properties['Last Portal Status'] = {
-                        rich_text: [{
-                            text: { content: updates.last_portal_status_text }
-                        }]
-                    };
-                } else {
-                    missingProps('Last Portal Status');
-                }
-            }
+            // Fee/price amount
+            setNumber('Price', updates.fee_amount);
 
-            if (updates.last_portal_updated_at) {
-                if (propSet.has('Last Portal Updated')) {
-                    properties['Last Portal Updated'] = {
-                        date: { start: updates.last_portal_updated_at }
-                    };
-                } else {
-                    missingProps('Last Portal Updated');
-                }
-            }
+            // Expected response date (statutory deadline)
+            setDate('Expected Response Date', updates.expected_response_date);
 
-            if (updates.portal_task_url) {
-                if (propSet.has('Portal Task URL')) {
-                    properties['Portal Task URL'] = {
-                        url: updates.portal_task_url
-                    };
-                } else {
-                    missingProps('Portal Task URL');
-                }
-            }
+            // Follow-up tracking
+            setDate('Follow Up Sent', updates.last_followup_date);
+            setDate('last follow-up date', updates.last_followup_date);
 
-            if (updates.portal_login_email) {
-                if (propSet.has('Portal Login Email')) {
-                    // Property type varies between databases — detect and adapt
-                    const portalEmailPropInfo = await this.getDatabasePropertyInfo('Portal Login Email');
-                    if (portalEmailPropInfo?.type === 'email') {
-                        properties['Portal Login Email'] = {
-                            email: updates.portal_login_email
-                        };
-                    } else {
-                        // rich_text fallback (most common)
-                        properties['Portal Login Email'] = {
-                            rich_text: [{ text: { content: updates.portal_login_email } }]
-                        };
-                    }
-                } else {
-                    missingProps('Portal Login Email');
-                }
-            }
+            // Last status change timestamp
+            setDate('Last Status Change', updates.last_status_change);
 
-            if (updates.needs_human_review !== undefined) {
-                if (propSet.has('Needs Human Review')) {
-                    properties['Needs Human Review'] = {
-                        checkbox: !!updates.needs_human_review
-                    };
-                } else {
-                    missingProps('Needs Human Review');
-                }
-            }
+            // Failure reason (portal failures, etc.)
+            setRichText('Failure Reason', updates.failure_reason);
+
+            // Denial tracking
+            setRichText('Denial Reason', updates.denial_reason);
+            setDate('Case Denied Date', updates.denial_date);
 
             if (Object.keys(properties).length === 0) {
                 console.warn(`No valid Notion properties to update for page ${pageId}`);
@@ -1641,18 +1577,15 @@ Look for a records division email, FOIA email, or general agency email that acce
                 updates.live_status = notionStatus;
             }
 
+            // Core dates
             if (caseData.send_date) {
                 updates.send_date = caseData.send_date;
             }
-
             if (caseData.last_response_date) {
                 updates.last_response_date = caseData.last_response_date;
             }
 
-            if (caseData.days_overdue) {
-                updates.days_overdue = caseData.days_overdue;
-            }
-
+            // Substatus & portal fields
             if (caseData.substatus !== undefined) {
                 updates.live_substatus = caseData.substatus || '';
             }
@@ -1669,6 +1602,47 @@ Look for a records division email, FOIA email, or general agency email that acce
                 updates.portal_login_email = caseData.last_portal_account_email;
             }
             updates.needs_human_review = ['needs_human_review', 'needs_human_fee_approval'].includes(caseData.status);
+
+            // Request number (portal reference)
+            if (caseData.portal_request_number) {
+                updates.request_number = caseData.portal_request_number;
+            }
+
+            // Fee amount from fee_quote_jsonb
+            if (caseData.fee_quote_jsonb?.amount) {
+                updates.fee_amount = caseData.fee_quote_jsonb.amount;
+            }
+
+            // Deadline / expected response date
+            if (caseData.deadline_date) {
+                updates.expected_response_date = caseData.deadline_date;
+            }
+
+            // Last status change
+            if (caseData.updated_at) {
+                updates.last_status_change = caseData.updated_at;
+            }
+
+            // Escalation/failure/denial reasons
+            if (caseData.escalation_reason) {
+                const isDenied = caseData.status === 'completed' && caseData.outcome_type === 'denied';
+                if (isDenied) {
+                    updates.denial_reason = caseData.escalation_reason;
+                    if (caseData.closed_at) {
+                        updates.denial_date = caseData.closed_at;
+                    }
+                } else if (['error', 'portal_submission_failed'].includes(caseData.status)) {
+                    updates.failure_reason = caseData.escalation_reason;
+                }
+            }
+
+            // Follow-up date (best-effort, don't let failure block sync)
+            try {
+                const followup = await db.getFollowUpScheduleByCaseId(caseId);
+                if (followup?.last_followup_sent_at) {
+                    updates.last_followup_date = followup.last_followup_sent_at;
+                }
+            } catch (_) { /* non-critical */ }
 
             await this.updatePage(caseData.notion_page_id, updates);
             console.log(`Updated Notion page for case: ${caseData.case_name}`);

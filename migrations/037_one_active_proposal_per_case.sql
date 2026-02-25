@@ -25,6 +25,6 @@ WHERE id IN (
 DROP INDEX IF EXISTS idx_proposals_one_pending_per_case;
 
 -- Step 3: Create the new broad constraint
-CREATE UNIQUE INDEX idx_proposals_one_active_per_case
+CREATE UNIQUE INDEX IF NOT EXISTS idx_proposals_one_active_per_case
   ON proposals (case_id)
   WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL');
