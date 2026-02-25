@@ -3,13 +3,9 @@
 import { useState, useMemo, useEffect } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
@@ -18,20 +14,6 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   fetcher,
   runsAPI,
@@ -43,834 +25,431 @@ import { formatDate, cn } from "@/lib/utils";
 import {
   Loader2,
   CheckCircle,
-  XCircle,
   AlertTriangle,
-  Clock,
-  Mail,
-  Inbox,
-  DollarSign,
-  FileQuestion,
   ChevronRight,
   ChevronLeft,
   RefreshCw,
   Edit,
   Trash2,
   Ban,
-  Play,
-  Eye,
-  MoreHorizontal,
   Send,
   ExternalLink,
-  UserCheck,
-  Shield,
   Zap,
-  FlaskConical,
   RotateCcw,
-  Activity,
-  ArrowRight,
+  XCircle,
 } from "lucide-react";
 
-const ACTION_TYPE_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-  SEND_EMAIL: { icon: <Mail className="h-4 w-4" />, color: "text-blue-600 bg-blue-50", label: "Send Email" },
-  SEND_REPLY: { icon: <Mail className="h-4 w-4" />, color: "text-blue-600 bg-blue-50", label: "Send Reply" },
-  ACCEPT_FEE: { icon: <DollarSign className="h-4 w-4" />, color: "text-green-600 bg-green-50", label: "Accept Fee" },
-  NEGOTIATE_FEE: { icon: <DollarSign className="h-4 w-4" />, color: "text-amber-600 bg-amber-50", label: "Negotiate Fee" },
-  APPEAL: { icon: <FileQuestion className="h-4 w-4" />, color: "text-orange-600 bg-orange-50", label: "Appeal" },
-  NARROW_SCOPE: { icon: <FileQuestion className="h-4 w-4" />, color: "text-purple-600 bg-purple-50", label: "Narrow Scope" },
-  FOLLOW_UP: { icon: <Clock className="h-4 w-4" />, color: "text-gray-600 bg-gray-50", label: "Follow Up" },
-  WITHDRAW: { icon: <Ban className="h-4 w-4" />, color: "text-red-600 bg-red-50", label: "Withdraw" },
+const PAUSE_REASON_LABELS: Record<string, string> = {
+  FEE_QUOTE: "FEE",
+  DENIAL: "DENIAL",
+  SCOPE: "SCOPE",
+  ID_REQUIRED: "ID REQ",
+  SENSITIVE: "SENSITIVE",
+  CLOSE_ACTION: "CLOSE",
+  PORTAL: "PORTAL",
+  HOSTILE_SENTIMENT: "HOSTILE",
+  TIMED_OUT: "TIMEOUT",
+  PENDING_APPROVAL: "PENDING",
+  INITIAL_REQUEST: "INITIAL",
 };
-
-const PAUSE_REASON_CONFIG: Record<string, { label: string; color: string }> = {
-  FEE_QUOTE: { label: "Fee Quote", color: "bg-amber-100 text-amber-800" },
-  DENIAL: { label: "Denial", color: "bg-red-100 text-red-800" },
-  SCOPE: { label: "Scope Issue", color: "bg-orange-100 text-orange-800" },
-  ID_REQUIRED: { label: "ID Required", color: "bg-blue-100 text-blue-800" },
-  SENSITIVE: { label: "Sensitive Content", color: "bg-purple-100 text-purple-800" },
-  CLOSE_ACTION: { label: "Close Action", color: "bg-green-100 text-green-800" },
-  PORTAL: { label: "Portal Required", color: "bg-cyan-100 text-cyan-800" },
-  HOSTILE_SENTIMENT: { label: "Hostile Sentiment", color: "bg-red-100 text-red-800" },
-  STRONG_DENIAL: { label: "Strong Denial", color: "bg-red-200 text-red-900" },
-  HIGH_FEE: { label: "High Fee", color: "bg-amber-200 text-amber-900" },
-  SUPERVISED_MODE: { label: "Supervised Mode", color: "bg-slate-100 text-slate-800" },
-};
-
-interface EnvironmentStatus {
-  shadow_mode: boolean;
-  execution_mode: "DRY" | "LIVE";
-  is_shadow: boolean;
-}
 
 export default function GatedInboxPage() {
-  const [selectedRun, setSelectedRun] = useState<AgentRun | null>(null);
-  const [selectedProposal, setSelectedProposal] = useState<ProposalListItem | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [adjustInstruction, setAdjustInstruction] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
 
-  // Fetch gated runs
   const { data: runsData, error, isLoading, mutate } = useSWR<{ success: boolean; runs: AgentRun[] }>(
     "/runs?status=gated&limit=100",
     fetcher,
     { refreshInterval: 15000 }
   );
 
-  // Fetch environment status
-  const { data: envData } = useSWR<EnvironmentStatus>(
-    "/shadow/status",
-    fetcher
-  );
+  const runs = useMemo(() => {
+    const all = runsData?.runs || [];
+    // Real runs first, then simulated
+    return all.sort((a, b) => {
+      const aIsSim = a.trigger_type?.toLowerCase().includes("simulated") || a.trigger_type?.toLowerCase().includes("test");
+      const bIsSim = b.trigger_type?.toLowerCase().includes("simulated") || b.trigger_type?.toLowerCase().includes("test");
+      if (aIsSim && !bIsSim) return 1;
+      if (!aIsSim && bIsSim) return -1;
+      return 0;
+    });
+  }, [runsData]);
 
-  // Fetch proposal details when a run is selected
-  const { data: proposalData, mutate: mutateProposal } = useSWR<{ success: boolean; proposal: ProposalListItem }>(
+  const selectedRun = runs[currentIndex] || null;
+
+  // Fetch proposal for current run
+  const { data: proposalData } = useSWR<{ success: boolean; proposal: ProposalListItem }>(
     selectedRun?.proposal_id ? `/proposals/${selectedRun.proposal_id}` : null,
     fetcher
   );
+  const proposal = proposalData?.proposal || null;
 
-  const handleSelectRun = async (run: AgentRun) => {
-    setSelectedRun(run);
-    setSelectedProposal(null);
-    setAdjustInstruction("");
-  };
-
-  const gatedRuns = runsData?.runs || [];
-
-  // Separate simulated from real runs
-  const { realRuns, simRuns } = useMemo(() => {
-    const real: AgentRun[] = [];
-    const sim: AgentRun[] = [];
-    gatedRuns.forEach(run => {
-      if (run.trigger_type?.toLowerCase().includes('simulated') ||
-          run.trigger_type?.toLowerCase().includes('test')) {
-        sim.push(run);
-      } else {
-        real.push(run);
-      }
-    });
-    return { realRuns: real, simRuns: sim };
-  }, [gatedRuns]);
-
-  // Queue navigation - combine real runs first, then sim runs
-  const allOrderedRuns = useMemo(() => [...realRuns, ...simRuns], [realRuns, simRuns]);
-
-  const currentIndex = useMemo(() => {
-    if (!selectedRun) return -1;
-    return allOrderedRuns.findIndex(r => r.id === selectedRun.id);
-  }, [selectedRun, allOrderedRuns]);
-
-  const handleNavigate = (direction: 'prev' | 'next') => {
-    if (currentIndex === -1 || allOrderedRuns.length === 0) return;
-
-    let newIndex: number;
-    if (direction === 'prev') {
-      newIndex = currentIndex > 0 ? currentIndex - 1 : allOrderedRuns.length - 1;
-    } else {
-      newIndex = currentIndex < allOrderedRuns.length - 1 ? currentIndex + 1 : 0;
-    }
-
-    const newRun = allOrderedRuns[newIndex];
-    handleSelectRun(newRun);
-  };
-
-  // Keyboard navigation
+  // Keyboard nav
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't navigate if typing in an input/textarea or modal is open
-      if (
-        showAdjustModal ||
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        handleNavigate('prev');
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        handleNavigate('next');
-      }
+      if (showAdjustModal || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); navigate(-1); }
+      if (e.key === "ArrowRight") { e.preventDefault(); navigate(1); }
     };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [currentIndex, runs.length, showAdjustModal]);
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, allOrderedRuns, showAdjustModal]);
+  const navigate = (delta: number) => {
+    if (runs.length === 0) return;
+    setCurrentIndex((prev) => {
+      const next = prev + delta;
+      if (next < 0) return runs.length - 1;
+      if (next >= runs.length) return 0;
+      return next;
+    });
+  };
 
-  // Auto-select first run when list loads or changes
-  useEffect(() => {
-    if (!selectedRun && allOrderedRuns.length > 0) {
-      handleSelectRun(allOrderedRuns[0]);
-    }
-  }, [allOrderedRuns.length]);
-
-  const handleDecision = async (action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW') => {
+  const handleDecision = async (action: "APPROVE" | "ADJUST" | "DISMISS" | "WITHDRAW") => {
     if (!selectedRun?.proposal_id) return;
     setIsSubmitting(true);
-
     try {
       await proposalsAPI.decide(parseInt(selectedRun.proposal_id), {
         action,
-        instruction: action === 'ADJUST' ? adjustInstruction : undefined,
-        reason: action === 'DISMISS' || action === 'WITHDRAW' ? 'User decision' : undefined,
+        instruction: action === "ADJUST" ? adjustInstruction : undefined,
+        reason: action === "DISMISS" || action === "WITHDRAW" ? "User decision" : undefined,
       });
-
       mutate();
-      setSelectedRun(null);
       setShowAdjustModal(false);
-    } catch (error) {
-      console.error("Error submitting decision:", error);
+      setAdjustInstruction("");
+      // Stay at same index (list shrinks, next item slides in)
+      if (currentIndex >= runs.length - 1 && currentIndex > 0) {
+        setCurrentIndex(currentIndex - 1);
+      }
+    } catch (err) {
+      console.error("Decision failed:", err);
       alert("Failed to submit decision");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleCancelRun = async (run: AgentRun) => {
-    if (!confirm("Are you sure you want to cancel this run?")) return;
+  const handleCancelRun = async () => {
+    if (!selectedRun || !confirm("Cancel this run?")) return;
     setIsSubmitting(true);
     try {
-      await runsAPI.cancel(run.id, "Cancelled from gated inbox");
+      await runsAPI.cancel(selectedRun.id, "Cancelled from queue");
       mutate();
-      if (selectedRun?.id === run.id) {
-        setSelectedRun(null);
-      }
-    } catch (error) {
-      console.error("Error cancelling run:", error);
-      alert("Failed to cancel run");
+    } catch (err) {
+      console.error("Cancel failed:", err);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleRetryRun = async (run: AgentRun) => {
+  const handleRetryRun = async () => {
+    if (!selectedRun) return;
     setIsSubmitting(true);
     try {
-      await runsAPI.retry(run.id);
+      await runsAPI.retry(selectedRun.id);
       mutate();
-    } catch (error) {
-      console.error("Error retrying run:", error);
-      alert("Failed to retry run");
+    } catch (err) {
+      console.error("Retry failed:", err);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const proposal = proposalData?.proposal || null;
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-[80vh]">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   if (error) {
     return (
-      <div className="text-center py-8">
-        <p className="text-destructive">Failed to load gated runs</p>
-        <p className="text-sm text-muted-foreground">{error.message}</p>
+      <div className="flex items-center justify-center h-[80vh] text-sm text-destructive">
+        Failed to load: {error.message}
+      </div>
+    );
+  }
+
+  // Empty state
+  if (runs.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-[80vh] gap-4">
+        <CheckCircle className="h-8 w-8 text-green-500" />
+        <p className="text-sm text-muted-foreground">Queue empty. No items need attention.</p>
+        <Button variant="outline" size="sm" onClick={() => mutate()}>
+          <RefreshCw className="h-3 w-3 mr-1" /> Refresh
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Shield className="h-6 w-6" />
-            Gated Inbox
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Runs awaiting human approval before execution
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* Environment indicator */}
-          {envData && (
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-sm px-3 py-1",
-                envData.execution_mode === "LIVE"
-                  ? "border-red-500 text-red-600 bg-red-50"
-                  : "border-blue-500 text-blue-600 bg-blue-50"
-              )}
-            >
-              {envData.execution_mode === "LIVE" ? (
-                <Zap className="h-3 w-3 mr-1" />
-              ) : (
-                <FlaskConical className="h-3 w-3 mr-1" />
-              )}
-              {envData.execution_mode}
-            </Badge>
-          )}
-          <Badge variant="outline" className="text-lg px-3 py-1">
-            {realRuns.length} pending
+    <div className="max-w-4xl mx-auto">
+      {/* Top bar: counter + nav */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground uppercase tracking-wider">Queue</span>
+          <Badge variant="outline" className="text-xs tabular-nums">
+            {currentIndex + 1} / {runs.length}
           </Badge>
-          {simRuns.length > 0 && (
-            <Badge variant="secondary" className="text-sm px-2 py-1">
-              {simRuns.length} simulated
-            </Badge>
-          )}
-          <Button variant="outline" size="sm" onClick={() => mutate()}>
-            <RefreshCw className="h-4 w-4 mr-1" />
-            Refresh
+          <Badge variant="destructive" className="text-xs">
+            <Zap className="h-3 w-3 mr-1" /> LIVE
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => navigate(-1)} title="Previous (←)">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => navigate(1)} title="Next (→)">
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <div className="w-px h-4 bg-border mx-1" />
+          <Button variant="ghost" size="sm" onClick={() => mutate()}>
+            <RefreshCw className="h-3 w-3" />
           </Button>
         </div>
       </div>
 
-      {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      {/* Case header */}
+      <div className="border-b pb-3 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold">
+              {selectedRun.case_name || `Case #${selectedRun.case_id}`}
+            </h2>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xs text-muted-foreground">
+                Run #{typeof selectedRun.id === 'string' ? selectedRun.id.slice(0, 8) : selectedRun.id}
+              </span>
+              <span className="text-xs text-muted-foreground">|</span>
+              <span className="text-xs text-muted-foreground">{selectedRun.trigger_type}</span>
+              {selectedRun.pause_reason && (
+                <Badge variant="outline" className="text-[10px]">
+                  {PAUSE_REASON_LABELS[selectedRun.pause_reason] || selectedRun.pause_reason}
+                </Badge>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/requests/detail?id=${selectedRun.case_id}`}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <ExternalLink className="h-3 w-3" /> Case
+            </Link>
+            <Button variant="ghost" size="sm" onClick={handleRetryRun} disabled={isSubmitting} title="Retry">
+              <RotateCcw className="h-3 w-3" />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleCancelRun} disabled={isSubmitting} title="Cancel run">
+              <XCircle className="h-3 w-3" />
+            </Button>
+          </div>
         </div>
-      ) : gatedRuns.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <CheckCircle className="h-12 w-12 mx-auto text-green-500 mb-4" />
-            <h3 className="text-lg font-semibold">All caught up!</h3>
-            <p className="text-muted-foreground">No runs awaiting approval</p>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Runs List */}
-          <Card className="lg:col-span-1">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Pending Approval</CardTitle>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ScrollArea className="h-[600px]">
-                <div className="divide-y">
-                  {/* Real runs first */}
-                  {realRuns.map((run) => (
-                    <RunRow
-                      key={run.id}
-                      run={run}
-                      isSelected={selectedRun?.id === run.id}
-                      isSimulated={false}
-                      onSelect={() => handleSelectRun(run)}
-                      onCancel={() => handleCancelRun(run)}
-                      onRetry={() => handleRetryRun(run)}
-                    />
-                  ))}
+      </div>
 
-                  {/* Separator if both types exist */}
-                  {realRuns.length > 0 && simRuns.length > 0 && (
-                    <div className="px-4 py-2 bg-muted/50">
-                      <span className="text-xs text-muted-foreground font-medium">
-                        Simulated / Test Runs
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Simulated runs */}
-                  {simRuns.map((run) => (
-                    <RunRow
-                      key={run.id}
-                      run={run}
-                      isSelected={selectedRun?.id === run.id}
-                      isSimulated={true}
-                      onSelect={() => handleSelectRun(run)}
-                      onCancel={() => handleCancelRun(run)}
-                      onRetry={() => handleRetryRun(run)}
-                    />
-                  ))}
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-
-          {/* Proposal Detail */}
-          <Card className="lg:col-span-1">
-            {selectedRun ? (
-              <>
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <CardTitle className="text-base">Proposal Review</CardTitle>
-                      {/* Queue navigation */}
-                      {allOrderedRuns.length > 1 && currentIndex !== -1 && (
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            onClick={() => handleNavigate('prev')}
-                            title="Previous (use ← key)"
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                          </Button>
-                          <Badge variant="secondary" className="text-xs px-2">
-                            {currentIndex + 1} of {allOrderedRuns.length}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            onClick={() => handleNavigate('next')}
-                            title="Next (use → key)"
-                          >
-                            <ChevronRight className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/requests/detail?id=${selectedRun.case_id}`}>
-                          <ExternalLink className="h-3 w-3 mr-1" />
-                          View Full Case
-                        </Link>
-                      </Button>
-                      <Link
-                        href={`/runs?id=${selectedRun.id}`}
-                        className="text-xs text-muted-foreground hover:underline"
-                      >
-                        Run Trace
-                      </Link>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {/* Execution Mode Warning */}
-                  {envData && (
-                    <div
-                      className={cn(
-                        "p-3 rounded-lg border flex items-center gap-2",
-                        envData.execution_mode === "LIVE"
-                          ? "bg-red-50 border-red-200 text-red-700"
-                          : "bg-blue-50 border-blue-200 text-blue-700"
-                      )}
-                    >
-                      {envData.execution_mode === "LIVE" ? (
-                        <>
-                          <Zap className="h-4 w-4" />
-                          <span className="text-sm font-medium">
-                            LIVE MODE - Approval will trigger real execution
-                          </span>
-                        </>
-                      ) : (
-                        <>
-                          <FlaskConical className="h-4 w-4" />
-                          <span className="text-sm font-medium">
-                            DRY MODE - No actual execution will occur
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Case Info */}
-                  <div className="bg-muted/50 rounded-lg p-3">
-                    <p className="font-medium">{selectedRun.case_name || `Case #${selectedRun.case_id}`}</p>
-                    <div className="flex items-center gap-2 mt-2 flex-wrap">
-                      <Badge variant="outline" className="text-xs">
-                        {selectedRun.trigger_type}
-                      </Badge>
-                      {selectedRun.pause_reason && (
-                        <Badge className={cn("text-xs", PAUSE_REASON_CONFIG[selectedRun.pause_reason]?.color)}>
-                          {PAUSE_REASON_CONFIG[selectedRun.pause_reason]?.label || selectedRun.pause_reason}
-                        </Badge>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Proposal Loading or Display */}
-                  {!proposal && selectedRun.proposal_id && (
-                    <div className="flex items-center justify-center py-4">
-                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-                    </div>
-                  )}
-
-                  {proposal && (
-                    <>
-                      {/* Action Type */}
-                      <div>
-                        <p className="text-sm font-medium mb-2">Proposed Action:</p>
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "gap-1",
-                              ACTION_TYPE_CONFIG[proposal.action_type]?.color || "bg-gray-50"
-                            )}
-                          >
-                            {ACTION_TYPE_CONFIG[proposal.action_type]?.icon || <Mail className="h-4 w-4" />}
-                            {ACTION_TYPE_CONFIG[proposal.action_type]?.label || proposal.action_type}
-                          </Badge>
-                          {proposal.confidence && (
-                            <Badge variant="outline" className="text-xs">
-                              {Math.round(proposal.confidence * 100)}% confidence
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Risk Flags */}
-                      {proposal.risk_flags && proposal.risk_flags.length > 0 && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                          <p className="text-sm font-medium text-amber-700 flex items-center gap-1 mb-2">
-                            <AlertTriangle className="h-4 w-4" />
-                            Risk Flags
-                          </p>
-                          <div className="flex flex-wrap gap-1">
-                            {proposal.risk_flags.map((flag, i) => (
-                              <Badge key={i} variant="outline" className="text-xs text-amber-600">
-                                {flag}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Warnings */}
-                      {proposal.warnings && proposal.warnings.length > 0 && (
-                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                          <p className="text-sm font-medium text-orange-700 mb-2">Warnings:</p>
-                          <ul className="text-sm text-orange-600 space-y-1">
-                            {proposal.warnings.map((w, i) => (
-                              <li key={i}>• {w}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      {/* Reasoning */}
-                      {proposal.reasoning && proposal.reasoning.length > 0 && (
-                        <div>
-                          <p className="text-sm font-medium mb-2">AI Reasoning:</p>
-                          <ul className="text-sm space-y-1">
-                            {proposal.reasoning.map((r, i) => (
-                              <li key={i} className="flex items-start gap-2">
-                                <span className="text-muted-foreground">•</span>
-                                <span>{r}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-
-                      <Separator />
-
-                      {/* Inbound Message - what the agency sent */}
-                      {selectedRun.trigger_message && (
-                        <div>
-                          <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                            <Inbox className="h-4 w-4 text-blue-600" />
-                            Agency Response
-                            {selectedRun.trigger_message.classification && (
-                              <Badge variant="outline" className="text-xs ml-2">
-                                {selectedRun.trigger_message.classification}
-                              </Badge>
-                            )}
-                            {selectedRun.trigger_message.sentiment && (
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "text-xs",
-                                  selectedRun.trigger_message.sentiment === 'POSITIVE' && "text-green-600",
-                                  selectedRun.trigger_message.sentiment === 'NEGATIVE' && "text-red-600",
-                                  selectedRun.trigger_message.sentiment === 'HOSTILE' && "text-red-700 bg-red-50"
-                                )}
-                              >
-                                {selectedRun.trigger_message.sentiment}
-                              </Badge>
-                            )}
-                          </p>
-                          <div className="text-xs text-muted-foreground mb-2">
-                            From: <span className="font-medium text-foreground">{selectedRun.trigger_message.from_email}</span>
-                          </div>
-                          {selectedRun.trigger_message.subject && (
-                            <p className="text-sm mb-2">
-                              <span className="text-muted-foreground">Subject:</span>{" "}
-                              {selectedRun.trigger_message.subject}
-                            </p>
-                          )}
-                          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3 max-h-[200px] overflow-auto">
-                            <pre className="text-sm whitespace-pre-wrap font-sans">
-                              {selectedRun.trigger_message.body_text || "(No content)"}
-                            </pre>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Arrow showing flow from inbound to response */}
-                      {selectedRun.trigger_message && (
-                        <div className="flex items-center justify-center py-2">
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <ArrowRight className="h-4 w-4" />
-                            <span className="text-xs">AI Generated Response</span>
-                            <ArrowRight className="h-4 w-4" />
-                          </div>
-                        </div>
-                      )}
-
-                      {!selectedRun.trigger_message && <Separator />}
-
-                      {/* Draft Content */}
-                      <div>
-                        <p className="text-sm font-medium mb-2 flex items-center gap-2">
-                          <Mail className="h-4 w-4" />
-                          Draft Response
-                        </p>
-                        {proposal.draft_subject && (
-                          <p className="text-sm mb-2">
-                            <span className="text-muted-foreground">Subject:</span>{" "}
-                            {proposal.draft_subject}
-                          </p>
-                        )}
-                        <div className="bg-muted/50 rounded-lg p-3 max-h-[200px] overflow-auto">
-                          <pre className="text-sm whitespace-pre-wrap font-sans">
-                            {proposal.draft_body_text || "(No content)"}
-                          </pre>
-                        </div>
-                      </div>
-
-                      <Separator />
-
-                      {/* Actions */}
-                      <div className="space-y-2">
-                        <div className="flex gap-2">
-                          <Button
-                            className="flex-1"
-                            onClick={() => handleDecision('APPROVE')}
-                            disabled={isSubmitting}
-                          >
-                            {isSubmitting ? (
-                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                            ) : (
-                              <Send className="h-4 w-4 mr-1" />
-                            )}
-                            Approve & Execute
-                          </Button>
-                          <Button
-                            variant="outline"
-                            onClick={() => setShowAdjustModal(true)}
-                            disabled={isSubmitting}
-                          >
-                            <Edit className="h-4 w-4 mr-1" />
-                            Edit & Approve
-                          </Button>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            className="flex-1"
-                            onClick={() => handleDecision('DISMISS')}
-                            disabled={isSubmitting}
-                          >
-                            <Trash2 className="h-4 w-4 mr-1" />
-                            Dismiss
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            className="flex-1"
-                            onClick={() => handleDecision('WITHDRAW')}
-                            disabled={isSubmitting}
-                          >
-                            <Ban className="h-4 w-4 mr-1" />
-                            Withdraw Case
-                          </Button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-
-                  {/* No proposal available */}
-                  {!proposal && !selectedRun.proposal_id && (
-                    <div className="text-center py-8">
-                      <AlertTriangle className="h-8 w-8 mx-auto text-amber-500 mb-2" />
-                      <p className="text-sm text-muted-foreground">
-                        No proposal associated with this run
-                      </p>
-                      <div className="flex gap-2 justify-center mt-4">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleRetryRun(selectedRun)}
-                          disabled={isSubmitting}
-                        >
-                          <RotateCcw className="h-4 w-4 mr-1" />
-                          Retry Run
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleCancelRun(selectedRun)}
-                          disabled={isSubmitting}
-                        >
-                          <XCircle className="h-4 w-4 mr-1" />
-                          Cancel Run
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </>
-            ) : (
-              <CardContent className="py-12 text-center">
-                <Eye className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <p className="text-muted-foreground">
-                  Select a run to review its proposal
-                </p>
-              </CardContent>
-            )}
-          </Card>
+      {/* Proposal content */}
+      {!proposal && selectedRun.proposal_id && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       )}
 
-      {/* Adjust Modal */}
+      {!proposal && !selectedRun.proposal_id && (
+        <div className="text-center py-12">
+          <AlertTriangle className="h-6 w-6 mx-auto text-amber-500 mb-2" />
+          <p className="text-xs text-muted-foreground">No proposal for this run</p>
+          <div className="flex gap-2 justify-center mt-3">
+            <Button variant="outline" size="sm" onClick={handleRetryRun} disabled={isSubmitting}>
+              <RotateCcw className="h-3 w-3 mr-1" /> Retry
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCancelRun} disabled={isSubmitting}>
+              <XCircle className="h-3 w-3 mr-1" /> Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {proposal && (
+        <div className="space-y-4">
+          {/* Proposed action */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground uppercase tracking-wider">Action:</span>
+            <Badge variant="outline" className="text-xs">
+              {proposal.action_type}
+            </Badge>
+            {proposal.confidence != null && (
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {Math.round(proposal.confidence * 100)}%
+              </span>
+            )}
+          </div>
+
+          {/* Risk flags */}
+          {proposal.risk_flags && proposal.risk_flags.length > 0 && (
+            <div className="border border-amber-700/50 bg-amber-950/20 p-3">
+              <p className="text-xs font-semibold text-amber-400 flex items-center gap-1 mb-1">
+                <AlertTriangle className="h-3 w-3" /> RISK FLAGS
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {proposal.risk_flags.map((flag, i) => (
+                  <Badge key={i} variant="outline" className="text-[10px] text-amber-400 border-amber-700/50">
+                    {flag}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Warnings */}
+          {proposal.warnings && proposal.warnings.length > 0 && (
+            <div className="border border-orange-700/50 bg-orange-950/20 p-3">
+              <p className="text-xs font-semibold text-orange-400 mb-1">WARNINGS</p>
+              {proposal.warnings.map((w, i) => (
+                <p key={i} className="text-xs text-orange-300">- {w}</p>
+              ))}
+            </div>
+          )}
+
+          {/* AI reasoning */}
+          {proposal.reasoning && proposal.reasoning.length > 0 && (
+            <div className="border p-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Reasoning</p>
+              {proposal.reasoning.map((r, i) => (
+                <p key={i} className="text-xs text-foreground/80 mb-1">
+                  <span className="text-muted-foreground mr-1">{i + 1}.</span>
+                  {typeof r === "string" ? r : JSON.stringify(r)}
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* Inbound message (what agency sent) */}
+          {selectedRun.trigger_message && (
+            <div className="border p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Inbound</p>
+                {selectedRun.trigger_message.classification && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {selectedRun.trigger_message.classification}
+                  </Badge>
+                )}
+                {selectedRun.trigger_message.sentiment && (
+                  <Badge variant="outline" className={cn(
+                    "text-[10px]",
+                    selectedRun.trigger_message.sentiment === "HOSTILE" && "text-red-400 border-red-700/50"
+                  )}>
+                    {selectedRun.trigger_message.sentiment}
+                  </Badge>
+                )}
+              </div>
+              {selectedRun.trigger_message.from_email && (
+                <p className="text-xs text-muted-foreground mb-1">
+                  From: {selectedRun.trigger_message.from_email}
+                </p>
+              )}
+              {selectedRun.trigger_message.subject && (
+                <p className="text-xs mb-2">
+                  <span className="text-muted-foreground">Subj:</span> {selectedRun.trigger_message.subject}
+                </p>
+              )}
+              <div className="bg-background border p-2 max-h-48 overflow-auto">
+                <pre className="text-xs whitespace-pre-wrap font-[inherit]">
+                  {selectedRun.trigger_message.body_text || "(empty)"}
+                </pre>
+              </div>
+            </div>
+          )}
+
+          {/* Draft response */}
+          <div className="border p-3">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Draft Response</p>
+            {proposal.draft_subject && (
+              <p className="text-xs mb-2">
+                <span className="text-muted-foreground">Subj:</span> {proposal.draft_subject}
+              </p>
+            )}
+            <div className="bg-background border p-2 max-h-64 overflow-auto">
+              <pre className="text-xs whitespace-pre-wrap font-[inherit]">
+                {proposal.draft_body_text || "(no draft)"}
+              </pre>
+            </div>
+          </div>
+
+          {/* Action buttons */}
+          <div className="border-t pt-4 space-y-2">
+            <div className="flex gap-2">
+              <Button
+                className="flex-1 bg-green-700 hover:bg-green-600 text-white"
+                onClick={() => handleDecision("APPROVE")}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Send className="h-3 w-3 mr-1" />}
+                APPROVE & EXECUTE
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowAdjustModal(true)}
+                disabled={isSubmitting}
+              >
+                <Edit className="h-3 w-3 mr-1" /> ADJUST
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => handleDecision("DISMISS")}
+                disabled={isSubmitting}
+              >
+                <Trash2 className="h-3 w-3 mr-1" /> DISMISS
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                onClick={() => handleDecision("WITHDRAW")}
+                disabled={isSubmitting}
+              >
+                <Ban className="h-3 w-3 mr-1" /> WITHDRAW
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Adjust modal */}
       <Dialog open={showAdjustModal} onOpenChange={setShowAdjustModal}>
-        <DialogContent>
+        <DialogContent className="bg-card border">
           <DialogHeader>
-            <DialogTitle>Edit Proposal</DialogTitle>
-            <DialogDescription>
-              Provide instructions for how the AI should adjust this proposal
+            <DialogTitle className="text-sm">Adjust Proposal</DialogTitle>
+            <DialogDescription className="text-xs">
+              Provide instructions for the AI to regenerate this draft
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Textarea
-              placeholder="e.g., Make the tone more formal, add a reference to the statute..."
-              value={adjustInstruction}
-              onChange={(e) => setAdjustInstruction(e.target.value)}
-              className="min-h-[100px]"
-            />
-          </div>
+          <Textarea
+            placeholder="e.g., Make tone more formal, reference the statute..."
+            value={adjustInstruction}
+            onChange={(e) => setAdjustInstruction(e.target.value)}
+            className="min-h-[80px] text-xs bg-background"
+          />
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAdjustModal(false)}>
+            <Button variant="outline" size="sm" onClick={() => setShowAdjustModal(false)}>
               Cancel
             </Button>
             <Button
-              onClick={() => handleDecision('ADJUST')}
+              size="sm"
+              onClick={() => handleDecision("ADJUST")}
               disabled={!adjustInstruction.trim() || isSubmitting}
             >
-              {isSubmitting ? (
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-              ) : (
-                <Edit className="h-4 w-4 mr-1" />
-              )}
-              Adjust & Regenerate
+              {isSubmitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Edit className="h-3 w-3 mr-1" />}
+              Adjust
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-// Extracted run row component
-function RunRow({
-  run,
-  isSelected,
-  isSimulated,
-  onSelect,
-  onCancel,
-  onRetry,
-}: {
-  run: AgentRun;
-  isSelected: boolean;
-  isSimulated: boolean;
-  onSelect: () => void;
-  onCancel: () => void;
-  onRetry: () => void;
-}) {
-  const actionConfig = run.proposal?.action_type
-    ? ACTION_TYPE_CONFIG[run.proposal.action_type]
-    : null;
-  const pauseConfig = run.pause_reason
-    ? PAUSE_REASON_CONFIG[run.pause_reason]
-    : null;
-
-  return (
-    <div
-      className={cn(
-        "p-4 cursor-pointer hover:bg-muted/50 transition-colors",
-        isSelected && "bg-muted",
-        isSimulated && "opacity-60"
-      )}
-      onClick={onSelect}
-    >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="font-medium truncate">
-              {run.case_name || `Case #${run.case_id}`}
-            </p>
-            {isSimulated && (
-              <Badge variant="secondary" className="text-xs">
-                SIM
-              </Badge>
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground truncate">
-            Run #{run.id.slice(0, 8)} • {run.trigger_type}
-          </p>
-        </div>
-        <div className="flex items-center gap-1">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link href={`/requests/detail?id=${run.case_id}`}>
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  Open Case
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onRetry(); }}>
-                <RotateCcw className="h-4 w-4 mr-2" />
-                Retry Run
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={(e) => { e.stopPropagation(); onCancel(); }}
-                className="text-red-600"
-              >
-                <XCircle className="h-4 w-4 mr-2" />
-                Cancel Run
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <ChevronRight className="h-5 w-5 text-muted-foreground flex-shrink-0" />
-        </div>
-      </div>
-
-      <div className="flex items-center gap-2 flex-wrap">
-        {actionConfig && (
-          <Badge
-            variant="outline"
-            className={cn("gap-1 text-xs", actionConfig.color)}
-          >
-            {actionConfig.icon}
-            {actionConfig.label}
-          </Badge>
-        )}
-
-        {pauseConfig && (
-          <Badge className={cn("text-xs", pauseConfig.color)}>
-            {pauseConfig.label}
-          </Badge>
-        )}
-
-        {run.proposal?.confidence && (
-          <Badge variant="outline" className="text-xs">
-            {Math.round(run.proposal.confidence * 100)}% conf
-          </Badge>
-        )}
-
-        {run.is_stuck && (
-          <Badge variant="destructive" className="text-xs">
-            Possibly stuck
-          </Badge>
-        )}
-      </div>
-
-      <p className="text-xs text-muted-foreground mt-2">
-        Started: {formatDate(run.started_at)}
-        {run.duration_seconds && run.duration_seconds > 60 && (
-          <span className="ml-2">
-            ({Math.round(run.duration_seconds / 60)}m elapsed)
-          </span>
-        )}
-      </p>
     </div>
   );
 }

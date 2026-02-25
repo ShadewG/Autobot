@@ -1,16 +1,15 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import Link from "next/link";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { NavLinks } from "@/components/nav-links";
-import { EnvironmentBanner } from "@/components/environment-banner";
 
-const inter = Inter({ subsets: ["latin"] });
+const mono = JetBrains_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "FOIA Request Dashboard",
-  description: "Monitor and manage FOIA requests",
+  title: "AUTOBOT",
+  description: "FOIA case operations",
 };
 
 export default function RootLayout({
@@ -20,21 +19,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body className={mono.className}>
         <Providers>
-          <EnvironmentBanner />
           <div className="min-h-screen bg-background">
-            <nav className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-              <div className="container flex h-14 items-center">
-                <div className="mr-4 flex">
-                  <Link href="/requests" className="mr-6 flex items-center space-x-2">
-                    <span className="font-bold">FOIA Dashboard</span>
-                  </Link>
-                  <NavLinks />
-                </div>
+            <nav className="sticky top-0 z-40 border-b bg-background">
+              <div className="flex h-10 items-center px-4">
+                <Link href="/gated" className="mr-8 text-xs font-bold tracking-widest uppercase text-muted-foreground hover:text-foreground">
+                  AUTOBOT
+                </Link>
+                <NavLinks />
               </div>
             </nav>
-            <main className="container py-6">{children}</main>
+            <main className="px-4 py-4">{children}</main>
           </div>
         </Providers>
       </body>
