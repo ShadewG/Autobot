@@ -117,6 +117,7 @@ export const processInitialRequest = task({
           urgency: "high",
           suggestedAction: "Review and decide on initial FOIA request",
         });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "timed_out", proposalId: draft.proposalId };
       }
 
@@ -137,12 +138,14 @@ export const processInitialRequest = task({
 
       if (humanDecision.action === "DISMISS") {
         await db.updateProposal(draft.proposalId, { status: "DISMISSED" });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed", proposalId: draft.proposalId };
       }
 
       if (humanDecision.action === "WITHDRAW") {
         await db.updateProposal(draft.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "withdrawn", proposalId: draft.proposalId };
       }
 
@@ -161,6 +164,7 @@ export const processInitialRequest = task({
           await db.updateProposal(draft.proposalId, {
             status: !adjustResult.ok ? "EXPIRED" : "DISMISSED",
           });
+          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
           return {
             status: !adjustResult.ok ? "timed_out" : "dismissed",
             proposalId: draft.proposalId,
@@ -192,6 +196,7 @@ export const processInitialRequest = task({
       0.9, "initial_request", execution.actionExecuted, execution.executionResult
     );
 
+    await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
     return {
       status: "completed",
       proposalId: draft.proposalId,

@@ -1260,10 +1260,12 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Draft response — only shown when there's actually a draft */}
+          {/* Draft content — only shown when there's actually a draft */}
           {(draftBody || draftSubject || (selectedProposalId && !proposalDetail)) && (
             <div className="border p-3">
-              <SectionLabel>Draft Response</SectionLabel>
+              <SectionLabel>
+                {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
+              </SectionLabel>
               {draftSubject && (
                 <p className="text-xs mb-2">
                   <span className="text-muted-foreground">Subj:</span>{" "}
