@@ -829,6 +829,11 @@ function MonitorPageContent() {
 
   // ── Phone Queue Helpers ────────────────────
 
+  const showToast = useCallback((message: string, type: "success" | "error" = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  }, []);
+
   const handleAddToPhoneQueue = async (caseId: number, reason?: string) => {
     setAddingToPhoneQueue(true);
     try {
@@ -845,14 +850,17 @@ function MonitorPageContent() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
-      if (data.already_exists) {
-        alert("Case is already in the phone queue.");
-      } else {
-        alert("Added to phone queue. AI briefing generating in background.");
-      }
+      // Remove from queue and advance to next item
+      removeCurrentItem();
+      revalidateQueue();
       mutatePhone();
+      if (data.already_exists) {
+        showToast("Already in phone queue — moved to next item");
+      } else {
+        showToast("Added to phone queue — briefing generating...");
+      }
     } catch (err) {
-      alert(`Failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setAddingToPhoneQueue(false);
     }
@@ -2391,6 +2399,26 @@ function MonitorPageContent() {
       </Dialog>
 
       {/* Correspondence is now shown inline, no dialog needed */}
+
+      {/* ── Toast notification ────────────── */}
+      {toast && (
+        <div
+          className={cn(
+            "fixed bottom-4 left-4 z-50 px-4 py-2.5 rounded-md shadow-lg border text-xs font-medium flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200",
+            toast.type === "success"
+              ? "bg-green-950/90 border-green-700/50 text-green-300"
+              : "bg-red-950/90 border-red-700/50 text-red-300"
+          )}
+          onClick={() => setToast(null)}
+        >
+          {toast.type === "success" ? (
+            <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" />
+          ) : (
+            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+          )}
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 }
