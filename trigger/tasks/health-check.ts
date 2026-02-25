@@ -1,71 +1,59 @@
 import { task } from "@trigger.dev/sdk/v3";
+import db, { logger } from "../lib/db";
+
+// Same imports as process-inbound to test if they hang
+import { loadContext } from "../steps/load-context";
+import { classifyInbound } from "../steps/classify-inbound";
+import { updateConstraints } from "../steps/update-constraints";
+import { decideNextAction } from "../steps/decide-next-action";
+import { draftResponse } from "../steps/draft-response";
+import { safetyCheck } from "../steps/safety-check";
+import { createProposalAndGate } from "../steps/gate-or-execute";
+import { executeAction } from "../steps/execute-action";
+import { commitState } from "../steps/commit-state";
+import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 
 export const healthCheck = task({
   id: "health-check",
   maxDuration: 60,
-  run: async (payload: { test: string }) => {
-    const results: Record<string, string> = {};
+  run: async (payload: { test: string; caseId?: number }) => {
+    const results: Record<string, any> = {};
 
-    // Test each import
+    // Test DB connectivity
     try {
-      const { loadContext } = await import("../steps/load-context");
-      results.loadContext = "ok";
-    } catch (e: any) { results.loadContext = e.message; }
+      const r = await db.query("SELECT 1 as ping");
+      results.dbPing = "ok";
+    } catch (e: any) { results.dbPing = e.message; }
 
-    try {
-      const { classifyInbound } = await import("../steps/classify-inbound");
-      results.classifyInbound = "ok";
-    } catch (e: any) { results.classifyInbound = e.message; }
+    // Test createAgentRun (the exact call that may be hanging)
+    if (payload.caseId) {
+      try {
+        await db.query(
+          `UPDATE agent_runs SET status = 'failed', error = 'superseded by health-check'
+           WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
+          [payload.caseId]
+        );
+        results.clearStale = "ok";
 
-    try {
-      const { updateConstraints } = await import("../steps/update-constraints");
-      results.updateConstraints = "ok";
-    } catch (e: any) { results.updateConstraints = e.message; }
+        const agentRun = await db.createAgentRun(payload.caseId, "HEALTH_CHECK", {
+          source: "health-check",
+        });
+        results.createAgentRun = `ok (id: ${agentRun.id})`;
 
-    try {
-      const { decideNextAction } = await import("../steps/decide-next-action");
-      results.decideNextAction = "ok";
-    } catch (e: any) { results.decideNextAction = e.message; }
+        // Clean up the test run
+        await db.query("UPDATE agent_runs SET status = 'failed' WHERE id = $1", [agentRun.id]);
+        results.cleanup = "ok";
+      } catch (e: any) { results.createAgentRun = e.message; }
+    }
 
-    try {
-      const { draftResponse } = await import("../steps/draft-response");
-      results.draftResponse = "ok";
-    } catch (e: any) { results.draftResponse = e.message; }
-
-    try {
-      const { safetyCheck } = await import("../steps/safety-check");
-      results.safetyCheck = "ok";
-    } catch (e: any) { results.safetyCheck = e.message; }
-
-    try {
-      const { createProposalAndGate } = await import("../steps/gate-or-execute");
-      results.gateOrExecute = "ok";
-    } catch (e: any) { results.gateOrExecute = e.message; }
-
-    try {
-      const { executeAction } = await import("../steps/execute-action");
-      results.executeAction = "ok";
-    } catch (e: any) { results.executeAction = e.message; }
-
-    try {
-      const { commitState } = await import("../steps/commit-state");
-      results.commitState = "ok";
-    } catch (e: any) { results.commitState = e.message; }
-
-    try {
-      const rc = await import("../steps/research-context");
-      results.researchContext = "ok";
-    } catch (e: any) { results.researchContext = e.message; }
-
-    try {
-      const db = await import("../lib/db");
-      results.db = "ok";
-    } catch (e: any) { results.db = e.message; }
-
-    try {
-      const ai = await import("../lib/ai");
-      results.ai = "ok";
-    } catch (e: any) { results.ai = e.message; }
+    // Test loadContext
+    if (payload.caseId) {
+      try {
+        const { loadContext } = await import("../steps/load-context");
+        const ctx = await loadContext(payload.caseId, null);
+        results.loadContext = `ok (agency: ${ctx.caseData?.agency_name})`;
+      } catch (e: any) { results.loadContext = e.message; }
+    }
 
     return results;
   },
