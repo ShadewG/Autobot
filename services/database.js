@@ -2694,10 +2694,11 @@ class DatabaseService {
 
     async createAttachment(data) {
         const result = await this.query(`
-            INSERT INTO attachments (message_id, case_id, filename, content_type, size_bytes, storage_path, file_data)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO attachments (message_id, case_id, filename, content_type, size_bytes, storage_path, storage_url, file_data)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING *
-        `, [data.message_id, data.case_id, data.filename, data.content_type, data.size_bytes, data.storage_path, data.file_data || null]);
+        `, [data.message_id, data.case_id, data.filename, data.content_type, data.size_bytes,
+            data.storage_path, data.storage_url || null, data.file_data || null]);
         return result.rows[0];
     }
 

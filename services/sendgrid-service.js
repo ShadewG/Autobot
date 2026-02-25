@@ -596,21 +596,38 @@ class SendGridService {
             // checks, thresholds, and proper proposals. The old regex detectFeeQuote() ran
             // before AI analysis and short-circuited the smarter pipeline.
 
-            // Feature 6: Save attachments to disk
+            // Feature 6: Save attachments — S3/R2 (permanent) + DB BYTEA fallback
             if (inboundData.attachments?.length > 0 && !messageAlreadyExists) {
+                const storageService = require('./storage-service');
                 const fsPromises = require('fs').promises;
                 const path = require('path');
                 const attachmentDir = process.env.ATTACHMENT_DIR || '/data/attachments';
 
                 for (const att of inboundData.attachments) {
                     try {
+                        let storageUrl = null;
+                        let storagePath = null;
+
+                        // Tier 1: Upload to S3/R2 (permanent)
+                        if (storageService.isConfigured() && att.buffer) {
+                            const result = await storageService.upload(
+                                caseData.id, message.id,
+                                att.filename, att.buffer,
+                                att.mimetype
+                            );
+                            if (result) storageUrl = result.storageUrl;
+                        }
+
+                        // Tier 2: Write to local disk (ephemeral, for quick access)
                         const dir = path.join(attachmentDir, String(caseData.id));
                         await fsPromises.mkdir(dir, { recursive: true });
                         const safeFilename = (att.filename || 'unnamed').replace(/[^a-zA-Z0-9._-]/g, '_');
-                        const storagePath = path.join(dir, `${message.id}_${safeFilename}`);
+                        storagePath = path.join(dir, `${message.id}_${safeFilename}`);
                         if (att.buffer) {
                             await fsPromises.writeFile(storagePath, att.buffer);
                         }
+
+                        // Tier 3: Save to DB — always store binary as BYTEA fallback
                         await db.createAttachment({
                             message_id: message.id,
                             case_id: caseData.id,
@@ -618,6 +635,7 @@ class SendGridService {
                             content_type: att.mimetype || 'application/octet-stream',
                             size_bytes: att.size || (att.buffer ? att.buffer.length : 0),
                             storage_path: storagePath,
+                            storage_url: storageUrl,
                             file_data: att.buffer || null
                         });
                     } catch (attErr) {

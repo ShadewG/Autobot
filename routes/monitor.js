@@ -2296,13 +2296,31 @@ router.get('/attachments/:id/download', async (req, res) => {
         res.setHeader('Content-Disposition', `inline; filename="${attachment.filename || 'download'}"`);
         res.setHeader('Content-Type', attachment.content_type || 'application/octet-stream');
 
-        // Try disk first, fall back to DB binary
+        // Tier 1: Try S3/R2 URL (permanent storage)
+        if (attachment.storage_url && !attachment.storage_url.startsWith('s3://')) {
+            return res.redirect(attachment.storage_url);
+        }
+
+        // Tier 1b: Try S3/R2 download (s3:// internal URLs)
+        if (attachment.storage_url && attachment.storage_url.startsWith('s3://')) {
+            try {
+                const storageService = require('../services/storage-service');
+                const key = attachment.storage_url.replace(/^s3:\/\/[^/]+\//, '');
+                const buffer = await storageService.download(key);
+                if (buffer) {
+                    res.setHeader('Content-Length', buffer.length);
+                    return res.send(buffer);
+                }
+            } catch (_) {}
+        }
+
+        // Tier 2: Try local disk (ephemeral)
         const fsSync = require('fs');
         if (attachment.storage_path && fsSync.existsSync(attachment.storage_path)) {
             return fsSync.createReadStream(attachment.storage_path).pipe(res);
         }
 
-        // Serve from DB file_data column
+        // Tier 3: Serve from DB file_data column (BYTEA fallback)
         if (attachment.file_data) {
             res.setHeader('Content-Length', attachment.file_data.length);
             return res.send(attachment.file_data);
