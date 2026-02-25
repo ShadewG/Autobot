@@ -26,6 +26,7 @@ export function NavLinks() {
     { href: "/requests", label: "CASES" },
     { href: "/runs", label: "RUNS" },
     { href: "/agencies", label: "AGENCIES" },
+    { href: "/settings", label: "SETTINGS" },
   ];
 
   return (

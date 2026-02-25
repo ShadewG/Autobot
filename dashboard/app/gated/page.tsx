@@ -496,6 +496,8 @@ function MonitorPageContent() {
   const [callOutcome, setCallOutcome] = useState<string | null>(null);
   const [nextStepSuggestion, setNextStepSuggestion] = useState<{ next_action: string; explanation: string; draft_notes?: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
+  const [editedBody, setEditedBody] = useState<string>("");
+  const [editedSubject, setEditedSubject] = useState<string>("");
   const initialCaseApplied = useRef(false);
 
   // ── Deep linking & user filter ─────────────
@@ -664,12 +666,17 @@ function MonitorPageContent() {
     if (!selectedItem || selectedItem.type !== "proposal") return;
     setIsSubmitting(true);
     try {
+      const body: Record<string, unknown> = { action: "APPROVE" };
+      // Include any edits the user made to the draft
+      if (editedBody && editedBody !== draftBody) body.draft_body_text = editedBody;
+      if (editedSubject && editedSubject !== draftSubject) body.draft_subject = editedSubject;
+
       const res = await fetch(
         `/api/monitor/proposals/${selectedItem.data.id}/decision`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "APPROVE" }),
+          body: JSON.stringify(body),
         }
       );
       const data = await res.json();
@@ -972,6 +979,12 @@ function MonitorPageContent() {
     if (proposalDetail?.proposal?.draft_subject) return proposalDetail.proposal.draft_subject;
     return selectedItem.data.draft_subject || null;
   })();
+
+  // Keep edited draft in sync when a new item is selected or draft loads
+  useEffect(() => {
+    setEditedBody(draftBody || "");
+    setEditedSubject(draftSubject || "");
+  }, [draftBody, draftSubject]);
 
   const reasoning = (() => {
     if (selectedItem?.type !== "proposal") return [];
@@ -1404,23 +1417,28 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Draft content — only shown when there's actually a draft */}
+          {/* Draft content — editable */}
           {(draftBody || draftSubject || (selectedProposalId && !proposalDetail)) && (
-            <div className="border p-3">
+            <div className="border p-3 space-y-2">
               <SectionLabel>
                 {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
+                <span className="ml-2 text-[10px] text-muted-foreground font-normal normal-case">edit inline before approving</span>
               </SectionLabel>
-              {draftSubject && (
-                <p className="text-xs mb-2">
-                  <span className="text-muted-foreground">Subj:</span>{" "}
-                  {draftSubject}
-                </p>
+              {(draftSubject || editedSubject) && (
+                <input
+                  className="w-full bg-background border rounded px-2 py-1 text-xs font-[inherit]"
+                  value={editedSubject}
+                  onChange={(e) => setEditedSubject(e.target.value)}
+                  placeholder="Subject"
+                />
               )}
-              <div className="bg-background border p-2 max-h-64 overflow-auto">
-                <pre className="text-xs whitespace-pre-wrap font-[inherit]">
-                  {draftBody || "(loading draft...)"}
-                </pre>
-              </div>
+              <textarea
+                className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
+                rows={12}
+                value={editedBody}
+                onChange={(e) => setEditedBody(e.target.value)}
+                placeholder={draftBody === null ? "(loading draft...)" : ""}
+              />
             </div>
           )}
 

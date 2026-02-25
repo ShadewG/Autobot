@@ -212,6 +212,27 @@ function RequestDetailContent() {
     );
   };
 
+  const handleAddToPhoneQueue = async () => {
+    if (!id) return;
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/phone-calls`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ case_id: Number(id), reason: "manual_add", notes: "Added from case detail page" }),
+      });
+      const data = await res.json();
+      if (data.already_exists) {
+        alert("This case is already in the phone call queue.");
+      } else {
+        alert("Added to phone call queue.");
+      }
+      mutate();
+    } catch (error) {
+      console.error("Error adding to phone queue:", error);
+      alert("Failed to add to phone queue.");
+    }
+  };
+
   const handleResolveReview = async (action: string, instruction?: string) => {
     if (!id) return;
     try {
@@ -463,7 +484,7 @@ function RequestDetailContent() {
   return (
     <div className="space-y-4">
       {/* Compact Header */}
-      <div className="sticky top-14 z-40 bg-background border-b pb-3 -mx-6 px-6 pt-2">
+      <div className="sticky top-10 z-30 bg-background border-b pb-3 -mx-6 px-6 pt-2">
         {/* Back + Title row */}
         <div className="flex items-center gap-4 mb-2">
           <Button
@@ -788,7 +809,7 @@ function RequestDetailContent() {
 
               {/* Decision Panel - sticky on right */}
               <div className="lg:col-span-4 min-w-0">
-                <div className="sticky top-48 space-y-4">
+                <div className="sticky top-44 space-y-4">
                   <DecisionPanel
                     request={request}
                     nextAction={nextAction}
@@ -800,6 +821,7 @@ function RequestDetailContent() {
                     onWithdraw={handleWithdraw}
                     onNarrowScope={handleNarrowScope}
                     onAppeal={handleAppeal}
+                    onAddToPhoneQueue={handleAddToPhoneQueue}
                     onResolveReview={handleResolveReview}
                     isLoading={isApproving || isRevising}
                   />

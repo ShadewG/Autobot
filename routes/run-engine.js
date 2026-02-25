@@ -338,6 +338,16 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
     }
 
+    // Apply any inline edits to the draft before executing
+    const { draft_body_text, draft_subject } = req.body;
+    if (action === 'APPROVE' && (draft_body_text !== undefined || draft_subject !== undefined)) {
+      const draftUpdates = {};
+      if (draft_body_text !== undefined) draftUpdates.draft_body_text = draft_body_text;
+      if (draft_subject !== undefined) draftUpdates.draft_subject = draft_subject;
+      await db.updateProposal(proposalId, draftUpdates);
+      logger.info('Applied inline draft edits before approval', { proposalId, fields: Object.keys(draftUpdates) });
+    }
+
     // Build human decision object (full details for graph and DB)
     const humanDecision = {
       action,

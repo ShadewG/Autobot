@@ -57,6 +57,7 @@ interface DecisionPanelProps {
   onNarrowScope: () => void;
   onAppeal: () => void;
   onOpenPortal?: () => void;
+  onAddToPhoneQueue?: () => void;
   onResolveReview?: (action: string, instruction?: string) => Promise<void>;
   isLoading?: boolean;
 }
@@ -262,7 +263,10 @@ const UNKNOWN_GATE_CONFIG: GateConfig = {
   getQuestion: () => "This request is paused but the gate type is unknown. What do you want to do?",
   primaryAction: { label: "Proceed", description: "Resume processing this request." },
   secondaryAction: { label: "Negotiate", description: "Draft an adjustment to the current action." },
-  overflowActions: [{ label: "Withdraw", description: "Cancel this request permanently." }],
+  overflowActions: [
+    { label: "Add to phone queue", description: "Add this case to the phone call queue for manual follow-up." },
+    { label: "Withdraw", description: "Cancel this request permanently." },
+  ],
   isSupported: true,
 };
 
@@ -297,6 +301,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     overflowActions: [
       { label: "Customize negotiation...", description: "Open the adjustment panel to give specific instructions for how to handle the fee." },
       { label: "Set cost cap", description: "Set a maximum you're willing to pay. The action won't auto-execute if the fee exceeds this limit." },
+      { label: "Add to phone queue", description: "Add this case to the phone call queue to negotiate by phone." },
       { label: "Withdraw", description: "Cancel this request permanently." },
     ],
     getRecommendation: (r, _, points) => {
@@ -338,6 +343,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       description: "AI drafts a narrowed-scope resubmission targeting only the records that weren't denied. Removes the items the agency can't or won't provide.",
     },
     overflowActions: [
+      { label: "Add to phone queue", description: "Add this case to the phone call queue to discuss the denial by phone." },
       { label: "Acknowledge & close", description: "Close this case, recording the denial as the final outcome." },
       { label: "Withdraw", description: "Cancel this request permanently." },
     ],
@@ -360,6 +366,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       description: "AI drafts a clarifying response that directly answers the agency's specific question without changing the scope of the request.",
     },
     overflowActions: [
+      { label: "Add to phone queue", description: "Add this case to the phone call queue to clarify scope by phone." },
       { label: "Withdraw", description: "Cancel this request permanently." },
     ],
     isSupported: true,
@@ -380,6 +387,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       description: "Draft a response challenging the ID requirement, citing that most state FOIA laws don't permit agencies to demand requester identification.",
     },
     overflowActions: [
+      { label: "Add to phone queue", description: "Add this case to the phone call queue to discuss ID requirements." },
       { label: "Withdraw", description: "Cancel this request permanently." },
     ],
     isSupported: false,
@@ -400,6 +408,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       description: "Open the adjust dialog to change the scope or wording of the request to address the sensitivity concern.",
     },
     overflowActions: [
+      { label: "Add to phone queue", description: "Add this case to the phone call queue." },
       { label: "Withdraw", description: "Cancel this request permanently." },
     ],
     isSupported: false,
@@ -544,6 +553,7 @@ export function DecisionPanel({
   onNarrowScope,
   onAppeal,
   onOpenPortal,
+  onAddToPhoneQueue,
   onResolveReview,
   isLoading,
 }: DecisionPanelProps) {
@@ -994,6 +1004,8 @@ export function DecisionPanel({
                         setShowCostCap(true);
                       } else if (action.label === "Customize negotiation...") {
                         onCustomAdjust?.();
+                      } else if (action.label === "Add to phone queue") {
+                        onAddToPhoneQueue?.();
                       }
                     }}
                     className="flex flex-col items-start gap-0.5 py-2"
