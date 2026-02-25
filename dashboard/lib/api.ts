@@ -2,6 +2,7 @@ import type {
   RequestsListResponse,
   RequestWorkspaceResponse,
   NextAction,
+  ScopeItem,
 } from './types';
 
 // API is at root /api, not under /dashboard
@@ -251,7 +252,7 @@ export const requestsAPI = {
   updateScopeItem: (
     id: string,
     itemIndex: number,
-    status: 'REQUESTED' | 'PENDING' | 'CONFIRMED_AVAILABLE' | 'NOT_DISCLOSABLE' | 'NOT_HELD',
+    status: ScopeItem['status'],
     reason?: string
   ): Promise<{ success: boolean; scope_items: unknown[] }> => {
     return fetchAPI(`/requests/${id}/scope-items/${itemIndex}`, {

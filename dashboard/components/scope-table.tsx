@@ -20,12 +20,14 @@ import type { ScopeItem } from "@/lib/types";
 import { CheckCircle, XCircle, HelpCircle, FileX, Ban, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const STATUS_CONFIG: Record<ScopeItem['status'], {
+interface StatusConfig {
   icon: React.ComponentType<{ className?: string }>;
   color: string;
   bgColor: string;
   label: string;
-}> = {
+}
+
+const STATUS_CONFIG: Record<string, StatusConfig> = {
   REQUESTED: {
     icon: HelpCircle,
     color: "text-gray-500",
@@ -56,6 +58,37 @@ const STATUS_CONFIG: Record<ScopeItem['status'], {
     bgColor: "bg-blue-500/10",
     label: "Pending"
   },
+  DELIVERED: {
+    icon: CheckCircle,
+    color: "text-emerald-400",
+    bgColor: "bg-emerald-500/10",
+    label: "Delivered"
+  },
+  DENIED: {
+    icon: XCircle,
+    color: "text-red-400",
+    bgColor: "bg-red-500/10",
+    label: "Denied"
+  },
+  PARTIAL: {
+    icon: HelpCircle,
+    color: "text-yellow-400",
+    bgColor: "bg-yellow-500/10",
+    label: "Partial"
+  },
+  EXEMPT: {
+    icon: Ban,
+    color: "text-red-400",
+    bgColor: "bg-red-500/10",
+    label: "Exempt"
+  },
+};
+
+const FALLBACK_CONFIG: StatusConfig = {
+  icon: HelpCircle,
+  color: "text-gray-500",
+  bgColor: "bg-muted",
+  label: "Unknown"
 };
 
 interface ScopeTableProps {
@@ -92,7 +125,7 @@ export function ScopeTable({ items, className, onStatusChange, isUpdating }: Sco
         </TableHeader>
         <TableBody>
           {items.map((item, index) => {
-            const config = STATUS_CONFIG[item.status];
+            const config = STATUS_CONFIG[item.status] || FALLBACK_CONFIG;
             const Icon = config.icon;
             const isUnknown = item.status === 'REQUESTED' || item.status === 'PENDING';
             const canEdit = isUnknown && onStatusChange;

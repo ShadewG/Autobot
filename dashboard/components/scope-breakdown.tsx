@@ -6,18 +6,6 @@ import type { ScopeItem } from "@/lib/types";
 import { CheckCircle, XCircle, HelpCircle, FileX, Ban } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const STATUS_CONFIG: Record<ScopeItem['status'], {
-  icon: React.ComponentType<{ className?: string }>;
-  color: string;
-  label: string;
-}> = {
-  REQUESTED: { icon: HelpCircle, color: "text-gray-500", label: "Requested" },
-  CONFIRMED_AVAILABLE: { icon: CheckCircle, color: "text-green-400", label: "Available" },
-  NOT_DISCLOSABLE: { icon: Ban, color: "text-red-400", label: "Not Disclosable" },
-  NOT_HELD: { icon: FileX, color: "text-orange-400", label: "Not Held" },
-  PENDING: { icon: HelpCircle, color: "text-blue-400", label: "Pending" },
-};
-
 interface ScopeBreakdownProps {
   items: ScopeItem[];
   className?: string;
@@ -31,15 +19,19 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
   // Group items by status
   const requested = items.filter(i => i.status === 'REQUESTED');
   const available = items.filter(i => i.status === 'CONFIRMED_AVAILABLE');
-  const notDisclosable = items.filter(i => i.status === 'NOT_DISCLOSABLE');
+  const delivered = items.filter(i => i.status === 'DELIVERED');
+  const notDisclosable = items.filter(i => i.status === 'NOT_DISCLOSABLE' || i.status === 'EXEMPT');
+  const denied = items.filter(i => i.status === 'DENIED');
   const notHeld = items.filter(i => i.status === 'NOT_HELD');
+  const partial = items.filter(i => i.status === 'PARTIAL');
   const pending = items.filter(i => i.status === 'PENDING');
 
   const renderGroup = (
     groupItems: ScopeItem[],
     title: string,
     icon: React.ComponentType<{ className?: string }>,
-    color: string
+    color: string,
+    badgeClass?: string
   ) => {
     if (groupItems.length === 0) return null;
     const Icon = icon;
@@ -56,12 +48,7 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
               <TooltipTrigger asChild>
                 <Badge
                   variant="outline"
-                  className={cn(
-                    "text-[10px] cursor-help",
-                    item.status === 'NOT_DISCLOSABLE' && "border-red-700/50 bg-red-500/10 text-red-300",
-                    item.status === 'NOT_HELD' && "border-orange-700/50 bg-orange-500/10 text-orange-300",
-                    item.status === 'CONFIRMED_AVAILABLE' && "border-green-700/50 bg-green-500/10 text-green-300",
-                  )}
+                  className={cn("text-[10px] cursor-help", badgeClass)}
                 >
                   {item.name}
                 </Badge>
@@ -99,37 +86,13 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
         </div>
       )}
 
-      {/* Not disclosable */}
-      {renderGroup(
-        notDisclosable,
-        "Confirmed Not Disclosable",
-        Ban,
-        "text-red-400"
-      )}
-
-      {/* Not held */}
-      {renderGroup(
-        notHeld,
-        "Confirmed Not Held",
-        FileX,
-        "text-orange-400"
-      )}
-
-      {/* Available */}
-      {renderGroup(
-        available,
-        "Confirmed Available",
-        CheckCircle,
-        "text-green-400"
-      )}
-
-      {/* Pending */}
-      {renderGroup(
-        pending,
-        "Still Pending",
-        HelpCircle,
-        "text-blue-400"
-      )}
+      {renderGroup(delivered, "Delivered", CheckCircle, "text-emerald-400", "border-emerald-700/50 bg-emerald-500/10 text-emerald-300")}
+      {renderGroup(notDisclosable, "Not Disclosable / Exempt", Ban, "text-red-400", "border-red-700/50 bg-red-500/10 text-red-300")}
+      {renderGroup(denied, "Denied", XCircle, "text-red-400", "border-red-700/50 bg-red-500/10 text-red-300")}
+      {renderGroup(notHeld, "Not Held", FileX, "text-orange-400", "border-orange-700/50 bg-orange-500/10 text-orange-300")}
+      {renderGroup(partial, "Partial", HelpCircle, "text-yellow-400", "border-yellow-700/50 bg-yellow-500/10 text-yellow-300")}
+      {renderGroup(available, "Confirmed Available", CheckCircle, "text-green-400", "border-green-700/50 bg-green-500/10 text-green-300")}
+      {renderGroup(pending, "Still Pending", HelpCircle, "text-blue-400")}
     </div>
   );
 }

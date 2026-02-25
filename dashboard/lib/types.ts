@@ -35,7 +35,7 @@ export interface RequestListItem {
 // Scope item with availability status
 export interface ScopeItem {
   name: string;
-  status: 'REQUESTED' | 'CONFIRMED_AVAILABLE' | 'NOT_DISCLOSABLE' | 'NOT_HELD' | 'PENDING';
+  status: 'REQUESTED' | 'CONFIRMED_AVAILABLE' | 'NOT_DISCLOSABLE' | 'NOT_HELD' | 'PENDING' | 'DELIVERED' | 'DENIED' | 'PARTIAL' | 'EXEMPT';
   reason?: string; // e.g., "SC § 23-1-240(B)" or "Agency confirmed not held"
   confidence?: number;
 }
