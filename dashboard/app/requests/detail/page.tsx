@@ -176,6 +176,12 @@ function RequestDetailContent() {
   };
 
   const handleNegotiate = () => {
+    handleRevise(
+      "Draft a fee negotiation email. Request an itemized breakdown of all charges, cite the applicable state FOIA fee statute to challenge any excessive charges, and offer to narrow the scope of the request to reduce cost. Keep the tone professional but firm."
+    );
+  };
+
+  const handleCustomAdjust = () => {
     setAdjustModalOpen(true);
   };
 
@@ -195,13 +201,15 @@ function RequestDetailContent() {
   };
 
   const handleNarrowScope = () => {
-    // Open adjust modal with scope narrowing preset
-    setAdjustModalOpen(true);
+    handleRevise(
+      "Draft a response narrowing the scope of the request to address the agency's overbreadth objection. Remove or limit the specific items they flagged as too broad while preserving the core records we need. Propose a clear, focused scope."
+    );
   };
 
   const handleAppeal = () => {
-    // Open adjust modal with appeal preset
-    setAdjustModalOpen(true);
+    handleRevise(
+      "Draft an administrative appeal of the denial. Cite the applicable state public records statute and challenge the exemptions the agency cited. Request reconsideration with legal basis for why the exemptions should not apply here. Be firm but professional."
+    );
   };
 
   const handleResolveReview = async (action: string, instruction?: string) => {
@@ -788,11 +796,12 @@ function RequestDetailContent() {
                     lastInboundMessage={lastInboundMessage}
                     onProceed={handleProceed}
                     onNegotiate={handleNegotiate}
+                    onCustomAdjust={handleCustomAdjust}
                     onWithdraw={handleWithdraw}
                     onNarrowScope={handleNarrowScope}
                     onAppeal={handleAppeal}
                     onResolveReview={handleResolveReview}
-                    isLoading={isApproving}
+                    isLoading={isApproving || isRevising}
                   />
 
                   {/* Copilot info below decision panel for context */}

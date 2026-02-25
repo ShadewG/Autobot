@@ -52,6 +52,7 @@ interface DecisionPanelProps {
   lastInboundMessage?: ThreadMessage | null;
   onProceed: (costCap?: number) => Promise<void>;
   onNegotiate: () => void;
+  onCustomAdjust?: () => void;
   onWithdraw: () => void;
   onNarrowScope: () => void;
   onAppeal: () => void;
@@ -294,7 +295,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
       recommended: false,
     },
     overflowActions: [
-      { label: "Request itemized breakdown", description: "Opens negotiation with a focused instruction to request a full cost breakdown before deciding." },
+      { label: "Customize negotiation...", description: "Open the adjustment panel to give specific instructions for how to handle the fee." },
       { label: "Set cost cap", description: "Set a maximum you're willing to pay. The action won't auto-execute if the fee exceeds this limit." },
       { label: "Withdraw", description: "Cancel this request permanently." },
     ],
@@ -538,6 +539,7 @@ export function DecisionPanel({
   lastInboundMessage,
   onProceed,
   onNegotiate,
+  onCustomAdjust,
   onWithdraw,
   onNarrowScope,
   onAppeal,
@@ -990,8 +992,8 @@ export function DecisionPanel({
                         onWithdraw();
                       } else if (action.label === "Set cost cap") {
                         setShowCostCap(true);
-                      } else if (action.label === "Request itemized breakdown") {
-                        onNegotiate();
+                      } else if (action.label === "Customize negotiation...") {
+                        onCustomAdjust?.();
                       }
                     }}
                     className="flex flex-col items-start gap-0.5 py-2"
