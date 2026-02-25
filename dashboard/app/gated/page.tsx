@@ -766,26 +766,29 @@ function MonitorPageContent() {
           { id: "queue" as TabId, label: "QUEUE", icon: AlertCircle, count: totalAttention },
           { id: "inbound" as TabId, label: "INBOUND", icon: Mail, count: inboundData?.count },
           { id: "calls" as TabId, label: "PHONE CALLS", icon: Phone, count: phoneData?.stats?.pending },
-        ]).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={cn(
-              "flex items-center gap-1.5 px-4 py-2 text-[10px] uppercase tracking-widest transition-colors border-b-2 -mb-px",
-              activeTab === tab.id
-                ? "text-foreground border-foreground"
-                : "text-muted-foreground border-transparent hover:text-foreground"
-            )}
-          >
-            <tab.icon className="h-3 w-3" />
-            {tab.label}
-            {tab.count != null && tab.count > 0 && (
-              <Badge variant="outline" className="h-4 px-1 text-[10px] leading-none ml-1">
-                {tab.count}
-              </Badge>
-            )}
-          </button>
-        ))}
+        ]).map((tab) => {
+          const TabIcon = tab.icon;
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-2 text-[10px] uppercase tracking-widest transition-colors border-b-2 -mb-px",
+                activeTab === tab.id
+                  ? "text-foreground border-foreground"
+                  : "text-muted-foreground border-transparent hover:text-foreground"
+              )}
+            >
+              <TabIcon className="h-3 w-3" />
+              {tab.label}
+              {tab.count != null && tab.count > 0 && (
+                <Badge variant="outline" className="h-4 px-1 text-[10px] leading-none ml-1">
+                  {tab.count}
+                </Badge>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── Queue Tab ────────────────────────── */}
