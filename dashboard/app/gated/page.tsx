@@ -928,6 +928,30 @@ function MonitorPageContent() {
     }
   };
 
+  const handleFindPhoneNumber = async (taskId: number) => {
+    setPhoneCallSubmitting(taskId);
+    try {
+      const res = await fetch(`/api/phone-calls/${taskId}/find-phone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      mutatePhone();
+      if (data.found) {
+        showToast(`Found: ${data.phone}`);
+      } else {
+        showToast("No phone number found from any source", "error");
+      }
+    } catch (err) {
+      showToast(`Lookup failed: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setPhoneCallSubmitting(null);
+    }
+  };
+
   // ── Extract display data ───────────────────
 
   const summary = overview?.summary;
@@ -2166,7 +2190,23 @@ function MonitorPageContent() {
                               {task.agency_phone}
                             </a>
                           ) : (
-                            <p className="text-sm text-muted-foreground italic">No phone number on file</p>
+                            <div className="space-y-2">
+                              <p className="text-sm text-muted-foreground italic">No phone number on file</p>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-xs text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+                                onClick={() => handleFindPhoneNumber(task.id)}
+                                disabled={isTaskSubmitting}
+                              >
+                                {isTaskSubmitting ? (
+                                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="h-3 w-3 mr-1.5" />
+                                )}
+                                {isTaskSubmitting ? "SEARCHING..." : "FIND PHONE NUMBER"}
+                              </Button>
+                            </div>
                           )}
                           {/* Phone options if available */}
                           {task.phone_options && (

@@ -119,7 +119,7 @@ router.post('/', async (req, res) => {
             { case_id }
         );
 
-        // Fire-and-forget: generate AI briefing
+        // Fire-and-forget: generate AI briefing + auto-lookup phone if missing
         (async () => {
             try {
                 const messages = await db.getMessagesByCaseId(case_id, 20);
@@ -130,6 +130,65 @@ router.post('/', async (req, res) => {
                 console.warn('Failed to auto-generate phone call briefing:', err.message);
             }
         })();
+
+        // Fire-and-forget: auto-search for phone number if none on file
+        if (!agencyPhone) {
+            (async () => {
+                try {
+                    const notionService = require('../services/notion-service');
+                    const pdContactService = require('../services/pd-contact-service');
+
+                    const [notionResult, webResult, firecrawlResult] = await Promise.allSettled([
+                        caseData.notion_page_id
+                            ? notionService.lookupPhoneFromNotion(caseData.notion_page_id)
+                            : Promise.resolve({ phone: null, pdPageId: null }),
+                        caseData.agency_name
+                            ? notionService.searchForAgencyPhone(caseData.agency_name, caseData.state)
+                            : Promise.resolve({ phone: null, confidence: 'low' }),
+                        caseData.agency_name
+                            ? pdContactService.lookupContact(caseData.agency_name, caseData.state, { forceSearch: true })
+                            : Promise.resolve(null)
+                    ]);
+
+                    const notion = notionResult.status === 'fulfilled' ? notionResult.value : { phone: null };
+                    const web = webResult.status === 'fulfilled' ? webResult.value : { phone: null };
+                    const firecrawl = firecrawlResult.status === 'fulfilled' ? firecrawlResult.value : null;
+
+                    const phoneOptions = {
+                        notion: { phone: notion.phone || null, source: 'Notion PD Card' },
+                        web_search: { phone: web.phone || null, source: 'Web Search (GPT)', confidence: web.confidence || null },
+                        firecrawl: firecrawl ? { phone: firecrawl.contact_phone || null, source: 'Firecrawl' } : null
+                    };
+
+                    const bestPhone = notion.phone || firecrawl?.contact_phone || web.phone || null;
+
+                    const setClauses = ['phone_options = $1', 'updated_at = NOW()'];
+                    const values = [JSON.stringify(phoneOptions)];
+                    let paramIdx = 2;
+                    if (bestPhone) {
+                        setClauses.push(`agency_phone = $${paramIdx}`);
+                        values.push(bestPhone);
+                        paramIdx++;
+                    }
+                    values.push(task.id);
+                    await db.query(
+                        `UPDATE phone_call_queue SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+                        values
+                    );
+
+                    if (bestPhone && caseData.agency_id) {
+                        await db.query(
+                            'UPDATE agencies SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = \'\')',
+                            [bestPhone, caseData.agency_id]
+                        );
+                    }
+
+                    console.log(`Auto phone lookup for task ${task.id}: found=${bestPhone || 'none'}`);
+                } catch (err) {
+                    console.warn('Failed to auto-lookup phone number:', err.message);
+                }
+            })();
+        }
 
         res.json({ success: true, message: 'Phone call task created', task });
     } catch (error) {
@@ -319,6 +378,122 @@ router.post('/:id/select-phone', async (req, res) => {
 
         res.json({ success: true, message: 'Phone number updated', phone });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /phone-calls/:id/find-phone
+ * Run phone number lookup (Notion PD card + GPT web search + Firecrawl)
+ * Returns the found phone number and all options
+ */
+router.post('/:id/find-phone', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+
+        const task = await db.getPhoneCallById(id);
+        if (!task) {
+            return res.status(404).json({ success: false, error: 'Phone call task not found' });
+        }
+
+        const caseData = await db.getCaseById(task.case_id);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const notionService = require('../services/notion-service');
+        const pdContactService = require('../services/pd-contact-service');
+
+        // Run all lookups in parallel:
+        // 1. Notion PD card (via case's notion_page_id relation)
+        // 2. GPT web search
+        // 3. Firecrawl deep search (also returns email, portal, etc.)
+        const [notionResult, webResult, firecrawlResult] = await Promise.allSettled([
+            caseData.notion_page_id
+                ? notionService.lookupPhoneFromNotion(caseData.notion_page_id)
+                : Promise.resolve({ phone: null, pdPageId: null }),
+            caseData.agency_name
+                ? notionService.searchForAgencyPhone(caseData.agency_name, caseData.state)
+                : Promise.resolve({ phone: null, confidence: 'low', reasoning: 'No agency name' }),
+            caseData.agency_name
+                ? pdContactService.lookupContact(caseData.agency_name, caseData.state, { forceSearch: true })
+                : Promise.resolve(null)
+        ]);
+
+        const notion = notionResult.status === 'fulfilled' ? notionResult.value : { phone: null };
+        const web = webResult.status === 'fulfilled' ? webResult.value : { phone: null };
+        const firecrawl = firecrawlResult.status === 'fulfilled' ? firecrawlResult.value : null;
+
+        // Build phone_options
+        const phoneOptions = {
+            notion: {
+                phone: notion.phone || null,
+                source: 'Notion PD Card',
+                pd_page_id: notion.pdPageId || null,
+                pd_page_url: notion.pdPageId
+                    ? `https://www.notion.so/${notion.pdPageId.replace(/-/g, '')}`
+                    : null
+            },
+            web_search: {
+                phone: web.phone || null,
+                source: 'Web Search (GPT)',
+                confidence: web.confidence || null,
+                reasoning: web.reasoning || null
+            },
+            firecrawl: firecrawl ? {
+                phone: firecrawl.contact_phone || null,
+                source: 'Firecrawl Deep Search',
+                confidence: firecrawl.confidence || null,
+                portal_url: firecrawl.portal_url || null,
+                contact_email: firecrawl.contact_email || null,
+                records_officer: firecrawl.records_officer || null
+            } : null
+        };
+
+        // Pick best phone: Notion > Firecrawl > Web Search
+        const bestPhone = notion.phone
+            || firecrawl?.contact_phone
+            || web.phone
+            || null;
+
+        // Update phone_call_queue
+        const setClauses = ['phone_options = $1', 'updated_at = NOW()'];
+        const values = [JSON.stringify(phoneOptions)];
+        let paramIdx = 2;
+
+        if (bestPhone) {
+            setClauses.push(`agency_phone = $${paramIdx}`);
+            values.push(bestPhone);
+            paramIdx++;
+        }
+
+        values.push(id);
+        await db.query(
+            `UPDATE phone_call_queue SET ${setClauses.join(', ')} WHERE id = $${paramIdx}`,
+            values
+        );
+
+        // Also update agencies table if we found a phone
+        if (bestPhone && caseData.agency_id) {
+            await db.query(
+                'UPDATE agencies SET phone = $1 WHERE id = $2 AND (phone IS NULL OR phone = \'\')',
+                [bestPhone, caseData.agency_id]
+            );
+        }
+
+        await db.logActivity('phone_lookup_completed',
+            `Phone lookup for task ${id}: found=${bestPhone || 'none'} (notion=${notion.phone || 'none'}, web=${web.phone || 'none'}, firecrawl=${firecrawl?.contact_phone || 'none'})`,
+            { case_id: task.case_id }
+        );
+
+        res.json({
+            success: true,
+            phone: bestPhone,
+            phone_options: phoneOptions,
+            found: !!bestPhone
+        });
+    } catch (error) {
+        console.error('Error finding phone number:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
