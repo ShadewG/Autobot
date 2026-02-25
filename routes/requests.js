@@ -1167,7 +1167,29 @@ router.post('/:id/resolve-review', async (req, res) => {
             ? `${baseInstruction}. Additional instructions: ${instruction}`
             : baseInstruction;
 
-        // Dismiss all active proposals first — human is taking a new direction
+        // Complete waitpoint tokens on active proposals before dismissing.
+        // This unblocks any Trigger.dev tasks waiting on human approval so they exit cleanly.
+        try {
+            const tokensToComplete = await db.query(
+                `SELECT id, waitpoint_token FROM proposals
+                 WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')
+                 AND waitpoint_token IS NOT NULL`,
+                [requestId]
+            );
+            if (tokensToComplete.rows.length > 0) {
+                const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+                for (const p of tokensToComplete.rows) {
+                    try {
+                        await triggerWait.completeToken(p.waitpoint_token, {
+                            action: 'DISMISS',
+                            reason: `Superseded by human review action: ${action}`,
+                        });
+                    } catch (_) {} // Token may already be expired/completed
+                }
+            }
+        } catch (_) {}
+
+        // Dismiss all active proposals — human is taking a new direction
         await db.query(
             `UPDATE proposals SET status = 'DISMISSED', human_decision = $1
              WHERE case_id = $2 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')`,

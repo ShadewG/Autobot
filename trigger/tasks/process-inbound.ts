@@ -53,6 +53,28 @@ export const processInbound = task({
   maxDuration: 600,
   retry: { maxAttempts: 2 },
 
+  onFailure: async ({ payload, error }) => {
+    // Clean up orphaned proposals when the task fails after all retries.
+    // Without this, PENDING_APPROVAL proposals from failed runs become zombies.
+    if (!payload || typeof payload !== "object") return;
+    const { caseId } = payload as any;
+    if (!caseId) return;
+    try {
+      await db.query(
+        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')`,
+        [caseId]
+      );
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        requires_human: true,
+        substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
+      });
+      await db.logActivity("agent_run_failed", `Process-inbound failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
+        case_id: caseId,
+      });
+    } catch {}
+  },
+
   run: async (payload: InboundPayload) => {
     const { caseId, messageId, autopilotMode, triggerType, reviewAction, reviewInstruction, originalActionType, originalProposalId } = payload;
 
@@ -311,8 +333,15 @@ export const processInbound = task({
       }
       logger.info("Human decision received", { caseId, action: humanDecision.action });
 
-      // Compare-and-swap: validate proposal is still actionable
+      // Compare-and-swap: validate proposal is still actionable.
+      // If proposal was DISMISSED (e.g. by resolve-review completing our token with DISMISS),
+      // exit cleanly — the human chose a different path.
       const currentProposal = await db.getProposalById(gate.proposalId);
+      if (currentProposal?.status === "DISMISSED") {
+        logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: gate.proposalId });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return { status: "dismissed_externally", proposalId: gate.proposalId };
+      }
       if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
         throw new Error(
           `Proposal ${gate.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`

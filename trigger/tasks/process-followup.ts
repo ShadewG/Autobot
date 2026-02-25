@@ -39,6 +39,23 @@ export const processFollowup = task({
   maxDuration: 600,
   retry: { maxAttempts: 2 },
 
+  onFailure: async ({ payload, error }) => {
+    if (!payload || typeof payload !== "object") return;
+    const { caseId } = payload as any;
+    if (!caseId) return;
+    try {
+      await db.query(
+        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')`,
+        [caseId]
+      );
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        requires_human: true,
+        substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
+      });
+    } catch {}
+  },
+
   run: async (payload: FollowupPayload) => {
     const { caseId, followupScheduleId } = payload;
 
