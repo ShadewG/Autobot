@@ -598,6 +598,7 @@ function MonitorPageContent() {
   const navigate = useCallback(
     (delta: number) => {
       if (queue.length === 0) return;
+      setShowCorrespondence(false);
       setCurrentIndex((prev) => {
         const next = prev + delta;
         if (next < 0) return queue.length - 1;
@@ -781,6 +782,11 @@ function MonitorPageContent() {
   };
 
   const openCorrespondence = async (caseId: number) => {
+    // Toggle off if already showing
+    if (showCorrespondence) {
+      setShowCorrespondence(false);
+      return;
+    }
     setShowCorrespondence(true);
     setCorrespondenceLoading(true);
     setCorrespondenceMessages([]);
@@ -2383,35 +2389,7 @@ function MonitorPageContent() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Correspondence Dialog ─────────── */}
-      <Dialog open={showCorrespondence} onOpenChange={setShowCorrespondence}>
-        <DialogContent className="bg-card border max-w-4xl w-[90vw] h-[85vh] overflow-hidden flex flex-col">
-          <DialogHeader className="flex-shrink-0">
-            <DialogTitle className="text-sm flex items-center gap-2">
-              <MessageSquare className="h-4 w-4" />
-              Full Correspondence
-            </DialogTitle>
-            <DialogDescription className="text-xs">
-              {correspondenceMessages.length > 0
-                ? `${correspondenceMessages.length} message${correspondenceMessages.length !== 1 ? "s" : ""} in thread`
-                : "Loading..."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-auto">
-            {correspondenceLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : correspondenceMessages.length > 0 ? (
-              <Thread messages={correspondenceMessages} maxHeight="h-full" />
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No messages found
-              </p>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Correspondence is now shown inline, no dialog needed */}
     </div>
   );
 }
