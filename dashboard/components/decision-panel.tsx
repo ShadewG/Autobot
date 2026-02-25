@@ -223,6 +223,11 @@ function extractAgencyPoints(
 }
 
 // Gate-specific configuration
+interface OverflowAction {
+  label: string;
+  description: string;
+}
+
 interface GateConfig {
   icon: React.ReactNode;
   color: string;
@@ -232,15 +237,16 @@ interface GateConfig {
   getQuestion: (request: RequestDetail) => string;
   primaryAction: {
     label: string;
+    description: string;
     subtext?: (request: RequestDetail, costCap?: string) => string | null;
     recommended?: boolean;
   };
-  primarySubtext?: string[];
   secondaryAction?: {
     label: string;
+    description: string;
     recommended?: boolean;
   };
-  overflowActions: string[];
+  overflowActions: OverflowAction[];
   getRecommendation?: (request: RequestDetail, nextAction: NextAction | null, agencyPoints: string[]) => string | null;
   isSupported?: boolean; // Whether actions are wired up
 }
@@ -253,9 +259,9 @@ const UNKNOWN_GATE_CONFIG: GateConfig = {
   borderColor: "border-yellow-700/50",
   title: "Unknown Gate",
   getQuestion: () => "This request is paused but the gate type is unknown. What do you want to do?",
-  primaryAction: { label: "Proceed" },
-  secondaryAction: { label: "Negotiate" },
-  overflowActions: ["Withdraw"],
+  primaryAction: { label: "Proceed", description: "Resume processing this request." },
+  secondaryAction: { label: "Negotiate", description: "Draft an adjustment to the current action." },
+  overflowActions: [{ label: "Withdraw", description: "Cancel this request permanently." }],
   isSupported: true,
 };
 
@@ -279,18 +285,19 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     },
     primaryAction: {
       label: "Proceed",
+      description: "Sends the pre-drafted fee acceptance email. Does NOT pay automatically — just confirms willingness to proceed. Sets status to Awaiting Payment.",
       subtext: () => null,
     },
-    primarySubtext: [
-      "Queues the drafted acceptance reply",
-      "Does NOT pay automatically",
-      "Sets status to Waiting: Payment",
-    ],
     secondaryAction: {
       label: "Negotiate",
+      description: "AI drafts a pushback email requesting itemized breakdown, citing state fee statutes, and offering to narrow scope to reduce cost. You'll review the draft before it's sent.",
       recommended: false,
     },
-    overflowActions: ["Request itemized breakdown", "Set cost cap", "Withdraw"],
+    overflowActions: [
+      { label: "Request itemized breakdown", description: "Opens negotiation with a focused instruction to request a full cost breakdown before deciding." },
+      { label: "Set cost cap", description: "Set a maximum you're willing to pay. The action won't auto-execute if the fee exceeds this limit." },
+      { label: "Withdraw", description: "Cancel this request permanently." },
+    ],
     getRecommendation: (r, _, points) => {
       const hasUnavailable = points.some(p =>
         p.toLowerCase().includes("not subject") ||
@@ -323,11 +330,16 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     getQuestion: () => "How should we respond to the denial?",
     primaryAction: {
       label: "Send Appeal",
+      description: "AI drafts an appeal challenging the denial, citing applicable state statutes and exemption limitations based on the agency's stated reason. You'll review before it's sent.",
     },
     secondaryAction: {
       label: "Narrow & Retry",
+      description: "AI drafts a narrowed-scope resubmission targeting only the records that weren't denied. Removes the items the agency can't or won't provide.",
     },
-    overflowActions: ["Acknowledge & close", "Withdraw"],
+    overflowActions: [
+      { label: "Acknowledge & close", description: "Close this case, recording the denial as the final outcome." },
+      { label: "Withdraw", description: "Cancel this request permanently." },
+    ],
     getRecommendation: () => "Review denial reason. If exemption cited, consider narrowing scope to non-exempt records.",
     isSupported: true,
   },
@@ -340,11 +352,15 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     getQuestion: () => "Agency needs scope clarification. How should we respond?",
     primaryAction: {
       label: "Narrow Scope",
+      description: "AI drafts a response narrowing the request to address the agency's overbreadth objection, removing or limiting the contested items.",
     },
     secondaryAction: {
       label: "Clarify Request",
+      description: "AI drafts a clarifying response that directly answers the agency's specific question without changing the scope of the request.",
     },
-    overflowActions: ["Withdraw"],
+    overflowActions: [
+      { label: "Withdraw", description: "Cancel this request permanently." },
+    ],
     isSupported: true,
   },
   ID_REQUIRED: {
@@ -356,12 +372,16 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     getQuestion: () => "Agency requires identity verification to proceed.",
     primaryAction: {
       label: "Provide ID",
+      description: "Not yet automated. You'll need to respond to the agency manually with the required identification.",
     },
     secondaryAction: {
       label: "Contest Requirement",
+      description: "Draft a response challenging the ID requirement, citing that most state FOIA laws don't permit agencies to demand requester identification.",
     },
-    overflowActions: ["Withdraw"],
-    isSupported: false, // Not wired up yet
+    overflowActions: [
+      { label: "Withdraw", description: "Cancel this request permanently." },
+    ],
+    isSupported: false,
   },
   SENSITIVE: {
     icon: <AlertTriangle className="h-5 w-5" />,
@@ -372,12 +392,16 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     getQuestion: () => "Request flagged for sensitive content review.",
     primaryAction: {
       label: "Approve & Continue",
+      description: "Confirm you've reviewed the sensitive content flag and allow the AI to proceed with the next action.",
     },
     secondaryAction: {
       label: "Modify Request",
+      description: "Open the adjust dialog to change the scope or wording of the request to address the sensitivity concern.",
     },
-    overflowActions: ["Withdraw"],
-    isSupported: false, // Not wired up yet
+    overflowActions: [
+      { label: "Withdraw", description: "Cancel this request permanently." },
+    ],
+    isSupported: false,
   },
   CLOSE_ACTION: {
     icon: <CheckCircle className="h-5 w-5" />,
@@ -388,12 +412,14 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     getQuestion: () => "Request appears complete. Confirm closure?",
     primaryAction: {
       label: "Confirm Complete",
+      description: "Mark this request as completed and close the case. Records have been received or the matter is resolved.",
     },
     secondaryAction: {
       label: "Request More Records",
+      description: "The case isn't fully resolved. Keep it open and draft a follow-up requesting the remaining records.",
     },
     overflowActions: [],
-    isSupported: false, // Not wired up yet
+    isSupported: false,
   },
 };
 
@@ -861,19 +887,24 @@ export function DecisionPanel({
           {/* Show Negotiate first if recommended */}
           {shouldRecommendNegotiate && config.secondaryAction && (
             <>
-              <Button
-                onClick={handleSecondaryClick}
-                variant="default"
-                className="w-full justify-between"
-                disabled={isLoading || isUnsupported}
-              >
-                <span className="flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" />
-                  {config.secondaryAction.label}
-                  <Badge variant="secondary" className="ml-1 text-[10px]">Recommended</Badge>
-                </span>
-                <ArrowRight className="h-4 w-4" />
-              </Button>
+              <div>
+                <Button
+                  onClick={handleSecondaryClick}
+                  variant="default"
+                  className="w-full justify-between"
+                  disabled={isLoading || isUnsupported}
+                >
+                  <span className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    {config.secondaryAction.label}
+                    <Badge variant="secondary" className="ml-1 text-[10px]">Recommended</Badge>
+                  </span>
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+                <p className="mt-1 text-[11px] text-muted-foreground leading-snug px-0.5">
+                  {config.secondaryAction.description}
+                </p>
+              </div>
               <div>
                 <Button
                   onClick={handlePrimaryClick}
@@ -887,14 +918,9 @@ export function DecisionPanel({
                   </span>
                   <ArrowRight className="h-4 w-4" />
                 </Button>
-                {/* Primary button subtext explanation */}
-                {config.primarySubtext && (
-                  <ul className="mt-1 ml-1 text-[10px] text-muted-foreground space-y-0.5">
-                    {config.primarySubtext.map((line, i) => (
-                      <li key={i}>• {line}</li>
-                    ))}
-                  </ul>
-                )}
+                <p className="mt-1 text-[11px] text-muted-foreground leading-snug px-0.5">
+                  {config.primaryAction.description}
+                </p>
               </div>
             </>
           )}
@@ -919,29 +945,29 @@ export function DecisionPanel({
                   )}
                   <ArrowRight className="h-4 w-4" />
                 </Button>
-                {/* Primary button subtext explanation */}
-                {config.primarySubtext && (
-                  <ul className="mt-1 ml-1 text-[10px] text-muted-foreground space-y-0.5">
-                    {config.primarySubtext.map((line, i) => (
-                      <li key={i}>• {line}</li>
-                    ))}
-                  </ul>
-                )}
+                <p className="mt-1 text-[11px] text-muted-foreground leading-snug px-0.5">
+                  {config.primaryAction.description}
+                </p>
               </div>
 
               {config.secondaryAction && (
-                <Button
-                  onClick={handleSecondaryClick}
-                  variant="outline"
-                  className="w-full justify-between"
-                  disabled={isLoading || isUnsupported}
-                >
-                  <span className="flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4" />
-                    {config.secondaryAction.label}
-                  </span>
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
+                <div>
+                  <Button
+                    onClick={handleSecondaryClick}
+                    variant="outline"
+                    className="w-full justify-between"
+                    disabled={isLoading || isUnsupported}
+                  >
+                    <span className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4" />
+                      {config.secondaryAction.label}
+                    </span>
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                  <p className="mt-1 text-[11px] text-muted-foreground leading-snug px-0.5">
+                    {config.secondaryAction.description}
+                  </p>
+                </div>
               )}
             </>
           )}
@@ -955,21 +981,23 @@ export function DecisionPanel({
                   More options
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="center" className="w-52">
+              <DropdownMenuContent align="center" className="w-64">
                 {config.overflowActions.map((action) => (
                   <DropdownMenuItem
-                    key={action}
+                    key={action.label}
                     onClick={() => {
-                      if (action === "Withdraw" || action === "Acknowledge & close") {
+                      if (action.label === "Withdraw" || action.label === "Acknowledge & close") {
                         onWithdraw();
-                      } else if (action === "Set cost cap") {
+                      } else if (action.label === "Set cost cap") {
                         setShowCostCap(true);
-                      } else if (action === "Request itemized breakdown") {
+                      } else if (action.label === "Request itemized breakdown") {
                         onNegotiate();
                       }
                     }}
+                    className="flex flex-col items-start gap-0.5 py-2"
                   >
-                    {action}
+                    <span className="font-medium text-sm">{action.label}</span>
+                    <span className="text-[11px] text-muted-foreground leading-snug whitespace-normal">{action.description}</span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
