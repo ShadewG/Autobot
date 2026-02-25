@@ -84,81 +84,98 @@ export const processInbound = task({
         await db.updateProposal(originalProposalId, { status: "DISMISSED" });
       }
 
-      const context = await loadContext(caseId, messageId);
-      const currentConstraints = context.constraints || [];
-      const currentScopeItems = context.scopeItems || [];
+      try {
+        const context = await loadContext(caseId, messageId);
+        const currentConstraints = context.constraints || [];
+        const currentScopeItems = context.scopeItems || [];
+        const adjustmentReasoning = [{ step: "Adjustment", detail: `Re-drafted per human instruction: ${reviewInstruction}` }];
 
-      // Re-draft with the user's adjustment instruction
-      const adjustedDraft = await draftResponse(
-        caseId, originalActionType, currentConstraints, currentScopeItems,
-        context.caseData.fee_amount || null,
-        reviewInstruction,
-        messageId,
-        emptyResearchContext()
-      );
-
-      // Safety check the adjusted draft
-      const adjustedSafety = await safetyCheck(
-        adjustedDraft.bodyText, adjustedDraft.subject,
-        originalActionType, currentConstraints, currentScopeItems,
-        null, context.caseData.state
-      );
-
-      // Create new proposal for human review
-      const adjustedGate = await createProposalAndGate(
-        caseId, runId, originalActionType,
-        messageId, adjustedDraft, adjustedSafety,
-        false, true, null,
-        [{ step: "Adjustment", detail: `Re-drafted per human instruction: ${reviewInstruction}` }],
-        0.9, 1, null, adjustedDraft.lessonsApplied
-      );
-
-      // Wait for human to approve the adjusted draft
-      if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
-        await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
-        const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
-
-        if (!result.ok) {
-          await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
-          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
-          return { status: "timed_out", proposalId: adjustedGate.proposalId };
-        }
-
-        const humanDecision = result.output;
-        if (humanDecision.action === "DISMISS") {
-          await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
-          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
-          return { status: "dismissed", proposalId: adjustedGate.proposalId };
-        }
-
-        if (humanDecision.action === "ADJUST") {
-          // Recursive adjustment — dismiss this and re-trigger
-          await db.updateProposal(adjustedGate.proposalId, {
-            status: "DISMISSED",
-            human_decision: { action: "ADJUST", instruction: humanDecision.instruction, decidedAt: new Date().toISOString() },
-          });
-          // The monitor will re-trigger with the new instruction
-          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
-          return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
-        }
-
-        // APPROVE: execute the adjusted action
-        await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
-        await executeAction(
-          caseId, adjustedGate.proposalId, originalActionType,
-          adjustedDraft.subject, adjustedDraft.bodyText, adjustedDraft.bodyHtml,
-          context.caseData, runId, adjustedDraft.lessonsApplied
+        // Re-draft with the user's adjustment instruction
+        const adjustedDraft = await draftResponse(
+          caseId, originalActionType, currentConstraints, currentScopeItems,
+          context.caseData.fee_amount ?? null,
+          reviewInstruction,
+          messageId,
+          emptyResearchContext()
         );
-        await db.updateProposal(adjustedGate.proposalId, { status: "EXECUTED", executedAt: new Date() });
-      }
 
-      await commitState(
-        caseId, runId, originalActionType,
-        [{ step: "Adjustment", detail: `Adjusted per human: ${reviewInstruction}` }],
-        0.9, "ADJUSTMENT", false, null
-      );
-      await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
-      return { status: "completed", action: originalActionType, adjusted: true };
+        // Safety check the adjusted draft
+        const adjustedSafety = await safetyCheck(
+          adjustedDraft.bodyText, adjustedDraft.subject,
+          originalActionType, currentConstraints, currentScopeItems,
+          null, context.caseData.state
+        );
+
+        // Create new proposal for human review (always requires human approval)
+        const adjustedGate = await createProposalAndGate(
+          caseId, runId, originalActionType,
+          messageId, adjustedDraft, adjustedSafety,
+          false, true, null,
+          adjustmentReasoning,
+          0.9, 1, null, adjustedDraft.lessonsApplied
+        );
+
+        // Wait for human to approve the adjusted draft
+        if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
+          await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
+          const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
+
+          if (!result.ok) {
+            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "timed_out", proposalId: adjustedGate.proposalId };
+          }
+
+          const humanDecision = result.output;
+          if (humanDecision.action === "DISMISS") {
+            await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "dismissed", proposalId: adjustedGate.proposalId };
+          }
+
+          if (humanDecision.action === "ADJUST") {
+            // Recursive adjustment — dismiss this proposal, complete this run.
+            // The waitpoint completion from the dashboard already records the instruction.
+            // The monitor processProposalDecision will see no waitpoint_token on this new
+            // proposal (it was consumed), so it will re-trigger a new process-inbound run
+            // with the updated instruction via the legacy path.
+            await db.updateProposal(adjustedGate.proposalId, {
+              status: "DISMISSED",
+              human_decision: { action: "ADJUST", instruction: humanDecision.instruction, decidedAt: new Date().toISOString() },
+            });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
+          }
+
+          // APPROVE: execute the adjusted action
+          await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          const execution = await executeAction(
+            caseId, adjustedGate.proposalId, originalActionType as any, runId,
+            adjustedDraft, null, adjustmentReasoning.map(r => r.detail)
+          );
+
+          // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
+          if (execution.actionExecuted) {
+            await db.updateProposal(adjustedGate.proposalId, { status: "EXECUTED", executedAt: new Date() });
+          }
+
+          await commitState(
+            caseId, runId, originalActionType,
+            adjustmentReasoning,
+            0.9, "ADJUSTMENT", execution.actionExecuted, execution.executionResult
+          );
+        }
+
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return { status: "completed", action: originalActionType, adjusted: true };
+      } catch (err: any) {
+        logger.error("Adjustment fast-path failed", { caseId, error: err.message });
+        await db.query(
+          "UPDATE agent_runs SET status = 'failed', error = $2, ended_at = NOW() WHERE id = $1",
+          [runId, `Adjustment failed: ${err.message}`.substring(0, 500)]
+        );
+        throw err;
+      }
     }
 
     // Step 1: Load context
