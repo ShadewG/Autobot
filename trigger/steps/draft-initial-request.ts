@@ -8,13 +8,15 @@
 import db, { aiService, logger } from "../lib/db";
 import type { AutopilotMode, ProposalRecord } from "../lib/types";
 
-function generateInitialRequestProposalKey(caseId: number): string {
-  return `${caseId}:initial:SEND_INITIAL_REQUEST:0`;
+function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean): string {
+  const action = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
+  return `${caseId}:initial:${action}:0`;
 }
 
 export interface InitialDraftResult {
   proposalId: number;
   proposalKey: string;
+  actionType: "SEND_INITIAL_REQUEST" | "SUBMIT_PORTAL";
   subject: string;
   bodyText: string;
   bodyHtml: string;
@@ -31,7 +33,9 @@ export async function draftInitialRequest(
   const caseData = await db.getCaseById(caseId);
   if (!caseData) throw new Error(`Case ${caseId} not found`);
 
-  const proposalKey = generateInitialRequestProposalKey(caseId);
+  const hasPortal = !!(caseData.portal_url);
+  const actionType = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
+  const proposalKey = generateInitialRequestProposalKey(caseId, hasPortal);
 
   // Check for existing proposal (idempotency)
   // Only reuse if in a non-terminal state
@@ -47,6 +51,7 @@ export async function draftInitialRequest(
       return {
         proposalId: existing.id,
         proposalKey,
+        actionType,
         subject: existing.draft_subject,
         bodyText: existing.draft_body_text,
         bodyHtml: existing.draft_body_html,
@@ -88,9 +93,11 @@ export async function draftInitialRequest(
   const canAutoExecute = autopilotMode === "AUTO";
   const requiresHuman = !canAutoExecute;
 
+  const deliveryMethod = hasPortal ? `Portal: ${caseData.portal_url}` : `Email: ${caseData.agency_email || "N/A"}`;
   const reasoning = [
     `Generated initial FOIA request for ${caseData.agency_name}`,
     `Subject: ${caseData.subject_name || "N/A"}`,
+    `Delivery: ${deliveryMethod}`,
     `Records: ${(caseData.requested_records || []).join(", ") || "Various records"}`,
     `Autopilot: ${autopilotMode}`,
   ];
@@ -100,7 +107,7 @@ export async function draftInitialRequest(
     caseId,
     runId,
     triggerMessageId: null,
-    actionType: "SEND_INITIAL_REQUEST",
+    actionType,
     draftSubject: subject,
     draftBodyText: bodyText,
     draftBodyHtml: bodyHtml,
@@ -113,6 +120,7 @@ export async function draftInitialRequest(
   return {
     proposalId: proposal.id,
     proposalKey,
+    actionType,
     subject,
     bodyText,
     bodyHtml,

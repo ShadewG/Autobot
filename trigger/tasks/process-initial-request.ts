@@ -91,7 +91,7 @@ export const processInitialRequest = task({
     // Step 3: Safety check
     const safety = await safetyCheck(
       draft.bodyText, draft.subject,
-      "SEND_INITIAL_REQUEST", context.constraints, context.scopeItems
+      draft.actionType, context.constraints, context.scopeItems
     );
 
     // If requires human review, wait for approval
@@ -173,9 +173,9 @@ export const processInitialRequest = task({
       await db.updateProposal(draft.proposalId, { status: "APPROVED" });
     }
 
-    // Step 4: Execute (send initial request)
+    // Step 4: Execute
     const execution = await executeAction(
-      caseId, draft.proposalId, "SEND_INITIAL_REQUEST", runId,
+      caseId, draft.proposalId, draft.actionType, runId,
       { subject: draft.subject, bodyText: draft.bodyText, bodyHtml: draft.bodyHtml },
       null, draft.reasoning
     );
@@ -188,7 +188,7 @@ export const processInitialRequest = task({
 
     // Step 6: Commit state
     await commitState(
-      caseId, runId, "SEND_INITIAL_REQUEST", draft.reasoning,
+      caseId, runId, draft.actionType, draft.reasoning,
       0.9, "initial_request", execution.actionExecuted, execution.executionResult
     );
 

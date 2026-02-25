@@ -86,8 +86,11 @@ export async function executeAction(
 
   const hasPortal = portalExecutor.requiresPortal({ ...caseData, portal_url: targetPortalUrl });
 
-  // Portal check for SEND_ actions
-  const shouldForcePortal = hasPortal && actionType.startsWith("SEND_");
+  // Portal check for SEND_ actions or explicit SUBMIT_PORTAL
+  if (actionType === "SUBMIT_PORTAL" && !hasPortal) {
+    throw new Error(`SUBMIT_PORTAL requested but no portal_url for case ${caseId}`);
+  }
+  const shouldForcePortal = hasPortal && (actionType.startsWith("SEND_") || actionType === "SUBMIT_PORTAL");
   if (shouldForcePortal) {
     const portalResult = await portalExecutor.createPortalTask({
       caseId,
@@ -124,6 +127,11 @@ export async function executeAction(
   let executionResult: ExecutionResult | null = null;
 
   switch (actionType) {
+    case "SUBMIT_PORTAL":
+      // SUBMIT_PORTAL should always be caught by shouldForcePortal above.
+      // If we get here, it means hasPortal was false but we didn't throw — should not happen.
+      throw new Error(`SUBMIT_PORTAL reached switch but was not handled by portal check for case ${caseId}`);
+
     case "SEND_INITIAL_REQUEST":
     case "SEND_FOLLOWUP":
     case "SEND_REBUTTAL":

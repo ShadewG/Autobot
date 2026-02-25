@@ -275,13 +275,13 @@ function getApproveLabel(actionType: string | null): string {
   return ACTION_LABELS[actionType] || `APPROVE: ${actionType.replace(/_/g, " ")}`;
 }
 
-function getActionExplanation(actionType: string | null, hasDraft: boolean): string {
+function getActionExplanation(actionType: string | null, hasDraft: boolean, portalUrl?: string | null, agencyEmail?: string | null): string {
   if (!actionType) return "Approve this proposal to execute it.";
   const explanations: Record<string, string> = {
     SEND_REBUTTAL: "Will send a rebuttal challenging the agency's denial, citing relevant statutes.",
     SEND_APPEAL: "Will file a formal appeal of the agency's denial.",
     SEND_FOLLOWUP: "Will send a follow-up email asking for a status update.",
-    SEND_INITIAL_REQUEST: "Will send the initial FOIA/public records request to the agency.",
+    SEND_INITIAL_REQUEST: "Will send the initial FOIA/public records request via email.",
     SEND_CLARIFICATION: "Will respond to the agency's question or request for clarification.",
     SEND_FEE_WAIVER_REQUEST: "Will request a fee waiver from the agency.",
     NEGOTIATE_FEE: "Will send a fee negotiation response to the agency.",
@@ -298,6 +298,12 @@ function getActionExplanation(actionType: string | null, hasDraft: boolean): str
   let explanation = explanations[actionType] || `Will execute: ${actionType.replace(/_/g, " ").toLowerCase()}.`;
   if (!hasDraft && actionType.startsWith("SEND")) {
     explanation += " The AI will generate the draft before sending.";
+  }
+  // Add delivery target for clarity
+  if (actionType === "SUBMIT_PORTAL" && portalUrl) {
+    explanation += ` Target: ${portalUrl}`;
+  } else if (actionType.startsWith("SEND") && agencyEmail) {
+    explanation += ` To: ${agencyEmail}`;
   }
   return explanation;
 }
@@ -1096,30 +1102,50 @@ function MonitorPageContent() {
             )}
           </div>
 
-          {/* Portal details — shown when action involves portal submission */}
-          {(selectedItem.data.action_type?.includes("PORTAL") || selectedItem.data.portal_url) && (
-            <div className="border border-blue-700/50 bg-blue-950/20 p-3">
-              <SectionLabel>Portal Submission</SectionLabel>
-              {selectedItem.data.portal_url ? (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <a
-                    href={selectedItem.data.portal_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-400 hover:underline flex items-center gap-1"
-                  >
-                    <ExternalLink className="h-3 w-3" /> {selectedItem.data.portal_url}
-                  </a>
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No portal URL on file for this case
+          {/* Delivery method — always show for actionable proposals */}
+          {selectedItem.data.action_type && (
+            <div className={cn(
+              "border p-3",
+              selectedItem.data.action_type === "SUBMIT_PORTAL"
+                ? "border-blue-700/50 bg-blue-950/20"
+                : selectedItem.data.action_type.startsWith("SEND")
+                ? "border-emerald-700/50 bg-emerald-950/20"
+                : "border-zinc-700/50 bg-zinc-950/20"
+            )}>
+              <SectionLabel>
+                {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Delivery: Portal" :
+                 selectedItem.data.action_type.startsWith("SEND") ? "Delivery: Email" :
+                 selectedItem.data.action_type === "CLOSE_CASE" ? "Action: Close Case" :
+                 selectedItem.data.action_type === "ESCALATE" ? "Action: Escalate" :
+                 "Action"}
+              </SectionLabel>
+              {selectedItem.data.action_type === "SUBMIT_PORTAL" && (
+                <>
+                  {selectedItem.data.portal_url ? (
+                    <a
+                      href={selectedItem.data.portal_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                    >
+                      <ExternalLink className="h-3 w-3" /> {selectedItem.data.portal_url}
+                    </a>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No portal URL on file</p>
+                  )}
+                </>
+              )}
+              {selectedItem.data.action_type.startsWith("SEND") && (
+                <p className="text-xs text-emerald-300">
+                  <Mail className="h-3 w-3 inline mr-1" />
+                  {selectedItem.data.agency_email || "No email on file"}
                 </p>
               )}
-              {selectedItem.data.agency_email && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Agency email: {selectedItem.data.agency_email}
-                </p>
+              {selectedItem.data.action_type === "CLOSE_CASE" && (
+                <p className="text-xs text-muted-foreground">Will mark this case as closed/denial accepted.</p>
+              )}
+              {selectedItem.data.action_type === "ESCALATE" && (
+                <p className="text-xs text-muted-foreground">Will flag for manual review.</p>
               )}
             </div>
           )}
@@ -1224,7 +1250,7 @@ function MonitorPageContent() {
           <div className="border-t pt-4 space-y-2">
             {/* Action explanation */}
             <p className="text-[10px] text-muted-foreground">
-              {getActionExplanation(selectedItem.data.action_type, !!draftBody)}
+              {getActionExplanation(selectedItem.data.action_type, !!draftBody, selectedItem.data.portal_url, selectedItem.data.agency_email)}
             </p>
             <div className="flex gap-2">
               <Button
