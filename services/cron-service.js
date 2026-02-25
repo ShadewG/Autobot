@@ -691,6 +691,34 @@ class CronService {
                     );
                     const priorProposals = priorProposalsResult.rows;
 
+                    // Hard circuit breaker: if 3+ proposals have been dismissed for this case,
+                    // force ESCALATE — the AI keeps proposing actions the human doesn't want.
+                    const dismissedCount = priorProposals.filter(p => p.status === 'DISMISSED').length;
+                    if (dismissedCount >= 3) {
+                        console.log(`Circuit breaker: case ${caseData.id} has ${dismissedCount} dismissed proposals — forcing ESCALATE`);
+                        await db.upsertProposal({
+                            proposalKey: `${caseData.id}:sweep_orphan:ESCALATE_CIRCUIT_BREAKER`,
+                            caseId: caseData.id,
+                            actionType: 'ESCALATE',
+                            reasoning: [
+                                { step: 'Circuit breaker', detail: `${dismissedCount} proposals have been dismissed for this case — AI cannot find an acceptable action` },
+                                { step: 'Prior dismissed actions', detail: priorProposals.filter(p => p.status === 'DISMISSED').map(p => p.action_type).join(', ') }
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Manual attention needed: ${caseData.case_name}`,
+                            draftBodyText: `This case has had ${dismissedCount} proposals dismissed. The automated system cannot determine the right action.\n\nPrior dismissed actions: ${priorProposals.filter(p => p.status === 'DISMISSED').map(p => p.action_type).join(', ')}\n\nPlease review the case and decide the next step manually.`,
+                            status: 'PENDING_APPROVAL'
+                        });
+                        await db.logActivity('circuit_breaker_escalation',
+                            `Case ${caseData.case_name}: ${dismissedCount} dismissed proposals → forced ESCALATE`,
+                            { case_id: caseData.id, dismissed_count: dismissedCount }
+                        );
+                        proposalsCreated++;
+                        continue;
+                    }
+
                     // AI triage: determine the right action
                     const triage = await aiService.triageStuckCase(caseData, messages, priorProposals);
                     let actionType = triage.actionType || 'ESCALATE';
@@ -840,10 +868,12 @@ class CronService {
 
         // Sweep 5: Retry proposals stuck in DECISION_RECEIVED > 5 minutes
         // These are proposals the user approved but the resume job failed (e.g. Redis timeout)
+        // Max 5 retries — after that, mark as failed and escalate
         let stuckDecisionsRetried = 0;
         try {
             const stuckDecisions = await db.query(`
-                SELECT p.id, p.case_id, p.action_type, p.human_decision
+                SELECT p.id, p.case_id, p.action_type, p.human_decision,
+                       COALESCE((p.human_decision->>'retry_count')::int, 0) AS retry_count
                 FROM proposals p
                 WHERE p.status = 'DECISION_RECEIVED'
                   AND p.updated_at < NOW() - INTERVAL '5 minutes'
@@ -851,6 +881,35 @@ class CronService {
 
             for (const proposal of stuckDecisions.rows) {
                 try {
+                    const retryCount = proposal.retry_count || 0;
+
+                    // Circuit breaker: after 5 retries, give up and escalate
+                    if (retryCount >= 5) {
+                        console.error(`Proposal #${proposal.id} stuck in DECISION_RECEIVED after ${retryCount} retries — marking EXECUTION_FAILED`);
+                        await db.query(
+                            `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW(),
+                             human_decision = COALESCE(human_decision, '{}'::jsonb) || '{"failure_reason": "execution_retry_exhausted"}'::jsonb
+                             WHERE id = $1`,
+                            [proposal.id]
+                        );
+                        await db.updateCaseStatus(proposal.case_id, 'needs_human_review', {
+                            substatus: `Approved proposal #${proposal.id} failed to execute after ${retryCount} retries`,
+                            requires_human: true
+                        });
+                        await db.logActivity('execution_retry_exhausted',
+                            `Proposal #${proposal.id} (${proposal.action_type}) failed to execute after ${retryCount} retries`,
+                            { case_id: proposal.case_id, proposal_id: proposal.id, retry_count: retryCount }
+                        );
+                        continue;
+                    }
+
+                    // Increment retry count
+                    await db.query(
+                        `UPDATE proposals SET human_decision = COALESCE(human_decision, '{}'::jsonb) || jsonb_build_object('retry_count', $2)
+                         WHERE id = $1`,
+                        [proposal.id, retryCount + 1]
+                    );
+
                     // Check if there's already an active/queued agent run for this case
                     const activeRun = await db.query(`
                         SELECT id FROM agent_runs

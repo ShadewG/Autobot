@@ -16,35 +16,65 @@ function normalizeItemName(name: string): string {
   return name.replace(/^\d+\.\s*/, "").toLowerCase().trim();
 }
 
+/** Extract core keywords from a scope item name for fuzzy matching */
+function extractKeywords(name: string): Set<string> {
+  const normalized = normalizeItemName(name);
+  // Remove parentheticals, slashes, and common filler
+  const cleaned = normalized
+    .replace(/\(.*?\)/g, "")
+    .replace(/\ball\b|\bany\b|\bthe\b|\bof\b|\band\b|\bor\b|\bif\b|\bavailable\b|\brequested\b|\brecords\b|\brelated\b/g, "")
+    .replace(/[\/,;]/g, " ")
+    .trim();
+  return new Set(cleaned.split(/\s+/).filter(w => w.length > 2));
+}
+
+/** Check if two scope item names refer to the same thing (word overlap >= 50%) */
+function isSimilarItem(a: string, b: string): boolean {
+  const exact = normalizeItemName(a) === normalizeItemName(b);
+  if (exact) return true;
+
+  const kwA = extractKeywords(a);
+  const kwB = extractKeywords(b);
+  if (kwA.size === 0 || kwB.size === 0) return false;
+
+  let overlap = 0;
+  for (const w of kwA) {
+    if (kwB.has(w)) overlap++;
+  }
+  const smaller = Math.min(kwA.size, kwB.size);
+  return smaller > 0 && overlap / smaller >= 0.5;
+}
+
 function mergeScopeUpdates(existing: ScopeItem[], updates: any[]): ScopeItem[] {
-  const byItem = new Map<string, ScopeItem>(
-    existing.map((s) => {
-      const itemName = normalizeItemName(s.name || (s as any).item);
-      return [itemName, { ...s, name: s.name || (s as any).item }];
-    })
-  );
+  const result: ScopeItem[] = existing.map((s) => ({
+    ...s,
+    name: s.name || (s as any).item,
+  }));
 
   for (const update of updates) {
     const rawName = update.name || update.item || "";
-    const itemName = normalizeItemName(rawName);
-    if (!itemName) continue;
+    if (!rawName) continue;
 
-    if (byItem.has(itemName)) {
-      const existingItem = byItem.get(itemName)!;
-      byItem.set(itemName, {
+    // Find existing item by exact or fuzzy match
+    const matchIdx = result.findIndex(s => isSimilarItem(s.name, rawName));
+
+    if (matchIdx >= 0) {
+      // Update existing item (keep original name, merge status/reason)
+      const existingItem = result[matchIdx];
+      result[matchIdx] = {
         ...existingItem,
         status: update.status || existingItem.status,
         reason: update.reason || existingItem.reason,
         confidence: update.confidence || existingItem.confidence,
         name: existingItem.name,
-      });
+      };
     } else {
       const cleanName = rawName.replace(/^\d+\.\s*/, "");
-      byItem.set(itemName, { ...update, name: cleanName });
+      result.push({ ...update, name: cleanName });
     }
   }
 
-  return Array.from(byItem.values());
+  return result;
 }
 
 export async function updateConstraints(
