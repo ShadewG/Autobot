@@ -2,14 +2,9 @@
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SWRConfig } from "swr";
+import { AuthProvider } from "./auth-provider";
 import { UserFilterProvider } from "./user-filter";
 
-/**
- * Global SWR fetcher with consistent error handling.
- * - Throws on non-2xx responses
- * - Includes credentials for cookie-based auth
- * - Logs errors with response body snippet for debugging
- */
 const fetcher = async (url: string) => {
   const res = await fetch(url, { credentials: "include" });
   if (!res.ok) {
@@ -23,10 +18,6 @@ interface ProvidersProps {
   children: React.ReactNode;
 }
 
-/**
- * Client-side providers wrapper.
- * Keeps app/layout.tsx as a server component.
- */
 export function Providers({ children }: ProvidersProps) {
   return (
     <SWRConfig
@@ -40,11 +31,13 @@ export function Providers({ children }: ProvidersProps) {
         },
       }}
     >
-      <UserFilterProvider>
-        <TooltipProvider delayDuration={300}>
-          {children}
-        </TooltipProvider>
-      </UserFilterProvider>
+      <AuthProvider>
+        <UserFilterProvider>
+          <TooltipProvider delayDuration={300}>
+            {children}
+          </TooltipProvider>
+        </UserFilterProvider>
+      </AuthProvider>
     </SWRConfig>
   );
 }

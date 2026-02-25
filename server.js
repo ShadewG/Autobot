@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const db = require('./services/database');
 
@@ -20,13 +21,11 @@ console.log('  DATABASE_URL:', process.env.DATABASE_URL ? '✅ Set' : '❌ NOT S
 app.use(helmet({
     contentSecurityPolicy: false // Allow inline scripts for dashboard
 }));
-app.use(cors());
+app.use(cors({ credentials: true, origin: true }));
+app.use(cookieParser(process.env.SESSION_SECRET || 'autobot-dev-secret'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('combined'));
-
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
 
 // Serve Next.js dashboard static files
 const dashboardPath = path.join(__dirname, 'dashboard', 'out');
@@ -63,6 +62,7 @@ const casesRoutes = require('./routes/cases');
 const monitorRoutes = require('./routes/monitor');
 const phoneCallRoutes = require('./routes/phone-calls');
 const userRoutes = require('./routes/users');
+const authRoutes = require('./routes/auth');
 const caseAgenciesRoutes = require('./routes/case-agencies');
 
 app.use('/webhooks', webhookRoutes);
@@ -77,6 +77,7 @@ app.use('/api/cases', casesRoutes);  // Cases: /api/cases/import-notion
 app.use('/api/monitor', monitorRoutes);  // Monitor: /api/monitor/* for debugging
 app.use('/api/phone-calls', phoneCallRoutes);  // Phone Call Queue: escalation for unresponsive email cases
 app.use('/api/users', userRoutes);  // Users: multi-user email routing
+app.use('/api/auth', authRoutes);  // Auth: login/logout/me
 app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency support per case
 
 // Import cron service and email queue workers
@@ -245,7 +246,7 @@ async function startServer() {
             }
 
             console.log(`   ✓ Ready to receive requests!`);
-            console.log(`\n   Test LangGraph: http://localhost:${PORT}/test-langgraph.html\n`);
+            console.log(``);
         });
     } catch (error) {
         console.error('Failed to start server:', error);

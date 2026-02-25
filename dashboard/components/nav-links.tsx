@@ -5,11 +5,13 @@ import { usePathname } from "next/navigation";
 import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { UserFilterDropdown, useUserFilter } from "./user-filter";
+import { useUserFilter } from "./user-filter";
+import { useAuth } from "./auth-provider";
 
 export function NavLinks() {
   const pathname = usePathname();
   const { appendUser } = useUserFilter();
+  const { user, logout } = useAuth();
 
   const { data: liveData } = useSWR<{
     success: boolean;
@@ -58,7 +60,17 @@ export function NavLinks() {
           );
         })}
       </nav>
-      <UserFilterDropdown />
+      {user && (
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-muted-foreground">{user.name}</span>
+          <button
+            onClick={logout}
+            className="text-muted-foreground hover:text-foreground transition-colors uppercase tracking-wider"
+          >
+            Logout
+          </button>
+        </div>
+      )}
     </div>
   );
 }
