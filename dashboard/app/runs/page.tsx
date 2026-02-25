@@ -38,7 +38,14 @@ import {
   Bot,
   Terminal,
   Database,
+  ExternalLink,
 } from "lucide-react";
+
+const TRIGGER_PROJECT_URL = "https://cloud.trigger.dev/projects/v3/proj_afwkrlynxcczbgflspqf";
+
+function triggerRunUrl(triggerRunId: string): string {
+  return `${TRIGGER_PROJECT_URL}/runs/${triggerRunId}`;
+}
 
 const STATUS_CONFIG: Record<AgentRun['status'], {
   icon: React.ComponentType<{ className?: string }>;
@@ -285,6 +292,19 @@ export default function RunsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
+                          {run.trigger_run_id && (
+                            <a
+                              href={triggerRunUrl(run.trigger_run_id)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="View in Trigger.dev"
+                            >
+                              <Button variant="ghost" size="sm">
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            </a>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -368,6 +388,20 @@ export default function RunsPage() {
                     <p className="text-sm text-muted-foreground">Trigger</p>
                     <p>{selectedRun.trigger_type}</p>
                   </div>
+                  {selectedRun.trigger_run_id && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Trigger.dev Run</p>
+                      <a
+                        href={triggerRunUrl(selectedRun.trigger_run_id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline flex items-center gap-1 text-sm"
+                      >
+                        View in Trigger.dev
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                    </div>
+                  )}
                   <div>
                     <p className="text-sm text-muted-foreground">Started</p>
                     <p>{formatDate(selectedRun.started_at)}</p>

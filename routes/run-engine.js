@@ -18,6 +18,16 @@ const db = require('../services/database');
 const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const logger = require('../services/logger');
 
+// Save Trigger.dev run ID in agent_run metadata for dashboard linking
+async function saveTriggerRunId(runId, triggerRunId) {
+  try {
+    await db.query(
+      `UPDATE agent_runs SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb WHERE id = $1`,
+      [runId, JSON.stringify({ triggerRunId })]
+    );
+  } catch (e) { /* best-effort */ }
+}
+
 /**
  * POST /cases/:id/run-initial
  *
@@ -93,6 +103,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(run.id, handle.id);
     logger.info('Initial request task triggered', {
       runId: run.id,
       caseId,
@@ -223,6 +234,7 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(run.id, handle.id);
     logger.info('Inbound message task triggered', {
       runId: run.id,
       caseId,
@@ -445,6 +457,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(run.id, handle.id);
     logger.info('Legacy proposal re-triggered via Trigger.dev', {
       runId: run.id,
       caseId,
@@ -579,6 +592,7 @@ router.post('/cases/:id/run-followup', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(run.id, handle.id);
     logger.info('Follow-up trigger task triggered', {
       runId: run.id,
       caseId,
@@ -701,6 +715,7 @@ router.post('/followups/:id/trigger', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(run.id, handle.id);
     logger.info('Follow-up trigger task triggered', {
       runId: run.id,
       caseId,
@@ -932,6 +947,7 @@ router.get('/runs', async (req, res) => {
       'error': 'failed',
       'gated': 'gated',
       'paused': 'gated',
+      'waiting': 'gated',
       'skipped': 'completed'
     };
     return statusMap[dbStatus] || 'running';
@@ -1018,6 +1034,7 @@ router.get('/runs', async (req, res) => {
         pause_reason: row.pause_reason,
         gated_reason: row.status === 'gated' ? 'Requires human approval' : null,
         node_trace: row.metadata?.nodeTrace || null,
+        trigger_run_id: row.metadata?.triggerRunId || null,
         // Proposal data for gated runs
         proposal_id: row.proposal_id ? String(row.proposal_id) : null,
         proposal: row.proposal_id ? {
@@ -1250,6 +1267,7 @@ router.post('/runs/:id/retry', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(newRun.id, handle.id);
     logger.info('Agent run retry created via Trigger.dev', {
       originalRunId: runId,
       newRunId: newRun.id,
@@ -1895,6 +1913,7 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
       throw triggerError;
     }
 
+    await saveTriggerRunId(run.id, handle.id);
     logger.info('Inbound-and-run completed via Trigger.dev', {
       caseId,
       messageId: message.id,

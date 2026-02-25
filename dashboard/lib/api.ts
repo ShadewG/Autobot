@@ -275,6 +275,7 @@ export interface AgentRun {
   is_stuck?: boolean;
   error_message?: string;
   node_trace?: string[];
+  trigger_run_id?: string;
   final_action?: string;
   pause_reason?: string;
   gated_reason?: string;
