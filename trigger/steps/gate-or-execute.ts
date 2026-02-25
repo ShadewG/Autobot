@@ -101,8 +101,9 @@ export async function createProposalAndGate(
   // HUMAN GATE PATH — generate opaque token ID
   const tokenId = crypto.randomUUID();
 
-  // Store token ID on proposal for dashboard lookup
-  await db.updateProposal(proposal.id, { waitpoint_token: tokenId });
+  // Store token ID on proposal and reset status for the new gate
+  // (upsert ON CONFLICT preserves EXECUTED status; we need PENDING_APPROVAL for the compare-and-swap)
+  await db.updateProposal(proposal.id, { waitpoint_token: tokenId, status: "PENDING_APPROVAL" });
 
   // Update case status to needs_human_review
   await db.updateCaseStatus(caseId, "needs_human_review", {
