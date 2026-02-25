@@ -79,9 +79,41 @@ export const classificationSchema = z.object({
       "privacy_exemption",
       "excessive_fees",
       "retention_expired",
+      "glomar_ncnd",
+      "not_reasonably_described",
+      "no_duty_to_create",
+      "privilege_attorney_work_product",
+      "juvenile_records",
+      "sealed_court_order",
+      "third_party_confidential",
+      "records_not_yet_created",
     ])
     .nullable()
     .describe("If intent is 'denial', the specific subtype"),
+
+  jurisdiction_level: z
+    .enum(["federal", "state", "local"])
+    .nullable()
+    .optional()
+    .describe("Jurisdiction level of the responding agency"),
+
+  response_nature: z
+    .enum(["substantive", "procedural", "administrative", "mixed"])
+    .nullable()
+    .optional()
+    .describe("Whether the response addresses the substance of the request or is procedural/administrative"),
+
+  detected_exemption_citations: z
+    .array(z.string())
+    .optional()
+    .default([])
+    .describe("Any specific legal exemptions or statutes cited by the agency in their response"),
+
+  decision_evidence_quotes: z
+    .array(z.string())
+    .optional()
+    .default([])
+    .describe("Key verbatim quotes from the agency response that support the classification decision"),
 
   constraints_to_add: z
     .array(z.string())
@@ -126,6 +158,7 @@ export const draftSchema = z.object({
 export const decisionSchema = z.object({
   action: z.enum([
     "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
+    "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
     "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
     "ESCALATE", "NONE", "CLOSE_CASE", "WITHDRAW", "RESEARCH_AGENCY",
     "REFORMULATE_REQUEST", "SUBMIT_PORTAL", "SEND_PDF_EMAIL",
@@ -135,6 +168,8 @@ export const decisionSchema = z.object({
   pauseReason: z.string().nullable().describe("Why human review is needed (e.g., 'FEE_QUOTE', 'DENIAL', 'SENSITIVE')"),
   confidence: z.number().min(0).max(1).describe("Confidence in this decision (0-1)"),
   adjustmentInstruction: z.string().nullable().describe("Specific instructions for drafting (e.g., 'negotiate fee down to $50')"),
+  researchLevel: z.enum(["none", "light", "medium", "deep"]).default("none")
+    .describe("How much research to do before drafting (none=skip, light=contacts, medium=+laws, deep=+full custodian chain)"),
 }).strict();
 
 export type DecisionOutput = z.infer<typeof decisionSchema>;
@@ -159,7 +194,30 @@ export const safetyReviewSchema = z.object({
   riskFlags: z.array(z.string()).describe("Critical risk flags (e.g., 'REQUESTS_EXEMPT_ITEM', 'CONTRADICTS_FEE_ACCEPTANCE', 'CONTAINS_PII')"),
   warnings: z.array(z.string()).describe("Non-critical warnings about the draft"),
   reasoning: z.string().describe("Explanation of the safety assessment"),
+  law_fit_valid: z.boolean().optional().default(true)
+    .describe("Whether the legal citations match the jurisdiction (e.g., not citing federal FOIA for a state agency)"),
+  law_fit_issues: z.array(z.string()).optional().default([])
+    .describe("Specific law-jurisdiction mismatches found"),
+  requester_consistency_valid: z.boolean().optional().default(true)
+    .describe("Whether the draft is consistent with prior requester positions (e.g., not negotiating after accepting fee)"),
+  requester_consistency_issues: z.array(z.string()).optional().default([])
+    .describe("Specific consistency issues with prior requester actions"),
 }).strict();
+
+// Research context schema - structured output from research step
+export const researchContextSchema = z.object({
+  level: z.enum(["none", "light", "medium", "deep"]).describe("Research depth level executed"),
+  agency_hierarchy_verified: z.boolean().describe("Whether the agency hierarchy was verified"),
+  likely_record_custodians: z.array(z.string()).describe("Agencies/units likely holding the requested records"),
+  official_records_submission_methods: z.array(z.string()).describe("Official ways to submit records requests to this agency"),
+  portal_url_verified: z.boolean().describe("Whether any portal URL was verified as working"),
+  state_law_notes: z.string().nullable().describe("Relevant state law notes for the denial type and jurisdiction"),
+  record_type_handoff_notes: z.string().nullable().describe("Notes about which record types are held by which custodians"),
+  rebuttal_support_points: z.array(z.string()).describe("Specific legal/factual points supporting a rebuttal"),
+  clarification_answer_support: z.string().nullable().describe("Research that helps answer the agency's clarification question"),
+}).strict();
+
+export type ResearchContextOutput = z.infer<typeof researchContextSchema>;
 
 export type SafetyReviewOutput = z.infer<typeof safetyReviewSchema>;
 

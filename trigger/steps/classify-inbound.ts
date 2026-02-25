@@ -48,7 +48,7 @@ function buildClassificationPrompt(
     ? caseData.requested_records.join(", ")
     : caseData.requested_records || "Various records";
 
-  return `You are analyzing an agency response to a FOIA (Freedom of Information Act) request.
+  return `You are an expert FOIA analyst classifying an agency response to a public records request.
 
 ## Case Context
 - **Agency**: ${caseData.agency_name || "Unknown"}
@@ -66,18 +66,59 @@ ${threadContext || "No prior messages."}
 **Body**:
 ${(message.body_text || message.body_html || "").substring(0, 3000)}
 
-## Instructions
-Classify this agency response. Consider:
-1. What is the primary intent? (fee request, denial, acknowledgment, etc.)
-2. Does this require an email response from us?
-3. Are there any fees mentioned? Extract the exact dollar amount if so.
-4. Is there a portal URL we should use instead?
-5. What constraints should we track? (e.g., BWC_EXEMPT, FEE_REQUIRED)
-6. What's the status of each requested record item?
-7. If this is a denial, what specific subtype is it?
+## Intent Definitions (choose the BEST match)
+- **fee_request**: Agency quotes a cost/fee for records production. Look for dollar amounts, invoices, cost estimates, payment instructions.
+- **question / more_info_needed**: Agency asks the requester to clarify, narrow scope, provide ID, or answer a question before proceeding.
+- **hostile**: Agency response is threatening, abusive, or overtly adversarial beyond normal bureaucratic friction.
+- **denial**: Agency explicitly refuses to produce some or all records. Includes claims of exemption, no responsive records, etc.
+- **partial_denial**: Agency releases some records but denies/withholds others citing an exemption.
+- **partial_approval**: Agency approves part of the request with conditions (redactions, fee for remainder, etc.).
+- **partial_release / partial_delivery**: Agency provides some records with more to follow later.
+- **portal_redirect**: Agency says to use an online portal (GovQA, NextRequest, JustFOIA, etc.) instead of email.
+- **acknowledgment**: Agency confirms receipt of the request and says they are working on it. No records or fees yet.
+- **records_ready**: Agency says records are ready for pickup/download/delivery. Includes links, attachments, or portal notifications.
+- **delivery**: Records are attached to or delivered in this message.
+- **wrong_agency**: Agency says they are not the correct custodian and may redirect to another agency.
+- **other**: Does not clearly fit any category above.
 
-Be precise with fee amounts — extract the exact number, not a range.
-If the agency asked a question we haven't answered, note it in unanswered_agency_question.`;
+## Denial Subtype Definitions (only if intent is "denial" or "partial_denial")
+- **no_records**: Agency claims no responsive records exist
+- **wrong_agency**: Agency says records are held by a different entity
+- **overly_broad**: Agency says request is too broad or unduly burdensome
+- **ongoing_investigation**: Records withheld due to active investigation/litigation
+- **privacy_exemption**: Records withheld citing privacy of individuals
+- **excessive_fees**: Denial is effectively a prohibitive cost barrier
+- **retention_expired**: Records destroyed per retention schedule
+- **glomar_ncnd**: Agency neither confirms nor denies the existence of records
+- **not_reasonably_described**: Agency claims request is too vague to search
+- **no_duty_to_create**: Agency claims it would need to create records to fulfill request
+- **privilege_attorney_work_product**: Records withheld claiming attorney-client privilege or work product
+- **juvenile_records**: Records withheld due to juvenile protections
+- **sealed_court_order**: Records sealed by court order
+- **third_party_confidential**: Records withheld to protect third-party confidential information
+- **records_not_yet_created**: Records don't exist yet (pending processing, future report)
+
+## Jurisdiction Detection
+- **federal**: Agency is a federal entity (e.g., FBI, DEA, federal court). Look for mentions of 5 USC 552, FOIA (federal), federal department names.
+- **state**: Agency is a state-level entity (e.g., state police, state AG, state department). Look for state statute citations.
+- **local**: Agency is a city, county, or municipal entity (e.g., city PD, county sheriff, municipal court).
+
+## Response Nature
+- **substantive**: Addresses the actual records request (approval, denial, fee quote, records delivery)
+- **procedural**: About the process (acknowledgment, timeline, portal redirect, request for clarification)
+- **administrative**: Internal/automated (confirmation emails, ticket numbers, auto-replies)
+- **mixed**: Contains both substantive and procedural elements
+
+## Extraction Instructions
+1. **Intent**: Choose the single best-fit intent from the definitions above.
+2. **Fee amount**: Extract the EXACT dollar amount if quoted. Look for "$X", "cost of $X", "estimated fee: $X".
+3. **Portal URL**: Extract any URL that appears to be an online records portal.
+4. **Denial subtype**: Only populate if intent is "denial" or "partial_denial".
+5. **Exemption citations**: Extract any statute numbers, legal codes, or exemption names cited by the agency (e.g., "5 ILCS 140/7(1)(c)", "FOIA Exemption 7(A)").
+6. **Evidence quotes**: Copy 1-3 short verbatim quotes (under 100 chars each) from the message that most clearly support your classification.
+7. **Unanswered question**: If the agency asked a question we haven't answered, state the question.
+8. **Jurisdiction**: Determine if agency is federal, state, or local.
+9. **Response nature**: Determine if response is substantive, procedural, administrative, or mixed.`;
 }
 
 export async function classifyInbound(
@@ -303,5 +344,9 @@ export async function classifyInbound(
     suggestedAction,
     reasonNoResponse: aiResult.reason_no_response,
     unansweredAgencyQuestion: aiResult.unanswered_agency_question,
+    jurisdiction_level: (aiResult as any).jurisdiction_level || null,
+    response_nature: (aiResult as any).response_nature || null,
+    detected_exemption_citations: (aiResult as any).detected_exemption_citations || [],
+    decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
   };
 }

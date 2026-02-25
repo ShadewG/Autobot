@@ -10,13 +10,18 @@ import { safetyReviewSchema, type SafetyReviewOutput } from "../lib/schemas";
 import { logger } from "../lib/db";
 import type { SafetyResult, ScopeItem } from "../lib/types";
 
-const CRITICAL_RISK_FLAGS = ["REQUESTS_EXEMPT_ITEM", "CONTRADICTS_FEE_ACCEPTANCE", "CONTAINS_PII"];
+const CRITICAL_RISK_FLAGS = [
+  "REQUESTS_EXEMPT_ITEM", "CONTRADICTS_FEE_ACCEPTANCE", "CONTAINS_PII",
+  "LAW_JURISDICTION_MISMATCH", "CONTRADICTS_SCOPE_NARROWING",
+];
 
 function runRegexSafetyChecks(
   draftBodyText: string,
   proposalActionType: string,
   constraints: string[],
-  scopeItems: ScopeItem[]
+  scopeItems: ScopeItem[],
+  jurisdictionLevel?: string | null,
+  caseState?: string | null
 ): { riskFlags: string[]; warnings: string[]; hasCriticalRisk: boolean } {
   const riskFlags: string[] = [];
   const warnings: string[] = [];
@@ -94,6 +99,36 @@ function runRegexSafetyChecks(
     warnings.push(`Draft contains email addresses: ${suspiciousEmails.join(", ")}`);
   }
 
+  // Law-fit checks: detect federal FOIA citation when addressing local/state agency
+  if (jurisdictionLevel && jurisdictionLevel !== "federal") {
+    if (/5\s*U\.?S\.?C\.?\s*§?\s*552\b/.test(draftBodyText) || /freedom of information act/i.test(draftBodyText)) {
+      // Check it's not just a general reference alongside state law
+      const hasStateLaw = /\d+\s+(ILCS|Gov\.?\s*Code|C\.?R\.?S|O\.?R\.?S|R\.?C\.?W|M\.?G\.?L)/i.test(draftBodyText);
+      if (!hasStateLaw) {
+        riskFlags.push("LAW_JURISDICTION_MISMATCH");
+        warnings.push(`Draft cites federal FOIA (5 USC 552) but agency is ${jurisdictionLevel}-level. Use state public records law instead.`);
+      }
+    }
+  }
+
+  // Requester consistency: FEE_ACCEPTED + negotiate language
+  if (constraints.includes("FEE_ACCEPTED")) {
+    if (draftLower.includes("excessive") || draftLower.includes("unreasonable") || draftLower.includes("too high")) {
+      if (!riskFlags.includes("CONTRADICTS_FEE_ACCEPTANCE")) {
+        riskFlags.push("CONTRADICTS_FEE_ACCEPTANCE");
+        warnings.push("Draft challenges fee after already accepting it");
+      }
+    }
+  }
+
+  // Requester consistency: SCOPE_NARROWED + expansion language
+  if (constraints.includes("SCOPE_NARROWED")) {
+    if (draftLower.includes("all records") || draftLower.includes("expand") || draftLower.includes("additional records") || draftLower.includes("full scope")) {
+      riskFlags.push("CONTRADICTS_SCOPE_NARROWING");
+      warnings.push("Draft appears to re-expand scope after it was already narrowed");
+    }
+  }
+
   return {
     riskFlags,
     warnings,
@@ -112,7 +147,7 @@ async function runAiSafetyReview(params: {
   const { object } = await generateObject({
     model: decisionModel,
     schema: safetyReviewSchema,
-    prompt: `Review this outbound draft for safety.
+    prompt: `Review this outbound draft for safety before sending to a government agency.
 
 ## Action type
 ${proposalActionType}
@@ -126,9 +161,33 @@ ${JSON.stringify(constraints, null, 2)}
 ## Scope items
 ${JSON.stringify(scopeItems, null, 2)}
 
-Is this draft safe to send?
-Check for contradictions with constraints, PII, aggressive tone, re-requesting exempt items, and internal inconsistency.
-Return critical risk flags only in riskFlags and non-critical issues in warnings.`,
+## Safety Checks (evaluate ALL of these)
+
+### 1. Constraint Contradictions
+- Does the draft contradict any active constraints? (e.g., requesting BWC when BWC_EXEMPT, negotiating after FEE_ACCEPTED)
+
+### 2. PII & Sensitive Content
+- Does the draft contain SSNs, credit card numbers, or other PII?
+- Does it reference internal system details that shouldn't be shared?
+
+### 3. Tone & Professionalism
+- Is the tone appropriate for the action type? (rebuttals can be firm; clarifications should be cooperative)
+- Are there aggressive/threatening terms that could harm the relationship?
+
+### 4. Re-requesting Exempt/Delivered Items
+- Does it re-request items already marked as DELIVERED or EXEMPT?
+
+### 5. Law-Jurisdiction Fit
+- If citing specific statutes, do they match the agency's jurisdiction?
+- Don't cite federal FOIA (5 USC 552) for state/local agencies unless appropriate
+- Don't cite one state's law for an agency in a different state
+- Set law_fit_valid=false and list issues in law_fit_issues if mismatches found
+
+### 6. Requester Consistency
+- Does the draft contradict prior positions? (e.g., FEE_ACCEPTED but now negotiating, SCOPE_NARROWED but now expanding)
+- Set requester_consistency_valid=false and list issues in requester_consistency_issues if inconsistencies found
+
+Return critical risk flags in riskFlags and non-critical issues in warnings.`,
   });
 
   return object as SafetyReviewOutput;
@@ -139,7 +198,9 @@ export async function safetyCheck(
   draftSubject: string | null,
   proposalActionType: string,
   constraints: string[],
-  scopeItems: ScopeItem[]
+  scopeItems: ScopeItem[],
+  jurisdictionLevel?: string | null,
+  caseState?: string | null
 ): Promise<SafetyResult> {
   if (!draftBodyText) {
     return {
@@ -165,7 +226,7 @@ export async function safetyCheck(
       : [];
 
   const [regexResult, aiResult] = await Promise.all([
-    Promise.resolve(runRegexSafetyChecks(draftBodyText, proposalActionType, safeConstraints, safeScope)),
+    Promise.resolve(runRegexSafetyChecks(draftBodyText, proposalActionType, safeConstraints, safeScope, jurisdictionLevel, caseState)),
     runAiSafetyReview({
       draftBodyText,
       proposalActionType,
@@ -188,6 +249,17 @@ export async function safetyCheck(
     ...regexResult.warnings,
     ...(aiResult?.warnings || []),
   ]));
+
+  // Merge law-fit and requester-consistency issues into risk flags
+  if (aiResult) {
+    if (aiResult.law_fit_valid === false && (aiResult.law_fit_issues?.length || 0) > 0) {
+      mergedRiskFlags.push("LAW_JURISDICTION_MISMATCH");
+      mergedWarnings.push(...(aiResult.law_fit_issues || []));
+    }
+    if (aiResult.requester_consistency_valid === false && (aiResult.requester_consistency_issues?.length || 0) > 0) {
+      mergedWarnings.push(...(aiResult.requester_consistency_issues || []));
+    }
+  }
 
   const aiHasCriticalRisk = aiResult
     ? (!aiResult.safe || aiResult.riskFlags.length > 0)

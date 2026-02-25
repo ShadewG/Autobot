@@ -128,6 +128,9 @@ export async function executeAction(
     case "SEND_FOLLOWUP":
     case "SEND_REBUTTAL":
     case "SEND_CLARIFICATION":
+    case "SEND_APPEAL":
+    case "SEND_FEE_WAIVER_REQUEST":
+    case "SEND_STATUS_UPDATE":
     case "RESPOND_PARTIAL_APPROVAL":
     case "ACCEPT_FEE":
     case "NEGOTIATE_FEE":

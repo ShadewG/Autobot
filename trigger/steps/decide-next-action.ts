@@ -73,6 +73,7 @@ function decision(
     reasoning: [],
     adjustmentInstruction: null,
     isComplete: false,
+    researchLevel: "none",
     ...overrides,
   };
 }
@@ -91,6 +92,8 @@ function buildDecisionPrompt(params: {
   sentiment: string;
   autopilotMode: AutopilotMode;
   threadMessages: any[];
+  denialSubtype?: string | null;
+  jurisdictionLevel?: string | null;
 }): string {
   const {
     caseData,
@@ -116,36 +119,87 @@ function buildDecisionPrompt(params: {
     })
     .join("\n");
 
-  return `You are deciding the next action for a public-records request workflow.
+  const denialSubtype = params.denialSubtype || null;
+  const jurisdictionLevel = params.jurisdictionLevel || null;
 
-## Case context
+  return `You are the decision engine for a FOIA (public records) automation system. Choose the single best next action.
+
+## Case Context
 - Agency: ${caseData?.agency_name || "Unknown"}
 - State: ${caseData?.state || "Unknown"}
 - Subject: ${caseData?.subject_name || "Unknown"}
 - Records requested: ${requestedRecords}
 - Current status: ${caseData?.status || "Unknown"}
+- Jurisdiction: ${jurisdictionLevel || "unknown"}
 
-## Current classifier result
+## Classifier Result
 - Classification: ${classification}
-- Classification confidence: ${classificationConfidence ?? "unknown"}
+- Confidence: ${classificationConfidence ?? "unknown"}
 - Sentiment: ${sentiment}
 - Fee amount: ${extractedFeeAmount ?? "none"}
+- Denial subtype: ${denialSubtype || "none"}
 
 ## Constraints
 ${JSON.stringify(constraints || [], null, 2)}
 
-## Scope items
+## Scope Items
 ${JSON.stringify(scopeItems || [], null, 2)}
 
-## Mode
-- Autopilot mode: ${autopilotMode}
+## Autopilot Mode: ${autopilotMode}
 
-## Thread summary (recent first-to-last)
+## Thread Summary
 ${threadSummary || "No thread messages available."}
 
-Given this classification and context, what is the best next action?
-Choose exactly one action from the schema and provide concise reasoning.
-Use requiresHuman=true when confidence is low or case is sensitive.`;
+## Policy Rulebook (follow these rules strictly)
+
+### Fee Routing
+- Fee <= $100 in AUTO mode → ACCEPT_FEE (auto-execute)
+- Fee $100-$500 → ACCEPT_FEE (requires human)
+- Fee > $500 → NEGOTIATE_FEE (requires human)
+- If agency also denied records in same message → SEND_REBUTTAL first, handle fee later
+- If fee seems excessive for the request → SEND_FEE_WAIVER_REQUEST (requires human)
+
+### Denial Routing by Subtype
+- no_records (no verified custodian) → RESEARCH_AGENCY, researchLevel=deep
+- no_records (has verified custodian) → SEND_REBUTTAL, researchLevel=medium
+- wrong_agency → RESEARCH_AGENCY, researchLevel=medium
+- overly_broad → REFORMULATE_REQUEST
+- ongoing_investigation → SEND_REBUTTAL (request segregable portions), researchLevel=medium
+- privacy_exemption → SEND_REBUTTAL (accept redactions, request segregable), researchLevel=medium
+- excessive_fees → NEGOTIATE_FEE or SEND_FEE_WAIVER_REQUEST
+- retention_expired → SEND_REBUTTAL (request proof), researchLevel=medium
+- glomar_ncnd → SEND_APPEAL (requires human), researchLevel=medium
+- not_reasonably_described → SEND_CLARIFICATION, researchLevel=light
+- no_duty_to_create → RESEARCH_AGENCY, researchLevel=medium
+- privilege_attorney_work_product → SEND_APPEAL (requires human), researchLevel=medium
+- juvenile_records → CLOSE_CASE (requires human)
+- sealed_court_order → CLOSE_CASE (requires human)
+- third_party_confidential → SEND_REBUTTAL (accept redactions), researchLevel=medium
+- records_not_yet_created → SEND_STATUS_UPDATE, schedule followup
+
+### Clarification Routing
+- If agency asked an identifier question (case number, date, name) → SEND_CLARIFICATION, researchLevel=light
+- If agency asked to narrow scope → REFORMULATE_REQUEST
+- If agency asked us to use a portal → treat as PORTAL_REDIRECT
+
+### RECORDS_READY Safety
+- Check for payment-required language → may need ACCEPT_FEE first
+- Check for mixed withholdings → RESPOND_PARTIAL_APPROVAL
+- Check for portal pickup instructions → NONE with note
+
+### requiresHuman Rules
+- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW
+- Require human when confidence < 0.7
+- Require human in SUPERVISED mode for any email-sending action
+
+### researchLevel Guidance
+- Set researchLevel to guide the research step that runs before drafting
+- "none" = skip research (acks, records ready, simple followups)
+- "light" = verify contacts/portal only (portal redirects, simple clarifications)
+- "medium" = contacts + state law research (most denials, complex clarifications)
+- "deep" = full custodian chain research (no_records without verified custodian, wrong_agency)
+
+Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 
 function validateDecision(
@@ -177,6 +231,14 @@ function validateDecision(
 
   if (aiDecisionResult.action === "CLOSE_CASE" && !aiDecisionResult.requiresHuman) {
     return { valid: false, reason: "CLOSE_CASE must require human review" };
+  }
+
+  // SEND_APPEAL and SEND_FEE_WAIVER_REQUEST always require human
+  if (aiDecisionResult.action === "SEND_APPEAL" && !aiDecisionResult.requiresHuman) {
+    return { valid: false, reason: "SEND_APPEAL must require human review" };
+  }
+  if (aiDecisionResult.action === "SEND_FEE_WAIVER_REQUEST" && !aiDecisionResult.requiresHuman) {
+    return { valid: false, reason: "SEND_FEE_WAIVER_REQUEST must require human review" };
   }
 
   const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
@@ -211,6 +273,8 @@ async function aiDecision(params: {
   extractedFeeAmount: number | null;
   sentiment: string;
   autopilotMode: AutopilotMode;
+  denialSubtype?: string | null;
+  jurisdictionLevel?: string | null;
 }): Promise<DecisionResult | null> {
   try {
     const [caseData, threadMessages, latestAnalysis] = await Promise.all([
@@ -236,6 +300,8 @@ async function aiDecision(params: {
       sentiment: params.sentiment,
       autopilotMode: params.autopilotMode,
       threadMessages: Array.isArray(threadMessages) ? threadMessages : [],
+      denialSubtype: params.denialSubtype,
+      jurisdictionLevel: params.jurisdictionLevel,
     });
 
     const { object } = await generateObject({
@@ -279,6 +345,7 @@ async function aiDecision(params: {
       reasoning: object.reasoning,
       adjustmentInstruction: object.adjustmentInstruction,
       isComplete: object.action === "NONE",
+      researchLevel: (object as any).researchLevel || "none",
     });
   } catch (error: any) {
     logger.warn("AI decision failed; using deterministic fallback", {
@@ -372,11 +439,11 @@ async function deterministicRouting(
     switch (resolvedSubtype) {
       case "no_records":
         if (!caseData.contact_research_notes) {
-          return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", reasoning: [...reasoning, "No records - researching correct agency"] });
+          return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "deep", reasoning: [...reasoning, "No records - researching correct agency (deep)"] });
         }
-        return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", reasoning: [...reasoning, "Already researched - reformulating request"] });
+        return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Already researched - reformulating request"] });
       case "wrong_agency":
-        return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", reasoning: [...reasoning, "Wrong agency - researching correct one"] });
+        return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Wrong agency - researching correct one"] });
       case "overly_broad":
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", reasoning: [...reasoning, "Overly broad - narrowing scope"] });
       case "ongoing_investigation":
@@ -394,13 +461,57 @@ async function deterministicRouting(
           canAutoExecute: canAuto,
           requiresHuman: !canAuto,
           pauseReason: canAuto ? null : "DENIAL",
+          researchLevel: "medium",
           reasoning: [...reasoning, `${resolvedSubtype} denial (${strength}) - drafting rebuttal`],
         });
       }
       case "excessive_fees":
         return decision("NEGOTIATE_FEE", { pauseReason: "FEE_QUOTE", reasoning: [...reasoning, "Excessive fees denial - negotiating"] });
       case "retention_expired":
-        return decision("ESCALATE", { pauseReason: "DENIAL", reasoning: [...reasoning, "Retention expired - escalating"] });
+        return decision("SEND_REBUTTAL", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Retention expired - requesting proof of destruction"] });
+      case "glomar_ncnd":
+        return decision("SEND_APPEAL", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Glomar/NCND response - filing formal appeal"] });
+      case "not_reasonably_described":
+        return decision("SEND_CLARIFICATION", {
+          pauseReason: "DENIAL",
+          researchLevel: "light",
+          reasoning: [...reasoning, "Request not reasonably described - providing additional details"],
+        });
+      case "no_duty_to_create":
+        return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "No duty to create - verifying records actually exist"] });
+      case "privilege_attorney_work_product":
+        return decision("SEND_APPEAL", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Privilege claim - filing formal appeal requesting privilege log"] });
+      case "juvenile_records":
+        return decision("CLOSE_CASE", {
+          pauseReason: "DENIAL",
+          gateOptions: ["APPROVE", "ADJUST", "DISMISS"],
+          reasoning: [...reasoning, "Juvenile records protection - recommending closure (strong exemption)"],
+        });
+      case "sealed_court_order":
+        return decision("CLOSE_CASE", {
+          pauseReason: "DENIAL",
+          gateOptions: ["APPROVE", "ADJUST", "DISMISS"],
+          reasoning: [...reasoning, "Sealed by court order - recommending closure (strong exemption)"],
+        });
+      case "third_party_confidential": {
+        const canAuto3p = autopilotMode === "AUTO";
+        return decision("SEND_REBUTTAL", {
+          canAutoExecute: canAuto3p,
+          requiresHuman: !canAuto3p,
+          pauseReason: canAuto3p ? null : "DENIAL",
+          researchLevel: "medium",
+          reasoning: [...reasoning, "Third-party confidential - rebutting with redaction offer"],
+        });
+      }
+      case "records_not_yet_created": {
+        const canAutoStatus = autopilotMode === "AUTO";
+        return decision("SEND_STATUS_UPDATE", {
+          canAutoExecute: canAutoStatus,
+          requiresHuman: !canAutoStatus,
+          pauseReason: canAutoStatus ? null : "DENIAL",
+          reasoning: [...reasoning, "Records not yet created - sending status inquiry and scheduling followup"],
+        });
+      }
       default: {
         const strength = await assessDenialStrength(caseId);
         if (strength === "strong" && autopilotMode !== "AUTO") {
@@ -415,6 +526,7 @@ async function deterministicRouting(
           canAutoExecute: canAuto,
           requiresHuman: !canAuto,
           pauseReason: canAuto ? null : "DENIAL",
+          researchLevel: "medium",
           reasoning: [...reasoning, `Denial (${strength}) - ${canAuto ? "auto-" : ""}drafting rebuttal`],
         });
       }
@@ -729,6 +841,8 @@ export async function decideNextAction(
       extractedFeeAmount,
       sentiment,
       autopilotMode,
+      denialSubtype,
+      jurisdictionLevel: null, // Populated by classify step in Phase 5
     });
 
     if (aiResult) {

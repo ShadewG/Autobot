@@ -706,7 +706,7 @@ Return concise legal citations and key statutory language with sources.`;
     async generateDenialRebuttal(messageData, analysis, caseData, options = {}) {
         try {
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
-            const { adjustmentInstruction, lessonsContext } = options;
+            const { adjustmentInstruction, lessonsContext, legalResearchOverride, rebuttalSupportPoints } = options;
 
             const denialSubtype = analysis.denial_subtype || 'overly_broad';
 
@@ -753,8 +753,8 @@ Return concise legal citations and key statutory language with sources.`;
             const stateDeadline = await db.getStateDeadline(caseData.state);
             const stateName = stateDeadline?.state_name || caseData.state;
 
-            // Research state-specific laws
-            const legalResearch = await this.researchStateLaws(stateName, denialSubtype);
+            // Use pre-researched legal data if available, otherwise do fresh research
+            const legalResearch = legalResearchOverride || await this.researchStateLaws(stateName, denialSubtype);
 
             const prompt = `Generate a strategic FOIA denial rebuttal for this response:
 
@@ -791,6 +791,7 @@ Generate a STRONG, legally-grounded rebuttal that:
 5. Shows good faith and willingness to cooperate
 6. References relevant case law if provided in research
 7. Is under 250 words
+${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researched Support Points (use these):**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text, no subject line.`;
 
@@ -977,15 +978,16 @@ Return ONLY the email body text.`;
         const {
             feeAmount,
             currency = 'USD',
-            recommendedAction = 'negotiate', // accept | negotiate | decline
+            recommendedAction = 'negotiate', // accept | negotiate | decline | waiver
             instructions = null,
             lessonsContext = '',
             agencyMessage = null,
             agencyAnalysis = null
         } = options;
 
-        if (!feeAmount) {
-            throw new Error('feeAmount is required to generate a fee response');
+        // feeAmount is optional for waiver mode
+        if (!feeAmount && recommendedAction !== 'waiver') {
+            throw new Error('feeAmount is required to generate a fee response (except for waiver mode)');
         }
 
         // Get short reference for correspondence
@@ -995,7 +997,8 @@ Return ONLY the email body text.`;
             accept: 'Politely accept the cost, confirm willingness to pay, and request next steps for invoice/payment.',
             negotiate: 'Push back on the cost, request itemized breakdowns, cite state fee statutes, and offer a phased or narrowed request to reduce cost.',
             decline: 'Explain the fee exceeds budget, request fee waiver or narrowing help, and keep door open for partial fulfillment.',
-            escalate: 'Flag that the fee far exceeds norms, request supervisor review, and cite public interest considerations.'
+            escalate: 'Flag that the fee far exceeds norms, request supervisor review, and cite public interest considerations.',
+            waiver: 'Request a full fee waiver citing documentary journalism public interest. Cite state statute requiring fee waivers for public interest requests. Note that this request is for documentary production investigating police accountability, which primarily benefits the general public. If a waiver is not granted, request the statutory basis for denial of the waiver.'
         };
 
         const actionInstruction = actionGuidance[recommendedAction] || actionGuidance.negotiate;
@@ -1010,7 +1013,7 @@ Full case context: ${caseData.case_name}
 Agency: ${caseData.agency_name}
 Jurisdiction: ${caseData.state}
 Requested records: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
-Quoted fee: ${currency} ${feeAmount.toFixed(2)}
+Quoted fee: ${feeAmount ? `${currency} ${feeAmount.toFixed(2)}` : 'Not specified (requesting proactive waiver)'}
 Recommended action: ${recommendedAction.toUpperCase()}
 ${agencyMessage ? `\nAgency's full response:\n${this.stripQuotedText(agencyMessage.body_text || '').substring(0, 500)}` : ''}
 ${agencyAnalysis?.full_analysis_json?.key_points ? `\nKey points from agency response: ${agencyAnalysis.full_analysis_json.key_points.join('; ')}` : ''}
@@ -1402,6 +1405,7 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
     async generateClarificationResponse(message, analysis, caseData, options = {}) {
         const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
         const lessonsContext = options.lessonsContext || '';
+        const clarificationResearch = options.clarificationResearch || '';
 
         const prompt = `You are responding to a public records request clarification from a government agency.
 
@@ -1415,6 +1419,7 @@ ORIGINAL REQUEST:
 - Incident Date: ${caseData.incident_date || 'Not specified'}
 - Location: ${caseData.incident_location || 'Not specified'}
 
+${clarificationResearch ? `PRE-RESEARCHED CONTEXT (use this to answer their question):\n${clarificationResearch}\n` : ''}
 ${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
 ${lessonsContext}
 Generate a professional, helpful response that:
@@ -1445,6 +1450,68 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
             };
         } catch (error) {
             console.error('Error generating clarification response:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Generate a formal administrative appeal letter for a denial.
+     * Used when the denial type warrants a formal appeal (Glomar, privilege, etc.)
+     */
+    async generateAppealLetter(messageData, analysis, caseData, options = {}) {
+        try {
+            const { adjustmentInstruction, lessonsContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const denialSubtype = analysis?.denial_subtype || 'general';
+            const stateDeadline = await db.getStateDeadline(caseData.state);
+            const stateName = stateDeadline?.state_name || caseData.state;
+            const legalResearch = legalResearchOverride || await this.researchStateLaws(stateName, denialSubtype);
+
+            const prompt = `Generate a formal administrative appeal of a FOIA/public records denial.
+
+**This is a FORMAL APPEAL, not a casual rebuttal.** It should:
+- Reference the original request and denial
+- Cite the specific appeal procedures and deadlines for ${stateName}
+- Identify the appeal authority (supervisor, AG, public access counselor, etc.)
+- Present legal arguments for why the denial was improper
+- Request a Vaughn index or privilege log if applicable
+- Be firm, professional, and legally precise
+
+**Denial Details:**
+- Denial type: ${denialSubtype}
+- Agency: ${caseData.agency_name}
+- State: ${stateName}
+- Agency response: ${(messageData?.body_text || '').substring(0, 500)}
+
+${legalResearch ? `**Legal Research for ${stateName}:**\n${legalResearch}` : ''}
+${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Support Points:**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
+
+**Case Context:**
+- Subject: ${caseData.subject_name}
+- Records requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
+- Incident date: ${caseData.incident_date || 'Unknown'}
+
+${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
+
+Generate a formal appeal letter under 300 words. Return ONLY the letter body, no subject line.`;
+
+            const response = await this.openai.responses.create({
+                model: 'gpt-5.2-2025-12-11',
+                reasoning: { effort: 'medium' },
+                text: { verbosity: 'medium' },
+                input: `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`
+            });
+
+            const bodyText = response.output_text?.trim();
+
+            return {
+                subject: `Administrative Appeal - ${caseData.subject_name || caseData.case_name || 'Records Request'}`,
+                body_text: bodyText,
+                body_html: null,
+                is_appeal: true,
+                denial_subtype: denialSubtype
+            };
+        } catch (error) {
+            console.error('Error generating appeal letter:', error);
             throw error;
         }
     }

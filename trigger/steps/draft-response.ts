@@ -7,7 +7,7 @@
  */
 
 import db, { aiService, decisionMemory, logger } from "../lib/db";
-import type { DraftResult, ActionType } from "../lib/types";
+import type { DraftResult, ActionType, ResearchContext } from "../lib/types";
 
 export async function draftResponse(
   caseId: number,
@@ -16,7 +16,8 @@ export async function draftResponse(
   scopeItems: any[],
   extractedFeeAmount: number | null,
   adjustmentInstruction: string | null,
-  messageId: number | null
+  messageId: number | null,
+  researchCtx?: ResearchContext
 ): Promise<DraftResult> {
   const caseData = await db.getCaseById(caseId);
   const lessonsApplied: any[] = [];
@@ -102,6 +103,10 @@ export async function draftResponse(
           scopeItems,
           adjustmentInstruction: rebuttalAdjust || undefined,
           lessonsContext,
+          legalResearchOverride: researchCtx?.state_law_notes || undefined,
+          rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
+            ? researchCtx.rebuttal_support_points
+            : undefined,
         }
       );
       break;
@@ -113,7 +118,11 @@ export async function draftResponse(
           latestInbound,
           latestAnalysis,
           caseData,
-          { adjustmentInstruction, lessonsContext }
+          {
+            adjustmentInstruction,
+            lessonsContext,
+            clarificationResearch: researchCtx?.clarification_answer_support || undefined,
+          }
         );
       } else {
         draft = await aiService.generateAutoReply(latestInbound, latestAnalysis, caseData);
@@ -170,6 +179,59 @@ export async function draftResponse(
           { scopeItems, adjustmentInstruction, lessonsContext }
         );
       }
+      break;
+    }
+
+    case "SEND_APPEAL": {
+      if (typeof aiService.generateAppealLetter === "function") {
+        draft = await aiService.generateAppealLetter(
+          latestInbound,
+          latestAnalysis,
+          caseData,
+          {
+            adjustmentInstruction,
+            lessonsContext,
+            legalResearchOverride: researchCtx?.state_law_notes || undefined,
+            rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
+              ? researchCtx.rebuttal_support_points
+              : undefined,
+          }
+        );
+      } else {
+        // Fallback: use rebuttal generator with appeal instruction
+        draft = await aiService.generateDenialRebuttal(
+          latestInbound,
+          latestAnalysis,
+          caseData,
+          {
+            scopeItems,
+            adjustmentInstruction: (adjustmentInstruction || "") + "\nFrame this as a formal administrative appeal, not just a rebuttal. Cite appeal procedures and deadlines.",
+            lessonsContext,
+            legalResearchOverride: researchCtx?.state_law_notes || undefined,
+          }
+        );
+      }
+      break;
+    }
+
+    case "SEND_FEE_WAIVER_REQUEST": {
+      draft = await aiService.generateFeeResponse(caseData, {
+        feeAmount: extractedFeeAmount || 0,
+        recommendedAction: "waiver",
+        instructions: adjustmentInstruction,
+        lessonsContext,
+        agencyMessage: latestInbound,
+        agencyAnalysis: latestAnalysis,
+      });
+      break;
+    }
+
+    case "SEND_STATUS_UPDATE": {
+      const followupSchedule = await db.getFollowUpScheduleByCaseId(caseId);
+      draft = await aiService.generateFollowUp(caseData, 0, {
+        adjustmentInstruction: (adjustmentInstruction || "") + "\nThis is a brief status inquiry, not a follow-up. Keep it under 100 words. Ask for an update on when records will be available.",
+        lessonsContext,
+      });
       break;
     }
 

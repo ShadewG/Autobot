@@ -28,6 +28,11 @@ const NONE = 'NONE';                     // No action needed
 const CLOSE_CASE = 'CLOSE_CASE';
 const WITHDRAW = 'WITHDRAW';
 
+// New send actions
+const SEND_APPEAL = 'SEND_APPEAL';                    // Formal administrative appeal of a denial
+const SEND_FEE_WAIVER_REQUEST = 'SEND_FEE_WAIVER_REQUEST';  // Request fee waiver citing public interest
+const SEND_STATUS_UPDATE = 'SEND_STATUS_UPDATE';      // Brief status inquiry on pending request
+
 // Research/reformulation actions
 const RESEARCH_AGENCY = 'RESEARCH_AGENCY';          // Re-research correct agency/contact
 const REFORMULATE_REQUEST = 'REFORMULATE_REQUEST';  // Rewrite request differently
@@ -42,6 +47,9 @@ const ACTION_TYPES = [
   SEND_FOLLOWUP,
   SEND_REBUTTAL,
   SEND_CLARIFICATION,
+  SEND_APPEAL,
+  SEND_FEE_WAIVER_REQUEST,
+  SEND_STATUS_UPDATE,
   RESPOND_PARTIAL_APPROVAL,
   ACCEPT_FEE,
   NEGOTIATE_FEE,
@@ -64,6 +72,9 @@ const DRAFT_REQUIRED_ACTIONS = [
   SEND_FOLLOWUP,
   SEND_REBUTTAL,
   SEND_CLARIFICATION,
+  SEND_APPEAL,
+  SEND_FEE_WAIVER_REQUEST,
+  SEND_STATUS_UPDATE,
   RESPOND_PARTIAL_APPROVAL,
   ACCEPT_FEE,
   NEGOTIATE_FEE,
@@ -80,7 +91,9 @@ const ALWAYS_GATE_ACTIONS = [
   RESEARCH_AGENCY,
   REFORMULATE_REQUEST,
   SUBMIT_PORTAL,
-  SEND_PDF_EMAIL
+  SEND_PDF_EMAIL,
+  SEND_APPEAL,
+  SEND_FEE_WAIVER_REQUEST
 ];
 
 /**
@@ -90,7 +103,8 @@ const AUTO_EXECUTE_ACTIONS = [
   SEND_FOLLOWUP,
   SEND_REBUTTAL,
   SEND_CLARIFICATION,
-  ACCEPT_FEE
+  ACCEPT_FEE,
+  SEND_STATUS_UPDATE
 ];
 
 /**
@@ -101,6 +115,9 @@ const ACTION_LABELS = {
   [SEND_FOLLOWUP]: 'Send Follow-up',
   [SEND_REBUTTAL]: 'Send Denial Rebuttal',
   [SEND_CLARIFICATION]: 'Send Clarification',
+  [SEND_APPEAL]: 'File Administrative Appeal',
+  [SEND_FEE_WAIVER_REQUEST]: 'Request Fee Waiver',
+  [SEND_STATUS_UPDATE]: 'Send Status Inquiry',
   [RESPOND_PARTIAL_APPROVAL]: 'Respond to Partial Approval',
   [ACCEPT_FEE]: 'Accept Fee',
   [NEGOTIATE_FEE]: 'Negotiate Fee',
@@ -213,6 +230,9 @@ module.exports = {
   SEND_FOLLOWUP,
   SEND_REBUTTAL,
   SEND_CLARIFICATION,
+  SEND_APPEAL,
+  SEND_FEE_WAIVER_REQUEST,
+  SEND_STATUS_UPDATE,
   RESPOND_PARTIAL_APPROVAL,
   ACCEPT_FEE,
   NEGOTIATE_FEE,

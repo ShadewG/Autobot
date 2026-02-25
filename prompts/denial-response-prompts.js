@@ -339,6 +339,210 @@ Under [State retention statute], [body-worn camera footage/incident records] mus
 If retention legitimately expired, please provide the documentation requested above.`
         },
 
+        glomar_ncnd: {
+            name: "Glomar / Neither Confirm Nor Deny",
+            strategy: `REBUTTAL STRATEGY:
+1. Challenge the Glomar response — it's only valid when confirming/denying existence itself would cause harm
+2. Argue that the existence of records is already public (incident reported in news, police responded publicly)
+3. Request they provide records with redactions rather than a blanket NCND
+4. Cite state law requiring specificity in exemption claims
+5. Note that Glomar is narrower than most agencies claim — it originates from CIA/national security context
+6. Request a Vaughn index or detailed exemption log
+
+TEMPLATE STRUCTURE:
+- Challenge applicability of Glomar to this request
+- Cite evidence that existence of records is already public
+- Request segregable portions with redactions
+- Cite state law requirements for specificity
+- Note Glomar's narrow legal scope`,
+
+            exampleRebuttal: `Your response neither confirms nor denies the existence of responsive records. However, a Glomar response is only appropriate when the very existence of records would itself cause harm — which is not the case here.
+
+The existence of records is already a matter of public record: [cite public evidence — news coverage, police blotter, court filing, etc.]. Given this, a NCND response is not legally supportable.
+
+Under [State statute], agencies must provide specific legal authority for each exemption claimed. Please either:
+1. Provide the requested records with appropriate redactions, or
+2. Identify the specific statutory exemption that applies to each category of records and explain why confirming their existence would cause harm
+
+I respectfully request you reconsider this response and provide records with necessary redactions applied.`
+        },
+
+        not_reasonably_described: {
+            name: "Request Not Reasonably Described",
+            strategy: `RESPONSE STRATEGY (cooperative, not combative):
+1. Thank them for identifying the issue
+2. Provide additional specificity immediately — dates, locations, names, incident numbers
+3. Offer to narrow or clarify any ambiguous terms
+4. Ask what additional identifiers they need
+5. Resubmit with more precise language
+
+TEMPLATE STRUCTURE:
+- Acknowledge their concern
+- Provide additional identifying information
+- Ask what specific identifiers would help
+- Offer to discuss by phone if needed
+- Resubmit clarified request`,
+
+            exampleRebuttal: `Thank you for your response. I'm happy to provide additional details to help locate these records.
+
+To clarify my request:
+- **Incident Date**: [specific date]
+- **Location**: [specific address/intersection]
+- **Subject**: [name if known]
+- **Incident/Case Number**: [if available]
+- **Specific Records**: [list each type clearly]
+
+Please let me know if you need any additional identifying information. I'm also available to discuss by phone if that would be more efficient.`
+        },
+
+        no_duty_to_create: {
+            name: "No Duty to Create Records",
+            strategy: `REBUTTAL STRATEGY:
+1. Clarify that you're requesting EXISTING records, not new compilations
+2. Point out specific record types that must already exist (incident reports, BWC, 911 logs)
+3. If the agency claims compiling a list constitutes "creating," argue that organizing existing records is retrieval, not creation
+4. Cite state law on reasonable search and retrieval obligations
+5. Request they identify which specific records exist vs. don't exist
+
+TEMPLATE STRUCTURE:
+- Clarify you're seeking existing records
+- Identify specific record types that routinely exist
+- Distinguish between retrieval and creation
+- Request inventory of what exists`,
+
+            exampleRebuttal: `I understand agencies have no duty to create new records. However, my request is for records that already exist in your systems:
+
+- **Incident/offense reports** are routinely generated for every call for service
+- **911/CAD records** are automatically logged
+- **Body-worn camera footage** is automatically recorded per department policy
+- **Dispatch recordings** are archived per retention schedules
+
+Compiling or retrieving these existing records is not "creating" new records — it is fulfilling a standard records request. Under [State statute], agencies must conduct a reasonable search of existing systems.
+
+Please identify which of the requested record types exist in your systems and provide them accordingly.`
+        },
+
+        privilege_attorney_work_product: {
+            name: "Attorney-Client Privilege / Work Product",
+            strategy: `REBUTTAL STRATEGY:
+1. Note that attorney-client privilege is very narrow in public records — only applies to actual legal advice, not factual records
+2. Request a privilege log identifying each withheld document, its author, date, and specific privilege claimed
+3. Challenge overbroad privilege claims — incident reports, BWC, 911 calls are NOT attorney work product
+4. Cite state law requiring segregation of privileged from non-privileged content
+5. Note that most factual records related to an incident predate any legal consultation
+
+TEMPLATE STRUCTURE:
+- Request detailed privilege log
+- Challenge scope of privilege claim
+- Identify records that cannot be privileged
+- Cite segregability requirements`,
+
+            exampleRebuttal: `Attorney-client privilege and work product doctrine are narrow exceptions that do not apply to routine operational records. The requested records — incident reports, body-worn camera footage, 911 calls, and dispatch logs — are factual records created in the ordinary course of operations, not legal advice or litigation preparation.
+
+Please provide:
+1. A detailed privilege log for each withheld record (document description, date, author, specific privilege claimed)
+2. All non-privileged records, which include at minimum: incident reports, BWC footage, 911 audio, and CAD/dispatch records
+
+Under [State statute], agencies must segregate privileged material and release all non-privileged portions. A blanket privilege assertion over operational records is not legally supportable.`
+        },
+
+        juvenile_records: {
+            name: "Juvenile Records Protection",
+            strategy: `APPROACH (respectful of legal limits):
+1. Acknowledge legitimate juvenile protections
+2. Request redacted versions — juvenile identity can be protected while releasing other content
+3. Request records of adult officers and responders (not subject to juvenile protections)
+4. Request non-identifying records (CAD logs, dispatch, aggregate data)
+5. Only escalate to human — don't push hard on juvenile protections
+
+NOTE: This is one of the strongest exemptions. Be cooperative, not combative.`,
+
+            exampleRebuttal: `I understand and respect juvenile privacy protections. I'm willing to accept comprehensive redactions of all juvenile-identifying information.
+
+I request:
+1. Body-worn camera footage with juvenile faces, names, and identifiers redacted/blurred
+2. Incident reports with juvenile information redacted
+3. 911 audio with juvenile identifiers bleeped
+4. All records pertaining to adult officers and responders (not subject to juvenile protections)
+
+Juvenile privacy protections require redaction, not blanket withholding. Please provide redacted versions of all requested records.`
+        },
+
+        sealed_court_order: {
+            name: "Sealed by Court Order",
+            strategy: `APPROACH (limited options):
+1. Request a copy of or citation to the sealing order (verify it exists and its scope)
+2. Determine if the seal covers ALL requested records or just some
+3. Request any records NOT covered by the seal
+4. Note when the seal expires (if applicable)
+5. Escalate to human — court orders must be respected but can sometimes be challenged
+
+NOTE: Court-sealed records are the hardest to obtain. Be respectful and factual.`,
+
+            exampleRebuttal: `I understand a court order may restrict access to some records. To better understand the scope of this restriction, please provide:
+
+1. The case number and court that issued the sealing order
+2. The specific records covered by the seal
+3. Whether the seal has an expiration date
+4. Any records from this incident that are NOT covered by the sealing order
+
+Records not specifically named in the court order remain subject to public records law. Please provide all non-sealed records with appropriate redactions.`
+        },
+
+        third_party_confidential: {
+            name: "Third-Party Confidential Information",
+            strategy: `REBUTTAL STRATEGY:
+1. Agree to comprehensive redaction of third-party PII
+2. Note that redaction is the remedy, not blanket withholding
+3. Cite state law requiring segregation and release of non-confidential portions
+4. Offer to pay reasonable redaction costs
+5. Identify records that contain no third-party info (CAD logs, dispatch, officer reports)
+
+TEMPLATE STRUCTURE:
+- Accept all redactions of third-party information
+- Cite segregability requirements
+- Identify records with no third-party content
+- Offer to pay redaction costs`,
+
+            exampleRebuttal: `I fully consent to redaction of all third-party confidential information, including:
+- Names, addresses, and contact information of third parties
+- Medical and financial information
+- Any other personally identifiable information
+
+Under [State statute], the presence of third-party confidential information requires redaction of that information, not withholding of entire records. Please provide:
+
+1. All requested records with third-party information redacted
+2. Records containing no third-party information in full (CAD logs, dispatch audio, officer activity logs)
+
+I'm willing to pay reasonable redaction costs. Please provide an estimate if applicable.`
+        },
+
+        records_not_yet_created: {
+            name: "Records Not Yet Created / Pending",
+            strategy: `RESPONSE STRATEGY:
+1. Ask when the records will be available (processing timeline)
+2. Request any records that ARE currently available
+3. Ask to be notified when records are ready
+4. Schedule a follow-up for the expected availability date
+5. If records are "pending review" or "in processing," this is not a valid denial
+
+TEMPLATE STRUCTURE:
+- Request timeline for availability
+- Request any currently available records
+- Ask for notification when ready
+- Challenge if "pending" is used as denial`,
+
+            exampleRebuttal: `Thank you for advising that these records are not yet available. Please clarify:
+
+1. When do you expect the records to be ready for release?
+2. Are any of the requested records currently available? (e.g., incident report, 911 audio, CAD logs may be processed faster than video)
+3. Can I be notified when the records are available for release?
+
+Please note that records that exist but are pending administrative processing are still subject to public records law. Under [State statute], agencies must respond within [X days] and cannot indefinitely delay production.
+
+I'll follow up on [expected date] if I haven't heard back.`
+        },
+
         format_issue: {
             name: "Format / Portal Issues",
             strategy: `REBUTTAL STRATEGY:
