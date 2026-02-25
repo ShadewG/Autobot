@@ -1321,7 +1321,9 @@ Look for a records division email, FOIA email, or general agency email that acce
             };
             const setNumber = (name, value) => {
                 if (value === undefined || value === null) return;
-                if (propSet.has(name)) properties[name] = { number: value };
+                const num = Number(value);
+                if (isNaN(num)) return;
+                if (propSet.has(name)) properties[name] = { number: num };
             };
             const setCheckbox = (name, value) => {
                 if (value === undefined) return;
@@ -1360,7 +1362,18 @@ Look for a records division email, FOIA email, or general agency email that acce
             setRichText('Last Portal Status', updates.last_portal_status_text);
             setDate('Last Portal Updated', updates.last_portal_updated_at);
             setUrl('Portal Task URL', updates.portal_task_url);
-            setRichText('Portal Login Email', updates.portal_login_email);
+
+            // Portal Login Email — auto-detect property type (email vs rich_text)
+            if (updates.portal_login_email && propSet.has('Portal Login Email')) {
+                const portalEmailPropInfo = await this.getDatabasePropertyInfo('Portal Login Email');
+                if (portalEmailPropInfo?.type === 'email') {
+                    properties['Portal Login Email'] = { email: updates.portal_login_email };
+                } else {
+                    properties['Portal Login Email'] = {
+                        rich_text: [{ text: { content: String(updates.portal_login_email).substring(0, 2000) } }]
+                    };
+                }
+            }
 
             // Human review flag
             setCheckbox('Needs Human Review', updates.needs_human_review);
@@ -1609,7 +1622,7 @@ Look for a records division email, FOIA email, or general agency email that acce
             }
 
             // Fee amount from fee_quote_jsonb
-            if (caseData.fee_quote_jsonb?.amount) {
+            if (caseData.fee_quote_jsonb?.amount != null) {
                 updates.fee_amount = caseData.fee_quote_jsonb.amount;
             }
 
