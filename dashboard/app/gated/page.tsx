@@ -189,11 +189,21 @@ interface PhoneCallTask {
   status: string;
   reason: string | null;
   agency_phone: string | null;
-  ai_briefing: string | null;
+  ai_briefing: unknown;
   assigned_to: string | null;
   case_name?: string | null;
   agency_name?: string | null;
+  agency_email?: string | null;
+  agency_state?: string | null;
+  subject_name?: string | null;
+  days_since_sent?: number | null;
+  notes?: string | null;
+  phone_options?: {
+    notion?: { phone: string; source: string; pd_page_url?: string };
+    web_search?: { phone: string; source: string; confidence?: string; reasoning?: string };
+  } | null;
   created_at?: string;
+  case_status?: string | null;
 }
 
 interface PhoneCallsResponse {
@@ -477,6 +487,9 @@ function MonitorPageContent() {
   const [manualCaseId, setManualCaseId] = useState("");
   const [activeTab, setActiveTab] = useState<TabId>("queue");
   const [reviewInstruction, setReviewInstruction] = useState("");
+  const [expandedPhoneCallId, setExpandedPhoneCallId] = useState<number | null>(null);
+  const [phoneCallSubmitting, setPhoneCallSubmitting] = useState<number | null>(null);
+  const [addingToPhoneQueue, setAddingToPhoneQueue] = useState(false);
   const initialCaseApplied = useRef(false);
 
   // ── Deep linking & user filter ─────────────
@@ -804,6 +817,99 @@ function MonitorPageContent() {
       alert(`Resolve failed: ${err instanceof Error ? err.message : err}`);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // ── Phone Queue Helpers ────────────────────
+
+  const handleAddToPhoneQueue = async (caseId: number, reason?: string) => {
+    setAddingToPhoneQueue(true);
+    try {
+      const res = await fetch("/api/phone-calls", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: caseId,
+          reason: reason || "manual_add",
+          notes: "Added from gated review queue",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      if (data.already_exists) {
+        alert("Case is already in the phone queue.");
+      } else {
+        alert("Added to phone queue. AI briefing generating in background.");
+      }
+      mutatePhone();
+    } catch (err) {
+      alert(`Failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setAddingToPhoneQueue(false);
+    }
+  };
+
+  const handleClaimPhoneCall = async (taskId: number) => {
+    setPhoneCallSubmitting(taskId);
+    try {
+      const res = await fetch(`/api/phone-calls/${taskId}/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignedTo: "dashboard" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      mutatePhone();
+    } catch (err) {
+      alert(`Claim failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setPhoneCallSubmitting(null);
+    }
+  };
+
+  const handleCompletePhoneCall = async (taskId: number, outcome: string) => {
+    const notes = prompt("Call notes (optional):");
+    setPhoneCallSubmitting(taskId);
+    try {
+      const res = await fetch(`/api/phone-calls/${taskId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome, notes: notes || undefined, completedBy: "dashboard" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      mutatePhone();
+    } catch (err) {
+      alert(`Complete failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setPhoneCallSubmitting(null);
+    }
+  };
+
+  const handleSkipPhoneCall = async (taskId: number) => {
+    const notes = prompt("Skip reason (optional):");
+    setPhoneCallSubmitting(taskId);
+    try {
+      const res = await fetch(`/api/phone-calls/${taskId}/skip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: notes || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      mutatePhone();
+    } catch (err) {
+      alert(`Skip failed: ${err instanceof Error ? err.message : err}`);
+    } finally {
+      setPhoneCallSubmitting(null);
     }
   };
 
@@ -1209,7 +1315,7 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Inbound message preview */}
+          {/* Inbound message — full text */}
           {selectedItem.data.last_inbound_preview && (
             <div className="border p-3">
               <div className="flex items-center justify-between mb-1.5">
@@ -1221,7 +1327,7 @@ function MonitorPageContent() {
                   onClick={() => openCorrespondence(selectedItem.data.case_id)}
                 >
                   <MessageSquare className="h-3 w-3 mr-1" />
-                  See Full Correspondence
+                  {showCorrespondence ? "Hide Correspondence" : "See Full Correspondence"}
                 </Button>
               </div>
               {selectedItem.data.last_inbound_subject && (
@@ -1230,11 +1336,31 @@ function MonitorPageContent() {
                   {selectedItem.data.last_inbound_subject}
                 </p>
               )}
-              <div className="bg-background border p-2 max-h-72 overflow-auto">
+              <div className="bg-background border p-2">
                 <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
                   {selectedItem.data.last_inbound_preview}
                 </pre>
               </div>
+            </div>
+          )}
+
+          {/* Inline correspondence — expands below inbound */}
+          {showCorrespondence && (
+            <div className="border p-3">
+              <SectionLabel>Full Correspondence</SectionLabel>
+              {correspondenceLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : correspondenceMessages.length > 0 ? (
+                <div className="mt-2">
+                  <Thread messages={correspondenceMessages} maxHeight="h-auto" />
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground py-4 text-center">
+                  No messages found
+                </p>
+              )}
             </div>
           )}
 
@@ -1321,6 +1447,20 @@ function MonitorPageContent() {
                 <Ban className="h-3 w-3 mr-1" /> WITHDRAW
               </Button>
             </div>
+            {/* Add to phone queue — always available */}
+            <Button
+              variant="outline"
+              className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+              onClick={() => handleAddToPhoneQueue(selectedItem.data.case_id, "clarification_needed")}
+              disabled={addingToPhoneQueue || isSubmitting}
+            >
+              {addingToPhoneQueue ? (
+                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+              ) : (
+                <Phone className="h-3 w-3 mr-1.5" />
+              )}
+              ADD TO PHONE QUEUE
+            </Button>
           </div>
         </div>
       )}
@@ -1424,7 +1564,7 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Inbound preview */}
+          {/* Inbound — full text */}
           {selectedItem.data.last_inbound_preview && (
             <div className="border p-3">
               <div className="flex items-center justify-between mb-1.5">
@@ -1436,10 +1576,10 @@ function MonitorPageContent() {
                   onClick={() => openCorrespondence(selectedItem.data.id)}
                 >
                   <MessageSquare className="h-3 w-3 mr-1" />
-                  See Full Correspondence
+                  {showCorrespondence ? "Hide Correspondence" : "See Full Correspondence"}
                 </Button>
               </div>
-              <div className="bg-background border p-2 max-h-48 overflow-auto">
+              <div className="bg-background border p-2">
                 <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
                   {selectedItem.data.last_inbound_preview}
                 </pre>
@@ -1447,6 +1587,26 @@ function MonitorPageContent() {
               {selectedItem.data.inbound_count > 0 && (
                 <p className="text-[10px] text-muted-foreground mt-1">
                   {selectedItem.data.inbound_count} inbound message(s) total
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Inline correspondence — expands below inbound */}
+          {showCorrespondence && (
+            <div className="border p-3">
+              <SectionLabel>Full Correspondence</SectionLabel>
+              {correspondenceLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              ) : correspondenceMessages.length > 0 ? (
+                <div className="mt-2">
+                  <Thread messages={correspondenceMessages} maxHeight="h-auto" />
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground py-4 text-center">
+                  No messages found
                 </p>
               )}
             </div>
@@ -1601,6 +1761,21 @@ function MonitorPageContent() {
                     </Button>
                   </Link>
                 </div>
+
+                {/* Add to phone queue — always available */}
+                <Button
+                  variant="outline"
+                  className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+                  onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "clarification_needed")}
+                  disabled={addingToPhoneQueue || isSubmitting}
+                >
+                  {addingToPhoneQueue ? (
+                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                  ) : (
+                    <Phone className="h-3 w-3 mr-1.5" />
+                  )}
+                  ADD TO PHONE QUEUE
+                </Button>
               </div>
             );
           })()}
@@ -1882,59 +2057,288 @@ function MonitorPageContent() {
               No pending phone calls.
             </div>
           ) : (
-            <div className="space-y-3">
-              {phoneData.tasks.map((task) => (
-                <div key={task.id} className="border p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-3.5 w-3.5 text-amber-400" />
-                      <Link
-                        href={`/requests/detail?id=${task.case_id}`}
-                        className="text-xs text-blue-400 hover:underline flex items-center gap-1"
-                      >
-                        #{task.case_id} {task.case_name || ""}
-                        <ArrowUpRight className="h-2.5 w-2.5" />
-                      </Link>
-                    </div>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "text-[10px]",
-                        task.status === "pending" && "text-amber-400 border-amber-700/50",
-                        task.status === "claimed" && "text-blue-400 border-blue-700/50",
-                        task.status === "completed" && "text-green-400 border-green-700/50"
-                      )}
+            <div className="space-y-2">
+              {phoneData.tasks.map((task) => {
+                const isExpanded = expandedPhoneCallId === task.id;
+                const isTaskSubmitting = phoneCallSubmitting === task.id;
+                const briefing = (() => {
+                  if (!task.ai_briefing) return null;
+                  if (typeof task.ai_briefing === "string") {
+                    try { return JSON.parse(task.ai_briefing); } catch { return { case_summary: task.ai_briefing }; }
+                  }
+                  return task.ai_briefing as Record<string, unknown>;
+                })();
+                const REASON_LABELS: Record<string, string> = {
+                  no_email_response: "No email response",
+                  manual_add: "Added manually",
+                  clarification_needed: "Needs clarification",
+                  details_needed: "Details needed",
+                  complex_inquiry: "Complex inquiry",
+                  portal_failed: "Portal failed",
+                  clarification_difficult: "Clarification by phone",
+                };
+
+                return (
+                  <div
+                    key={task.id}
+                    className={cn(
+                      "border transition-colors",
+                      task.status === "claimed" && "border-blue-700/30 bg-blue-950/5",
+                      isExpanded && "ring-1 ring-foreground/20"
+                    )}
+                  >
+                    {/* Row header — clickable to expand */}
+                    <button
+                      className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-muted/20"
+                      onClick={() => setExpandedPhoneCallId(isExpanded ? null : task.id)}
                     >
-                      {task.status.toUpperCase()}
-                    </Badge>
+                      <Phone className={cn(
+                        "h-4 w-4 flex-shrink-0",
+                        task.status === "claimed" ? "text-blue-400" : "text-amber-400"
+                      )} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-xs font-medium">
+                            {task.agency_name || `Case #${task.case_id}`}
+                          </span>
+                          {task.agency_state && (
+                            <span className="text-[10px] text-muted-foreground">{task.agency_state}</span>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px]",
+                              task.status === "pending" && "text-amber-400 border-amber-700/50",
+                              task.status === "claimed" && "text-blue-400 border-blue-700/50"
+                            )}
+                          >
+                            {task.status.toUpperCase()}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {task.agency_phone && (
+                            <span className="text-xs font-mono text-foreground">{task.agency_phone}</span>
+                          )}
+                          <span className="text-[10px] text-muted-foreground">
+                            {REASON_LABELS[task.reason || ""] || task.reason || ""}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {task.created_at && (
+                          <span className="text-[10px] text-muted-foreground">
+                            {formatRelativeTime(task.created_at)}
+                          </span>
+                        )}
+                        <ChevronRight className={cn(
+                          "h-3 w-3 text-muted-foreground transition-transform",
+                          isExpanded && "rotate-90"
+                        )} />
+                      </div>
+                    </button>
+
+                    {/* Expanded detail card */}
+                    {isExpanded && (
+                      <div className="border-t px-3 py-3 space-y-3">
+                        {/* Phone number — prominent */}
+                        <div className="border p-3 bg-background">
+                          <SectionLabel>Phone Number</SectionLabel>
+                          {task.agency_phone ? (
+                            <a
+                              href={`tel:${task.agency_phone}`}
+                              className="text-lg font-mono font-semibold text-foreground hover:text-blue-400 transition-colors"
+                            >
+                              {task.agency_phone}
+                            </a>
+                          ) : (
+                            <p className="text-sm text-muted-foreground italic">No phone number on file</p>
+                          )}
+                          {/* Phone options if available */}
+                          {task.phone_options && (
+                            <div className="mt-2 space-y-1">
+                              {task.phone_options.notion?.phone && task.phone_options.notion.phone !== task.agency_phone && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Notion: <span className="font-mono">{task.phone_options.notion.phone}</span>
+                                </p>
+                              )}
+                              {task.phone_options.web_search?.phone && task.phone_options.web_search.phone !== task.agency_phone && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Web: <span className="font-mono">{task.phone_options.web_search.phone}</span>
+                                  {task.phone_options.web_search.confidence && (
+                                    <span className="ml-1 text-muted-foreground">({task.phone_options.web_search.confidence})</span>
+                                  )}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Case details */}
+                        <div className="border p-3 bg-background">
+                          <SectionLabel>Case Details</SectionLabel>
+                          <div className="space-y-1 text-xs">
+                            <div className="flex items-center gap-2">
+                              <Link
+                                href={`/requests/detail?id=${task.case_id}`}
+                                className="text-blue-400 hover:underline flex items-center gap-1"
+                              >
+                                #{task.case_id} {task.case_name || ""} <ArrowUpRight className="h-2.5 w-2.5" />
+                              </Link>
+                            </div>
+                            {task.subject_name && (
+                              <p><span className="text-muted-foreground">Subject:</span> {task.subject_name}</p>
+                            )}
+                            {task.agency_email && (
+                              <p><span className="text-muted-foreground">Email:</span> {task.agency_email}</p>
+                            )}
+                            {task.days_since_sent != null && (
+                              <p><span className="text-muted-foreground">Days since sent:</span> {task.days_since_sent}</p>
+                            )}
+                            {task.case_status && (
+                              <p><span className="text-muted-foreground">Case status:</span> {task.case_status.replace(/_/g, " ")}</p>
+                            )}
+                            {task.notes && (
+                              <p><span className="text-muted-foreground">Notes:</span> {task.notes}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* AI Briefing — parsed nicely */}
+                        {briefing && (
+                          <div className="border p-3 bg-background">
+                            <SectionLabel>AI Call Briefing</SectionLabel>
+                            <div className="space-y-2 text-xs">
+                              {typeof briefing === "object" && "case_summary" in briefing && (
+                                <p className="text-foreground/80">{String(briefing.case_summary)}</p>
+                              )}
+                              {typeof briefing === "object" && "call_justification" in briefing && (
+                                <div>
+                                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Why call</p>
+                                  <p className="text-foreground/80">{String(briefing.call_justification)}</p>
+                                </div>
+                              )}
+                              {typeof briefing === "object" && "talking_points" in briefing && Array.isArray(briefing.talking_points) && (
+                                <div>
+                                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Talking points</p>
+                                  <ul className="space-y-0.5">
+                                    {(briefing.talking_points as string[]).map((point, i) => (
+                                      <li key={i} className="text-foreground/80 pl-2 border-l-2 border-muted">
+                                        {point}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {typeof briefing === "object" && "key_details" in briefing && briefing.key_details && (
+                                <div>
+                                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Key details</p>
+                                  {(() => {
+                                    const details = briefing.key_details as Record<string, unknown>;
+                                    const dates = (details.dates || {}) as Record<string, unknown>;
+                                    const records = (details.records_requested || []) as string[];
+                                    const responses = (details.previous_responses || []) as string[];
+                                    const daysWaiting = dates.days_waiting != null ? String(dates.days_waiting) : null;
+                                    const requestSent = dates.request_sent ? String(dates.request_sent) : null;
+                                    return (
+                                      <div className="space-y-1 text-foreground/80">
+                                        {daysWaiting && (
+                                          <p>Waiting: {daysWaiting} days</p>
+                                        )}
+                                        {requestSent && (
+                                          <p>Request sent: {requestSent}</p>
+                                        )}
+                                        {records.length > 0 && (
+                                          <p>Records: {records.join(", ")}</p>
+                                        )}
+                                        {responses.length > 0 && (
+                                          <div>
+                                            <p className="text-muted-foreground">Previous responses:</p>
+                                            {responses.map((r, i) => <p key={i} className="pl-2">- {r}</p>)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              )}
+                              {/* Fallback for plain string briefing */}
+                              {typeof briefing === "object" && !("case_summary" in briefing) && !("talking_points" in briefing) && (
+                                <p className="text-foreground/80 whitespace-pre-wrap">{JSON.stringify(briefing, null, 2)}</p>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Correspondence button */}
+                        <Button
+                          variant="ghost"
+                          className="w-full text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => openCorrespondence(task.case_id)}
+                        >
+                          <MessageSquare className="h-3 w-3 mr-1.5" />
+                          View Full Correspondence
+                        </Button>
+
+                        {/* Action buttons */}
+                        <div className="border-t pt-3 space-y-2">
+                          {task.status === "pending" && (
+                            <Button
+                              className="w-full bg-blue-700 hover:bg-blue-600 text-white"
+                              onClick={() => handleClaimPhoneCall(task.id)}
+                              disabled={isTaskSubmitting}
+                            >
+                              {isTaskSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
+                              CLAIM CALL
+                            </Button>
+                          )}
+                          {(task.status === "pending" || task.status === "claimed") && (
+                            <div className="flex gap-2">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    className="flex-1 bg-green-700 hover:bg-green-600 text-white"
+                                    disabled={isTaskSubmitting}
+                                  >
+                                    <CheckCircle className="h-3 w-3 mr-1.5" />
+                                    COMPLETE
+                                    <ChevronDown className="h-3 w-3 ml-1" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="start">
+                                  {[
+                                    { outcome: "resolved", label: "Resolved" },
+                                    { outcome: "connected", label: "Connected / Spoke with someone" },
+                                    { outcome: "transferred", label: "Transferred to right dept" },
+                                    { outcome: "voicemail", label: "Left voicemail" },
+                                    { outcome: "no_answer", label: "No answer" },
+                                    { outcome: "wrong_number", label: "Wrong number" },
+                                  ].map((opt) => (
+                                    <DropdownMenuItem
+                                      key={opt.outcome}
+                                      onClick={() => handleCompletePhoneCall(task.id, opt.outcome)}
+                                      className="text-xs"
+                                    >
+                                      {opt.label}
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                              <Button
+                                variant="outline"
+                                className="flex-1"
+                                onClick={() => handleSkipPhoneCall(task.id)}
+                                disabled={isTaskSubmitting}
+                              >
+                                SKIP
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  {task.agency_name && (
-                    <p className="text-xs text-muted-foreground mb-1">{task.agency_name}</p>
-                  )}
-                  {task.agency_phone && (
-                    <p className="text-xs mb-1">
-                      <span className="text-muted-foreground">Phone:</span>{" "}
-                      <span className="text-foreground font-mono">{task.agency_phone}</span>
-                    </p>
-                  )}
-                  {task.reason && (
-                    <p className="text-xs mb-2">
-                      <span className="text-muted-foreground">Reason:</span> {task.reason}
-                    </p>
-                  )}
-                  {task.ai_briefing && (
-                    <div className="bg-muted/30 border p-2 mt-2">
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">AI Briefing</p>
-                      <p className="text-xs text-foreground/80 whitespace-pre-wrap">{task.ai_briefing}</p>
-                    </div>
-                  )}
-                  {task.assigned_to && (
-                    <p className="text-[10px] text-muted-foreground mt-2">
-                      Assigned to: {task.assigned_to}
-                    </p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

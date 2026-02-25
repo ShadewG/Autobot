@@ -61,6 +61,84 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * POST /phone-calls
+ * Create a new phone call task from the dashboard
+ * Body: { case_id, reason, notes }
+ */
+router.post('/', async (req, res) => {
+    try {
+        const { case_id, reason, notes } = req.body;
+
+        if (!case_id) {
+            return res.status(400).json({ success: false, error: 'case_id is required' });
+        }
+
+        // Check for existing pending/claimed task for this case
+        const existing = await db.getPhoneCallByCaseId(case_id);
+        if (existing && (existing.status === 'pending' || existing.status === 'claimed')) {
+            return res.json({
+                success: true,
+                message: 'Case already in phone queue',
+                task: existing,
+                already_exists: true
+            });
+        }
+
+        // Load case data for auto-populating fields
+        const caseData = await db.getCaseById(case_id);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        // Get agency phone if available
+        let agencyPhone = null;
+        if (caseData.agency_id) {
+            try {
+                const agencyResult = await db.query(
+                    'SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]
+                );
+                if (agencyResult.rows[0]?.phone) agencyPhone = agencyResult.rows[0].phone;
+            } catch (e) { /* ignore */ }
+        }
+
+        const task = await db.createPhoneCallTask({
+            case_id,
+            agency_name: caseData.agency_name,
+            agency_phone: agencyPhone,
+            agency_state: caseData.state,
+            reason: reason || 'manual_add',
+            priority: 1,
+            notes: notes || 'Added manually from dashboard',
+            days_since_sent: caseData.send_date
+                ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
+                : null
+        });
+
+        await db.logActivity('phone_call_created',
+            `Phone call task created manually for case ${case_id}: ${reason || 'manual_add'}`,
+            { case_id }
+        );
+
+        // Fire-and-forget: generate AI briefing
+        (async () => {
+            try {
+                const messages = await db.getMessagesByCaseId(case_id, 20);
+                const aiService = require('../services/ai-service');
+                const briefing = await aiService.generatePhoneCallBriefing(task, caseData, messages);
+                await db.updatePhoneCallBriefing(task.id, briefing);
+            } catch (err) {
+                console.warn('Failed to auto-generate phone call briefing:', err.message);
+            }
+        })();
+
+        res.json({ success: true, message: 'Phone call task created', task });
+    } catch (error) {
+        console.error('Error creating phone call:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /phone-calls/stats
  * Get queue statistics
  */

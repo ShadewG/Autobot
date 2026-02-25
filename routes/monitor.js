@@ -956,7 +956,7 @@ router.get('/live-overview', async (req, res) => {
                 (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id) AS message_count,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
-                (SELECT LEFT(m2.body_text, 1000) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview,
+                (SELECT m2.body_text FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview,
                 (SELECT m3.subject FROM messages m3 WHERE m3.case_id = c.id AND m3.direction = 'inbound' ORDER BY COALESCE(m3.received_at, m3.created_at) DESC LIMIT 1) AS last_inbound_subject,
                 (SELECT COALESCE(m4.received_at, m4.created_at) FROM messages m4 WHERE m4.case_id = c.id AND m4.direction = 'inbound' ORDER BY COALESCE(m4.received_at, m4.created_at) DESC LIMIT 1) AS last_inbound_date
             FROM proposals p
@@ -1081,7 +1081,7 @@ router.get('/live-overview', async (req, res) => {
                 c.agency_email,
                 c.user_id,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
-                (SELECT LEFT(m2.body_text, 1000) FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
+                (SELECT m2.body_text FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
             FROM cases c
             WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
               AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status = 'PENDING_APPROVAL')
