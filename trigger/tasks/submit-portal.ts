@@ -24,13 +24,35 @@ const getSkyvern = lazy(() => require("../../services/portal-agent-service-skyve
 const getNotion = lazy(() => require("../../services/notion-service"));
 const getDiscord = lazy(() => require("../../services/discord-service"));
 
-const MAX_RECENT_FAILURES = 3;
+const MAX_RECENT_FAILURES = 2;
 const FAILURE_WINDOW_HOURS = 24;
 
 export const submitPortal = task({
   id: "submit-portal",
-  maxDuration: 600, // 10 minutes — Skyvern workflows can be slow
+  maxDuration: 1200, // 20 minutes — cancel if Skyvern takes too long
   retry: { maxAttempts: 1 }, // Don't auto-retry portal submissions (expensive)
+
+  onFailure: async ({ payload, error }) => {
+    // Runs on hard timeout or unexpected crash — ensure case is flagged for human
+    const db = getDb();
+    const { caseId, portalTaskId } = payload as any;
+    try {
+      if (portalTaskId) {
+        await db.query(
+          `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW(),
+           completion_notes = $2 WHERE id = $1 AND status = 'PENDING'`,
+          [portalTaskId, `Timed out or crashed: ${String(error).substring(0, 200)}`]
+        );
+      }
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        requires_human: true,
+        substatus: "Portal submission timed out — manual submission needed",
+      });
+      await db.logActivity("portal_submission_failed", `Portal timed out for case ${caseId}`, {
+        case_id: caseId, error: String(error).substring(0, 500),
+      });
+    } catch {}
+  },
 
   run: async (payload: {
     caseId: number;
