@@ -89,6 +89,8 @@ export interface RequestDetail extends RequestListItem {
   portal_url: string | null;
   portal_provider: string | null;
   portal_request_number: string | null;
+  last_portal_task_url: string | null;
+  last_portal_status: string | null;
   submitted_at: string | null;
   statutory_due_at: string | null;
   attachments: Attachment[];

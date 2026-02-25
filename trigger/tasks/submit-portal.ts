@@ -34,8 +34,10 @@ export const submitPortal = task({
 
   onFailure: async ({ payload, error }) => {
     // Runs on hard timeout or unexpected crash — ensure case is flagged for human
+    if (!payload || typeof payload !== "object") return;
     const db = getDb();
     const { caseId, portalTaskId } = payload as any;
+    if (!caseId) return;
     try {
       if (portalTaskId) {
         await db.query(
@@ -70,9 +72,9 @@ export const submitPortal = task({
     const recentFailures = await db.query(
       `SELECT COUNT(*) as cnt FROM activity_log
        WHERE event_type = 'portal_submission_failed'
-         AND details->>'case_id' = $1
+         AND case_id = $1
          AND created_at > NOW() - INTERVAL '${FAILURE_WINDOW_HOURS} hours'`,
-      [String(caseId)]
+      [caseId]
     );
     const failCount = parseInt(recentFailures.rows[0]?.cnt || "0", 10);
     if (failCount >= MAX_RECENT_FAILURES) {

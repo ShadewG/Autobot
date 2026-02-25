@@ -481,7 +481,7 @@ const portalExecutor = {
 async function createPortalTask(data) {
   // Dedup: check for existing PENDING portal task for this case
   const existing = await db.query(
-    `SELECT id FROM portal_tasks WHERE case_id = $1 AND status = 'PENDING' LIMIT 1`,
+    `SELECT * FROM portal_tasks WHERE case_id = $1 AND status = 'PENDING' LIMIT 1`,
     [data.caseId]
   );
   if (existing.rows.length > 0) {

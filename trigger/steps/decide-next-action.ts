@@ -402,11 +402,11 @@ async function aiDecision(params: {
       ).then((r: any) => r.rows),
       // Fetch recent human decisions from activity log (review resolutions, instructions)
       db.query(
-        `SELECT action, details, created_at FROM activity_log
-         WHERE details->>'case_id' = $1::text
-           AND action IN ('human_decision', 'phone_call_completed')
+        `SELECT event_type, metadata, created_at FROM activity_log
+         WHERE case_id = $1
+           AND event_type IN ('human_decision', 'phone_call_completed')
          ORDER BY created_at DESC LIMIT 10`,
-        [String(params.caseId)]
+        [params.caseId]
       ).then((r: any) => r.rows),
       // Fetch phone call notes for this case
       db.query(
