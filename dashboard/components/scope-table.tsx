@@ -29,31 +29,31 @@ const STATUS_CONFIG: Record<ScopeItem['status'], {
   REQUESTED: {
     icon: HelpCircle,
     color: "text-gray-500",
-    bgColor: "bg-gray-50",
+    bgColor: "bg-muted",
     label: "Unknown"
   },
   CONFIRMED_AVAILABLE: {
     icon: CheckCircle,
-    color: "text-green-600",
-    bgColor: "bg-green-50",
+    color: "text-green-400",
+    bgColor: "bg-green-500/10",
     label: "Available"
   },
   NOT_DISCLOSABLE: {
     icon: Ban,
-    color: "text-red-600",
-    bgColor: "bg-red-50",
+    color: "text-red-400",
+    bgColor: "bg-red-500/10",
     label: "Exempt"
   },
   NOT_HELD: {
     icon: FileX,
-    color: "text-orange-600",
-    bgColor: "bg-orange-50",
+    color: "text-orange-400",
+    bgColor: "bg-orange-500/10",
     label: "Not Held"
   },
   PENDING: {
     icon: HelpCircle,
-    color: "text-blue-600",
-    bgColor: "bg-blue-50",
+    color: "text-blue-400",
+    bgColor: "bg-blue-500/10",
     label: "Pending"
   },
 };
@@ -107,7 +107,7 @@ export function ScopeTable({ items, className, onStatusChange, isUpdating }: Sco
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         className={cn(
-                          "flex items-center gap-1.5 px-2 py-1 rounded hover:bg-gray-200/50 transition-colors cursor-pointer",
+                          "flex items-center gap-1.5 px-2 py-1 rounded hover:bg-muted/50 transition-colors cursor-pointer",
                           config.color,
                           isUpdating && "opacity-50 pointer-events-none"
                         )}
@@ -199,19 +199,19 @@ export function ScopeSummary({ items }: ScopeSummaryProps) {
   return (
     <div className="flex items-center gap-3 text-xs">
       {counts.available > 0 && (
-        <span className="flex items-center gap-1 text-green-600">
+        <span className="flex items-center gap-1 text-green-400">
           <CheckCircle className="h-3 w-3" />
           {counts.available} available
         </span>
       )}
       {counts.exempt > 0 && (
-        <span className="flex items-center gap-1 text-red-600">
+        <span className="flex items-center gap-1 text-red-400">
           <Ban className="h-3 w-3" />
           {counts.exempt} exempt
         </span>
       )}
       {counts.notHeld > 0 && (
-        <span className="flex items-center gap-1 text-orange-600">
+        <span className="flex items-center gap-1 text-orange-400">
           <FileX className="h-3 w-3" />
           {counts.notHeld} not held
         </span>

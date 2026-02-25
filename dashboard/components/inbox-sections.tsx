@@ -173,10 +173,10 @@ export function InboxSections({
       </div>
 
       {/* Paused Section */}
-      <Card className="border-amber-200 bg-amber-50/30">
+      <Card className="border-amber-700/50 bg-amber-500/10/30">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
-            <AlertCircle className="h-5 w-5 text-amber-600" />
+            <AlertCircle className="h-5 w-5 text-amber-400" />
             Paused — Needs Human ({filteredPaused.length})
           </CardTitle>
         </CardHeader>
@@ -206,7 +206,7 @@ export function InboxSections({
 
       {/* Scheduled Actions Section - only show if there are items */}
       {filteredScheduled.length > 0 && (
-        <Card className="border-blue-200">
+        <Card className="border-blue-700/50">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-lg">
               <CalendarClock className="h-5 w-5 text-blue-500" />

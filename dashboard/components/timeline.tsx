@@ -102,26 +102,26 @@ const eventIcons: Record<string, React.ReactNode> = {
 
 const eventColors: Record<string, string> = {
   // Case lifecycle
-  CREATED: "bg-blue-100 text-blue-800",
-  SENT: "bg-green-100 text-green-800",
-  RECEIVED: "bg-purple-100 text-purple-800",
-  EMAIL_SENT: "bg-green-100 text-green-800",
-  EMAIL_RECEIVED: "bg-purple-100 text-purple-800",
+  CREATED: "bg-blue-500/15 text-blue-300",
+  SENT: "bg-green-500/15 text-green-300",
+  RECEIVED: "bg-purple-500/15 text-purple-300",
+  EMAIL_SENT: "bg-green-500/15 text-green-300",
+  EMAIL_RECEIVED: "bg-purple-500/15 text-purple-300",
 
   // Fee/Cost events
-  FEE_QUOTE: "bg-amber-100 text-amber-800",
-  FEE_ACCEPTED: "bg-green-100 text-green-800",
-  FEE_NEGOTIATED: "bg-amber-100 text-amber-800",
+  FEE_QUOTE: "bg-amber-500/15 text-amber-300",
+  FEE_ACCEPTED: "bg-green-500/15 text-green-300",
+  FEE_NEGOTIATED: "bg-amber-500/15 text-amber-300",
 
   // Response classifications
-  DENIAL: "bg-red-100 text-red-800",
-  PARTIAL_DENIAL: "bg-orange-100 text-orange-800",
-  RECORDS_PROVIDED: "bg-green-100 text-green-800",
+  DENIAL: "bg-red-500/15 text-red-300",
+  PARTIAL_DENIAL: "bg-orange-500/15 text-orange-300",
+  RECORDS_PROVIDED: "bg-green-500/15 text-green-300",
 
   // Follow-ups
-  FOLLOW_UP: "bg-orange-100 text-orange-800",
-  FOLLOWUP_SCHEDULED: "bg-orange-100 text-orange-800",
-  FOLLOWUP_TRIGGERED: "bg-orange-100 text-orange-800",
+  FOLLOW_UP: "bg-orange-500/15 text-orange-300",
+  FOLLOWUP_SCHEDULED: "bg-orange-500/15 text-orange-300",
+  FOLLOWUP_TRIGGERED: "bg-orange-500/15 text-orange-300",
 
   // Portal tasks
   PORTAL_TASK: "bg-cyan-100 text-cyan-800",
@@ -129,35 +129,35 @@ const eventColors: Record<string, string> = {
   PORTAL_TASK_COMPLETED: "bg-teal-100 text-teal-800",
 
   // Agent/Proposal events
-  GATE_TRIGGERED: "bg-amber-100 text-amber-800",
+  GATE_TRIGGERED: "bg-amber-500/15 text-amber-300",
   PROPOSAL_QUEUED: "bg-indigo-100 text-indigo-800",
   PROPOSAL_CREATED: "bg-indigo-100 text-indigo-800",
-  PROPOSAL_APPROVED: "bg-green-100 text-green-800",
-  PROPOSAL_DISMISSED: "bg-gray-100 text-gray-800",
-  PROPOSAL_ADJUSTED: "bg-blue-100 text-blue-800",
+  PROPOSAL_APPROVED: "bg-green-500/15 text-green-300",
+  PROPOSAL_DISMISSED: "bg-muted text-muted-foreground",
+  PROPOSAL_ADJUSTED: "bg-blue-500/15 text-blue-300",
 
   // Agent runs
-  RUN_STARTED: "bg-blue-100 text-blue-800",
-  RUN_COMPLETED: "bg-green-100 text-green-800",
-  RUN_FAILED: "bg-red-100 text-red-800",
-  RUN_GATED: "bg-amber-100 text-amber-800",
+  RUN_STARTED: "bg-blue-500/15 text-blue-300",
+  RUN_COMPLETED: "bg-green-500/15 text-green-300",
+  RUN_FAILED: "bg-red-500/15 text-red-300",
+  RUN_GATED: "bg-amber-500/15 text-amber-300",
 
   // Human decisions
-  HUMAN_DECISION: "bg-green-100 text-green-800",
-  HUMAN_APPROVAL: "bg-green-100 text-green-800",
+  HUMAN_DECISION: "bg-green-500/15 text-green-300",
+  HUMAN_APPROVAL: "bg-green-500/15 text-green-300",
 
   // Execution events
-  ACTION_EXECUTED: "bg-green-100 text-green-800",
-  ACTION_DRY_RUN: "bg-blue-100 text-blue-800",
+  ACTION_EXECUTED: "bg-green-500/15 text-green-300",
+  ACTION_DRY_RUN: "bg-blue-500/15 text-blue-300",
 
   // Constraint/scope events
-  CONSTRAINT_DETECTED: "bg-orange-100 text-orange-800",
-  SCOPE_UPDATED: "bg-blue-100 text-blue-800",
+  CONSTRAINT_DETECTED: "bg-orange-500/15 text-orange-300",
+  SCOPE_UPDATED: "bg-blue-500/15 text-blue-300",
 
   // Status changes
-  STATUS_CHANGED: "bg-gray-100 text-gray-800",
-  CASE_CLOSED: "bg-green-100 text-green-800",
-  CASE_WITHDRAWN: "bg-red-100 text-red-800",
+  STATUS_CHANGED: "bg-muted text-muted-foreground",
+  CASE_CLOSED: "bg-green-500/15 text-green-300",
+  CASE_WITHDRAWN: "bg-red-500/15 text-red-300",
 };
 
 // Category filter configuration
@@ -204,7 +204,7 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
       <div
         className={cn(
           "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center",
-          eventColors[event.type] || "bg-gray-100 text-gray-800"
+          eventColors[event.type] || "bg-muted text-muted-foreground"
         )}
       >
         {eventIcons[event.type] || <FileText className="h-4 w-4" />}

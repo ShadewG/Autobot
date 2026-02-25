@@ -118,15 +118,15 @@ export function FollowupSchedulerPanel({
     if (!schedule) return "";
     switch (schedule.status) {
       case 'active':
-        return "bg-green-100 text-green-800";
+        return "bg-green-500/15 text-green-300";
       case 'paused':
-        return "bg-amber-100 text-amber-800";
+        return "bg-amber-500/15 text-amber-300";
       case 'completed':
-        return "bg-green-100 text-green-800";
+        return "bg-green-500/15 text-green-300";
       case 'max_reached':
-        return "bg-red-100 text-red-800";
+        return "bg-red-500/15 text-red-300";
       default:
-        return "bg-gray-100 text-gray-800";
+        return "bg-muted text-muted-foreground";
     }
   };
 
@@ -209,12 +209,12 @@ export function FollowupSchedulerPanel({
 
         {/* Max Reached Warning */}
         {isMaxReached && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-sm font-medium text-red-700 flex items-center gap-2">
+          <div className="bg-red-500/10 border border-red-700/50 rounded-lg p-3">
+            <p className="text-sm font-medium text-red-300 flex items-center gap-2">
               <AlertTriangle className="h-4 w-4" />
               Max Attempts Reached
             </p>
-            <p className="text-xs text-red-600 mt-1">
+            <p className="text-xs text-red-400 mt-1">
               No more automatic follow-ups will be sent. Consider manual escalation.
             </p>
           </div>
@@ -233,7 +233,7 @@ export function FollowupSchedulerPanel({
               </span>
             </div>
             {isPaused && (
-              <p className="text-xs text-amber-600 mt-1">
+              <p className="text-xs text-amber-400 mt-1">
                 Paused - will not send until resumed
               </p>
             )}

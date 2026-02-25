@@ -50,23 +50,23 @@ import {
 } from "lucide-react";
 
 const ACTION_TYPE_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-  SEND_EMAIL: { icon: <Mail className="h-4 w-4" />, color: "text-blue-600 bg-blue-50", label: "Send Email" },
-  SEND_REPLY: { icon: <Mail className="h-4 w-4" />, color: "text-blue-600 bg-blue-50", label: "Send Reply" },
-  ACCEPT_FEE: { icon: <DollarSign className="h-4 w-4" />, color: "text-green-600 bg-green-50", label: "Accept Fee" },
-  NEGOTIATE_FEE: { icon: <DollarSign className="h-4 w-4" />, color: "text-amber-600 bg-amber-50", label: "Negotiate Fee" },
-  APPEAL: { icon: <FileQuestion className="h-4 w-4" />, color: "text-orange-600 bg-orange-50", label: "Appeal" },
-  NARROW_SCOPE: { icon: <FileQuestion className="h-4 w-4" />, color: "text-purple-600 bg-purple-50", label: "Narrow Scope" },
-  FOLLOW_UP: { icon: <Clock className="h-4 w-4" />, color: "text-gray-600 bg-gray-50", label: "Follow Up" },
-  WITHDRAW: { icon: <Ban className="h-4 w-4" />, color: "text-red-600 bg-red-50", label: "Withdraw" },
+  SEND_EMAIL: { icon: <Mail className="h-4 w-4" />, color: "text-blue-400 bg-blue-500/10", label: "Send Email" },
+  SEND_REPLY: { icon: <Mail className="h-4 w-4" />, color: "text-blue-400 bg-blue-500/10", label: "Send Reply" },
+  ACCEPT_FEE: { icon: <DollarSign className="h-4 w-4" />, color: "text-green-400 bg-green-500/10", label: "Accept Fee" },
+  NEGOTIATE_FEE: { icon: <DollarSign className="h-4 w-4" />, color: "text-amber-400 bg-amber-500/10", label: "Negotiate Fee" },
+  APPEAL: { icon: <FileQuestion className="h-4 w-4" />, color: "text-orange-400 bg-orange-500/10", label: "Appeal" },
+  NARROW_SCOPE: { icon: <FileQuestion className="h-4 w-4" />, color: "text-purple-400 bg-purple-500/10", label: "Narrow Scope" },
+  FOLLOW_UP: { icon: <Clock className="h-4 w-4" />, color: "text-muted-foreground bg-muted", label: "Follow Up" },
+  WITHDRAW: { icon: <Ban className="h-4 w-4" />, color: "text-red-400 bg-red-500/10", label: "Withdraw" },
 };
 
 const PAUSE_REASON_CONFIG: Record<string, { label: string; color: string }> = {
-  FEE_QUOTE: { label: "Fee Quote", color: "bg-amber-100 text-amber-800" },
-  DENIAL: { label: "Denial", color: "bg-red-100 text-red-800" },
-  SCOPE: { label: "Scope", color: "bg-orange-100 text-orange-800" },
-  ID_REQUIRED: { label: "ID Required", color: "bg-blue-100 text-blue-800" },
-  SENSITIVE: { label: "Sensitive", color: "bg-purple-100 text-purple-800" },
-  CLOSE_ACTION: { label: "Close", color: "bg-green-100 text-green-800" },
+  FEE_QUOTE: { label: "Fee Quote", color: "bg-amber-500/10 text-amber-400" },
+  DENIAL: { label: "Denial", color: "bg-red-500/10 text-red-400" },
+  SCOPE: { label: "Scope", color: "bg-orange-500/10 text-orange-400" },
+  ID_REQUIRED: { label: "ID Required", color: "bg-blue-500/10 text-blue-400" },
+  SENSITIVE: { label: "Sensitive", color: "bg-purple-500/10 text-purple-400" },
+  CLOSE_ACTION: { label: "Close", color: "bg-green-500/10 text-green-400" },
 };
 
 export default function InboxPage() {
@@ -170,7 +170,7 @@ export default function InboxPage() {
                   {proposals.map((proposal) => {
                     const actionConfig = ACTION_TYPE_CONFIG[proposal.action_type] || {
                       icon: <Mail className="h-4 w-4" />,
-                      color: "text-gray-600 bg-gray-50",
+                      color: "text-muted-foreground bg-muted",
                       label: proposal.action_type,
                     };
                     const pauseConfig = proposal.pause_reason
@@ -220,7 +220,7 @@ export default function InboxPage() {
                           )}
 
                           {proposal.analysis.extracted_fee_amount && (
-                            <Badge variant="outline" className="text-xs text-green-600">
+                            <Badge variant="outline" className="text-xs text-green-400">
                               ${proposal.analysis.extracted_fee_amount}
                             </Badge>
                           )}
@@ -288,12 +288,12 @@ export default function InboxPage() {
 
                   {/* Warnings */}
                   {selectedProposal.warnings && selectedProposal.warnings.length > 0 && (
-                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                      <p className="text-sm font-medium text-amber-700 flex items-center gap-1 mb-2">
+                    <div className="bg-amber-950/20 border border-amber-700/50 p-3">
+                      <p className="text-sm font-medium text-amber-400 flex items-center gap-1 mb-2">
                         <AlertTriangle className="h-4 w-4" />
                         Warnings
                       </p>
-                      <ul className="text-sm text-amber-600 space-y-1">
+                      <ul className="text-sm text-amber-300 space-y-1">
                         {selectedProposal.warnings.map((w, i) => (
                           <li key={i}>• {w}</li>
                         ))}

@@ -54,7 +54,7 @@ const STAGE_CONFIG: Record<StageType, StageConfig> = {
     label: "Completed",
     icon: <CheckCircle className="h-3 w-3" />,
     variant: "outline",
-    className: "text-green-700 border-green-300",
+    className: "text-green-300 border-green-700/50",
   },
   draft: {
     label: "Draft",

@@ -12,10 +12,10 @@ const STATUS_CONFIG: Record<ScopeItem['status'], {
   label: string;
 }> = {
   REQUESTED: { icon: HelpCircle, color: "text-gray-500", label: "Requested" },
-  CONFIRMED_AVAILABLE: { icon: CheckCircle, color: "text-green-600", label: "Available" },
-  NOT_DISCLOSABLE: { icon: Ban, color: "text-red-600", label: "Not Disclosable" },
-  NOT_HELD: { icon: FileX, color: "text-orange-600", label: "Not Held" },
-  PENDING: { icon: HelpCircle, color: "text-blue-600", label: "Pending" },
+  CONFIRMED_AVAILABLE: { icon: CheckCircle, color: "text-green-400", label: "Available" },
+  NOT_DISCLOSABLE: { icon: Ban, color: "text-red-400", label: "Not Disclosable" },
+  NOT_HELD: { icon: FileX, color: "text-orange-400", label: "Not Held" },
+  PENDING: { icon: HelpCircle, color: "text-blue-400", label: "Pending" },
 };
 
 interface ScopeBreakdownProps {
@@ -58,9 +58,9 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
                   variant="outline"
                   className={cn(
                     "text-[10px] cursor-help",
-                    item.status === 'NOT_DISCLOSABLE' && "border-red-300 bg-red-50 text-red-700",
-                    item.status === 'NOT_HELD' && "border-orange-300 bg-orange-50 text-orange-700",
-                    item.status === 'CONFIRMED_AVAILABLE' && "border-green-300 bg-green-50 text-green-700",
+                    item.status === 'NOT_DISCLOSABLE' && "border-red-700/50 bg-red-500/10 text-red-300",
+                    item.status === 'NOT_HELD' && "border-orange-700/50 bg-orange-500/10 text-orange-300",
+                    item.status === 'CONFIRMED_AVAILABLE' && "border-green-700/50 bg-green-500/10 text-green-300",
                   )}
                 >
                   {item.name}
@@ -104,7 +104,7 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
         notDisclosable,
         "Confirmed Not Disclosable",
         Ban,
-        "text-red-600"
+        "text-red-400"
       )}
 
       {/* Not held */}
@@ -112,7 +112,7 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
         notHeld,
         "Confirmed Not Held",
         FileX,
-        "text-orange-600"
+        "text-orange-400"
       )}
 
       {/* Available */}
@@ -120,7 +120,7 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
         available,
         "Confirmed Available",
         CheckCircle,
-        "text-green-600"
+        "text-green-400"
       )}
 
       {/* Pending */}
@@ -128,7 +128,7 @@ export function ScopeBreakdown({ items, className }: ScopeBreakdownProps) {
         pending,
         "Still Pending",
         HelpCircle,
-        "text-blue-600"
+        "text-blue-400"
       )}
     </div>
   );

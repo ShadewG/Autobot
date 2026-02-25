@@ -117,10 +117,10 @@ export function SafetyHints({
   }
 
   const variantColors = {
-    success: "bg-green-100 text-green-700 border-green-200",
-    warning: "bg-amber-100 text-amber-700 border-amber-200",
-    info: "bg-blue-100 text-blue-700 border-blue-200",
-    neutral: "bg-gray-100 text-gray-700 border-gray-200",
+    success: "bg-green-500/15 text-green-300 border-green-700/50",
+    warning: "bg-amber-500/15 text-amber-300 border-amber-700/50",
+    info: "bg-blue-500/15 text-blue-300 border-blue-700/50",
+    neutral: "bg-muted text-muted-foreground border-border",
   };
 
   return (
@@ -163,22 +163,22 @@ export function SafetyIndicator({
   const config = {
     processed: {
       icon: <CheckCircle className="h-3 w-3" />,
-      color: "text-green-600",
+      color: "text-green-400",
       defaultTooltip: "Already processed",
     },
     executed: {
       icon: <FileCheck className="h-3 w-3" />,
-      color: "text-green-600",
+      color: "text-green-400",
       defaultTooltip: "Already executed",
     },
     "duplicate-prevented": {
       icon: <Ban className="h-3 w-3" />,
-      color: "text-amber-600",
+      color: "text-amber-400",
       defaultTooltip: "Duplicate prevented",
     },
     "active-run": {
       icon: <Clock className="h-3 w-3" />,
-      color: "text-blue-600",
+      color: "text-blue-400",
       defaultTooltip: "Run in progress",
     },
     "dry-mode": {

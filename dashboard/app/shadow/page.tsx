@@ -292,8 +292,8 @@ export default function ShadowModePage() {
                 </div>
                 <div className={cn(
                   "p-2 rounded-full",
-                  metrics.routing_accuracy >= 0.8 ? "bg-green-100" :
-                  metrics.routing_accuracy >= 0.6 ? "bg-amber-100" : "bg-red-100"
+                  metrics.routing_accuracy >= 0.8 ? "bg-green-500/15" :
+                  metrics.routing_accuracy >= 0.6 ? "bg-amber-500/15" : "bg-red-500/15"
                 )}>
                   <CheckCircle className="h-4 w-4" />
                 </div>
@@ -440,8 +440,8 @@ export default function ShadowModePage() {
                               className={cn(
                                 "p-2 rounded text-sm",
                                 msg.direction === "inbound"
-                                  ? "bg-blue-50 border-l-2 border-blue-500"
-                                  : "bg-gray-50 border-l-2 border-gray-300"
+                                  ? "bg-blue-500/10 border-l-2 border-blue-500"
+                                  : "bg-muted border-l-2 border-border"
                               )}
                             >
                               <p className="font-medium text-xs">
@@ -494,8 +494,8 @@ export default function ShadowModePage() {
                       <p className="text-sm font-medium">Your Review</p>
 
                       {existingReview && (
-                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                          <p className="text-sm text-green-700 flex items-center gap-1">
+                        <div className="bg-green-500/10 border border-green-700/50 rounded-lg p-3">
+                          <p className="text-sm text-green-300 flex items-center gap-1">
                             <CheckCircle className="h-4 w-4" />
                             Already reviewed on {formatDate(existingReview.reviewed_at)}
                           </p>

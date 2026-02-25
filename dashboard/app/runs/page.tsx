@@ -47,22 +47,22 @@ const STATUS_CONFIG: Record<AgentRun['status'], {
 }> = {
   running: {
     icon: Loader2,
-    color: "text-blue-600 bg-blue-50",
+    color: "text-blue-400 bg-blue-500/10",
     label: "Running",
   },
   completed: {
     icon: CheckCircle,
-    color: "text-green-600 bg-green-50",
+    color: "text-green-400 bg-green-500/10",
     label: "Completed",
   },
   failed: {
     icon: XCircle,
-    color: "text-red-600 bg-red-50",
+    color: "text-red-400 bg-red-500/10",
     label: "Failed",
   },
   gated: {
     icon: AlertTriangle,
-    color: "text-amber-600 bg-amber-50",
+    color: "text-amber-400 bg-amber-500/10",
     label: "Gated",
   },
 };
@@ -268,7 +268,7 @@ export default function RunsPage() {
                       </TableCell>
                       <TableCell>
                         {run.error_message ? (
-                          <span className="text-xs text-red-600 truncate max-w-[200px] block">
+                          <span className="text-xs text-red-400 truncate max-w-[200px] block">
                             {run.error_message}
                           </span>
                         ) : run.final_action ? (
@@ -276,7 +276,7 @@ export default function RunsPage() {
                             {run.final_action}
                           </Badge>
                         ) : run.gated_reason ? (
-                          <span className="text-xs text-amber-600">
+                          <span className="text-xs text-amber-400">
                             Gated: {run.gated_reason}
                           </span>
                         ) : (
@@ -387,9 +387,9 @@ export default function RunsPage() {
                 </div>
 
                 {selectedRun.error_message && (
-                  <div className="bg-red-50 border border-red-200 rounded-md p-4">
-                    <p className="text-sm font-medium text-red-700 mb-1">Error</p>
-                    <pre className="text-sm text-red-600 whitespace-pre-wrap">
+                  <div className="bg-red-950/30 border border-red-800 p-4">
+                    <p className="text-sm font-medium text-red-400 mb-1">Error</p>
+                    <pre className="text-sm text-red-300 whitespace-pre-wrap">
                       {selectedRun.error_message}
                     </pre>
                   </div>

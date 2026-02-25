@@ -82,32 +82,32 @@ import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog"
 const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; label: string }> = {
   FEE_QUOTE: {
     icon: <DollarSign className="h-4 w-4" />,
-    color: "text-amber-700 bg-amber-100 border-amber-300",
+    color: "text-amber-400 bg-amber-500/10 border-amber-700/50",
     label: "Fee Quote",
   },
   DENIAL: {
     icon: <XCircle className="h-4 w-4" />,
-    color: "text-red-700 bg-red-100 border-red-300",
+    color: "text-red-400 bg-red-500/10 border-red-700/50",
     label: "Denial",
   },
   SCOPE: {
     icon: <FileQuestion className="h-4 w-4" />,
-    color: "text-orange-700 bg-orange-100 border-orange-300",
+    color: "text-orange-400 bg-orange-500/10 border-orange-700/50",
     label: "Scope Issue",
   },
   ID_REQUIRED: {
     icon: <UserCheck className="h-4 w-4" />,
-    color: "text-blue-700 bg-blue-100 border-blue-300",
+    color: "text-blue-400 bg-blue-500/10 border-blue-700/50",
     label: "ID Required",
   },
   SENSITIVE: {
     icon: <AlertTriangle className="h-4 w-4" />,
-    color: "text-purple-700 bg-purple-100 border-purple-300",
+    color: "text-purple-400 bg-purple-500/10 border-purple-700/50",
     label: "Sensitive",
   },
   CLOSE_ACTION: {
     icon: <CheckCircle className="h-4 w-4" />,
-    color: "text-green-700 bg-green-100 border-green-300",
+    color: "text-green-400 bg-green-500/10 border-green-700/50",
     label: "Ready to Close",
   },
 };
@@ -542,16 +542,16 @@ function RequestDetailContent() {
 
         {/* Draft Case CTA - prominent for cases not yet sent */}
         {(request.status === 'DRAFT' || request.status === 'READY_TO_SEND') && !request.submitted_at && (
-          <div className="flex items-center gap-3 px-3 py-3 rounded-md border border-blue-300 bg-blue-50 mb-2">
-            <Send className="h-5 w-5 text-blue-700" />
+          <div className="flex items-center gap-3 px-3 py-3 border border-blue-700/50 bg-blue-500/10 mb-2">
+            <Send className="h-5 w-5 text-blue-400" />
             <div className="flex-1">
-              <span className="font-semibold text-blue-800">Ready to Submit</span>
-              <p className="text-xs text-blue-600">Generate and review the initial FOIA request for this case</p>
+              <span className="font-semibold text-blue-300">Ready to Submit</span>
+              <p className="text-xs text-blue-400">Generate and review the initial FOIA request for this case</p>
             </div>
             <Button
               onClick={handleGenerateInitialRequest}
               disabled={isGeneratingInitial}
-              className="bg-blue-600 hover:bg-blue-700"
+              className="bg-blue-600 hover:bg-blue-500"
             >
               {isGeneratingInitial ? (
                 <>
@@ -588,7 +588,7 @@ function RequestDetailContent() {
           {request.requires_human && (
             <div className="flex items-center gap-1.5">
               <UserCheck className="h-3 w-3 text-amber-500" />
-              <span className="text-amber-600 font-medium">Requires Human</span>
+              <span className="text-amber-400 font-medium">Requires Human</span>
             </div>
           )}
           {request.portal_request_number && (
@@ -602,7 +602,7 @@ function RequestDetailContent() {
           {request.pause_reason && (
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Pause Reason:</span>
-              <Badge variant="outline" className="font-medium text-amber-600">
+              <Badge variant="outline" className="font-medium text-amber-400">
                 {request.pause_reason}
               </Badge>
             </div>
@@ -888,8 +888,8 @@ function RequestDetailContent() {
                               'secondary'
                             }
                             className={cn(
-                              run.status === 'completed' && 'bg-green-100 text-green-800',
-                              run.status === 'running' && 'bg-blue-100 text-blue-800'
+                              run.status === 'completed' && 'bg-green-500/10 text-green-400',
+                              run.status === 'running' && 'bg-blue-500/10 text-blue-400'
                             )}
                           >
                             {run.status}
@@ -945,14 +945,14 @@ function RequestDetailContent() {
 
               {/* Show error details for failed runs */}
               {runsData?.runs?.filter(r => r.status === 'failed' && r.error_message).map((run) => (
-                <div key={`error-${run.id}`} className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <div key={`error-${run.id}`} className="mt-4 p-4 bg-red-950/30 border border-red-800">
                   <div className="flex items-center gap-2 mb-2">
-                    <XCircle className="h-4 w-4 text-red-600" />
-                    <span className="font-medium text-red-700">
+                    <XCircle className="h-4 w-4 text-red-400" />
+                    <span className="font-medium text-red-300">
                       Run {run.id.slice(0, 8)} Failed
                     </span>
                   </div>
-                  <pre className="text-xs text-red-600 whitespace-pre-wrap font-mono bg-red-100 p-2 rounded">
+                  <pre className="text-xs text-red-400 whitespace-pre-wrap font-mono bg-red-950/50 p-2">
                     {run.error_message}
                   </pre>
                 </div>
@@ -960,14 +960,14 @@ function RequestDetailContent() {
 
               {/* Show gated reason for gated runs */}
               {runsData?.runs?.filter(r => r.status === 'gated' && r.gated_reason).map((run) => (
-                <div key={`gated-${run.id}`} className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                <div key={`gated-${run.id}`} className="mt-4 p-4 bg-amber-950/20 border border-amber-700/50">
                   <div className="flex items-center gap-2 mb-2">
-                    <UserCheck className="h-4 w-4 text-amber-600" />
-                    <span className="font-medium text-amber-700">
+                    <UserCheck className="h-4 w-4 text-amber-400" />
+                    <span className="font-medium text-amber-300">
                       Run {run.id.slice(0, 8)} Awaiting Approval
                     </span>
                   </div>
-                  <p className="text-sm text-amber-600">{run.gated_reason}</p>
+                  <p className="text-sm text-amber-400">{run.gated_reason}</p>
                 </div>
               ))}
             </CardContent>

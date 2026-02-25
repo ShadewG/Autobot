@@ -36,9 +36,9 @@ const MODES: { value: AutopilotMode; label: string; icon: React.ReactNode; descr
 ];
 
 const MODE_COLORS: Record<AutopilotMode, string> = {
-  AUTO: "bg-green-100 text-green-700 border-green-300",
-  SUPERVISED: "bg-blue-100 text-blue-700 border-blue-300",
-  MANUAL: "bg-gray-100 text-gray-700 border-gray-300",
+  AUTO: "bg-green-500/15 text-green-300 border-green-700/50",
+  SUPERVISED: "bg-blue-500/15 text-blue-300 border-blue-700/50",
+  MANUAL: "bg-muted text-muted-foreground border-border",
 };
 
 interface AutopilotSelectorProps {

@@ -58,31 +58,31 @@ export function DeadlineCalculator({
       if (isOverdue) {
         return {
           icon: XCircle,
-          color: "text-red-600",
-          bgColor: "bg-red-100",
+          color: "text-red-400",
+          bgColor: "bg-red-500/15",
           status: "Overdue",
         };
       }
       if (isToday) {
         return {
           icon: AlertTriangle,
-          color: "text-amber-600",
-          bgColor: "bg-amber-100",
+          color: "text-amber-400",
+          bgColor: "bg-amber-500/15",
           status: "Due Today!",
         };
       }
       if (isAtRisk) {
         return {
           icon: AlertTriangle,
-          color: "text-amber-600",
-          bgColor: "bg-amber-100",
+          color: "text-amber-400",
+          bgColor: "bg-amber-500/15",
           status: "At Risk",
         };
       }
       return {
         icon: Clock,
-        color: "text-blue-600",
-        bgColor: "bg-blue-100",
+        color: "text-blue-400",
+        bgColor: "bg-blue-500/15",
         status: "Upcoming",
       };
     }
@@ -92,31 +92,31 @@ export function DeadlineCalculator({
       if (milestone.is_met === true) {
         return {
           icon: CheckCircle,
-          color: "text-green-600",
-          bgColor: "bg-green-100",
+          color: "text-green-400",
+          bgColor: "bg-green-500/15",
           status: "On Time",
         };
       }
       if (milestone.is_met === false) {
         return {
           icon: XCircle,
-          color: "text-red-600",
-          bgColor: "bg-red-100",
+          color: "text-red-400",
+          bgColor: "bg-red-500/15",
           status: "Late",
         };
       }
       return {
         icon: CheckCircle,
-        color: "text-gray-600",
-        bgColor: "bg-gray-100",
+        color: "text-muted-foreground",
+        bgColor: "bg-muted",
         status: "Completed",
       };
     }
 
     return {
       icon: HelpCircle,
-      color: "text-gray-400",
-      bgColor: "bg-gray-50",
+      color: "text-muted-foreground",
+      bgColor: "bg-muted",
       status: "Pending",
     };
   };
@@ -131,14 +131,14 @@ export function DeadlineCalculator({
             <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-1">
               <span>{formatDate(submitted.date)}</span>
               <span className={cn(
-                isOverdue ? "text-red-600 font-medium" : isAtRisk ? "text-amber-600 font-medium" : ""
+                isOverdue ? "text-red-400 font-medium" : isAtRisk ? "text-amber-400 font-medium" : ""
               )}>
                 {formatDate(statutoryDue.date)}
                 {isOverdue && " (overdue)"}
                 {isToday && " (today!)"}
               </span>
             </div>
-            <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div className="relative h-2 bg-muted rounded-full overflow-hidden">
               <div
                 className={cn(
                   "absolute left-0 top-0 h-full rounded-full transition-all",
@@ -212,7 +212,7 @@ export function DeadlineCalculator({
               <span>{formatDate(submitted.date)}</span>
               <span>{formatDate(statutoryDue.date)}</span>
             </div>
-            <div className="relative h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div className="relative h-2 bg-muted rounded-full overflow-hidden">
               {/* Progress indicator */}
               <div
                 className={cn(
@@ -283,7 +283,7 @@ export function DeadlineCalculator({
                             <span
                               className={cn(
                                 "ml-1",
-                                milestone.is_met ? "text-green-600" : "text-red-600"
+                                milestone.is_met ? "text-green-400" : "text-red-400"
                               )}
                             >
                               — {milestone.is_met ? "on time" : "late"}
@@ -350,15 +350,15 @@ export function DeadlineStatus({ milestones, stateDeadline }: DeadlineStatusProp
     <div className="flex items-center gap-1.5 text-xs">
       {isOverdue ? (
         <>
-          <XCircle className="h-3 w-3 text-red-600" />
-          <span className="text-red-600 font-medium">
+          <XCircle className="h-3 w-3 text-red-400" />
+          <span className="text-red-400 font-medium">
             {Math.abs(daysRemaining)}d overdue
           </span>
         </>
       ) : daysRemaining <= 2 ? (
         <>
-          <AlertTriangle className="h-3 w-3 text-amber-600" />
-          <span className="text-amber-600 font-medium">
+          <AlertTriangle className="h-3 w-3 text-amber-400" />
+          <span className="text-amber-400 font-medium">
             {daysRemaining === 0 ? "Due today" : `${daysRemaining}d left`}
           </span>
         </>

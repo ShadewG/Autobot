@@ -11,10 +11,10 @@ const CONSTRAINT_CONFIG: Record<Constraint['type'], {
   color: string;
   bgColor: string;
 }> = {
-  EXEMPTION: { icon: Ban, color: "text-red-600", bgColor: "bg-red-50" },
-  NOT_HELD: { icon: FileX, color: "text-orange-600", bgColor: "bg-orange-50" },
-  REDACTION_REQUIRED: { icon: Shield, color: "text-yellow-600", bgColor: "bg-yellow-50" },
-  FEE_REQUIRED: { icon: DollarSign, color: "text-blue-600", bgColor: "bg-blue-50" },
+  EXEMPTION: { icon: Ban, color: "text-red-400", bgColor: "bg-red-500/10" },
+  NOT_HELD: { icon: FileX, color: "text-orange-400", bgColor: "bg-orange-500/10" },
+  REDACTION_REQUIRED: { icon: Shield, color: "text-yellow-400", bgColor: "bg-yellow-500/10" },
+  FEE_REQUIRED: { icon: DollarSign, color: "text-blue-400", bgColor: "bg-blue-500/10" },
 };
 
 interface ConstraintsDisplayProps {
@@ -31,7 +31,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
   if (compact) {
     return (
       <div className={cn("flex items-center gap-1 flex-wrap", className)}>
-        <AlertTriangle className="h-3 w-3 text-yellow-600" />
+        <AlertTriangle className="h-3 w-3 text-yellow-400" />
         <span className="text-xs text-muted-foreground">
           {constraints.length} constraint{constraints.length !== 1 ? 's' : ''} detected
         </span>
@@ -63,7 +63,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
   return (
     <div className={cn("space-y-2", className)}>
       <div className="flex items-center gap-2 text-sm font-medium">
-        <AlertTriangle className="h-4 w-4 text-yellow-600" />
+        <AlertTriangle className="h-4 w-4 text-yellow-400" />
         Constraints Detected
       </div>
       <div className="space-y-2">
@@ -76,8 +76,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
               key={index}
               className={cn(
                 "rounded-lg p-3 border",
-                config.bgColor,
-                "dark:bg-opacity-20"
+                config.bgColor
               )}
             >
               <div className="flex items-start gap-2">

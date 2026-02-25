@@ -248,9 +248,9 @@ interface GateConfig {
 // UNKNOWN gate fallback - always show something
 const UNKNOWN_GATE_CONFIG: GateConfig = {
   icon: <AlertTriangle className="h-5 w-5" />,
-  color: "text-yellow-800",
-  bgColor: "bg-yellow-50",
-  borderColor: "border-yellow-300",
+  color: "text-yellow-300",
+  bgColor: "bg-yellow-500/10",
+  borderColor: "border-yellow-700/50",
   title: "Unknown Gate",
   getQuestion: () => "This request is paused but the gate type is unknown. What do you want to do?",
   primaryAction: { label: "Proceed" },
@@ -262,9 +262,9 @@ const UNKNOWN_GATE_CONFIG: GateConfig = {
 const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   FEE_QUOTE: {
     icon: <DollarSign className="h-5 w-5" />,
-    color: "text-amber-700",
-    bgColor: "bg-amber-50",
-    borderColor: "border-amber-300",
+    color: "text-amber-300",
+    bgColor: "bg-amber-500/10",
+    borderColor: "border-amber-700/50",
     title: "Fee Quote",
     getQuestion: (r) => {
       const deposit = r.fee_quote?.deposit_amount;
@@ -316,9 +316,9 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   },
   DENIAL: {
     icon: <Ban className="h-5 w-5" />,
-    color: "text-red-700",
-    bgColor: "bg-red-50",
-    borderColor: "border-red-300",
+    color: "text-red-300",
+    bgColor: "bg-red-500/10",
+    borderColor: "border-red-700/50",
     title: "Denial",
     getQuestion: () => "How should we respond to the denial?",
     primaryAction: {
@@ -333,9 +333,9 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   },
   SCOPE: {
     icon: <FileQuestion className="h-5 w-5" />,
-    color: "text-orange-700",
-    bgColor: "bg-orange-50",
-    borderColor: "border-orange-300",
+    color: "text-orange-300",
+    bgColor: "bg-orange-500/10",
+    borderColor: "border-orange-700/50",
     title: "Scope Issue",
     getQuestion: () => "Agency needs scope clarification. How should we respond?",
     primaryAction: {
@@ -349,9 +349,9 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   },
   ID_REQUIRED: {
     icon: <UserCheck className="h-5 w-5" />,
-    color: "text-blue-700",
-    bgColor: "bg-blue-50",
-    borderColor: "border-blue-300",
+    color: "text-blue-300",
+    bgColor: "bg-blue-500/10",
+    borderColor: "border-blue-700/50",
     title: "ID Required",
     getQuestion: () => "Agency requires identity verification to proceed.",
     primaryAction: {
@@ -365,9 +365,9 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   },
   SENSITIVE: {
     icon: <AlertTriangle className="h-5 w-5" />,
-    color: "text-purple-700",
-    bgColor: "bg-purple-50",
-    borderColor: "border-purple-300",
+    color: "text-purple-300",
+    bgColor: "bg-purple-500/10",
+    borderColor: "border-purple-700/50",
     title: "Sensitive Content",
     getQuestion: () => "Request flagged for sensitive content review.",
     primaryAction: {
@@ -381,9 +381,9 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
   },
   CLOSE_ACTION: {
     icon: <CheckCircle className="h-5 w-5" />,
-    color: "text-green-700",
-    bgColor: "bg-green-50",
-    borderColor: "border-green-300",
+    color: "text-green-300",
+    bgColor: "bg-green-500/10",
+    borderColor: "border-green-700/50",
     title: "Ready to Close",
     getQuestion: () => "Request appears complete. Confirm closure?",
     primaryAction: {
@@ -420,9 +420,9 @@ interface ReviewConfig {
 const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
   PORTAL_FAILED: {
     icon: <Globe className="h-5 w-5" />,
-    color: "text-red-700",
-    bgColor: "bg-red-50",
-    borderColor: "border-red-300",
+    color: "text-red-300",
+    bgColor: "bg-red-500/10",
+    borderColor: "border-red-700/50",
     title: "Portal Submission Failed",
     question: "The portal submission failed. How should we proceed?",
     actions: [
@@ -436,9 +436,9 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
   },
   PORTAL_STUCK: {
     icon: <Globe className="h-5 w-5" />,
-    color: "text-orange-700",
-    bgColor: "bg-orange-50",
-    borderColor: "border-orange-300",
+    color: "text-orange-300",
+    bgColor: "bg-orange-500/10",
+    borderColor: "border-orange-700/50",
     title: "Portal Submission Timed Out",
     question: "The portal submission was started but never completed. What happened?",
     actions: [
@@ -451,9 +451,9 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
   },
   FEE_QUOTE: {
     icon: <DollarSign className="h-5 w-5" />,
-    color: "text-amber-700",
-    bgColor: "bg-amber-50",
-    borderColor: "border-amber-300",
+    color: "text-amber-300",
+    bgColor: "bg-amber-500/10",
+    borderColor: "border-amber-700/50",
     title: "Fee Quote Received",
     question: "A fee has been quoted. What would you like to do?",
     actions: [
@@ -465,9 +465,9 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
   },
   DENIAL: {
     icon: <Ban className="h-5 w-5" />,
-    color: "text-red-700",
-    bgColor: "bg-red-50",
-    borderColor: "border-red-300",
+    color: "text-red-300",
+    bgColor: "bg-red-500/10",
+    borderColor: "border-red-700/50",
     title: "Request Denied",
     question: "The request was denied. How should we respond?",
     actions: [
@@ -479,9 +479,9 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
   },
   MISSING_INFO: {
     icon: <Search className="h-5 w-5" />,
-    color: "text-blue-700",
-    bgColor: "bg-blue-50",
-    borderColor: "border-blue-300",
+    color: "text-blue-300",
+    bgColor: "bg-blue-500/10",
+    borderColor: "border-blue-700/50",
     title: "Missing Information",
     question: "Additional information is needed to proceed.",
     actions: [
@@ -492,9 +492,9 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
   },
   GENERAL: {
     icon: <AlertTriangle className="h-5 w-5" />,
-    color: "text-yellow-700",
-    bgColor: "bg-yellow-50",
-    borderColor: "border-yellow-300",
+    color: "text-yellow-300",
+    bgColor: "bg-yellow-500/10",
+    borderColor: "border-yellow-700/50",
     title: "Needs Review",
     question: "This request needs human review. What would you like to do?",
     actions: [
@@ -541,7 +541,7 @@ export function DecisionPanel({
     return (
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2 text-green-700">
+          <CardTitle className="text-base flex items-center gap-2 text-green-300">
             <CheckCircle className="h-4 w-4" />
             No Decision Required
           </CardTitle>
@@ -757,7 +757,7 @@ export function DecisionPanel({
         {/* Show raw pause reason if unknown for debugging */}
         {normalized === "UNKNOWN" && pauseReasonRaw && (
           <p className="text-xs text-muted-foreground">
-            Raw value: <code className="bg-gray-100 px-1 rounded">{pauseReasonRaw}</code>
+            Raw value: <code className="bg-muted px-1 rounded">{pauseReasonRaw}</code>
           </p>
         )}
 
@@ -785,11 +785,11 @@ export function DecisionPanel({
 
         {/* Recommendation */}
         {recommendation && (
-          <div className="bg-white/80 rounded-md p-3 border border-amber-200">
+          <div className="bg-white/80 rounded-md p-3 border border-amber-700/50">
             <div className="flex items-start gap-2">
-              <Info className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+              <Info className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-xs font-semibold text-amber-700 mb-1">Recommendation</p>
+                <p className="text-xs font-semibold text-amber-300 mb-1">Recommendation</p>
                 <p className="text-sm">{recommendation}</p>
               </div>
             </div>
@@ -798,11 +798,11 @@ export function DecisionPanel({
 
         {/* Fallback: No recommendation available */}
         {!recommendation && !nextAction && agencyPoints.length === 0 && (
-          <div className="bg-gray-50 rounded-md p-3 border border-gray-200">
+          <div className="bg-muted rounded-md p-3 border border-border">
             <div className="flex items-start gap-2">
               <HelpCircle className="h-4 w-4 text-gray-500 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-xs font-semibold text-gray-600 mb-1">No recommendation</p>
+                <p className="text-xs font-semibold text-muted-foreground mb-1">No recommendation</p>
                 <p className="text-xs text-muted-foreground">
                   Not enough context to suggest an action. Review the message and choose an action below.
                 </p>
@@ -815,12 +815,12 @@ export function DecisionPanel({
 
         {/* Unsupported gate warning */}
         {isUnsupported && (
-          <div className="bg-yellow-50 rounded-md p-3 border border-yellow-200">
+          <div className="bg-yellow-500/10 rounded-md p-3 border border-yellow-700/50">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+              <AlertTriangle className="h-4 w-4 text-yellow-400 mt-0.5 flex-shrink-0" />
               <div>
-                <p className="text-xs font-semibold text-yellow-700 mb-1">Actions not yet implemented</p>
-                <p className="text-xs text-yellow-600">
+                <p className="text-xs font-semibold text-yellow-300 mb-1">Actions not yet implemented</p>
+                <p className="text-xs text-yellow-400">
                   This gate type ({config.title}) doesn't have automated actions yet. Use the overflow menu to withdraw or take manual action.
                 </p>
               </div>

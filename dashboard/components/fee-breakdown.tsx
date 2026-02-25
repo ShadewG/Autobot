@@ -52,9 +52,9 @@ export function FeeBreakdown({ feeQuote, scopeItems, className }: FeeBreakdownPr
   };
 
   return (
-    <Card className={cn("border-amber-200 bg-amber-50/50", className)}>
+    <Card className={cn("border-amber-700/50 bg-amber-500/10/50", className)}>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
+        <CardTitle className="text-sm flex items-center gap-2 text-amber-300">
           <DollarSign className="h-4 w-4" />
           Fee Estimate: {formatCurrency(feeQuote.amount)}
         </CardTitle>
@@ -93,7 +93,7 @@ export function FeeBreakdown({ feeQuote, scopeItems, className }: FeeBreakdownPr
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
                 <span className="font-medium">Deposit Required:</span>
-                <span className="font-semibold text-amber-700">
+                <span className="font-semibold text-amber-300">
                   {formatCurrency(depositAmount)}
                 </span>
               </div>
@@ -113,7 +113,7 @@ export function FeeBreakdown({ feeQuote, scopeItems, className }: FeeBreakdownPr
               <p className="text-xs font-medium text-muted-foreground">Covers:</p>
               <div className="space-y-0.5">
                 {coveredItems.map((item, i) => (
-                  <div key={i} className="flex items-center gap-1.5 text-xs text-green-700">
+                  <div key={i} className="flex items-center gap-1.5 text-xs text-green-300">
                     <CheckCircle className="h-3 w-3" />
                     {item.name}
                   </div>
@@ -134,14 +134,14 @@ export function FeeBreakdown({ feeQuote, scopeItems, className }: FeeBreakdownPr
                   <div key={i} className="flex items-center gap-1.5 text-xs">
                     {item.status === 'NOT_DISCLOSABLE' ? (
                       <>
-                        <XCircle className="h-3 w-3 text-red-600" />
-                        <span className="text-red-700">{item.name}</span>
+                        <XCircle className="h-3 w-3 text-red-400" />
+                        <span className="text-red-300">{item.name}</span>
                         <span className="text-muted-foreground">(exempt)</span>
                       </>
                     ) : (
                       <>
-                        <FileX className="h-3 w-3 text-orange-600" />
-                        <span className="text-orange-700">{item.name}</span>
+                        <FileX className="h-3 w-3 text-orange-400" />
+                        <span className="text-orange-300">{item.name}</span>
                         <span className="text-muted-foreground">(not held)</span>
                       </>
                     )}
@@ -162,7 +162,7 @@ export function FeeBreakdown({ feeQuote, scopeItems, className }: FeeBreakdownPr
 
         {/* Waiver possibility */}
         {feeQuote.waiver_possible && (
-          <p className="text-xs text-blue-600 font-medium">
+          <p className="text-xs text-blue-400 font-medium">
             Fee waiver may be possible
           </p>
         )}
@@ -181,7 +181,7 @@ export function FeeSummary({ feeQuote }: FeeSummaryProps) {
 
   return (
     <div className="flex items-center gap-2 text-sm">
-      <DollarSign className="h-4 w-4 text-amber-600" />
+      <DollarSign className="h-4 w-4 text-amber-400" />
       <span className="font-semibold">{formatCurrency(feeQuote.amount)}</span>
       {feeQuote.deposit_amount && feeQuote.deposit_amount > 0 && (
         <span className="text-xs text-muted-foreground">

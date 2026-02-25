@@ -76,16 +76,16 @@ const CLASSIFICATION_TYPES = [
 ];
 
 const CLASSIFICATION_CONFIG: Record<string, { color: string; icon: React.ReactNode }> = {
-  ACKNOWLEDGMENT: { color: "bg-blue-100 text-blue-800", icon: <Mail className="h-3 w-3" /> },
-  FEE_QUOTE: { color: "bg-amber-100 text-amber-800", icon: <DollarSign className="h-3 w-3" /> },
-  DENIAL: { color: "bg-red-100 text-red-800", icon: <AlertTriangle className="h-3 w-3" /> },
-  PARTIAL_DENIAL: { color: "bg-orange-100 text-orange-800", icon: <AlertTriangle className="h-3 w-3" /> },
-  RECORDS_PROVIDED: { color: "bg-green-100 text-green-800", icon: <FileText className="h-3 w-3" /> },
-  CLARIFICATION_REQUEST: { color: "bg-purple-100 text-purple-800", icon: <Mail className="h-3 w-3" /> },
-  EXTENSION_NOTICE: { color: "bg-yellow-100 text-yellow-800", icon: <Clock className="h-3 w-3" /> },
+  ACKNOWLEDGMENT: { color: "bg-blue-500/15 text-blue-300", icon: <Mail className="h-3 w-3" /> },
+  FEE_QUOTE: { color: "bg-amber-500/15 text-amber-300", icon: <DollarSign className="h-3 w-3" /> },
+  DENIAL: { color: "bg-red-500/15 text-red-300", icon: <AlertTriangle className="h-3 w-3" /> },
+  PARTIAL_DENIAL: { color: "bg-orange-500/15 text-orange-300", icon: <AlertTriangle className="h-3 w-3" /> },
+  RECORDS_PROVIDED: { color: "bg-green-500/15 text-green-300", icon: <FileText className="h-3 w-3" /> },
+  CLARIFICATION_REQUEST: { color: "bg-purple-500/15 text-purple-300", icon: <Mail className="h-3 w-3" /> },
+  EXTENSION_NOTICE: { color: "bg-yellow-500/15 text-yellow-300", icon: <Clock className="h-3 w-3" /> },
   PORTAL_INSTRUCTION: { color: "bg-cyan-100 text-cyan-800", icon: <ExternalLink className="h-3 w-3" /> },
-  NO_RECORDS: { color: "bg-gray-100 text-gray-800", icon: <FileText className="h-3 w-3" /> },
-  OTHER: { color: "bg-gray-100 text-gray-800", icon: <Mail className="h-3 w-3" /> },
+  NO_RECORDS: { color: "bg-muted text-muted-foreground", icon: <FileText className="h-3 w-3" /> },
+  OTHER: { color: "bg-muted text-muted-foreground", icon: <Mail className="h-3 w-3" /> },
 };
 
 export function InboundEvidencePanel({
@@ -270,12 +270,12 @@ export function InboundEvidencePanel({
 
             {/* Fee Amount */}
             {analysis?.extracted_fee_amount !== undefined && (
-              <div className="bg-amber-50 rounded p-2">
+              <div className="bg-amber-500/10 rounded p-2">
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <DollarSign className="h-3 w-3" />
                   Fee Amount
                 </p>
-                <p className="text-sm font-medium text-amber-700">
+                <p className="text-sm font-medium text-amber-300">
                   ${analysis.extracted_fee_amount.toLocaleString()}
                 </p>
               </div>
@@ -283,12 +283,12 @@ export function InboundEvidencePanel({
 
             {/* Due Date */}
             {analysis?.extracted_due_date && (
-              <div className="bg-orange-50 rounded p-2">
+              <div className="bg-orange-500/10 rounded p-2">
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <Clock className="h-3 w-3" />
                   Due Date
                 </p>
-                <p className="text-sm font-medium text-orange-700">
+                <p className="text-sm font-medium text-orange-300">
                   {formatDate(analysis.extracted_due_date)}
                 </p>
               </div>
@@ -317,7 +317,7 @@ export function InboundEvidencePanel({
                   </Badge>
                 ))}
                 {analysis.detected_exemptions?.map((exemption, i) => (
-                  <Badge key={`ex-${i}`} variant="secondary" className="text-xs text-red-600">
+                  <Badge key={`ex-${i}`} variant="secondary" className="text-xs text-red-400">
                     {exemption}
                   </Badge>
                 ))}
@@ -353,8 +353,8 @@ export function InboundEvidencePanel({
 
           {/* Risk Flags */}
           {analysis?.risk_flags && analysis.risk_flags.length > 0 && (
-            <div className="mt-3 bg-red-50 border border-red-200 rounded p-2">
-              <p className="text-xs text-red-700 font-medium flex items-center gap-1 mb-1">
+            <div className="mt-3 bg-red-500/10 border border-red-700/50 rounded p-2">
+              <p className="text-xs text-red-300 font-medium flex items-center gap-1 mb-1">
                 <AlertTriangle className="h-3 w-3" />
                 Risk Flags
               </p>

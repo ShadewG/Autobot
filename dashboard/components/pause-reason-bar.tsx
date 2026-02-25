@@ -34,9 +34,9 @@ export function PauseReasonBar({
   });
 
   return (
-    <div className="flex items-center gap-2 text-sm bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-800 rounded px-3 py-1.5">
-      <Info className="h-3.5 w-3.5 text-yellow-600 flex-shrink-0" />
-      <span className="text-yellow-800 dark:text-yellow-200">{reasonText}</span>
+    <div className="flex items-center gap-2 text-sm bg-yellow-500/10 border border-yellow-700/50 rounded px-3 py-1.5">
+      <Info className="h-3.5 w-3.5 text-yellow-400 flex-shrink-0" />
+      <span className="text-yellow-300">{reasonText}</span>
     </div>
   );
 }

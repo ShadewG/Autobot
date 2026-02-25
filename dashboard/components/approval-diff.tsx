@@ -137,7 +137,7 @@ export function ApprovalDiff({
               </p>
               {willDo.map((item, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs">
-                  <Check className="h-3 w-3 text-green-600 mt-0.5 flex-shrink-0" />
+                  <Check className="h-3 w-3 text-green-400 mt-0.5 flex-shrink-0" />
                   <span>{item}</span>
                 </div>
               ))}

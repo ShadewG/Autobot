@@ -34,7 +34,7 @@ export function RecipientDisplay({
   if (channel === "PORTAL") {
     return (
       <div className={className}>
-        <Badge variant="outline" className="gap-1 text-xs font-normal bg-blue-50 border-blue-200 text-blue-800">
+        <Badge variant="outline" className="gap-1 text-xs font-normal bg-blue-500/10 border-blue-700/50 text-blue-300">
           <Globe className="h-3 w-3" />
           Portal: {portalProvider || "Agency Portal"}
         </Badge>

@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  darkMode: ["class"],
+  // Always dark — colors defined in globals.css :root
   content: [
     './pages/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',

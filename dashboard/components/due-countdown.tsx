@@ -20,7 +20,7 @@ export function DueCountdown({ dueAt, className }: DueCountdownProps) {
       className={cn(
         "font-medium",
         isOverdue && "text-destructive",
-        isUrgent && !isOverdue && "text-yellow-600 dark:text-yellow-500",
+        isUrgent && !isOverdue && "text-yellow-400",
         !isOverdue && !isUrgent && "text-muted-foreground",
         className
       )}

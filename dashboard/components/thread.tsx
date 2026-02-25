@@ -61,9 +61,9 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
               variant="outline"
               className={cn(
                 "text-[10px]",
-                message.sentiment.toUpperCase() === 'POSITIVE' && "text-green-600",
-                message.sentiment.toUpperCase() === 'NEGATIVE' && "text-red-600",
-                message.sentiment.toUpperCase() === 'HOSTILE' && "text-red-700 bg-red-50"
+                message.sentiment.toUpperCase() === 'POSITIVE' && "text-green-400",
+                message.sentiment.toUpperCase() === 'NEGATIVE' && "text-red-400",
+                message.sentiment.toUpperCase() === 'HOSTILE' && "text-red-300 bg-red-500/10"
               )}
             >
               {message.sentiment}

@@ -237,20 +237,20 @@ export function PasteInboundDialog({
     switch (status) {
       case 'queued':
       case 'running':
-        return { icon: <Loader2 className="h-4 w-4 animate-spin" />, text: 'Processing...', color: 'text-blue-600' };
+        return { icon: <Loader2 className="h-4 w-4 animate-spin" />, text: 'Processing...', color: 'text-blue-400' };
       case 'completed':
-        return { icon: <CheckCircle2 className="h-4 w-4" />, text: 'Completed', color: 'text-green-600' };
+        return { icon: <CheckCircle2 className="h-4 w-4" />, text: 'Completed', color: 'text-green-400' };
       case 'paused':
       case 'gated':
-        return { icon: <Clock className="h-4 w-4" />, text: 'Needs Review', color: 'text-amber-600' };
+        return { icon: <Clock className="h-4 w-4" />, text: 'Needs Review', color: 'text-amber-400' };
       case 'failed':
-        return { icon: <XCircle className="h-4 w-4" />, text: 'Failed', color: 'text-red-600' };
+        return { icon: <XCircle className="h-4 w-4" />, text: 'Failed', color: 'text-red-400' };
       case 'duplicate':
-        return { icon: <AlertCircle className="h-4 w-4" />, text: 'Duplicate', color: 'text-amber-600' };
+        return { icon: <AlertCircle className="h-4 w-4" />, text: 'Duplicate', color: 'text-amber-400' };
       case 'no_run':
-        return { icon: <PlayCircle className="h-4 w-4" />, text: 'No run triggered', color: 'text-gray-600' };
+        return { icon: <PlayCircle className="h-4 w-4" />, text: 'No run triggered', color: 'text-muted-foreground' };
       default:
-        return { icon: <Clock className="h-4 w-4" />, text: status, color: 'text-gray-600' };
+        return { icon: <Clock className="h-4 w-4" />, text: status, color: 'text-muted-foreground' };
     }
   };
 
@@ -302,7 +302,7 @@ export function PasteInboundDialog({
                 <span className={getStatusDisplay(result.runStatus).color}>{result.runStatus}</span>
               </div>
               {result.error && (
-                <div className="font-mono text-red-600">
+                <div className="font-mono text-red-400">
                   <span className="text-muted-foreground">Error:</span> {result.error}
                 </div>
               )}

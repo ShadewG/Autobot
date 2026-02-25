@@ -40,11 +40,11 @@ interface PortalTaskPanelProps {
 }
 
 const STATUS_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-  pending: { icon: <Clock className="h-4 w-4" />, color: "bg-amber-100 text-amber-800", label: "Pending" },
-  in_progress: { icon: <Play className="h-4 w-4" />, color: "bg-blue-100 text-blue-800", label: "In Progress" },
-  completed: { icon: <CheckCircle className="h-4 w-4" />, color: "bg-green-100 text-green-800", label: "Completed" },
-  failed: { icon: <XCircle className="h-4 w-4" />, color: "bg-red-100 text-red-800", label: "Failed" },
-  cancelled: { icon: <XCircle className="h-4 w-4" />, color: "bg-gray-100 text-gray-800", label: "Cancelled" },
+  pending: { icon: <Clock className="h-4 w-4" />, color: "bg-amber-500/15 text-amber-300", label: "Pending" },
+  in_progress: { icon: <Play className="h-4 w-4" />, color: "bg-blue-500/15 text-blue-300", label: "In Progress" },
+  completed: { icon: <CheckCircle className="h-4 w-4" />, color: "bg-green-500/15 text-green-300", label: "Completed" },
+  failed: { icon: <XCircle className="h-4 w-4" />, color: "bg-red-500/15 text-red-300", label: "Failed" },
+  cancelled: { icon: <XCircle className="h-4 w-4" />, color: "bg-muted text-muted-foreground", label: "Cancelled" },
 };
 
 export function PortalTaskPanel({
@@ -174,9 +174,9 @@ export function PortalTaskPanel({
 
             {/* Task Instructions */}
             {activeTask.instructions && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm font-medium text-blue-800 mb-1">Instructions:</p>
-                <p className="text-sm text-blue-700 whitespace-pre-wrap">
+              <div className="bg-blue-500/10 border border-blue-700/50 rounded-lg p-3">
+                <p className="text-sm font-medium text-blue-300 mb-1">Instructions:</p>
+                <p className="text-sm text-blue-300 whitespace-pre-wrap">
                   {activeTask.instructions}
                 </p>
               </div>
@@ -325,9 +325,9 @@ export function PortalTaskPanel({
             <CollapsibleContent>
               <div className="space-y-2 pt-2">
                 {completedTasks.map((task) => (
-                  <div key={task.id} className="bg-green-50 rounded p-2 text-sm">
+                  <div key={task.id} className="bg-green-500/10 rounded p-2 text-sm">
                     <div className="flex items-center justify-between">
-                      <Badge className="bg-green-100 text-green-800 text-xs">
+                      <Badge className="bg-green-500/15 text-green-300 text-xs">
                         {task.task_type.replace(/_/g, ' ')}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
@@ -335,7 +335,7 @@ export function PortalTaskPanel({
                       </span>
                     </div>
                     {task.completion_notes && (
-                      <p className="text-xs text-green-700 mt-1">
+                      <p className="text-xs text-green-300 mt-1">
                         {task.completion_notes}
                       </p>
                     )}

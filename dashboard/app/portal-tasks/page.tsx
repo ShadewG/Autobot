@@ -51,18 +51,18 @@ import {
 } from "lucide-react";
 
 const TASK_TYPE_CONFIG: Record<PortalTask['task_type'], { icon: React.ReactNode; label: string; color: string }> = {
-  initial_submission: { icon: <Upload className="h-4 w-4" />, label: "Initial Submission", color: "text-blue-600 bg-blue-50" },
-  fee_payment: { icon: <FileText className="h-4 w-4" />, label: "Fee Payment", color: "text-green-600 bg-green-50" },
-  document_upload: { icon: <Upload className="h-4 w-4" />, label: "Document Upload", color: "text-purple-600 bg-purple-50" },
-  status_check: { icon: <Clock className="h-4 w-4" />, label: "Status Check", color: "text-gray-600 bg-gray-50" },
+  initial_submission: { icon: <Upload className="h-4 w-4" />, label: "Initial Submission", color: "text-blue-400 bg-blue-500/10" },
+  fee_payment: { icon: <FileText className="h-4 w-4" />, label: "Fee Payment", color: "text-green-400 bg-green-500/10" },
+  document_upload: { icon: <Upload className="h-4 w-4" />, label: "Document Upload", color: "text-purple-400 bg-purple-500/10" },
+  status_check: { icon: <Clock className="h-4 w-4" />, label: "Status Check", color: "text-muted-foreground bg-muted" },
 };
 
 const STATUS_CONFIG: Record<PortalTask['status'], { icon: React.ReactNode; label: string; color: string }> = {
-  pending: { icon: <Clock className="h-4 w-4" />, label: "Pending", color: "text-amber-600 bg-amber-50" },
-  in_progress: { icon: <Play className="h-4 w-4" />, label: "In Progress", color: "text-blue-600 bg-blue-50" },
-  completed: { icon: <CheckCircle className="h-4 w-4" />, label: "Completed", color: "text-green-600 bg-green-50" },
-  failed: { icon: <XCircle className="h-4 w-4" />, label: "Failed", color: "text-red-600 bg-red-50" },
-  cancelled: { icon: <XCircle className="h-4 w-4" />, label: "Cancelled", color: "text-gray-600 bg-gray-50" },
+  pending: { icon: <Clock className="h-4 w-4" />, label: "Pending", color: "text-amber-400 bg-amber-500/10" },
+  in_progress: { icon: <Play className="h-4 w-4" />, label: "In Progress", color: "text-blue-400 bg-blue-500/10" },
+  completed: { icon: <CheckCircle className="h-4 w-4" />, label: "Completed", color: "text-green-400 bg-green-500/10" },
+  failed: { icon: <XCircle className="h-4 w-4" />, label: "Failed", color: "text-red-400 bg-red-500/10" },
+  cancelled: { icon: <XCircle className="h-4 w-4" />, label: "Cancelled", color: "text-muted-foreground bg-muted" },
 };
 
 export default function PortalTasksPage() {
@@ -311,7 +311,7 @@ export default function PortalTasksPage() {
                   {selectedTask.instructions && (
                     <div>
                       <p className="text-sm font-medium mb-2">Instructions:</p>
-                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                      <div className="bg-blue-500/10 border border-blue-700/50 rounded-lg p-3">
                         <p className="text-sm whitespace-pre-wrap">{selectedTask.instructions}</p>
                       </div>
                     </div>
@@ -331,7 +331,7 @@ export default function PortalTasksPage() {
                           {copiedPayload ? "Copied!" : "Copy"}
                         </Button>
                       </div>
-                      <pre className="bg-gray-100 rounded-lg p-3 text-xs overflow-auto max-h-[200px]">
+                      <pre className="bg-muted rounded-lg p-3 text-xs overflow-auto max-h-[200px]">
                         {JSON.stringify(selectedTask.payload, null, 2)}
                       </pre>
                     </div>

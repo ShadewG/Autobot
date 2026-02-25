@@ -11,17 +11,17 @@ const DUE_TYPE_CONFIG = {
   FOLLOW_UP: {
     label: "Follow-up due",
     icon: Bell,
-    color: "text-blue-600",
+    color: "text-blue-400",
   },
   STATUTORY: {
     label: "Statutory deadline",
     icon: Calendar,
-    color: "text-purple-600",
+    color: "text-purple-400",
   },
   AGENCY_PROMISED: {
     label: "Agency promised",
     icon: Clock,
-    color: "text-green-600",
+    color: "text-green-400",
   },
   SNOOZED: {
     label: "Snoozed until",

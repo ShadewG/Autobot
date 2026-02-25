@@ -50,47 +50,47 @@ interface AuditTrailPanelProps {
 const ENTRY_CONFIG: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   proposal_created: {
     icon: <Bot className="h-3.5 w-3.5" />,
-    color: "text-blue-600 bg-blue-50",
+    color: "text-blue-400 bg-blue-500/10",
     label: "Proposal Created",
   },
   proposal_approved: {
     icon: <CheckCircle className="h-3.5 w-3.5" />,
-    color: "text-green-600 bg-green-50",
+    color: "text-green-400 bg-green-500/10",
     label: "Approved",
   },
   proposal_dismissed: {
     icon: <XCircle className="h-3.5 w-3.5" />,
-    color: "text-gray-600 bg-gray-50",
+    color: "text-muted-foreground bg-muted",
     label: "Dismissed",
   },
   proposal_adjusted: {
     icon: <FileText className="h-3.5 w-3.5" />,
-    color: "text-purple-600 bg-purple-50",
+    color: "text-purple-400 bg-purple-500/10",
     label: "Adjusted",
   },
   action_executed: {
     icon: <Zap className="h-3.5 w-3.5" />,
-    color: "text-green-600 bg-green-50",
+    color: "text-green-400 bg-green-500/10",
     label: "Executed (LIVE)",
   },
   action_dry_run: {
     icon: <Shield className="h-3.5 w-3.5" />,
-    color: "text-blue-600 bg-blue-50",
+    color: "text-blue-400 bg-blue-500/10",
     label: "Executed (DRY)",
   },
   run_started: {
     icon: <Clock className="h-3.5 w-3.5" />,
-    color: "text-blue-600 bg-blue-50",
+    color: "text-blue-400 bg-blue-500/10",
     label: "Run Started",
   },
   run_completed: {
     icon: <CheckCircle className="h-3.5 w-3.5" />,
-    color: "text-green-600 bg-green-50",
+    color: "text-green-400 bg-green-500/10",
     label: "Run Completed",
   },
   run_failed: {
     icon: <AlertTriangle className="h-3.5 w-3.5" />,
-    color: "text-red-600 bg-red-50",
+    color: "text-red-400 bg-red-500/10",
     label: "Run Failed",
   },
 };
@@ -143,8 +143,8 @@ export function AuditTrailPanel({ entries, executionMode }: AuditTrailPanelProps
               className={cn(
                 "text-xs",
                 executionMode === "LIVE"
-                  ? "border-red-300 text-red-600"
-                  : "border-blue-300 text-blue-600"
+                  ? "border-red-700/50 text-red-400"
+                  : "border-blue-700/50 text-blue-400"
               )}
             >
               {executionMode === "LIVE" ? (
@@ -241,8 +241,8 @@ export function AuditTrailPanel({ entries, executionMode }: AuditTrailPanelProps
                                   className={cn(
                                     "text-[10px]",
                                     entry.details.execution_mode === "LIVE"
-                                      ? "border-red-300 text-red-600"
-                                      : "border-blue-300 text-blue-600"
+                                      ? "border-red-700/50 text-red-400"
+                                      : "border-blue-700/50 text-blue-400"
                                   )}
                                 >
                                   {entry.details.execution_mode}
@@ -256,7 +256,7 @@ export function AuditTrailPanel({ entries, executionMode }: AuditTrailPanelProps
                               </p>
                             )}
                             {entry.details.failure_reason && (
-                              <p className="text-xs text-red-600">
+                              <p className="text-xs text-red-400">
                                 <span className="text-muted-foreground">Error:</span>{" "}
                                 {entry.details.failure_reason}
                               </p>

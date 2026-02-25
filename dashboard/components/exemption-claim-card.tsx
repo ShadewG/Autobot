@@ -81,9 +81,9 @@ Draft a response that respectfully challenges this exemption and requests the re
   };
 
   return (
-    <Card className={cn("border-amber-300 bg-amber-50/50", className)}>
+    <Card className={cn("border-amber-700/50 bg-amber-500/10/50", className)}>
       <CardHeader className="pb-2">
-        <CardTitle className="text-sm flex items-center gap-2 text-amber-800">
+        <CardTitle className="text-sm flex items-center gap-2 text-amber-300">
           <AlertTriangle className="h-4 w-4" />
           Agency Claims Exemption
         </CardTitle>
@@ -104,7 +104,7 @@ Draft a response that respectfully challenges this exemption and requests the re
             <p className="text-xs font-medium text-muted-foreground">Affects:</p>
             <div className="flex flex-wrap gap-1">
               {constraint.affected_items.map((item, i) => (
-                <Badge key={i} variant="outline" className="text-xs bg-red-50 text-red-700 border-red-200">
+                <Badge key={i} variant="outline" className="text-xs bg-red-500/10 text-red-300 border-red-700/50">
                   {item}
                 </Badge>
               ))}
@@ -125,7 +125,7 @@ Draft a response that respectfully challenges this exemption and requests the re
                 <p className="text-xs text-muted-foreground">{matchingExemption.title}</p>
                 {matchingExemption.exceptions.length > 0 && (
                   <div className="mt-2">
-                    <p className="text-xs font-medium text-green-700">Known Exceptions:</p>
+                    <p className="text-xs font-medium text-green-300">Known Exceptions:</p>
                     <ul className="text-xs text-muted-foreground list-disc list-inside">
                       {matchingExemption.exceptions.map((ex, i) => (
                         <li key={i}>{ex}</li>
@@ -156,7 +156,7 @@ Draft a response that respectfully challenges this exemption and requests the re
 
         {/* Error */}
         {researchError && (
-          <p className="text-xs text-red-600">{researchError}</p>
+          <p className="text-xs text-red-400">{researchError}</p>
         )}
 
         {/* Action buttons */}

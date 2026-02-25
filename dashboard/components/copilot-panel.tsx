@@ -128,13 +128,13 @@ export function CopilotPanel({
 
               {/* Warnings */}
               {nextAction.warnings && nextAction.warnings.length > 0 && (
-                <div className="bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg p-2">
+                <div className="bg-yellow-500/10 border border-yellow-700/50 rounded-lg p-2">
                   <div className="flex items-start gap-2">
-                    <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                    <AlertTriangle className="h-4 w-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                     <div className="text-xs">
-                      <p className="font-medium text-yellow-800 dark:text-yellow-200">Warning</p>
+                      <p className="font-medium text-yellow-300">Warning</p>
                       {nextAction.warnings.map((w, i) => (
-                        <p key={i} className="text-yellow-700 dark:text-yellow-300">{w}</p>
+                        <p key={i} className="text-yellow-300">{w}</p>
                       ))}
                     </div>
                   </div>

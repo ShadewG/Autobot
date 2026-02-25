@@ -43,14 +43,14 @@ import Link from "next/link";
 
 // Action type labels and icons
 const ACTION_TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  SEND_INITIAL_REQUEST: { label: "Initial Request", icon: <Send className="h-4 w-4" />, color: "bg-blue-100 text-blue-800" },
-  SEND_FOLLOWUP: { label: "Follow-up", icon: <Clock className="h-4 w-4" />, color: "bg-purple-100 text-purple-800" },
-  SEND_REBUTTAL: { label: "Rebuttal", icon: <MessageSquare className="h-4 w-4" />, color: "bg-red-100 text-red-800" },
-  SEND_CLARIFICATION: { label: "Clarification", icon: <FileQuestion className="h-4 w-4" />, color: "bg-orange-100 text-orange-800" },
-  ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-green-100 text-green-800" },
-  NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-amber-100 text-amber-800" },
-  DECLINE_FEE: { label: "Decline Fee", icon: <XCircle className="h-4 w-4" />, color: "bg-red-100 text-red-800" },
-  ESCALATE: { label: "Escalate", icon: <AlertTriangle className="h-4 w-4" />, color: "bg-yellow-100 text-yellow-800" },
+  SEND_INITIAL_REQUEST: { label: "Initial Request", icon: <Send className="h-4 w-4" />, color: "bg-blue-500/10 text-blue-400" },
+  SEND_FOLLOWUP: { label: "Follow-up", icon: <Clock className="h-4 w-4" />, color: "bg-purple-500/10 text-purple-400" },
+  SEND_REBUTTAL: { label: "Rebuttal", icon: <MessageSquare className="h-4 w-4" />, color: "bg-red-500/10 text-red-400" },
+  SEND_CLARIFICATION: { label: "Clarification", icon: <FileQuestion className="h-4 w-4" />, color: "bg-orange-500/10 text-orange-400" },
+  ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-green-500/10 text-green-400" },
+  NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-amber-500/10 text-amber-400" },
+  DECLINE_FEE: { label: "Decline Fee", icon: <XCircle className="h-4 w-4" />, color: "bg-red-500/10 text-red-400" },
+  ESCALATE: { label: "Escalate", icon: <AlertTriangle className="h-4 w-4" />, color: "bg-yellow-500/10 text-yellow-400" },
 };
 
 // Pause reason labels
@@ -68,10 +68,10 @@ function SentimentBadge({ sentiment }: { sentiment: string | null }) {
   if (!sentiment) return null;
 
   const colors: Record<string, string> = {
-    positive: "bg-green-100 text-green-800",
-    neutral: "bg-gray-100 text-gray-800",
-    negative: "bg-red-100 text-red-800",
-    hostile: "bg-red-200 text-red-900",
+    positive: "bg-green-500/10 text-green-400",
+    neutral: "bg-muted text-muted-foreground",
+    negative: "bg-red-500/10 text-red-400",
+    hostile: "bg-red-500/20 text-red-300",
   };
 
   return (
@@ -99,7 +99,7 @@ function ProposalCard({
   const actionConfig = ACTION_TYPE_CONFIG[proposal.action_type] || {
     label: proposal.action_type,
     icon: <Send className="h-4 w-4" />,
-    color: "bg-gray-100 text-gray-800",
+    color: "bg-muted text-muted-foreground",
   };
 
   const handleApprove = () => onDecision(proposal.id, 'APPROVE');
@@ -149,7 +149,7 @@ function ProposalCard({
           {/* Fee display */}
           {proposal.analysis.extracted_fee_amount && (
             <div className="text-right">
-              <p className="text-lg font-semibold text-amber-700">
+              <p className="text-lg font-semibold text-amber-400">
                 ${proposal.analysis.extracted_fee_amount.toLocaleString()}
               </p>
               <p className="text-xs text-muted-foreground">Fee Amount</p>
@@ -172,7 +172,7 @@ function ProposalCard({
             </Badge>
           ))}
           {proposal.warnings?.map((warning, i) => (
-            <Badge key={i} variant="outline" className="text-xs text-amber-700 border-amber-300">
+            <Badge key={i} variant="outline" className="text-xs text-amber-400 border-amber-700/50">
               {warning}
             </Badge>
           ))}

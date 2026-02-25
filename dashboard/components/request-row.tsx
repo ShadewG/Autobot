@@ -135,7 +135,7 @@ export function RequestRow({
     <TableRow
       className={cn(
         "cursor-pointer transition-colors",
-        isPaused && "bg-amber-50/50 hover:bg-amber-100/50"
+        isPaused && "bg-amber-500/10/50 hover:bg-amber-500/15/50"
       )}
       onClick={handleClick}
     >
@@ -158,7 +158,7 @@ export function RequestRow({
           </span>
           {/* Last inbound summary for paused rows */}
           {isPaused && inboundSummary && (
-            <span className="text-xs text-amber-700 font-medium">
+            <span className="text-xs text-amber-300 font-medium">
               {inboundSummary}
             </span>
           )}
@@ -174,7 +174,7 @@ export function RequestRow({
               costAmount={request.cost_amount}
             />
           ) : (
-            <Badge variant="outline" className="gap-1 text-amber-700 border-amber-300 bg-amber-50">
+            <Badge variant="outline" className="gap-1 text-amber-300 border-amber-700/50 bg-amber-500/10">
               <HelpCircle className="h-3 w-3" />
               Unknown
             </Badge>
@@ -214,13 +214,13 @@ export function RequestRow({
               )}
               <span className={cn(
                 "text-sm",
-                dueInfo.isOverdue && "text-red-600 font-medium"
+                dueInfo.isOverdue && "text-red-400 font-medium"
               )}>
                 {dueInfo.text}
               </span>
             </div>
             {dueInfo.overdueDays && dueInfo.overdueDays > 0 && (
-              <span className="text-xs text-red-600 font-medium flex items-center gap-1">
+              <span className="text-xs text-red-400 font-medium flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 {dueInfo.overdueDays}d overdue
               </span>

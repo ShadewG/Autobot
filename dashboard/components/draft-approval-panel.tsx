@@ -127,14 +127,14 @@ function buildActionPreview(
 }
 
 const ACTION_TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  SEND_EMAIL: { label: "Send Email", icon: <Mail className="h-4 w-4" />, color: "text-blue-600" },
-  SEND_REPLY: { label: "Send Reply", icon: <Mail className="h-4 w-4" />, color: "text-blue-600" },
-  ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-green-600" },
-  NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-amber-600" },
-  APPEAL: { label: "Appeal", icon: <Scale className="h-4 w-4" />, color: "text-orange-600" },
-  NARROW_SCOPE: { label: "Narrow & Retry", icon: <Edit className="h-4 w-4" />, color: "text-purple-600" },
-  FOLLOW_UP: { label: "Follow Up", icon: <Clock className="h-4 w-4" />, color: "text-gray-600" },
-  WITHDRAWAL: { label: "Withdraw", icon: <Trash2 className="h-4 w-4" />, color: "text-red-600" },
+  SEND_EMAIL: { label: "Send Email", icon: <Mail className="h-4 w-4" />, color: "text-blue-400" },
+  SEND_REPLY: { label: "Send Reply", icon: <Mail className="h-4 w-4" />, color: "text-blue-400" },
+  ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-green-400" },
+  NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-amber-400" },
+  APPEAL: { label: "Appeal", icon: <Scale className="h-4 w-4" />, color: "text-orange-400" },
+  NARROW_SCOPE: { label: "Narrow & Retry", icon: <Edit className="h-4 w-4" />, color: "text-purple-400" },
+  FOLLOW_UP: { label: "Follow Up", icon: <Clock className="h-4 w-4" />, color: "text-muted-foreground" },
+  WITHDRAWAL: { label: "Withdraw", icon: <Trash2 className="h-4 w-4" />, color: "text-red-400" },
 };
 
 export function DraftApprovalPanel({
@@ -151,7 +151,7 @@ export function DraftApprovalPanel({
   const [editedBody, setEditedBody] = useState(action?.draft_body || "");
 
   const actionConfig = action?.action_type
-    ? ACTION_TYPE_CONFIG[action.action_type] || { label: action.action_type, icon: <Mail className="h-4 w-4" />, color: "text-gray-600" }
+    ? ACTION_TYPE_CONFIG[action.action_type] || { label: action.action_type, icon: <Mail className="h-4 w-4" />, color: "text-muted-foreground" }
     : null;
 
   const preview = buildActionPreview(action, executionMode, isPortalAgency);
@@ -202,19 +202,19 @@ export function DraftApprovalPanel({
         <Alert
           className={cn(
             executionMode === "LIVE"
-              ? "border-red-200 bg-red-50"
-              : "border-blue-200 bg-blue-50"
+              ? "border-red-700/50 bg-red-500/10"
+              : "border-blue-700/50 bg-blue-500/10"
           )}
         >
           {executionMode === "LIVE" ? (
-            <Zap className="h-4 w-4 text-red-600" />
+            <Zap className="h-4 w-4 text-red-400" />
           ) : (
-            <Shield className="h-4 w-4 text-blue-600" />
+            <Shield className="h-4 w-4 text-blue-400" />
           )}
           <AlertTitle
             className={cn(
               "text-sm",
-              executionMode === "LIVE" ? "text-red-700" : "text-blue-700"
+              executionMode === "LIVE" ? "text-red-300" : "text-blue-300"
             )}
           >
             {executionMode === "LIVE" ? "LIVE EXECUTION" : "DRY RUN MODE"}
@@ -222,7 +222,7 @@ export function DraftApprovalPanel({
           <AlertDescription
             className={cn(
               "text-xs",
-              executionMode === "LIVE" ? "text-red-600" : "text-blue-600"
+              executionMode === "LIVE" ? "text-red-400" : "text-blue-400"
             )}
           >
             {executionMode === "LIVE"
@@ -259,10 +259,10 @@ export function DraftApprovalPanel({
 
         {/* Warnings */}
         {action.warnings && action.warnings.length > 0 && (
-          <Alert className="border-amber-200 bg-amber-50">
-            <AlertTriangle className="h-4 w-4 text-amber-600" />
-            <AlertTitle className="text-sm text-amber-700">Warnings</AlertTitle>
-            <AlertDescription className="text-xs text-amber-600">
+          <Alert className="border-amber-700/50 bg-amber-500/10">
+            <AlertTriangle className="h-4 w-4 text-amber-400" />
+            <AlertTitle className="text-sm text-amber-300">Warnings</AlertTitle>
+            <AlertDescription className="text-xs text-amber-400">
               <ul className="mt-1 space-y-1">
                 {action.warnings.map((w, i) => (
                   <li key={i}>• {w}</li>

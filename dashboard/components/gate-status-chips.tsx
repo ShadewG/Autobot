@@ -37,9 +37,9 @@ const PAUSE_ICON: Record<PauseReason, React.ComponentType<{ className?: string }
 };
 
 const MODE_CONFIG: Record<AutopilotMode, { label: string; icon: React.ComponentType<{ className?: string }>; color: string }> = {
-  AUTO: { label: "Auto", icon: Play, color: "text-green-600" },
-  SUPERVISED: { label: "Supervised", icon: Eye, color: "text-yellow-600" },
-  MANUAL: { label: "Manual", icon: Hand, color: "text-gray-600" },
+  AUTO: { label: "Auto", icon: Play, color: "text-green-400" },
+  SUPERVISED: { label: "Supervised", icon: Eye, color: "text-yellow-400" },
+  MANUAL: { label: "Manual", icon: Hand, color: "text-muted-foreground" },
 };
 
 interface GateStatusChipsProps {
@@ -71,7 +71,7 @@ export function GateStatusChips({
           <TooltipTrigger asChild>
             <Badge
               variant="destructive"
-              className="gap-1 bg-yellow-100 text-yellow-800 hover:bg-yellow-100 border-yellow-300"
+              className="gap-1 bg-yellow-500/15 text-yellow-300 hover:bg-yellow-500/15 border-yellow-700/50"
             >
               <Pause className="h-3 w-3" />
               PAUSED — {PAUSE_REASON_LABELS[pauseReason]}

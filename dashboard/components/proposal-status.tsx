@@ -30,7 +30,7 @@ export function ProposalStatus({
   switch (state) {
     case "QUEUED":
       return (
-        <div className="flex items-center gap-2 text-sm bg-blue-50 dark:bg-blue-950/30 rounded px-3 py-1.5">
+        <div className="flex items-center gap-2 text-sm bg-blue-500/10 rounded px-3 py-1.5">
           <Badge variant="secondary" className="gap-1">
             <Clock className="h-3 w-3" />
             Queued
@@ -47,8 +47,8 @@ export function ProposalStatus({
 
     case "SENDING":
       return (
-        <div className="flex items-center gap-2 text-sm bg-yellow-50 dark:bg-yellow-950/30 rounded px-3 py-1.5">
-          <Badge variant="secondary" className="gap-1 bg-yellow-100 text-yellow-800">
+        <div className="flex items-center gap-2 text-sm bg-yellow-500/10 rounded px-3 py-1.5">
+          <Badge variant="secondary" className="gap-1 bg-yellow-500/15 text-yellow-300">
             <Loader2 className="h-3 w-3 animate-spin" />
             Sending
           </Badge>
@@ -58,7 +58,7 @@ export function ProposalStatus({
 
     case "SENT":
       return (
-        <div className="flex items-center gap-2 text-sm bg-green-50 dark:bg-green-950/30 rounded px-3 py-1.5">
+        <div className="flex items-center gap-2 text-sm bg-green-500/10 rounded px-3 py-1.5">
           <Badge variant="default" className="gap-1 bg-green-600">
             <CheckCircle className="h-3 w-3" />
             Sent
@@ -73,12 +73,12 @@ export function ProposalStatus({
 
     case "FAILED":
       return (
-        <div className="flex items-center gap-2 text-sm bg-red-50 dark:bg-red-950/30 rounded px-3 py-1.5">
+        <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded px-3 py-1.5">
           <Badge variant="destructive" className="gap-1">
             <AlertCircle className="h-3 w-3" />
             Failed
           </Badge>
-          <span className="text-xs text-red-700 dark:text-red-300">
+          <span className="text-xs text-red-300">
             {failedReason || "Delivery failed - will retry"}
           </span>
         </div>
@@ -86,12 +86,12 @@ export function ProposalStatus({
 
     case "BLOCKED":
       return (
-        <div className="flex items-center gap-2 text-sm bg-red-50 dark:bg-red-950/30 rounded px-3 py-1.5">
+        <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded px-3 py-1.5">
           <Badge variant="destructive" className="gap-1">
             <XCircle className="h-3 w-3" />
             Blocked
           </Badge>
-          <span className="text-xs text-red-700 dark:text-red-300">
+          <span className="text-xs text-red-300">
             {blockedReason || "Blocked by safety validator"}
           </span>
         </div>
@@ -117,7 +117,7 @@ export function ProposalStatusBadge({ state }: { state: ProposalState }) {
       );
     case "SENDING":
       return (
-        <Badge variant="secondary" className="gap-1 text-[10px] bg-yellow-100 text-yellow-800">
+        <Badge variant="secondary" className="gap-1 text-[10px] bg-yellow-500/15 text-yellow-300">
           <Loader2 className="h-2.5 w-2.5 animate-spin" />
           Sending
         </Badge>
