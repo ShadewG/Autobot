@@ -4679,6 +4679,18 @@
             return proposeDecision(proposalId, 'APPROVE', routeMode);
         }
 
+        async function approveAndClose(proposalId, caseId, routeMode) {
+            const fn = routeMode ? approveProposalWithRoute(proposalId, routeMode) : approveProposal(proposalId);
+            await fn;
+            // Close the case drawer instead of re-opening (avoids "reprocess" flash
+            // while Trigger.dev task is still executing)
+            const inspector = document.getElementById('caseInspector');
+            if (inspector) inspector.style.display = 'none';
+            showToast('success', 'Sent! The case will update shortly.');
+            // Refresh queue after a short delay to let execution complete
+            setTimeout(loadData, 3000);
+        }
+
         async function adjustProposal(proposalId) {
             return proposeDecision(proposalId, 'ADJUST');
         }
@@ -4807,8 +4819,7 @@
                         html += `<div class="pac-subject">${escapeHtml(p.draft_subject)}</div>`;
                     }
                     if (p.draft_body_text) {
-                        html += `<div class="pac-body-preview" id="pac_preview_${p.id}">${escapeHtml(truncate(p.draft_body_text, 200))}</div>`;
-                        html += `<div class="pac-body-full" id="pac_full_${p.id}" style="display:none;">${escapeHtml(p.draft_body_text)}</div>`;
+                        html += `<div class="pac-body-full" id="pac_full_${p.id}" style="white-space:pre-wrap;font-size:12px;color:#c9d1d9;line-height:1.5;max-height:300px;overflow-y:auto;">${escapeHtml(p.draft_body_text)}</div>`;
                     }
                     html += `</div>`;
                 } else {
@@ -4892,10 +4903,10 @@
                 html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">`;
                 const sendLabel = SEND_LABELS[p.action_type] || 'Approve &amp; Send';
                 if (hasDraft) {
-                    html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="padding:10px 24px;font-size:13px;">${sendLabel}</button>`;
+                    html += `<button class="send-btn" onclick="approveAndClose(${p.id},${caseData.id})" style="padding:10px 24px;font-size:13px;">${sendLabel}</button>`;
                     if (showRouteApprove) {
-                        html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>openCase(${caseData.id}))">Approve Email</button>`;
-                        html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>openCase(${caseData.id}))">Approve Portal</button>`;
+                        html += `<button class="drawer-btn warn" onclick="approveAndClose(${p.id},${caseData.id},'email')">Approve Email</button>`;
+                        html += `<button class="drawer-btn warn" onclick="approveAndClose(${p.id},${caseData.id},'portal')">Approve Portal</button>`;
                     }
                     html += `<button class="drawer-btn" onclick="adjustProposal(${p.id}).then(()=>openCase(${caseData.id}))">Adjust</button>`;
                 }
