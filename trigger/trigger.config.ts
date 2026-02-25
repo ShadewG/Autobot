@@ -33,6 +33,14 @@ export default defineConfig({
           "SENDGRID_FROM_EMAIL",
           "SENDGRID_FROM_NAME",
           "RAILWAY_STATIC_URL",
+          "SKYVERN_API_KEY",
+          "SKYVERN_API_URL",
+          "SKYVERN_WORKFLOW_ID",
+          "SKYVERN_WORKFLOW_RUN_URL",
+          "SKYVERN_WORKFLOW_STATUS_URL",
+          "SKYVERN_APP_BASE_URL",
+          "SKYVERN_PROXY_LOCATION",
+          "REQUESTS_INBOX",
         ];
         return vars
           .filter((name) => process.env[name])

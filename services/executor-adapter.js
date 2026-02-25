@@ -475,9 +475,23 @@ const portalExecutor = {
 // ============================================================================
 
 /**
- * Create portal task in database
+ * Create portal task in database.
+ * Dedup guard: skips creation if a PENDING task already exists for the same case.
  */
 async function createPortalTask(data) {
+  // Dedup: check for existing PENDING portal task for this case
+  const existing = await db.query(
+    `SELECT id FROM portal_tasks WHERE case_id = $1 AND status = 'PENDING' LIMIT 1`,
+    [data.caseId]
+  );
+  if (existing.rows.length > 0) {
+    logger.info('Portal task dedup: PENDING task already exists for case', {
+      caseId: data.caseId,
+      existingTaskId: existing.rows[0].id,
+    });
+    return existing.rows[0]; // Return existing task instead of creating duplicate
+  }
+
   const query = `
     INSERT INTO portal_tasks (
       case_id, execution_id, proposal_id, portal_url,
