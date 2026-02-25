@@ -1410,6 +1410,16 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             return res.status(503).json({ success: false, error: 'Portal queue unavailable' });
         }
 
+        // Cancel any existing in-flight portal tasks to avoid duplicate submissions
+        try {
+            await db.query(
+                `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW(),
+                 completion_notes = 'Superseded by monitor portal retry'
+                 WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+                [caseId]
+            );
+        } catch (_) {}
+
         const baseInstructions = instructions || `Monitor-triggered portal submission for case ${caseId}`;
         const appendedResearch = research_context
             ? `${baseInstructions}\n\nCase research context:\n${research_context}`

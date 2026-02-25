@@ -108,7 +108,8 @@ export const submitPortal = task({
     }
 
     // ── WRONG_AGENCY guard: skip if case has WRONG_AGENCY constraint ──
-    const constraints = caseData.constraints_jsonb || caseData.constraints || [];
+    const rawConstraints = caseData.constraints_jsonb || caseData.constraints || [];
+    const constraints = Array.isArray(rawConstraints) ? rawConstraints : [];
     if (constraints.includes("WRONG_AGENCY")) {
       logger.warn("Portal submission skipped — wrong agency", { caseId });
       return { success: false, skipped: true, reason: "wrong_agency" };

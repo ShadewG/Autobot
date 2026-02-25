@@ -2320,13 +2320,16 @@ class DatabaseService {
             }
 
             // Try normalized match (remove common suffixes)
-            // When state is provided, require state match — don't fall back to cross-state
+            // When state is provided, match same state OR null-state (federal/multi-state agencies)
+            // but never cross-state (e.g. MS agency matching OH agency)
             result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
-                WHERE ($2::text IS NULL OR state = $2)
+                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
+                  AND ($2::text IS NULL OR state IS NULL OR state = $2)
                   AND LOWER(REGEXP_REPLACE(name, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
                     = LOWER(REGEXP_REPLACE($1, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
+                ORDER BY (state = $2)::int DESC
                 LIMIT 1
             `, [agencyName, state]);
 
@@ -2335,16 +2338,17 @@ class DatabaseService {
             }
 
             // Try case-insensitive contains match as last resort
-            // When state is provided, require state match — never allow cross-state fuzzy matches
+            // Same state or null-state only — never cross-state fuzzy matches
             result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
-                WHERE ($2::text IS NULL OR state = $2)
+                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
+                  AND ($2::text IS NULL OR state IS NULL OR state = $2)
                   AND (
                     LOWER(name) LIKE LOWER('%' || $1 || '%')
                     OR LOWER($1) LIKE LOWER('%' || name || '%')
                   )
-                ORDER BY LENGTH(name) ASC
+                ORDER BY (state = $2)::int DESC, LENGTH(name) ASC
                 LIMIT 1
             `, [agencyName, state]);
 
