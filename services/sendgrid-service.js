@@ -617,7 +617,8 @@ class SendGridService {
                             filename: att.filename || 'unnamed',
                             content_type: att.mimetype || 'application/octet-stream',
                             size_bytes: att.size || (att.buffer ? att.buffer.length : 0),
-                            storage_path: storagePath
+                            storage_path: storagePath,
+                            file_data: att.buffer || null
                         });
                     } catch (attErr) {
                         console.error(`Failed to save attachment ${att.filename}:`, attErr.message);

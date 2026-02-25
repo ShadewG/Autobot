@@ -92,6 +92,7 @@ export interface CaseContext {
   caseId: number;
   caseData: any;
   messages: any[];
+  attachments: any[];
   analysis: any | null;
   followups: any | null;
   existingProposal: any | null;

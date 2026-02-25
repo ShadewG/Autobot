@@ -18,6 +18,7 @@ export async function loadContext(
   }
 
   const messages = await db.getMessagesByCaseId(caseId);
+  const attachments = await db.getAttachmentsByCaseId(caseId);
 
   let analysis = null;
   if (messageId) {
@@ -59,6 +60,7 @@ export async function loadContext(
     caseId,
     caseData,
     messages,
+    attachments,
     analysis,
     followups,
     existingProposal,

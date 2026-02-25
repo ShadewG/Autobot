@@ -34,7 +34,8 @@ const CLASSIFICATION_MAP: Record<string, Classification> = {
 function buildClassificationPrompt(
   message: any,
   caseData: any,
-  threadMessages: any[]
+  threadMessages: any[],
+  attachments: any[] = []
 ): string {
   const threadContext = threadMessages
     .slice(-10)
@@ -65,6 +66,11 @@ ${threadContext || "No prior messages."}
 **Subject**: ${message.subject || "No subject"}
 **Body**:
 ${(message.body_text || message.body_html || "").substring(0, 3000)}
+${attachments.length > 0 ? `
+**Attachments** (${attachments.length} file${attachments.length > 1 ? "s" : ""}):
+${attachments.map((a: any) => `- ${a.filename} (${a.content_type}, ${Math.round((a.size_bytes || 0) / 1024)}KB)`).join("\n")}
+
+IMPORTANT: If attachments include PDFs or documents and the message references them as records/responses, classify as "records_ready" or "delivery", NOT as "acknowledgment" or "other".` : ""}
 
 ## Intent Definitions (choose the BEST match)
 - **fee_request**: Agency quotes a cost/fee for records production. Look for dollar amounts, invoices, cost estimates, payment instructions.
@@ -235,13 +241,18 @@ export async function classifyInbound(
   // Load thread messages for context
   const threadMessages = await db.getMessagesByCaseId(context.caseId);
 
+  // Get attachments for this specific message
+  const messageAttachments = (context.attachments || []).filter(
+    (a: any) => a.message_id === messageId
+  );
+
   // === Vercel AI SDK: generateObject with Zod schema ===
   let aiResult: ClassificationOutput;
   try {
     const { object } = await generateObject({
       model: classifyModel,
       schema: classificationSchema,
-      prompt: buildClassificationPrompt(message, context.caseData, threadMessages),
+      prompt: buildClassificationPrompt(message, context.caseData, threadMessages, messageAttachments),
       providerOptions: classifyOptions,
     });
     aiResult = object;

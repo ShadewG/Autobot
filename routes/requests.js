@@ -24,6 +24,73 @@ const STATUS_MAP = {
 };
 
 /**
+ * Generate AI outcome summary when a case is closed.
+ * Summarizes what happened, why it was closed, and the result.
+ */
+async function generateOutcomeSummary(caseId, caseData, closeInstruction) {
+    try {
+        const messages = await db.getMessagesByCaseId(caseId);
+        const proposals = await db.getAllProposalsByCaseId(caseId);
+
+        const inboundCount = messages.filter(m => m.direction === 'inbound').length;
+        const outboundCount = messages.filter(m => m.direction === 'outbound').length;
+        const lastInbound = messages.filter(m => m.direction === 'inbound').pop();
+
+        // Build outcome context
+        const parts = [];
+        parts.push(`Agency: ${caseData.agency_name || 'Unknown'} (${caseData.state || '?'})`);
+        parts.push(`Subject: ${caseData.subject_name || caseData.case_name || 'Unknown'}`);
+        parts.push(`Records requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Unknown'}`);
+        parts.push(`Messages: ${outboundCount} sent, ${inboundCount} received`);
+
+        if (caseData.outcome_type) {
+            parts.push(`Outcome: ${caseData.outcome_type.replace(/_/g, ' ')}`);
+        }
+
+        if (caseData.fee_quote_jsonb?.amount) {
+            parts.push(`Fee: $${caseData.fee_quote_jsonb.amount}`);
+        }
+
+        if (lastInbound?.body_text) {
+            const preview = lastInbound.body_text.substring(0, 300);
+            parts.push(`Last agency response: ${preview}`);
+        }
+
+        if (closeInstruction) {
+            parts.push(`Close reason: ${closeInstruction}`);
+        }
+
+        // Use OpenAI to generate a concise summary
+        const OpenAI = require('openai');
+        const openai = new OpenAI();
+        const completion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [{
+                role: 'system',
+                content: 'You summarize the outcome of FOIA/public records requests in 1-2 sentences. Be specific about what happened (records received, denied, fee quoted, no response, etc). Do not use generic language.'
+            }, {
+                role: 'user',
+                content: parts.join('\n')
+            }],
+            max_tokens: 150,
+        });
+
+        const summary = completion.choices[0]?.message?.content?.trim();
+        if (summary) {
+            await db.updateCase(caseId, { outcome_summary: summary });
+
+            // Sync summary to Notion
+            try {
+                const notionService = require('../services/notion-service');
+                await notionService.addAISummaryToNotion(caseId, summary);
+            } catch (_) {}
+        }
+    } catch (err) {
+        console.error(`Failed to generate outcome summary for case ${caseId}:`, err.message);
+    }
+}
+
+/**
  * Derive cost_status from fee fields (supports both legacy columns and JSONB)
  */
 function deriveCostStatus(caseData) {
@@ -162,7 +229,11 @@ function toRequestListItem(caseData) {
         autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
         cost_status: deriveCostStatus(caseData),
         cost_amount: feeQuote?.amount || null,
-        at_risk: isAtRisk(dueInfo.next_due_at)
+        at_risk: isAtRisk(dueInfo.next_due_at),
+        outcome_type: caseData.outcome_type || null,
+        outcome_summary: caseData.outcome_summary || null,
+        closed_at: caseData.closed_at || null,
+        substatus: caseData.substatus || null
     };
 }
 
@@ -435,12 +506,19 @@ router.get('/', async (req, res) => {
     try {
         const { requires_human, status, agency_id, q } = req.query;
 
+        const includeCompleted = req.query.include_completed === 'true';
+
         let query = `
             SELECT c.*
             FROM cases c
             WHERE 1=1
         `;
         const params = [];
+
+        // Exclude completed/cancelled cases from main view unless explicitly requested
+        if (!includeCompleted && !status) {
+            query += ` AND c.status NOT IN ('completed', 'cancelled')`;
+        }
 
         // Filter by requires_human
         if (requires_human === 'true') {
@@ -480,6 +558,15 @@ router.get('/', async (req, res) => {
         const result = await db.query(query, params);
         const requests = result.rows.map(toRequestListItem);
 
+        // Fetch completed cases separately (most recent 50)
+        const completedResult = await db.query(`
+            SELECT c.* FROM cases c
+            WHERE c.status IN ('completed', 'cancelled')
+            ORDER BY c.closed_at DESC NULLS LAST, c.updated_at DESC
+            LIMIT 50
+        `);
+        const completed = completedResult.rows.map(toRequestListItem);
+
         // Separate into paused and ongoing for client convenience
         const paused = requests.filter(r => r.requires_human);
         const ongoing = requests.filter(r => !r.requires_human);
@@ -489,7 +576,9 @@ router.get('/', async (req, res) => {
             count: requests.length,
             paused_count: paused.length,
             ongoing_count: ongoing.length,
-            requests
+            completed_count: completed.length,
+            requests,
+            completed
         });
     } catch (error) {
         console.error('Error fetching requests:', error);
@@ -908,6 +997,12 @@ router.post('/:id/resolve-review', async (req, res) => {
                 updates.requires_human = true; // keep in review so user can choose next step
             }
 
+            // On close: set closed_at and generate outcome summary
+            if (action === 'close') {
+                updates.closed_at = new Date();
+                updates.outcome_recorded = true;
+            }
+
             await db.updateCase(requestId, updates);
 
             // When marking as sent, dismiss only submission-related proposals (keep rebuttals, fee negotiations)
@@ -924,6 +1019,13 @@ router.post('/:id/resolve-review', async (req, res) => {
                 instruction: instruction || null,
                 previous_status: caseData.status
             });
+
+            // On close: generate AI outcome summary asynchronously
+            if (action === 'close') {
+                generateOutcomeSummary(requestId, caseData, instruction).catch(err => {
+                    log.warn(`Failed to generate outcome summary: ${err.message}`);
+                });
+            }
 
             // Sync to Notion
             try {
