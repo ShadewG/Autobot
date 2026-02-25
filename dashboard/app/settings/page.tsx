@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Check, Pencil } from "lucide-react";
 import { fetcher } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
 
 interface User {
   id: number;
@@ -252,8 +253,9 @@ function UserSettings({ user }: { user: User }) {
 }
 
 export default function SettingsPage() {
-  const { data, error, isLoading } = useSWR<{ success: boolean; users: User[] }>(
-    "/users",
+  const { user: authUser } = useAuth();
+  const { data, error, isLoading } = useSWR<{ success: boolean; user: User }>(
+    authUser ? `/users/${authUser.id}` : null,
     fetcher
   );
 
@@ -270,15 +272,13 @@ export default function SettingsPage() {
 
       {isLoading && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading users...
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading...
         </div>
       )}
       {error && (
-        <p className="text-sm text-destructive">Failed to load users.</p>
+        <p className="text-sm text-destructive">Failed to load settings.</p>
       )}
-      {data?.users?.map((user) => (
-        <UserSettings key={user.id} user={user} />
-      ))}
+      {data?.user && <UserSettings user={data.user} />}
     </div>
   );
 }
