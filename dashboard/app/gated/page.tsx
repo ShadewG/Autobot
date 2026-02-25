@@ -1339,15 +1339,15 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Warnings */}
+          {/* Review notes from safety check */}
           {warnings.length > 0 && (
-            <div className="border border-orange-700/50 bg-orange-950/20 p-3">
-              <p className="text-[10px] font-semibold text-orange-400 uppercase tracking-wider mb-1.5">
-                Warnings
+            <div className="border border-border bg-muted/50 p-3">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                Review Notes
               </p>
               {warnings.map((w, i) => (
-                <p key={i} className="text-xs text-orange-300">
-                  - {w}
+                <p key={i} className="text-xs text-muted-foreground">
+                  {i + 1}. {w}
                 </p>
               ))}
             </div>

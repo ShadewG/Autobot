@@ -90,6 +90,70 @@ function noAction(reasoning: string[]): DecisionResult {
   return decision("NONE", { isComplete: true, requiresHuman: false, reasoning });
 }
 
+function buildHumanDirectivesSection(
+  dismissedProposals?: any[],
+  humanDirectives?: any[],
+  phoneNotes?: any[]
+): string {
+  const sections: string[] = [];
+
+  // 1. Recent human decisions (review resolutions, instructions)
+  if (humanDirectives && humanDirectives.length > 0) {
+    const decisions = humanDirectives
+      .filter((d: any) => d.action === "human_decision")
+      .map((d: any) => {
+        const details = d.details || {};
+        const action = details.review_action || "unknown";
+        const instruction = details.instruction;
+        const date = new Date(d.created_at).toISOString().slice(0, 16);
+        return instruction
+          ? `- [${date}] Human chose "${action}" with instruction: "${instruction}"`
+          : `- [${date}] Human chose "${action}"`;
+      });
+    if (decisions.length > 0) {
+      sections.push(`### Human Review Decisions\n${decisions.join("\n")}`);
+    }
+  }
+
+  // 2. Phone call notes
+  if (phoneNotes && phoneNotes.length > 0) {
+    const calls = phoneNotes.map((p: any) => {
+      const date = new Date(p.updated_at).toISOString().slice(0, 16);
+      const outcome = p.call_outcome || "unknown";
+      return `- [${date}] Call outcome: ${outcome}. Notes: ${(p.notes || "").trim().substring(0, 500)}`;
+    });
+    sections.push(`### Phone Call Notes\n${calls.join("\n")}`);
+  }
+
+  // 3. Dismissed proposals (with reasons)
+  if (dismissedProposals && dismissedProposals.length > 0) {
+    const dismissed = dismissedProposals.map((p: any) => {
+      const date = new Date(p.created_at).toISOString().slice(0, 16);
+      const hd = p.human_decision;
+      const reason = hd?.reason || hd?.instruction || null;
+      return reason
+        ? `- ${p.action_type} [${date}] — Human said: "${reason}"`
+        : `- ${p.action_type} [${date}]`;
+    });
+    sections.push(`### Previously Rejected Proposals\nDo NOT repeat these action types:\n${dismissed.join("\n")}`);
+  }
+
+  if (sections.length === 0) return "";
+
+  const warning = (dismissedProposals?.length || 0) >= 3
+    ? "\nCRITICAL: 3+ proposals rejected. Strongly consider ESCALATE.\n"
+    : "";
+
+  return `
+## HUMAN DIRECTIVES (HIGHEST PRIORITY)
+The following are decisions, instructions, and notes from the human operator.
+These OVERRIDE your own analysis. If a human said to do something, do it.
+Do NOT propose an action the human already rejected.
+
+${sections.join("\n\n")}
+${warning}`;
+}
+
 function buildDecisionPrompt(params: {
   caseData: any;
   classification: Classification;
@@ -103,6 +167,8 @@ function buildDecisionPrompt(params: {
   denialSubtype?: string | null;
   jurisdictionLevel?: string | null;
   dismissedProposals?: any[];
+  humanDirectives?: any[];
+  phoneNotes?: any[];
 }): string {
   const {
     caseData,
@@ -131,8 +197,13 @@ function buildDecisionPrompt(params: {
   const denialSubtype = params.denialSubtype || null;
   const jurisdictionLevel = params.jurisdictionLevel || null;
 
-  return `You are the decision engine for a FOIA (public records) automation system. Choose the single best next action.
+  // Build human directives section (highest priority — placed before all other context)
+  const humanDirectivesSection = buildHumanDirectivesSection(
+    params.dismissedProposals, params.humanDirectives, params.phoneNotes
+  );
 
+  return `You are the decision engine for a FOIA (public records) automation system. Choose the single best next action.
+${humanDirectivesSection}
 ## Case Context
 - Agency: ${caseData?.agency_name || "Unknown"}
 - State: ${caseData?.state || "Unknown"}
@@ -208,13 +279,6 @@ ${threadSummary || "No thread messages available."}
 - "medium" = contacts + state law research (most denials, complex clarifications)
 - "deep" = full custodian chain research (no_records without verified custodian, wrong_agency)
 
-${params.dismissedProposals && params.dismissedProposals.length > 0 ? `
-## Previously Dismissed Proposals (DO NOT repeat these)
-The human reviewer has already rejected the following proposals for this case.
-Do NOT propose the same action type again unless you have fundamentally new information.
-${params.dismissedProposals.map((p: any) => `- ${p.action_type} (dismissed ${p.created_at})`).join("\n")}
-${params.dismissedProposals.length >= 3 ? "\nWARNING: 3+ proposals dismissed. Strongly consider ESCALATE to let a human decide the next step." : ""}
-` : ""}
 Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 
@@ -326,14 +390,29 @@ async function aiDecision(params: {
   jurisdictionLevel?: string | null;
 }): Promise<DecisionResult | null> {
   try {
-    const [caseData, threadMessages, latestAnalysis, dismissedProposals] = await Promise.all([
+    const [caseData, threadMessages, latestAnalysis, dismissedProposals, humanDirectives, phoneNotes] = await Promise.all([
       db.getCaseById(params.caseId),
       db.getMessagesByCaseId(params.caseId),
       db.getLatestResponseAnalysis(params.caseId),
       db.query(
-        `SELECT action_type, reasoning, created_at FROM proposals
+        `SELECT action_type, reasoning, human_decision, created_at FROM proposals
          WHERE case_id = $1 AND status = 'DISMISSED'
          ORDER BY created_at DESC LIMIT 5`,
+        [params.caseId]
+      ).then((r: any) => r.rows),
+      // Fetch recent human decisions from activity log (review resolutions, instructions)
+      db.query(
+        `SELECT action, details, created_at FROM activity_log
+         WHERE details->>'case_id' = $1::text
+           AND action IN ('human_decision', 'phone_call_completed')
+         ORDER BY created_at DESC LIMIT 10`,
+        [String(params.caseId)]
+      ).then((r: any) => r.rows),
+      // Fetch phone call notes for this case
+      db.query(
+        `SELECT notes, call_outcome, ai_briefing, updated_at FROM phone_call_queue
+         WHERE case_id = $1 AND (notes IS NOT NULL AND notes != '')
+         ORDER BY updated_at DESC LIMIT 3`,
         [params.caseId]
       ).then((r: any) => r.rows),
     ]);
@@ -358,6 +437,8 @@ async function aiDecision(params: {
       denialSubtype: params.denialSubtype,
       jurisdictionLevel: params.jurisdictionLevel,
       dismissedProposals,
+      humanDirectives,
+      phoneNotes,
     });
 
     const { object } = await generateObject({

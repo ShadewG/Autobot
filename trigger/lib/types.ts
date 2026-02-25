@@ -74,6 +74,10 @@ export interface InboundPayload {
   caseId: number;
   messageId: number;
   autopilotMode: AutopilotMode;
+  // Human review resolution context (when human resolves a review action from dashboard)
+  triggerType?: string;
+  reviewAction?: string;
+  reviewInstruction?: string;
 }
 
 export interface InitialRequestPayload {

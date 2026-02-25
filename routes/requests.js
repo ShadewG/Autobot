@@ -165,6 +165,7 @@ function parseScopeItems(caseData) {
  * Normalizes both plain string constraints (legacy) and full objects
  * into { type, description, source, confidence, affected_items } shape.
  */
+// Known constraint types with human-readable labels
 const CONSTRAINT_LABELS = {
     FEE_REQUIRED: 'Fee payment required',
     PREPAYMENT_REQUIRED: 'Prepayment required before records are released',
@@ -182,25 +183,73 @@ const CONSTRAINT_LABELS = {
     INVESTIGATION_ACTIVE: 'Active investigation — records may be delayed or withheld',
     PARTIAL_DENIAL: 'Some records denied, others may be available',
     DENIAL_RECEIVED: 'Agency denied the request',
+    IN_PERSON_VIEWING_OPTION: 'In-person viewing/inspection available',
+    IN_PERSON_INSPECTION_OPTION: 'In-person viewing/inspection available',
+    VIEW_IN_PERSON_OPTION: 'In-person viewing/inspection available',
+    SCOPE_NARROWING_SUGGESTED: 'Agency suggests narrowing scope',
+    SCOPE_NARROW_SUGGESTED: 'Agency suggests narrowing scope',
+    SCOPE_NARROWING_OPTION: 'Agency suggests narrowing scope',
+    RESPONSE_DEADLINE: 'Response deadline applies',
+    DEADLINE_10_BUSINESS_DAYS: 'Must respond within 10 business days',
+    RESPONSE_DEADLINE_10_BUSINESS_DAYS: 'Must respond within 10 business days',
+    WITHDRAWAL_IF_NO_RESPONSE_10_BUSINESS_DAYS: 'Auto-withdrawal after 10 business days without response',
+    AUTO_WITHDRAW_10_BUSINESS_DAYS: 'Auto-withdrawal after 10 business days without response',
+    FEE_ESTIMATE_PROVIDED: 'Fee estimate provided',
+};
+
+// Collapse duplicate/variant constraint types to a canonical form
+const CONSTRAINT_CANONICAL = {
+    RECORDS_NOT_HELD: 'NOT_HELD',
+    NO_FINANCIAL_GAIN_CERT_REQUIRED: 'CERTIFICATION_NO_FINANCIAL_GAIN_REQUIRED',
+    CERTIFICATION_REQUIRED_NONCOMMERCIAL_USE: 'CERTIFICATION_NO_FINANCIAL_GAIN_REQUIRED',
+    IN_PERSON_INSPECTION_OPTION: 'IN_PERSON_VIEWING_OPTION',
+    VIEW_IN_PERSON_OPTION: 'IN_PERSON_VIEWING_OPTION',
+    SCOPE_NARROW_SUGGESTED: 'SCOPE_NARROWING_SUGGESTED',
+    SCOPE_NARROWING_OPTION: 'SCOPE_NARROWING_SUGGESTED',
+    DEADLINE_10_BUSINESS_DAYS: 'RESPONSE_DEADLINE_10_BUSINESS_DAYS',
+    RESPONSE_DEADLINE: 'RESPONSE_DEADLINE_10_BUSINESS_DAYS',
+    AUTO_WITHDRAW_10_BUSINESS_DAYS: 'WITHDRAWAL_IF_NO_RESPONSE_10_BUSINESS_DAYS',
+    FEE_ESTIMATE_PROVIDED: 'FEE_REQUIRED', // redundant when FEE_REQUIRED is present
 };
 
 function parseConstraints(caseData) {
     if (!caseData.constraints_jsonb || !Array.isArray(caseData.constraints_jsonb)) {
         return [];
     }
-    return caseData.constraints_jsonb.map(c => {
-        // Already a full object
-        if (c && typeof c === 'object' && c.type) return c;
-        // Plain string — normalize to object
-        const type = typeof c === 'string' ? c : 'UNKNOWN';
-        return {
-            type,
-            description: CONSTRAINT_LABELS[type] || type.replace(/_/g, ' ').toLowerCase(),
-            source: 'Agency response',
-            confidence: 1.0,
-            affected_items: [],
-        };
-    });
+
+    const seen = new Set();
+    const results = [];
+
+    for (const c of caseData.constraints_jsonb) {
+        let constraint;
+        if (c && typeof c === 'object' && c.type) {
+            constraint = c;
+        } else {
+            const type = typeof c === 'string' ? c : 'UNKNOWN';
+            constraint = {
+                type,
+                description: CONSTRAINT_LABELS[type] || type.replace(/_/g, ' ').toLowerCase(),
+                source: 'Agency response',
+                confidence: 1.0,
+                affected_items: [],
+            };
+        }
+
+        // Canonicalize to collapse duplicates
+        const canonical = CONSTRAINT_CANONICAL[constraint.type] || constraint.type;
+        if (seen.has(canonical)) continue;
+        seen.add(canonical);
+
+        // Use canonical type's label if available
+        constraint.type = canonical;
+        if (CONSTRAINT_LABELS[canonical]) {
+            constraint.description = CONSTRAINT_LABELS[canonical];
+        }
+
+        results.push(constraint);
+    }
+
+    return results;
 }
 
 /**
@@ -1131,7 +1180,7 @@ router.post('/:id/resolve-review', async (req, res) => {
             previous_status: caseData.status
         });
 
-        // Trigger Trigger.dev task for re-processing
+        // Trigger Trigger.dev task for re-processing — pass review action + instruction
         const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
         const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
         const triggerRun = await db.createAgentRunFull({
@@ -1146,6 +1195,9 @@ router.post('/:id/resolve-review', async (req, res) => {
             caseId: requestId,
             messageId: latestMsg.rows[0]?.id || null,
             autopilotMode: 'SUPERVISED',
+            triggerType: 'HUMAN_REVIEW_RESOLUTION',
+            reviewAction: action,
+            reviewInstruction: combinedInstruction,
         });
         const job = { id: handle.id };
 

@@ -54,7 +54,7 @@ export const processInbound = task({
   retry: { maxAttempts: 2 },
 
   run: async (payload: InboundPayload) => {
-    const { caseId, messageId, autopilotMode } = payload;
+    const { caseId, messageId, autopilotMode, triggerType, reviewAction, reviewInstruction } = payload;
 
     // Clear any stale agent_runs that would block the unique constraint
     await db.query(
@@ -106,14 +106,15 @@ export const processInbound = task({
     );
 
     // Step 4: Decide next action
+    const effectiveTriggerType = triggerType || "INBOUND_MESSAGE";
     const decision = await decideNextAction(
       caseId, classification.classification, constraints,
       classification.extractedFeeAmount, classification.sentiment,
-      autopilotMode, "INBOUND_MESSAGE",
+      autopilotMode, effectiveTriggerType,
       classification.requiresResponse, classification.portalUrl,
       classification.suggestedAction, classification.reasonNoResponse,
       classification.denialSubtype,
-      undefined, undefined, undefined,
+      reviewAction || undefined, reviewInstruction || undefined, undefined,
       classification.jurisdiction_level
     );
 
