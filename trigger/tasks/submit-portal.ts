@@ -146,6 +146,11 @@ export const submitPortal = task({
       });
 
       if (!result || !result.success) {
+        // Approval gate: proposal created, waiting for human — not a failure
+        if (result?.needsApproval) {
+          logger.info("Portal submission blocked — needs approval", { caseId, reason: result.reason });
+          return result;
+        }
         // PDF fallback / not-real-portal handled inside Skyvern service
         if (result?.status === "pdf_form_pending" || result?.status === "not_real_portal") {
           logger.info("Portal handled via alternative path", { caseId, status: result.status });

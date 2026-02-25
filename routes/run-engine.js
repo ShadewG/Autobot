@@ -17,6 +17,7 @@ const router = express.Router();
 const db = require('../services/database');
 const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const logger = require('../services/logger');
+const { emailExecutor } = require('../services/executor-adapter');
 
 // Save Trigger.dev run ID in agent_run metadata for dashboard linking
 async function saveTriggerRunId(runId, triggerRunId) {
@@ -431,7 +432,56 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
-    // APPROVE/ADJUST on old proposals: re-trigger through Trigger.dev
+    // APPROVE/ADJUST on old proposals: send email directly if draft is present
+    const refreshedProposal = await db.getProposalById(proposalId);
+    if ((action === 'APPROVE' || action === 'ADJUST') && refreshedProposal.draft_body_text && refreshedProposal.draft_subject) {
+      await db.updateProposal(proposalId, {
+        human_decision: humanDecision,
+        status: 'DECISION_RECEIVED'
+      });
+
+      const caseData = await db.getCaseById(caseId);
+      if (!caseData.agency_email) {
+        throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
+      }
+
+      const latestInbound = await db.getLatestInboundMessage(caseId);
+      const emailResult = await emailExecutor.sendEmail({
+        to: caseData.agency_email,
+        subject: refreshedProposal.draft_subject,
+        bodyText: refreshedProposal.draft_body_text,
+        bodyHtml: refreshedProposal.draft_body_html || null,
+        headers: latestInbound ? {
+          'In-Reply-To': latestInbound.message_id,
+          'References': latestInbound.message_id
+        } : null,
+        caseId,
+        proposalId,
+        runId: null,
+        actionType: refreshedProposal.action_type,
+        delayMs: 0,
+      });
+
+      if (!emailResult || emailResult.success !== true) {
+        throw new Error(emailResult?.error || 'Email send failed');
+      }
+
+      await db.updateProposal(proposalId, { status: 'EXECUTED' });
+      await db.updateCaseStatus(caseId, 'awaiting_response', { requires_human: false, pause_reason: null });
+      await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
+        case_id: caseId, proposal_id: proposalId, action_type: refreshedProposal.action_type
+      });
+
+      logger.info('Legacy proposal executed via direct email send', { caseId, proposalId, action });
+      return res.json({
+        success: true,
+        message: 'Email sent directly',
+        proposal_id: proposalId,
+        action,
+      });
+    }
+
+    // Fallback: no draft — re-trigger through Trigger.dev to regenerate
     const run = await db.createAgentRunFull({
       case_id: caseId,
       trigger_type: 'resume',
@@ -445,7 +495,6 @@ router.post('/proposals/:id/decision', async (req, res) => {
       status: 'DECISION_RECEIVED'
     });
 
-    // Re-trigger through Trigger.dev (fresh run, old LangGraph checkpoint is gone)
     let handle;
     try {
       if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
@@ -468,7 +517,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
     }
 
     await saveTriggerRunId(run.id, handle.id);
-    logger.info('Legacy proposal re-triggered via Trigger.dev', {
+    logger.info('Legacy proposal re-triggered via Trigger.dev (no draft)', {
       runId: run.id,
       caseId,
       proposalId,

@@ -603,6 +603,46 @@ class PortalAgentServiceSkyvern {
             return { success: true, skipped: true, reason: 'recent_success' };
         }
 
+        // ── Approval gate: require an approved proposal before any portal run ──
+        const approvedProposal = await database.query(
+            `SELECT id, status FROM proposals
+             WHERE case_id = $1
+               AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_FEE_RESPONSE')
+               AND status IN ('APPROVED', 'PENDING_PORTAL', 'EXECUTED')
+               AND created_at > NOW() - INTERVAL '24 hours'
+             ORDER BY created_at DESC LIMIT 1`,
+            [caseData.id]
+        );
+        if (approvedProposal.rows.length === 0) {
+            console.log(`🛑 Portal submission blocked for case ${caseData.id} — no approved proposal found, creating one for review`);
+            try {
+                await database.upsertProposal({
+                    proposalKey: `${caseData.id}:portal_approval:SUBMIT_PORTAL:1`,
+                    caseId: caseData.id,
+                    actionType: 'SUBMIT_PORTAL',
+                    reasoning: [{ step: 'Portal submission requested', detail: `Automatic portal submission blocked — requires human approval. Portal: ${portalUrl}` }],
+                    confidence: 0.8,
+                    requiresHuman: true,
+                    canAutoExecute: false,
+                    draftSubject: `Portal submission: ${caseData.case_name || caseData.agency_name || 'Unknown'}`,
+                    draftBodyText: `Portal URL: ${portalUrl}\n\nThis portal submission was triggered automatically but requires human approval before Skyvern runs.${instructions ? '\n\nInstructions: ' + instructions : ''}`,
+                    status: 'PENDING_APPROVAL'
+                });
+            } catch (proposalErr) {
+                // Dedup constraint — proposal already exists, which is fine
+                console.warn('Could not create approval proposal (may already exist):', proposalErr.message);
+            }
+            await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                substatus: 'Portal submission requires approval',
+                requires_human: true
+            });
+            await database.logActivity('portal_submission_blocked',
+                `Portal submission blocked for case ${caseData.id} — no approved proposal`, {
+                case_id: caseData.id, portal_url: portalUrl
+            });
+            return { success: false, needsApproval: true, reason: 'no_approved_proposal' };
+        }
+
         const runId = uuidv4();
 
         console.log(`🤖 Starting Skyvern workflow for case: ${caseData.case_name}`);

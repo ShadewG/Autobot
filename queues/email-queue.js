@@ -665,7 +665,11 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                     instructions: portalInstructions
                 });
 
-                if (portalResult && portalResult.success) {
+                // Approval gate: proposal created, waiting for human — not a failure
+                if (portalResult && portalResult.needsApproval) {
+                    console.log(`🛑 Portal for case ${caseId} needs approval — proposal created`);
+                    portalHandled = true; // Don't fall through to email fallback
+                } else if (portalResult && portalResult.success) {
                     // Dedup skip — Skyvern service detected already submitted, don't re-update status
                     if (portalResult.skipped) {
                         console.log(`Portal dedup skip for case ${caseId}: ${portalResult.reason}`);
@@ -996,6 +1000,11 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
         });
 
         if (!result || !result.success) {
+            // Approval gate: proposal created, waiting for human — not a failure
+            if (result?.needsApproval) {
+                console.log(`🛑 Portal for case ${caseId} needs approval — proposal created`);
+                return result;
+            }
             // PDF fallback already handled — don't create duplicate proposals
             if (result?.status === 'pdf_form_pending' || result?.status === 'not_real_portal') {
                 console.log(`Portal submission for case ${caseId} handled via ${result.status} — no further action needed`);
