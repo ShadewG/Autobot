@@ -42,7 +42,7 @@ import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
 import { requestsAPI, casesAPI, fetcher, type AgentRun } from "@/lib/api";
 import type { RequestWorkspaceResponse, NextAction, PauseReason, PendingProposal } from "@/lib/types";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
 import {
   ArrowLeft,
   Loader2,
@@ -868,7 +868,7 @@ function RequestDetailContent() {
                           <Send className="h-4 w-4" />
                           Draft Pending Approval
                           <Badge variant="outline" className="text-[10px] ml-auto">
-                            {pending_proposal.action_type.replace(/_/g, " ")}
+                            {ACTION_TYPE_LABELS[pending_proposal.action_type]?.label || pending_proposal.action_type.replace(/_/g, " ")}
                           </Badge>
                         </CardTitle>
                       </CardHeader>
@@ -885,7 +885,7 @@ function RequestDetailContent() {
                         )}
                         {Array.isArray(pending_proposal.reasoning) && pending_proposal.reasoning.length > 0 && (
                           <ul className="text-xs text-muted-foreground space-y-1">
-                            {pending_proposal.reasoning.map((r, i) => (
+                            {formatReasoning(pending_proposal.reasoning, 5).map((r, i) => (
                               <li key={i} className="flex gap-1.5">
                                 <span className="text-blue-400 shrink-0">•</span>
                                 <span>{r}</span>

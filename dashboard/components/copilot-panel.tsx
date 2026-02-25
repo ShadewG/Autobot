@@ -16,7 +16,7 @@ import type {
   AgencySummary,
   ScopeItem,
 } from "@/lib/types";
-import { formatCurrency, formatDate } from "@/lib/utils";
+import { formatCurrency, formatDate, formatReasoning } from "@/lib/utils";
 import {
   AlertTriangle,
   DollarSign,
@@ -97,7 +97,7 @@ export function CopilotPanel({
 
               {/* Reasoning */}
               <ul className="text-xs text-muted-foreground space-y-1">
-                {nextAction.reasoning.map((reason, i) => (
+                {formatReasoning(nextAction.reasoning, 5).map((reason, i) => (
                   <li key={i}>• {reason}</li>
                 ))}
               </ul>

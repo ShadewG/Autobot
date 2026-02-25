@@ -635,7 +635,7 @@ class PortalAgentServiceSkyvern {
                             caseData.id,
                             'SUBMIT_PORTAL',
                             `${caseData.id}:portal_gate:SUBMIT_PORTAL:${Date.now()}`,
-                            JSON.stringify([{ step: 'Portal submission requested', detail: `Automatic portal submission blocked — requires human approval. Portal: ${portalUrl}` }]),
+                            JSON.stringify(['Automatic portal submission requires human approval before running', `Portal: ${portalUrl}`]),
                             0.8,
                             true,
                             false,
@@ -1114,12 +1114,15 @@ class PortalAgentServiceSkyvern {
                         proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
                         caseId: caseData.id,
                         actionType: 'SUBMIT_PORTAL',
-                        reasoning: [{ step: 'Automated portal submission failed', detail: timeoutDetail }],
+                        reasoning: [
+                            `Automated portal submission failed: ${timeoutDetail}`,
+                            'Approve to retry automated submission, or dismiss to handle manually'
+                        ],
                         confidence: 0,
                         requiresHuman: true,
                         canAutoExecute: false,
-                        draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
-                        draftBodyText: `Portal: ${portalUrl}\nError: ${timeoutDetail}`,
+                        draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
+                        draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${timeoutDetail}\n\nApproving will retry the automated portal submission.`,
                         status: 'PENDING_APPROVAL'
                     });
                 } catch (proposalErr) {
@@ -1354,12 +1357,15 @@ class PortalAgentServiceSkyvern {
                     proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
                     caseId: caseData.id,
                     actionType: 'SUBMIT_PORTAL',
-                    reasoning: [{ step: 'Automated portal submission failed', detail: failureReason }],
+                    reasoning: [
+                        `Automated portal submission failed: ${failureReason}`,
+                        'Approve to retry automated submission, or dismiss to handle manually'
+                    ],
                     confidence: 0,
                     requiresHuman: true,
                     canAutoExecute: false,
-                    draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
-                    draftBodyText: `Portal: ${portalUrl}\nError: ${failureReason}`,
+                    draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
+                    draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${failureReason}\n\nApproving will retry the automated portal submission.`,
                     status: 'PENDING_APPROVAL'
                 });
             } catch (proposalErr) {
@@ -1428,12 +1434,15 @@ class PortalAgentServiceSkyvern {
                     proposalKey: `${caseData.id}:portal_failure:SUBMIT_PORTAL:1`,
                     caseId: caseData.id,
                     actionType: 'SUBMIT_PORTAL',
-                    reasoning: [{ step: 'Automated portal submission failed', detail: message }],
+                    reasoning: [
+                        `Automated portal submission failed: ${message}`,
+                        'Approve to retry automated submission, or dismiss to handle manually'
+                    ],
                     confidence: 0,
                     requiresHuman: true,
                     canAutoExecute: false,
-                    draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
-                    draftBodyText: `Portal: ${portalUrl}\nError: ${message}`,
+                    draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
+                    draftBodyText: `Portal URL: ${portalUrl}\nPrevious attempt failed: ${message}\n\nApproving will retry the automated portal submission.`,
                     status: 'PENDING_APPROVAL'
                 });
                 await notionService.syncStatusToNotion(caseData.id);
@@ -1503,8 +1512,8 @@ class PortalAgentServiceSkyvern {
                 proposalKey: `${caseData.id}:portal_fallback:SEND_PDF_EMAIL:1`,
                 caseId: caseData.id, actionType: 'SEND_PDF_EMAIL',
                 reasoning: [
-                    { step: 'Portal submission failed', detail: reason },
-                    { step: 'Email fallback sent', detail: `Sent to ${targetEmail}` }
+                    `Portal submission failed: ${reason}`,
+                    `Email fallback sent to ${targetEmail}`
                 ],
                 confidence: 0.9, requiresHuman: false, canAutoExecute: true,
                 draftSubject, draftBodyText: pdfResult.draftBodyText, status: 'EXECUTED'
@@ -1630,8 +1639,8 @@ class PortalAgentServiceSkyvern {
                                 caseId: caseData.id,
                                 actionType: 'SEND_PDF_EMAIL',
                                 reasoning: [
-                                    { step: 'Portal URL is not a real online form', detail: reason },
-                                    { step: 'PDF form filled and auto-sent via email', detail: `Sent to ${targetEmail}` }
+                                    `Portal URL is not a real online form: ${reason}`,
+                                    `PDF form filled and auto-sent to ${targetEmail}`
                                 ],
                                 confidence: 0.9,
                                 requiresHuman: false,
@@ -1663,9 +1672,8 @@ class PortalAgentServiceSkyvern {
                     caseId: caseData.id,
                     actionType: 'SEND_PDF_EMAIL',
                     reasoning: [
-                        { step: 'Portal URL is not a real online form (researched, no alternative found)', detail: reason },
-                        { step: 'PDF form filled automatically', detail: `Attachment ID: ${pdfResult.attachmentId}` },
-                        { step: 'No email address on file', detail: 'Needs human to find agency email before sending' }
+                        `Portal URL is not a real online form: ${reason}`,
+                        'PDF form filled automatically — needs human to find agency email and send'
                     ],
                     confidence: 0.7,
                     requiresHuman: true,

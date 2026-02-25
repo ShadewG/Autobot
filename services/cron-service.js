@@ -565,14 +565,14 @@ class CronService {
                     caseId: caseData.id,
                     actionType: 'SUBMIT_PORTAL',
                     reasoning: [
-                        { step: 'AI detected portal redirect', detail: analysis.suggested_action || 'Agency directed to portal' },
-                        { step: 'Deadline passed', detail: `${daysOverdue} days overdue` }
+                        `Agency directed to portal: ${analysis.suggested_action || 'Portal redirect detected'}`,
+                        `Response deadline ${daysOverdue} days overdue`
                     ],
                     confidence: analysis.confidence_score || 0,
                     requiresHuman: true,
                     canAutoExecute: false,
-                    draftSubject: `Portal submission needed: ${caseData.case_name}`,
-                    draftBodyText: `Agency redirected to portal. ${caseData.portal_url ? 'Portal: ' + caseData.portal_url : 'No portal URL on file.'}`,
+                    draftSubject: `Portal submission: ${caseData.case_name}`.substring(0, 200),
+                    draftBodyText: `Agency redirected to portal.\n${caseData.portal_url ? 'Portal URL: ' + caseData.portal_url : 'No portal URL on file — needs research.'}`,
                     status: 'PENDING_APPROVAL'
                 });
                 await db.updateCaseStatus(caseData.id, 'needs_human_review', {
@@ -633,16 +633,19 @@ class CronService {
                         caseId: caseData.id,
                         actionType: 'SUBMIT_PORTAL',
                         reasoning: [
-                            { step: 'Portal submission timed out', detail: 'Stuck in portal_in_progress for >60 min' },
-                            { step: 'Skyvern error', detail: portalError }
+                            'Automated portal submission timed out after 60+ minutes',
+                            `Error: ${portalError}`,
+                            'Approve to retry automated submission, or dismiss to handle manually'
                         ],
                         confidence: 0, requiresHuman: true, canAutoExecute: false,
-                        draftSubject: `Manual portal submission needed: ${caseData.case_name}`,
+                        draftSubject: `Portal retry: ${caseData.case_name}`.substring(0, 200),
                         draftBodyText: [
-                            `Portal: ${caseData.portal_url || 'N/A'}`,
-                            `Error: ${portalError}`,
-                            recordingUrl ? `Recording: ${recordingUrl}` : null,
-                            taskUrl ? `Task: ${taskUrl}` : null
+                            `Portal URL: ${caseData.portal_url || 'N/A'}`,
+                            `Previous attempt failed: ${portalError}`,
+                            '',
+                            'Approving will retry the automated portal submission.',
+                            recordingUrl ? `Last attempt recording: ${recordingUrl}` : null,
+                            taskUrl ? `Last attempt task: ${taskUrl}` : null
                         ].filter(Boolean).join('\n'),
                         status: 'PENDING_APPROVAL'
                     });

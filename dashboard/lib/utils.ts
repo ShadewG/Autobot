@@ -111,3 +111,51 @@ export const AUTOPILOT_LABELS: Record<string, string> = {
   SUPERVISED: 'Supervised',
   MANUAL: 'Manual',
 };
+
+// Normalize reasoning items to display strings.
+// Backend stores reasoning as either string[] or {step, detail}[] objects.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function formatReasoningItem(item: any): string {
+  if (typeof item === 'string') return item;
+  if (item && typeof item === 'object') {
+    const step = item.step || '';
+    const detail = item.detail || '';
+    if (step && detail) return `${step}: ${detail}`;
+    return step || detail || JSON.stringify(item);
+  }
+  return String(item);
+}
+
+// Normalize an entire reasoning array, capping at maxItems (from the end).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function formatReasoning(reasoning: any[] | null | undefined, maxItems?: number): string[] {
+  if (!Array.isArray(reasoning) || reasoning.length === 0) return [];
+  const formatted = reasoning.map(formatReasoningItem);
+  if (maxItems && formatted.length > maxItems) {
+    return formatted.slice(-maxItems);
+  }
+  return formatted;
+}
+
+// Action type display config — shared across queue page, detail page, panels
+export const ACTION_TYPE_LABELS: Record<string, { label: string; color: string }> = {
+  SEND_INITIAL_REQUEST: { label: "Initial Request", color: "bg-blue-500/10 text-blue-400" },
+  SEND_FOLLOWUP: { label: "Follow-up", color: "bg-purple-500/10 text-purple-400" },
+  SEND_REBUTTAL: { label: "Rebuttal", color: "bg-red-500/10 text-red-400" },
+  SEND_CLARIFICATION: { label: "Clarification", color: "bg-orange-500/10 text-orange-400" },
+  SEND_APPEAL: { label: "Appeal", color: "bg-orange-500/10 text-orange-400" },
+  SEND_FEE_WAIVER_REQUEST: { label: "Fee Waiver", color: "bg-amber-500/10 text-amber-400" },
+  SEND_STATUS_UPDATE: { label: "Status Update", color: "bg-sky-500/10 text-sky-400" },
+  RESPOND_PARTIAL_APPROVAL: { label: "Partial Approval", color: "bg-teal-500/10 text-teal-400" },
+  ACCEPT_FEE: { label: "Accept Fee", color: "bg-green-500/10 text-green-400" },
+  NEGOTIATE_FEE: { label: "Negotiate Fee", color: "bg-amber-500/10 text-amber-400" },
+  DECLINE_FEE: { label: "Decline Fee", color: "bg-red-500/10 text-red-400" },
+  SUBMIT_PORTAL: { label: "Portal Submission", color: "bg-cyan-500/10 text-cyan-400" },
+  SEND_PDF_EMAIL: { label: "PDF Email", color: "bg-indigo-500/10 text-indigo-400" },
+  ESCALATE: { label: "Escalate", color: "bg-yellow-500/10 text-yellow-400" },
+  CLOSE_CASE: { label: "Close Case", color: "bg-gray-500/10 text-gray-400" },
+  WITHDRAW: { label: "Withdraw", color: "bg-red-500/10 text-red-400" },
+  RESEARCH_AGENCY: { label: "Research Agency", color: "bg-violet-500/10 text-violet-400" },
+  REFORMULATE_REQUEST: { label: "Reformulate", color: "bg-fuchsia-500/10 text-fuchsia-400" },
+  NONE: { label: "No Action", color: "bg-gray-500/10 text-gray-400" },
+};

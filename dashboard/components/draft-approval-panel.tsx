@@ -13,7 +13,7 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
-import { cn } from "@/lib/utils";
+import { cn, formatReasoning } from "@/lib/utils";
 import type { NextAction } from "@/lib/types";
 import {
   Send,
@@ -129,12 +129,21 @@ function buildActionPreview(
 const ACTION_TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   SEND_EMAIL: { label: "Send Email", icon: <Mail className="h-4 w-4" />, color: "text-blue-400" },
   SEND_REPLY: { label: "Send Reply", icon: <Mail className="h-4 w-4" />, color: "text-blue-400" },
+  SEND_INITIAL_REQUEST: { label: "Initial Request", icon: <Send className="h-4 w-4" />, color: "text-blue-400" },
+  SEND_FOLLOWUP: { label: "Follow-up", icon: <Clock className="h-4 w-4" />, color: "text-purple-400" },
+  SEND_REBUTTAL: { label: "Rebuttal", icon: <Mail className="h-4 w-4" />, color: "text-red-400" },
+  SEND_CLARIFICATION: { label: "Clarification", icon: <Mail className="h-4 w-4" />, color: "text-orange-400" },
+  SEND_APPEAL: { label: "Appeal", icon: <Scale className="h-4 w-4" />, color: "text-orange-400" },
   ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-green-400" },
   NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-amber-400" },
+  DECLINE_FEE: { label: "Decline Fee", icon: <DollarSign className="h-4 w-4" />, color: "text-red-400" },
+  SUBMIT_PORTAL: { label: "Portal Submission", icon: <Globe className="h-4 w-4" />, color: "text-cyan-400" },
+  SEND_PDF_EMAIL: { label: "PDF Email", icon: <Mail className="h-4 w-4" />, color: "text-indigo-400" },
   APPEAL: { label: "Appeal", icon: <Scale className="h-4 w-4" />, color: "text-orange-400" },
   NARROW_SCOPE: { label: "Narrow & Retry", icon: <Edit className="h-4 w-4" />, color: "text-purple-400" },
   FOLLOW_UP: { label: "Follow Up", icon: <Clock className="h-4 w-4" />, color: "text-muted-foreground" },
   WITHDRAWAL: { label: "Withdraw", icon: <Trash2 className="h-4 w-4" />, color: "text-red-400" },
+  ESCALATE: { label: "Escalate", icon: <AlertTriangle className="h-4 w-4" />, color: "text-yellow-400" },
 };
 
 export function DraftApprovalPanel({
@@ -247,7 +256,7 @@ export function DraftApprovalPanel({
           <div>
             <p className="text-sm font-medium mb-2">Why this action?</p>
             <ul className="text-sm space-y-1">
-              {action.reasoning.map((r, i) => (
+              {formatReasoning(action.reasoning, 10).map((r, i) => (
                 <li key={i} className="flex items-start gap-2">
                   <span className="text-muted-foreground">•</span>
                   <span>{r}</span>

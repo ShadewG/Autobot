@@ -21,7 +21,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { fetcher, proposalsAPI, type ProposalListItem, type ProposalsListResponse } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
 import {
   CheckCircle,
   XCircle,
@@ -38,19 +38,22 @@ import {
   Send,
   MessageSquare,
   RefreshCw,
+  Globe,
 } from "lucide-react";
 import Link from "next/link";
 
-// Action type labels and icons
-const ACTION_TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
-  SEND_INITIAL_REQUEST: { label: "Initial Request", icon: <Send className="h-4 w-4" />, color: "bg-blue-500/10 text-blue-400" },
-  SEND_FOLLOWUP: { label: "Follow-up", icon: <Clock className="h-4 w-4" />, color: "bg-purple-500/10 text-purple-400" },
-  SEND_REBUTTAL: { label: "Rebuttal", icon: <MessageSquare className="h-4 w-4" />, color: "bg-red-500/10 text-red-400" },
-  SEND_CLARIFICATION: { label: "Clarification", icon: <FileQuestion className="h-4 w-4" />, color: "bg-orange-500/10 text-orange-400" },
-  ACCEPT_FEE: { label: "Accept Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-green-500/10 text-green-400" },
-  NEGOTIATE_FEE: { label: "Negotiate Fee", icon: <DollarSign className="h-4 w-4" />, color: "bg-amber-500/10 text-amber-400" },
-  DECLINE_FEE: { label: "Decline Fee", icon: <XCircle className="h-4 w-4" />, color: "bg-red-500/10 text-red-400" },
-  ESCALATE: { label: "Escalate", icon: <AlertTriangle className="h-4 w-4" />, color: "bg-yellow-500/10 text-yellow-400" },
+// Action type icons (labels/colors come from shared ACTION_TYPE_LABELS)
+const ACTION_TYPE_ICONS: Record<string, React.ReactNode> = {
+  SEND_INITIAL_REQUEST: <Send className="h-4 w-4" />,
+  SEND_FOLLOWUP: <Clock className="h-4 w-4" />,
+  SEND_REBUTTAL: <MessageSquare className="h-4 w-4" />,
+  SEND_CLARIFICATION: <FileQuestion className="h-4 w-4" />,
+  SEND_APPEAL: <AlertTriangle className="h-4 w-4" />,
+  ACCEPT_FEE: <DollarSign className="h-4 w-4" />,
+  NEGOTIATE_FEE: <DollarSign className="h-4 w-4" />,
+  DECLINE_FEE: <XCircle className="h-4 w-4" />,
+  SUBMIT_PORTAL: <Globe className="h-4 w-4" />,
+  ESCALATE: <AlertTriangle className="h-4 w-4" />,
 };
 
 // Pause reason labels
@@ -96,10 +99,13 @@ function ProposalCard({
   const [adjustInstruction, setAdjustInstruction] = useState("");
   const [showWithdraw, setShowWithdraw] = useState(false);
 
-  const actionConfig = ACTION_TYPE_CONFIG[proposal.action_type] || {
-    label: proposal.action_type,
-    icon: <Send className="h-4 w-4" />,
+  const labelConfig = ACTION_TYPE_LABELS[proposal.action_type] || {
+    label: proposal.action_type.replace(/_/g, " "),
     color: "bg-muted text-muted-foreground",
+  };
+  const actionConfig = {
+    ...labelConfig,
+    icon: ACTION_TYPE_ICONS[proposal.action_type] || <Send className="h-4 w-4" />,
   };
 
   const handleApprove = () => onDecision(proposal.id, 'APPROVE');
@@ -201,13 +207,16 @@ function ProposalCard({
         </Collapsible>
 
         {/* Reasoning */}
-        {proposal.reasoning && proposal.reasoning.length > 0 && (
-          <div className="text-xs text-muted-foreground">
-            <span className="font-medium">Reasoning: </span>
-            {proposal.reasoning.slice(0, 2).join(" • ")}
-            {proposal.reasoning.length > 2 && ` (+${proposal.reasoning.length - 2} more)`}
-          </div>
-        )}
+        {proposal.reasoning && proposal.reasoning.length > 0 && (() => {
+          const items = formatReasoning(proposal.reasoning, 3);
+          return (
+            <div className="text-xs text-muted-foreground">
+              <span className="font-medium">Reasoning: </span>
+              {items.slice(0, 2).join(" \u2022 ")}
+              {items.length > 2 && ` (+${items.length - 2} more)`}
+            </div>
+          );
+        })()}
 
         {/* Actions */}
         <div className="flex items-center gap-2 pt-2 border-t">

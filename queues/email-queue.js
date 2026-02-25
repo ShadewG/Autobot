@@ -1084,12 +1084,15 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
                 proposalKey: `${caseId}:portal_failure:SUBMIT_PORTAL:1`,
                 caseId: caseId,
                 actionType: 'SUBMIT_PORTAL',
-                reasoning: [{ step: 'Automated portal submission failed', detail: error.message }],
+                reasoning: [
+                    `Automated portal submission failed: ${error.message}`,
+                    'Approve to retry automated submission, or dismiss to handle manually'
+                ],
                 confidence: 0,
                 requiresHuman: true,
                 canAutoExecute: false,
-                draftSubject: `Manual portal submission needed: ${caseName}`,
-                draftBodyText: `Portal: ${portalUrl || 'N/A'}\nError: ${error.message}`,
+                draftSubject: `Portal retry: ${caseName}`.substring(0, 200),
+                draftBodyText: `Portal URL: ${portalUrl || 'N/A'}\nPrevious attempt failed: ${error.message}\n\nApproving will retry the automated portal submission.`,
                 status: 'PENDING_APPROVAL'
             });
             await notionService.syncStatusToNotion(caseId);
