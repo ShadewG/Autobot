@@ -69,8 +69,8 @@ const GATE_CONFIG: Record<PauseReason, GateConfig> = {
 const PORTAL_FAILURE_CONFIG: GateConfig = {
   label: "Portal Issue",
   icon: <Globe className="h-3.5 w-3.5" />,
-  bgColor: "bg-cyan-100",
-  textColor: "text-cyan-800",
+  bgColor: "bg-cyan-500/15",
+  textColor: "text-cyan-300",
 };
 
 export function GateChip({ reason, costAmount, className }: GateChipProps) {

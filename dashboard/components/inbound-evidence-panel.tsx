@@ -83,7 +83,7 @@ const CLASSIFICATION_CONFIG: Record<string, { color: string; icon: React.ReactNo
   RECORDS_PROVIDED: { color: "bg-green-500/15 text-green-300", icon: <FileText className="h-3 w-3" /> },
   CLARIFICATION_REQUEST: { color: "bg-purple-500/15 text-purple-300", icon: <Mail className="h-3 w-3" /> },
   EXTENSION_NOTICE: { color: "bg-yellow-500/15 text-yellow-300", icon: <Clock className="h-3 w-3" /> },
-  PORTAL_INSTRUCTION: { color: "bg-cyan-100 text-cyan-800", icon: <ExternalLink className="h-3 w-3" /> },
+  PORTAL_INSTRUCTION: { color: "bg-cyan-500/15 text-cyan-300", icon: <ExternalLink className="h-3 w-3" /> },
   NO_RECORDS: { color: "bg-muted text-muted-foreground", icon: <FileText className="h-3 w-3" /> },
   OTHER: { color: "bg-muted text-muted-foreground", icon: <Mail className="h-3 w-3" /> },
 };
@@ -327,12 +327,12 @@ export function InboundEvidencePanel({
 
           {/* Portal Instructions */}
           {analysis?.portal_instructions && (
-            <div className="mt-3 bg-cyan-50 border border-cyan-200 rounded p-2">
-              <p className="text-xs text-cyan-700 font-medium flex items-center gap-1 mb-1">
+            <div className="mt-3 bg-cyan-500/10 border border-cyan-700/50 rounded p-2">
+              <p className="text-xs text-cyan-300 font-medium flex items-center gap-1 mb-1">
                 <ExternalLink className="h-3 w-3" />
                 Portal Instructions
               </p>
-              <p className="text-sm text-cyan-800">{analysis.portal_instructions}</p>
+              <p className="text-sm text-cyan-300">{analysis.portal_instructions}</p>
             </div>
           )}
 

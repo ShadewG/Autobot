@@ -10,7 +10,7 @@ import { AtRiskBadge } from "./at-risk-badge";
 import type { RequestListItem } from "@/lib/types";
 import type { TableVariant } from "./request-table";
 import { formatRelativeTime, truncate, cn } from "@/lib/utils";
-import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle } from "lucide-react";
+import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle, CheckCircle2, XCircle, FileText } from "lucide-react";
 
 interface RequestRowProps {
   request: RequestListItem;
@@ -69,6 +69,36 @@ function formatDueWithSeverity(request: RequestListItem): {
   };
 }
 
+// Outcome badge for completed cases
+function OutcomeBadge({ outcomeType }: { outcomeType: string | null }) {
+  const config = (() => {
+    switch (outcomeType) {
+      case "RECORDS_PROVIDED":
+        return { label: "Records", icon: FileText, className: "text-emerald-400 border-emerald-700/50 bg-emerald-500/10" };
+      case "PARTIAL_RECORDS":
+        return { label: "Partial", icon: FileText, className: "text-yellow-400 border-yellow-700/50 bg-yellow-500/10" };
+      case "DENIED":
+        return { label: "Denied", icon: XCircle, className: "text-red-400 border-red-700/50 bg-red-500/10" };
+      case "WITHDRAWN":
+        return { label: "Withdrawn", icon: XCircle, className: "text-slate-400 border-slate-700/50 bg-slate-500/10" };
+      case "NO_RECORDS":
+        return { label: "No Records", icon: XCircle, className: "text-orange-400 border-orange-700/50 bg-orange-500/10" };
+      case "FEE_DECLINED":
+        return { label: "Fee Declined", icon: DollarSign, className: "text-orange-400 border-orange-700/50 bg-orange-500/10" };
+      default:
+        return { label: "Closed", icon: CheckCircle2, className: "text-emerald-400 border-emerald-700/50 bg-emerald-500/10" };
+    }
+  })();
+
+  const Icon = config.icon;
+  return (
+    <Badge variant="outline" className={cn("gap-1", config.className)}>
+      <Icon className="h-3 w-3" />
+      {config.label}
+    </Badge>
+  );
+}
+
 export function RequestRow({
   request,
   variant,
@@ -78,6 +108,7 @@ export function RequestRow({
 }: RequestRowProps) {
   const router = useRouter();
   const isPaused = variant === "paused";
+  const isCompleted = variant === "completed";
 
   const handleClick = () => {
     router.push(`/requests/detail?id=${request.id}`);
@@ -135,7 +166,7 @@ export function RequestRow({
     <TableRow
       className={cn(
         "cursor-pointer transition-colors",
-        isPaused && "bg-amber-500/10/50 hover:bg-amber-500/15/50"
+        isPaused && "bg-amber-500/10 hover:bg-amber-500/15"
       )}
       onClick={handleClick}
     >
@@ -165,8 +196,12 @@ export function RequestRow({
         </div>
       </TableCell>
 
-      {/* Gate - mandatory for paused, shows "Unknown" if missing */}
-      {isPaused && (
+      {/* Gate for paused, Outcome for completed, Stage for others */}
+      {isCompleted ? (
+        <TableCell>
+          <OutcomeBadge outcomeType={request.outcome_type} />
+        </TableCell>
+      ) : isPaused ? (
         <TableCell>
           {request.pause_reason ? (
             <GateChip
@@ -180,10 +215,7 @@ export function RequestRow({
             </Badge>
           )}
         </TableCell>
-      )}
-
-      {/* Stage - only for non-paused rows */}
-      {!isPaused && (
+      ) : (
         <TableCell>
           <StageChip
             status={request.status}
@@ -194,17 +226,32 @@ export function RequestRow({
         </TableCell>
       )}
 
-      {/* Inbound */}
-      <TableCell className={cn(
-        "text-sm",
-        !request.last_inbound_at && "text-muted-foreground"
-      )}>
-        {inboundDisplay}
-      </TableCell>
+      {/* Inbound or Summary for completed */}
+      {isCompleted ? (
+        <TableCell>
+          <span className="text-xs text-muted-foreground line-clamp-2">
+            {request.outcome_summary || request.substatus || "Closed"}
+          </span>
+        </TableCell>
+      ) : (
+        <TableCell className={cn(
+          "text-sm",
+          !request.last_inbound_at && "text-muted-foreground"
+        )}>
+          {inboundDisplay}
+        </TableCell>
+      )}
 
-      {/* Due with type chip + overdue severity */}
+      {/* Due / Closed date */}
       <TableCell>
-        {dueInfo.text ? (
+        {isCompleted && request.closed_at ? (
+          <span className="text-sm text-muted-foreground">
+            {new Date(request.closed_at).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            })}
+          </span>
+        ) : dueInfo.text ? (
           <div className="flex flex-col gap-0.5">
             <div className="flex items-center gap-1.5">
               {dueInfo.typeChip && (

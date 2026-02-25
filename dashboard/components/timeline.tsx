@@ -124,14 +124,14 @@ const eventColors: Record<string, string> = {
   FOLLOWUP_TRIGGERED: "bg-orange-500/15 text-orange-300",
 
   // Portal tasks
-  PORTAL_TASK: "bg-cyan-100 text-cyan-800",
-  PORTAL_TASK_CREATED: "bg-cyan-100 text-cyan-800",
-  PORTAL_TASK_COMPLETED: "bg-teal-100 text-teal-800",
+  PORTAL_TASK: "bg-cyan-500/15 text-cyan-300",
+  PORTAL_TASK_CREATED: "bg-cyan-500/15 text-cyan-300",
+  PORTAL_TASK_COMPLETED: "bg-teal-500/15 text-teal-300",
 
   // Agent/Proposal events
   GATE_TRIGGERED: "bg-amber-500/15 text-amber-300",
-  PROPOSAL_QUEUED: "bg-indigo-100 text-indigo-800",
-  PROPOSAL_CREATED: "bg-indigo-100 text-indigo-800",
+  PROPOSAL_QUEUED: "bg-indigo-500/15 text-indigo-300",
+  PROPOSAL_CREATED: "bg-indigo-500/15 text-indigo-300",
   PROPOSAL_APPROVED: "bg-green-500/15 text-green-300",
   PROPOSAL_DISMISSED: "bg-muted text-muted-foreground",
   PROPOSAL_ADJUSTED: "bg-blue-500/15 text-blue-300",

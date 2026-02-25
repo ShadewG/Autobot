@@ -10,7 +10,7 @@ import {
 import { RequestRow } from "./request-row";
 import type { RequestListItem } from "@/lib/types";
 
-export type TableVariant = "paused" | "waiting" | "scheduled";
+export type TableVariant = "paused" | "waiting" | "scheduled" | "completed";
 
 interface RequestTableProps {
   requests: RequestListItem[];
@@ -36,6 +36,7 @@ export function RequestTable({
   }
 
   const isPaused = variant === "paused";
+  const isCompleted = variant === "completed";
 
   return (
     <Table>
@@ -43,14 +44,21 @@ export function RequestTable({
         <TableRow>
           <TableHead className="w-[70px]">ID</TableHead>
           <TableHead className="min-w-[220px]">Subject / Agency</TableHead>
-          {/* Gate for paused, Stage for non-paused */}
-          {isPaused ? (
+          {isCompleted ? (
+            <TableHead className="w-[130px]">Outcome</TableHead>
+          ) : isPaused ? (
             <TableHead className="w-[130px]">Gate</TableHead>
           ) : (
             <TableHead className="w-[110px]">Stage</TableHead>
           )}
-          <TableHead className="w-[90px]">Inbound</TableHead>
-          <TableHead className="w-[130px]">Due</TableHead>
+          {isCompleted ? (
+            <TableHead className="min-w-[200px]">Summary</TableHead>
+          ) : (
+            <TableHead className="w-[90px]">Inbound</TableHead>
+          )}
+          <TableHead className={isCompleted ? "w-[100px]" : "w-[130px]"}>
+            {isCompleted ? "Closed" : "Due"}
+          </TableHead>
           <TableHead className="w-[80px]">Cost</TableHead>
           <TableHead className="w-[100px] text-right">Action</TableHead>
         </TableRow>

@@ -26,6 +26,10 @@ export interface RequestListItem {
   cost_status: CostStatus;
   cost_amount: number | null;
   at_risk: boolean;
+  outcome_type: string | null;
+  outcome_summary: string | null;
+  closed_at: string | null;
+  substatus: string | null;
 }
 
 // Scope item with availability status
@@ -94,7 +98,6 @@ export interface RequestDetail extends RequestListItem {
   notion_url: string | null;
   // Human review fields
   review_reason?: ReviewReason;
-  substatus?: string;
 }
 
 // Timeline Event for the timeline column
@@ -385,7 +388,9 @@ export interface RequestsListResponse {
   count: number;
   paused_count: number;
   ongoing_count: number;
+  completed_count: number;
   requests: RequestListItem[];
+  completed: RequestListItem[];
 }
 
 export interface RequestWorkspaceResponse {

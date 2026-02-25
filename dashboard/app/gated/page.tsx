@@ -21,7 +21,7 @@ import {
   type AgentRun,
   type ProposalListItem,
 } from "@/lib/api";
-import { formatDate, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
   Loader2,
   CheckCircle,
@@ -67,8 +67,7 @@ export default function GatedInboxPage() {
 
   const runs = useMemo(() => {
     const all = runsData?.runs || [];
-    // Real runs first, then simulated
-    return all.sort((a, b) => {
+    return [...all].sort((a, b) => {
       const aIsSim = a.trigger_type?.toLowerCase().includes("simulated") || a.trigger_type?.toLowerCase().includes("test");
       const bIsSim = b.trigger_type?.toLowerCase().includes("simulated") || b.trigger_type?.toLowerCase().includes("test");
       if (aIsSim && !bIsSim) return 1;
@@ -77,7 +76,10 @@ export default function GatedInboxPage() {
     });
   }, [runsData]);
 
-  const selectedRun = runs[currentIndex] || null;
+  // Clamp index when runs shrink (e.g. after approval removes an item)
+  const safeIndex = runs.length === 0 ? 0 : Math.min(currentIndex, runs.length - 1);
+  if (safeIndex !== currentIndex) setCurrentIndex(safeIndex);
+  const selectedRun = runs[safeIndex] || null;
 
   // Fetch proposal for current run
   const { data: proposalData } = useSWR<{ success: boolean; proposal: ProposalListItem }>(

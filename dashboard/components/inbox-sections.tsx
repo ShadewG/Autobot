@@ -13,13 +13,14 @@ import {
 import { RequestTable } from "./request-table";
 import { GATE_TYPE_LABELS } from "./gate-chip";
 import type { RequestListItem, PauseReason } from "@/lib/types";
-import { AlertCircle, Clock, CalendarClock, Filter, ChevronDown } from "lucide-react";
+import { AlertCircle, Clock, CalendarClock, Filter, ChevronDown, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface InboxSectionsProps {
   paused: RequestListItem[];
   waiting: RequestListItem[];
   scheduled: RequestListItem[];
+  completed: RequestListItem[];
   onApprove: (id: string) => void;
   onAdjust: (id: string) => void;
   onSnooze: (id: string) => void;
@@ -29,10 +30,12 @@ export function InboxSections({
   paused,
   waiting,
   scheduled,
+  completed,
   onApprove,
   onAdjust,
   onSnooze,
 }: InboxSectionsProps) {
+  const [showCompleted, setShowCompleted] = useState(false);
   // Filter state
   const [gateFilters, setGateFilters] = useState<Set<PauseReason>>(new Set());
   const [showOnlyOverdue, setShowOnlyOverdue] = useState(false);
@@ -173,7 +176,7 @@ export function InboxSections({
       </div>
 
       {/* Paused Section */}
-      <Card className="border-amber-700/50 bg-amber-500/10/30">
+      <Card className="border-amber-700/50 bg-amber-500/10">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-lg">
             <AlertCircle className="h-5 w-5 text-amber-400" />
@@ -216,6 +219,32 @@ export function InboxSections({
           <CardContent>
             <RequestTable requests={filteredScheduled} variant="scheduled" />
           </CardContent>
+        </Card>
+      )}
+
+      {/* Completed Section - collapsed by default */}
+      {completed.length > 0 && (
+        <Card className="border-emerald-700/30 bg-emerald-500/5">
+          <CardHeader className="pb-3">
+            <CardTitle
+              className="flex items-center gap-2 text-lg cursor-pointer select-none"
+              onClick={() => setShowCompleted(!showCompleted)}
+            >
+              <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+              Completed ({completed.length})
+              <ChevronDown
+                className={cn(
+                  "h-4 w-4 text-muted-foreground transition-transform",
+                  showCompleted && "rotate-180"
+                )}
+              />
+            </CardTitle>
+          </CardHeader>
+          {showCompleted && (
+            <CardContent>
+              <RequestTable requests={completed} variant="completed" />
+            </CardContent>
+          )}
         </Card>
       )}
     </div>

@@ -190,6 +190,7 @@ export default function RequestsPage() {
           paused={paused}
           waiting={waiting}
           scheduled={scheduled}
+          completed={data?.completed || []}
           onApprove={handleApprove}
           onAdjust={handleAdjust}
           onSnooze={handleSnooze}

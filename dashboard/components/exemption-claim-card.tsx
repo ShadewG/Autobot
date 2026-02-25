@@ -81,7 +81,7 @@ Draft a response that respectfully challenges this exemption and requests the re
   };
 
   return (
-    <Card className={cn("border-amber-700/50 bg-amber-500/10/50", className)}>
+    <Card className={cn("border-amber-700/50 bg-amber-500/10", className)}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex items-center gap-2 text-amber-300">
           <AlertTriangle className="h-4 w-4" />

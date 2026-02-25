@@ -233,10 +233,10 @@ export function DraftApprovalPanel({
 
         {/* Portal Agency Notice */}
         {isPortalAgency && (
-          <Alert className="border-cyan-200 bg-cyan-50">
-            <Globe className="h-4 w-4 text-cyan-600" />
-            <AlertTitle className="text-sm text-cyan-700">Portal Agency</AlertTitle>
-            <AlertDescription className="text-xs text-cyan-600">
+          <Alert className="border-cyan-700/50 bg-cyan-500/10">
+            <Globe className="h-4 w-4 text-cyan-400" />
+            <AlertTitle className="text-sm text-cyan-300">Portal Agency</AlertTitle>
+            <AlertDescription className="text-xs text-cyan-400">
               This agency requires portal submission. A portal task will be created instead of sending email.
             </AlertDescription>
           </Alert>
