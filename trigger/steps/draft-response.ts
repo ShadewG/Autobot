@@ -241,6 +241,34 @@ export async function draftResponse(
     }
 
     case "RESEARCH_AGENCY": {
+      // Check if research step already stored referral data (from agency redirect)
+      let existingReferral: any = null;
+      try {
+        const freshCase = await db.getCaseById(caseId);
+        if (freshCase?.contact_research_notes) {
+          const parsed = typeof freshCase.contact_research_notes === "string"
+            ? JSON.parse(freshCase.contact_research_notes)
+            : freshCase.contact_research_notes;
+          if (parsed.contactResult?.source === "agency_referral") {
+            existingReferral = parsed;
+          }
+        }
+      } catch (e: any) { /* non-fatal */ }
+
+      if (existingReferral) {
+        // Referral data already present from research step — don't overwrite
+        logger.info("Using existing referral data for RESEARCH_AGENCY draft", { caseId });
+        return {
+          subject: null,
+          bodyText: null,
+          bodyHtml: null,
+          lessonsApplied,
+          researchContactResult: existingReferral.contactResult,
+          researchBrief: existingReferral.brief,
+        };
+      }
+
+      // No referral — fall back to PD lookup + AI research
       // @ts-ignore
       let contactResult = null;
       try {
