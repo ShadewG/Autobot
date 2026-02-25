@@ -30,7 +30,7 @@ const STATUS_CONFIG: Record<ScopeItem['status'], {
     icon: HelpCircle,
     color: "text-gray-500",
     bgColor: "bg-muted",
-    label: "Unknown"
+    label: "Requested"
   },
   CONFIRMED_AVAILABLE: {
     icon: CheckCircle,

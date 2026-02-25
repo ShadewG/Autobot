@@ -75,7 +75,7 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
       {/* Message bubble - full width, colored border to indicate direction */}
       <div
         className={cn(
-          "rounded-lg p-3 w-full border-l-4",
+          "p-3 w-full border-l-4",
           isOutbound
             ? "bg-primary/5 border-l-primary"
             : "bg-muted border-l-amber-500"

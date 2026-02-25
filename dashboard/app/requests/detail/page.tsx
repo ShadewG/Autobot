@@ -484,7 +484,7 @@ function RequestDetailContent() {
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleInvokeAgent}>
                 <Bot className="h-4 w-4 mr-2" />
-                Run Agent (General)
+                Re-process Case
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

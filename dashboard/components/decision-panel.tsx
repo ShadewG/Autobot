@@ -597,7 +597,7 @@ export function DecisionPanel({
 
           {/* Substatus context */}
           {request.substatus && (
-            <div className="bg-white/60 rounded-md p-3">
+            <div className="bg-muted rounded-md p-3">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
                 Context
               </p>
@@ -620,7 +620,7 @@ export function DecisionPanel({
             {reviewConfig.question}
           </p>
 
-          <Separator className="bg-white/50" />
+          <Separator className="bg-border" />
 
           {/* Action buttons — stacked */}
           <div className="space-y-2">
@@ -631,7 +631,6 @@ export function DecisionPanel({
                 variant={action.variant}
                 className={cn(
                   "w-full justify-between",
-                  action.variant === "outline" && "bg-white",
                   action.variant === "ghost" && "text-muted-foreground"
                 )}
                 disabled={isLoading || reviewActionLoading !== null}
@@ -654,7 +653,7 @@ export function DecisionPanel({
           {/* Custom instructions textarea — collapsible */}
           <Collapsible open={showCustomInstruction} onOpenChange={setShowCustomInstruction}>
             <CollapsibleTrigger asChild>
-              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-white/50">
+              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-border">
                 <span className="flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5" />
                   Custom instructions
@@ -672,14 +671,14 @@ export function DecisionPanel({
                   value={customInstruction}
                   onChange={(e) => setCustomInstruction(e.target.value)}
                   placeholder="Add specific instructions for the agent (e.g., 'cite public interest exception', 'limit to 2023 records only')"
-                  className="bg-white text-sm min-h-[80px]"
+                  className="bg-background text-sm min-h-[80px]"
                 />
                 {customInstruction && (
                   <Button
                     onClick={() => handleReviewAction("custom")}
                     variant="outline"
                     size="sm"
-                    className="w-full bg-white"
+                    className="w-full"
                     disabled={isLoading || reviewActionLoading !== null}
                   >
                     {reviewActionLoading === "custom" ? (
@@ -768,7 +767,7 @@ export function DecisionPanel({
 
         {/* Agency says section */}
         {agencyPoints.length > 0 && (
-          <div className="bg-white/60 rounded-md p-3 space-y-2">
+          <div className="bg-muted rounded-md p-3 space-y-2">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Agency says:
             </p>
@@ -785,7 +784,7 @@ export function DecisionPanel({
 
         {/* Recommendation */}
         {recommendation && (
-          <div className="bg-white/80 rounded-md p-3 border border-amber-700/50">
+          <div className="bg-amber-950/30 rounded-md p-3 border border-amber-700/50">
             <div className="flex items-start gap-2">
               <Info className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
               <div>
@@ -811,7 +810,7 @@ export function DecisionPanel({
           </div>
         )}
 
-        <Separator className="bg-white/50" />
+        <Separator className="bg-border" />
 
         {/* Unsupported gate warning */}
         {isUnsupported && (
@@ -839,7 +838,7 @@ export function DecisionPanel({
                   type="number"
                   value={costCap}
                   onChange={(e) => setCostCap(e.target.value)}
-                  className="w-24 h-7 bg-white"
+                  className="w-24 h-7 bg-background"
                   placeholder="Max total"
                   autoFocus={showCostCap && !costCap}
                 />
@@ -879,7 +878,7 @@ export function DecisionPanel({
                 <Button
                   onClick={handlePrimaryClick}
                   variant="outline"
-                  className="w-full justify-between bg-white"
+                  className="w-full justify-between"
                   disabled={isLoading || isUnsupported}
                 >
                   <span className="flex items-center gap-2">
@@ -934,7 +933,7 @@ export function DecisionPanel({
                 <Button
                   onClick={handleSecondaryClick}
                   variant="outline"
-                  className="w-full justify-between bg-white"
+                  className="w-full justify-between"
                   disabled={isLoading || isUnsupported}
                 >
                   <span className="flex items-center gap-2">
@@ -982,7 +981,7 @@ export function DecisionPanel({
         {nextAction?.draft_content && (
           <Collapsible open={draftExpanded} onOpenChange={setDraftExpanded}>
             <CollapsibleTrigger asChild>
-              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-white/50 mt-2">
+              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-border mt-2">
                 <span className="flex items-center gap-1.5">
                   <FileText className="h-3.5 w-3.5" />
                   View prepared response draft
@@ -995,7 +994,7 @@ export function DecisionPanel({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="bg-white/80 rounded-md p-3 text-sm border border-white/50">
+              <div className="bg-muted rounded-md p-3 text-sm border border-border">
                 <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed">
                   {nextAction.draft_content}
                 </pre>

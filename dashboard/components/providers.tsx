@@ -2,6 +2,7 @@
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SWRConfig } from "swr";
+import { UserFilterProvider } from "./user-filter";
 
 /**
  * Global SWR fetcher with consistent error handling.
@@ -39,9 +40,11 @@ export function Providers({ children }: ProvidersProps) {
         },
       }}
     >
-      <TooltipProvider delayDuration={300}>
-        {children}
-      </TooltipProvider>
+      <UserFilterProvider>
+        <TooltipProvider delayDuration={300}>
+          {children}
+        </TooltipProvider>
+      </UserFilterProvider>
     </SWRConfig>
   );
 }

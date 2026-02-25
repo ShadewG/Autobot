@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import Link from "next/link";
+import { useUserFilter } from "@/components/user-filter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -78,10 +80,12 @@ interface PendingProposal {
   proposal_pause_reason: string | null;
   case_pause_reason: string | null;
   last_inbound_preview: string | null;
+  last_inbound_subject: string | null;
   inbound_count: number;
   trigger_message_id: number | null;
   portal_url?: string | null;
   agency_email?: string | null;
+  user_id?: number | null;
 }
 
 interface HumanReviewCase {
@@ -96,6 +100,7 @@ interface HumanReviewCase {
   last_fee_quote_amount: number | null;
   portal_url: string | null;
   last_portal_status: string | null;
+  user_id?: number | null;
 }
 
 interface UnmatchedMessage {
@@ -313,12 +318,25 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
    Main Component
    ───────────────────────────────────────────── */
 
-export default function MonitorPage() {
+function MonitorPageContent() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [adjustInstruction, setAdjustInstruction] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
+  const initialCaseApplied = useRef(false);
+
+  // ── Deep linking & user filter ─────────────
+  const searchParams = useSearchParams();
+  const { appendUser } = useUserFilter();
+
+  // Fetch users for resolving user_id → name
+  const { data: usersData } = useSWR<{ success: boolean; users: { id: number; name: string }[] }>("/api/users");
+  const userNameMap = useMemo(() => {
+    const map: Record<number, string> = {};
+    for (const u of usersData?.users || []) map[u.id] = u.name;
+    return map;
+  }, [usersData]);
 
   // ── Data fetching ──────────────────────────
 
@@ -327,7 +345,7 @@ export default function MonitorPage() {
     error,
     isLoading,
     mutate,
-  } = useSWR<LiveOverview>("/api/monitor/live-overview?limit=25", {
+  } = useSWR<LiveOverview>(appendUser("/api/monitor/live-overview?limit=25"), {
     refreshInterval: 12000,
   });
 
@@ -351,6 +369,32 @@ export default function MonitorPage() {
     if (safeIndex !== currentIndex) setCurrentIndex(safeIndex);
   }, [safeIndex, currentIndex]);
   const selectedItem = queue[safeIndex] || null;
+
+  // Deep link: on first load, jump to the case from ?case=XXXX
+  useEffect(() => {
+    if (initialCaseApplied.current || queue.length === 0) return;
+    const caseParam = searchParams.get("case");
+    if (!caseParam) { initialCaseApplied.current = true; return; }
+    const targetId = parseInt(caseParam, 10);
+    if (isNaN(targetId)) { initialCaseApplied.current = true; return; }
+    const idx = queue.findIndex((item) => {
+      const id = item.type === "proposal" ? item.data.case_id : item.data.id;
+      return id === targetId;
+    });
+    if (idx >= 0) setCurrentIndex(idx);
+    initialCaseApplied.current = true;
+  }, [queue, searchParams]);
+
+  // Deep link: update URL when selected case changes
+  useEffect(() => {
+    if (!selectedItem) return;
+    const caseId = selectedItem.type === "proposal"
+      ? selectedItem.data.case_id
+      : selectedItem.data.id;
+    const url = new URL(window.location.href);
+    url.searchParams.set("case", String(caseId));
+    window.history.replaceState({}, "", url.toString());
+  }, [selectedItem]);
 
   // Fetch full proposal detail for the selected proposal
   const selectedProposalId =
@@ -730,6 +774,11 @@ export default function MonitorPage() {
                   <span className="text-xs text-muted-foreground">
                     {selectedItem.data.agency_name}
                   </span>
+                  {selectedItem.data.user_id && (
+                    <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-700/50">
+                      {userNameMap[selectedItem.data.user_id] || `User #${selectedItem.data.user_id}`}
+                    </Badge>
+                  )}
                   {getPauseReason(selectedItem) && (
                     <Badge variant="outline" className="text-[10px]">
                       {PAUSE_LABELS[getPauseReason(selectedItem)!] || getPauseReason(selectedItem)}
@@ -797,6 +846,34 @@ export default function MonitorPage() {
             )}
           </div>
 
+          {/* Portal details — shown when action involves portal submission */}
+          {(selectedItem.data.action_type?.includes("PORTAL") || selectedItem.data.portal_url) && (
+            <div className="border border-blue-700/50 bg-blue-950/20 p-3">
+              <SectionLabel>Portal Submission</SectionLabel>
+              {selectedItem.data.portal_url ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <a
+                    href={selectedItem.data.portal_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-400 hover:underline flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" /> {selectedItem.data.portal_url}
+                  </a>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  No portal URL on file for this case
+                </p>
+              )}
+              {selectedItem.data.agency_email && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Agency email: {selectedItem.data.agency_email}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Risk flags */}
           {riskFlags.length > 0 && (
             <div className="border border-amber-700/50 bg-amber-950/20 p-3">
@@ -850,7 +927,13 @@ export default function MonitorPage() {
           {selectedItem.data.last_inbound_preview && (
             <div className="border p-3">
               <SectionLabel>Inbound</SectionLabel>
-              <div className="bg-background border p-2 max-h-48 overflow-auto">
+              {selectedItem.data.last_inbound_subject && (
+                <p className="text-xs mb-1.5">
+                  <span className="text-muted-foreground">Subj:</span>{" "}
+                  {selectedItem.data.last_inbound_subject}
+                </p>
+              )}
+              <div className="bg-background border p-2 max-h-72 overflow-auto">
                 <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
                   {selectedItem.data.last_inbound_preview}
                 </pre>
@@ -956,6 +1039,11 @@ export default function MonitorPage() {
                   <span className="text-xs text-muted-foreground">
                     {selectedItem.data.agency_name}
                   </span>
+                  {selectedItem.data.user_id && (
+                    <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-700/50">
+                      {userNameMap[selectedItem.data.user_id] || `User #${selectedItem.data.user_id}`}
+                    </Badge>
+                  )}
                   <Badge
                     variant="outline"
                     className="text-[10px] text-purple-400 border-purple-700/50"
@@ -1129,5 +1217,17 @@ export default function MonitorPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function MonitorPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-[80vh]">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <MonitorPageContent />
+    </Suspense>
   );
 }
