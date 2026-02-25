@@ -285,11 +285,21 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     });
 
     let handle;
+    // Pass the human's decision context so the agent follows the instruction
+    const triggerContext = {
+        triggerType: action === 'ADJUST' ? 'ADJUSTMENT' : 'HUMAN_REVIEW_RESOLUTION',
+        reviewAction: action,
+        reviewInstruction: instruction || null,
+        // For ADJUST: carry the original action type so the agent re-drafts with the same action
+        originalActionType: action === 'ADJUST' ? proposal.action_type : undefined,
+        originalProposalId: proposalId,
+    };
     if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
         handle = await tasks.trigger('process-initial-request', {
             runId: run.id,
             caseId,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+            ...triggerContext,
         });
     } else {
         handle = await tasks.trigger('process-inbound', {
@@ -297,6 +307,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             caseId,
             messageId: proposal.trigger_message_id,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+            ...triggerContext,
         });
     }
 

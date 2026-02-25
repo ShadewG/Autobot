@@ -78,6 +78,9 @@ export interface InboundPayload {
   triggerType?: string;
   reviewAction?: string;
   reviewInstruction?: string;
+  // Adjustment context (when human clicks ADJUST on a proposal)
+  originalActionType?: string;
+  originalProposalId?: number;
 }
 
 export interface InitialRequestPayload {
