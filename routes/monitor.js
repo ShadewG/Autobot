@@ -248,6 +248,63 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         };
     }
 
+    // SUBMIT_PORTAL: Execute directly — trigger the portal submission task.
+    // These proposals are created by cron-service or Skyvern failure handlers
+    // outside the Trigger.dev gate flow, so they have no waitpoint_token.
+    if (proposal.action_type === 'SUBMIT_PORTAL' && action === 'APPROVE') {
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            const err = new Error(`Case ${caseId} not found`);
+            err.status = 404;
+            throw err;
+        }
+
+        const portalUrl = caseData.portal_url;
+        if (!portalUrl) {
+            const err = new Error(`No portal URL on case ${caseId}`);
+            err.status = 400;
+            throw err;
+        }
+
+        // Mark proposal as approved
+        await db.updateProposal(proposalId, {
+            human_decision: humanDecision,
+            status: 'APPROVED',
+        });
+
+        // Trigger submit-portal task via Trigger.dev
+        let portalTaskId = null;
+        try {
+            // Create a portal_task record for tracking
+            const ptResult = await db.query(
+                `INSERT INTO portal_tasks (case_id, portal_url, status, proposal_id)
+                 VALUES ($1, $2, 'PENDING', $3) RETURNING id`,
+                [caseId, portalUrl, proposalId]
+            );
+            portalTaskId = ptResult.rows[0]?.id;
+        } catch (_) {}
+
+        const handle = await tasks.trigger('submit-portal', {
+            caseId,
+            portalUrl,
+            provider: caseData.portal_provider || null,
+            instructions: proposal.draft_body_text || null,
+            portalTaskId,
+        });
+
+        // Update proposal to PENDING_PORTAL
+        await db.updateProposal(proposalId, { status: 'PENDING_PORTAL' });
+
+        notify('info', `Portal submission approved — Trigger.dev task started for case ${caseId}`, { case_id: caseId });
+        return {
+            success: true,
+            message: 'Portal submission approved and triggered',
+            proposal_id: proposalId,
+            action,
+            triggerRunId: handle?.id,
+        };
+    }
+
     // Trigger.dev path: if proposal has waitpoint_token, complete it
     if (proposal.waitpoint_token) {
         await triggerWait.completeToken(proposal.waitpoint_token, {
