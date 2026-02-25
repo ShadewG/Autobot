@@ -23,16 +23,24 @@ const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || "100
 const FEE_NEGOTIATE_THRESHOLD = parseFloat(process.env.FEE_NEGOTIATE_THRESHOLD || "500");
 const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "2", 10);
 
-async function assessDenialStrength(caseId: number): Promise<"strong" | "medium" | "weak"> {
+async function assessDenialStrength(caseId: number, denialSubtype?: string | null): Promise<"strong" | "medium" | "weak"> {
   const analysis = await db.getLatestResponseAnalysis(caseId);
   const keyPoints: string[] = analysis?.key_points || [];
   const strongIndicators = [
     "exemption", "statute", "law enforcement", "ongoing investigation",
-    "privacy", "confidential", "sealed", "court", "pending litigation", "active case",
+    "ongoing", "in court", "cannot be provided", "nothing can be provided",
+    "privacy", "confidential", "sealed", "court", "pending litigation",
+    "active case", "pending case", "active prosecution",
   ];
-  const strongCount = keyPoints.filter((p: string) =>
+  let strongCount = keyPoints.filter((p: string) =>
     strongIndicators.some((ind) => p.toLowerCase().includes(ind))
   ).length;
+
+  // The classifier's denial_subtype is itself strong evidence — it already analyzed the message
+  if (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") {
+    strongCount += 1;
+  }
+
   if (strongCount >= 2) return "strong";
   if (strongCount === 1) return "medium";
   return "weak";
@@ -202,15 +210,17 @@ ${threadSummary || "No thread messages available."}
 Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 
-function validateDecision(
+async function validateDecision(
   aiDecisionResult: DecisionOutput,
   context: {
+    caseId: number;
     classification: Classification;
     extractedFeeAmount: number | null;
     autopilotMode: AutopilotMode;
+    denialSubtype?: string | null;
   }
-): { valid: boolean; reason?: string } {
-  const { classification, extractedFeeAmount, autopilotMode } = context;
+): Promise<{ valid: boolean; reason?: string }> {
+  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype } = context;
 
   if (aiDecisionResult.confidence < 0.5) {
     return { valid: false, reason: `AI decision confidence too low (${aiDecisionResult.confidence})` };
@@ -231,6 +241,21 @@ function validateDecision(
 
   if (aiDecisionResult.action === "CLOSE_CASE" && !aiDecisionResult.requiresHuman) {
     return { valid: false, reason: "CLOSE_CASE must require human review" };
+  }
+
+  // Strong ongoing_investigation or sealed_court_order denials should close, not rebuttal
+  if (
+    classification === "DENIAL" &&
+    (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") &&
+    aiDecisionResult.action === "SEND_REBUTTAL"
+  ) {
+    const strength = await assessDenialStrength(caseId, denialSubtype);
+    if (strength === "strong") {
+      return {
+        valid: false,
+        reason: `Strong ${denialSubtype} denial — should CLOSE_CASE, not SEND_REBUTTAL`,
+      };
+    }
   }
 
   // SEND_APPEAL and SEND_FEE_WAIVER_REQUEST always require human
@@ -311,10 +336,12 @@ async function aiDecision(params: {
       providerOptions: decisionOptions,
     });
 
-    const validation = validateDecision(object, {
+    const validation = await validateDecision(object, {
+      caseId: params.caseId,
       classification: params.classification,
       extractedFeeAmount: params.extractedFeeAmount,
       autopilotMode: params.autopilotMode,
+      denialSubtype: params.denialSubtype,
     });
 
     if (!validation.valid) {
@@ -448,7 +475,7 @@ async function deterministicRouting(
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", reasoning: [...reasoning, "Overly broad - narrowing scope"] });
       case "ongoing_investigation":
       case "privacy_exemption": {
-        const strength = await assessDenialStrength(caseId);
+        const strength = await assessDenialStrength(caseId, resolvedSubtype);
         if (strength === "strong") {
           return decision("CLOSE_CASE", {
             pauseReason: "DENIAL",
@@ -513,7 +540,7 @@ async function deterministicRouting(
         });
       }
       default: {
-        const strength = await assessDenialStrength(caseId);
+        const strength = await assessDenialStrength(caseId, resolvedSubtype);
         if (strength === "strong" && autopilotMode !== "AUTO") {
           return decision("CLOSE_CASE", {
             pauseReason: "DENIAL",

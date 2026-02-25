@@ -56,6 +56,32 @@ export const processInitialRequest = task({
 
     logger.info("process-initial-request started", { runId, caseId, autopilotMode });
 
+    // Pre-check: abort if case already has denial correspondence
+    // (don't blindly send a new FOIA when the agency already said no)
+    const denialCheck = await db.query(
+      `SELECT ra.intent, ra.full_analysis_json->>'denial_subtype' AS denial_subtype,
+              LEFT(m.body_text, 200) AS body_preview
+       FROM response_analysis ra
+       JOIN messages m ON m.id = ra.message_id
+       WHERE ra.case_id = $1 AND m.case_id = $1 AND m.direction = 'inbound'
+         AND ra.intent = 'denial'
+       ORDER BY ra.created_at DESC LIMIT 1`,
+      [caseId]
+    );
+    if (denialCheck.rows.length > 0) {
+      const denial = denialCheck.rows[0];
+      logger.warn("process-initial-request aborted: case has existing denial", {
+        caseId, denialSubtype: denial.denial_subtype, bodyPreview: denial.body_preview,
+      });
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        substatus: `Cannot send new initial request: agency already denied (${denial.denial_subtype || "general denial"}). Review correspondence and decide next step.`,
+        requires_human: true,
+        pause_reason: "DENIAL",
+      });
+      await db.query("UPDATE agent_runs SET status = 'completed', error = 'aborted: existing denial' WHERE id = $1", [runId]);
+      return { status: "aborted", reason: "existing_denial", denialSubtype: denial.denial_subtype };
+    }
+
     // Step 1: Load context
     const context = await loadContext(caseId, null);
 
