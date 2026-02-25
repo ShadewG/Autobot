@@ -1,7 +1,8 @@
-import { defineConfig } from "@trigger.dev/sdk/v3";
+import { defineConfig } from "@trigger.dev/sdk";
+import { syncEnvVars } from "@trigger.dev/build/extensions/core";
 
 export default defineConfig({
-  project: "autobot-mvp",
+  project: "proj_afwkrlynxcczbgflspqf",
   runtime: "node",
   logLevel: "log",
   maxDuration: 300,
@@ -15,4 +16,27 @@ export default defineConfig({
     },
   },
   dirs: ["./tasks", "./steps"],
+  build: {
+    external: [
+      "canvas",
+      "pdf.js-extract",
+      "bullmq",
+      "ioredis",
+    ],
+    extensions: [
+      syncEnvVars(async () => {
+        // Sync env vars from the CLI process into the Trigger.dev deploy
+        const vars = [
+          "OPENAI_API_KEY",
+          "DATABASE_URL",
+          "SENDGRID_API_KEY",
+          "SENDGRID_FROM_EMAIL",
+          "SENDGRID_FROM_NAME",
+        ];
+        return vars
+          .filter((name) => process.env[name])
+          .map((name) => ({ name, value: process.env[name]! }));
+      }),
+    ],
+  },
 });

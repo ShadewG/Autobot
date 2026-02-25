@@ -50,6 +50,7 @@
     "@langchain/openai": "^1.2.2",
     "@notionhq/client": "^2.2.14",
     "@sendgrid/mail": "^8.1.0",
+    "@trigger.dev/build": "^4.4.1",
     "@trigger.dev/sdk": "^4.4.1",
     "ai": "^6.0.98",
     "axios": "^1.6.5",
@@ -84,6 +85,7 @@
     "nodemon": "^3.0.2",
     "sinon": "^17.0.1",
     "supertest": "^7.2.2",
+    "trigger.dev": "^4.4.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
