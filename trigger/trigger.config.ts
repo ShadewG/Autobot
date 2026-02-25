@@ -32,6 +32,7 @@ export default defineConfig({
           "SENDGRID_API_KEY",
           "SENDGRID_FROM_EMAIL",
           "SENDGRID_FROM_NAME",
+          "RAILWAY_STATIC_URL",
         ];
         return vars
           .filter((name) => process.env[name])

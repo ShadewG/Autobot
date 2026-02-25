@@ -161,13 +161,46 @@ function parseScopeItems(caseData) {
 }
 
 /**
- * Parse constraints from JSONB
+ * Parse constraints from JSONB.
+ * Normalizes both plain string constraints (legacy) and full objects
+ * into { type, description, source, confidence, affected_items } shape.
  */
+const CONSTRAINT_LABELS = {
+    FEE_REQUIRED: 'Fee payment required',
+    PREPAYMENT_REQUIRED: 'Prepayment required before records are released',
+    CASH_OR_CHECK_ONLY: 'Payment by cash or check only',
+    CERTIFICATION_REQUIRED: 'Certification or notarized statement required',
+    CERTIFICATION_NO_FINANCIAL_GAIN_REQUIRED: 'Must certify records are not for financial gain',
+    NO_FINANCIAL_GAIN_CERT_REQUIRED: 'Must certify records are not for financial gain',
+    CERTIFICATION_REQUIRED_NONCOMMERCIAL_USE: 'Must certify non-commercial use of records',
+    EXEMPTION: 'Agency claimed an exemption',
+    BWC_EXEMPT: 'Body-worn camera footage exempt',
+    NOT_HELD: 'Agency states records are not held',
+    RECORDS_NOT_HELD: 'Agency states records are not held',
+    REDACTION_REQUIRED: 'Records require redaction before release',
+    ID_REQUIRED: 'Photo ID or identity verification required',
+    INVESTIGATION_ACTIVE: 'Active investigation — records may be delayed or withheld',
+    PARTIAL_DENIAL: 'Some records denied, others may be available',
+    DENIAL_RECEIVED: 'Agency denied the request',
+};
+
 function parseConstraints(caseData) {
-    if (caseData.constraints_jsonb && Array.isArray(caseData.constraints_jsonb)) {
-        return caseData.constraints_jsonb;
+    if (!caseData.constraints_jsonb || !Array.isArray(caseData.constraints_jsonb)) {
+        return [];
     }
-    return [];
+    return caseData.constraints_jsonb.map(c => {
+        // Already a full object
+        if (c && typeof c === 'object' && c.type) return c;
+        // Plain string — normalize to object
+        const type = typeof c === 'string' ? c : 'UNKNOWN';
+        return {
+            type,
+            description: CONSTRAINT_LABELS[type] || type.replace(/_/g, ' ').toLowerCase(),
+            source: 'Agency response',
+            confidence: 1.0,
+            affected_items: [],
+        };
+    });
 }
 
 /**

@@ -662,6 +662,7 @@ class CronService {
         }
 
         // Sweep 2: Orphaned needs_human_review > 48 hours with no pending proposals — AI triage
+        // Guard: skip cases that already have active proposals OR were recently triaged (last 48h)
         try {
             const orphaned = await db.query(`
                 SELECT c.* FROM cases c
@@ -669,7 +670,11 @@ class CronService {
                   AND c.updated_at < NOW() - INTERVAL '48 hours'
                   AND NOT EXISTS (
                     SELECT 1 FROM proposals p
-                    WHERE p.case_id = c.id AND p.status IN ('PENDING_APPROVAL', 'DRAFT')
+                    WHERE p.case_id = c.id
+                      AND (
+                        p.status IN ('PENDING_APPROVAL', 'DRAFT', 'DECISION_RECEIVED', 'BLOCKED', 'PENDING_PORTAL')
+                        OR (p.status = 'DISMISSED' AND p.updated_at > NOW() - INTERVAL '48 hours')
+                      )
                   )
             `);
 

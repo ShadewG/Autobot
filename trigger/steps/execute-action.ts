@@ -16,8 +16,41 @@ import db, {
 } from "../lib/db";
 import type { ActionType, ExecutionResult } from "../lib/types";
 
-// @ts-ignore
-const { portalQueue } = require("../../queues/email-queue");
+/**
+ * Enqueue a portal job via the server's HTTP API.
+ * Trigger.dev cloud workers don't have Redis access, so we call
+ * the main server which has BullMQ connected.
+ */
+async function enqueuePortalJob(data: {
+  caseId: number;
+  portalUrl: string;
+  provider: string | null;
+  instructions: string | null;
+  jobId: string;
+}) {
+  const host = process.env.RAILWAY_STATIC_URL || process.env.APP_URL;
+  if (!host) {
+    logger.warn("No RAILWAY_STATIC_URL or APP_URL set, cannot enqueue portal job", { caseId: data.caseId });
+    return;
+  }
+  const url = `https://${host}/api/portal-tasks/enqueue`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      logger.error("Portal enqueue API returned error", { status: resp.status, body, caseId: data.caseId });
+    } else {
+      const result = await resp.json();
+      logger.info("Portal job enqueued via API", { caseId: data.caseId, jobId: result.jobId });
+    }
+  } catch (err: any) {
+    logger.error("Portal enqueue API call failed", { error: err.message, caseId: data.caseId });
+  }
+}
 
 export async function executeAction(
   caseId: number,
@@ -92,6 +125,23 @@ export async function executeAction(
   }
   const shouldForcePortal = hasPortal && (actionType.startsWith("SEND_") || actionType === "SUBMIT_PORTAL");
   if (shouldForcePortal) {
+    // For follow-ups on portals with existing request numbers,
+    // use the request-specific URL instead of /requests/new
+    const isFollowup = actionType !== "SEND_INITIAL_REQUEST" && actionType !== "SUBMIT_PORTAL";
+    const requestNumber = caseData?.portal_request_number;
+    let portalInstructions = bodyText || bodyHtml || null;
+
+    if (isFollowup && requestNumber && targetPortalUrl) {
+      // Build request-specific URL for NextRequest portals
+      const baseUrl = targetPortalUrl.replace(/\/requests\/new\/?$/, "");
+      const requestUrl = `${baseUrl}/requests/${requestNumber}`;
+      targetPortalUrl = requestUrl;
+      portalInstructions = `IMPORTANT: This is a FOLLOW-UP message on existing request #${requestNumber}.\n` +
+        `Navigate to ${requestUrl} and add a message/reply to the existing request.\n` +
+        `Do NOT create a new request.\n\n` +
+        `Message to send:\n${portalInstructions}`;
+    }
+
     const portalResult = await portalExecutor.createPortalTask({
       caseId,
       caseData,
@@ -99,24 +149,19 @@ export async function executeAction(
       runId,
       actionType,
       subject,
-      bodyText,
+      bodyText: isFollowup && requestNumber ? portalInstructions : bodyText,
       bodyHtml,
     });
     await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
 
-    if (portalQueue) {
-      await portalQueue.add("portal-submit", {
-        caseId,
-        portalUrl: targetPortalUrl,
-        provider: caseData.portal_provider || null,
-        instructions: bodyText || bodyHtml || null,
-      }, {
-        jobId: `${caseId}:portal-submit:${runId || proposalId}`,
-        attempts: 1,
-        removeOnComplete: 100,
-        removeOnFail: 100,
-      });
-    }
+    // Enqueue portal job via server API (Trigger.dev can't access Redis directly)
+    await enqueuePortalJob({
+      caseId,
+      portalUrl: targetPortalUrl,
+      provider: caseData.portal_provider || null,
+      instructions: portalInstructions,
+      jobId: `${caseId}:portal-submit:${runId || proposalId}`,
+    });
 
     return {
       actionExecuted: false,

@@ -273,6 +273,44 @@ router.post('/:id/cancel', async (req, res) => {
 });
 
 /**
+ * POST /portal-tasks/enqueue
+ *
+ * Enqueue a portal submission job to BullMQ.
+ * Called by Trigger.dev (which can't access Redis directly).
+ */
+router.post('/enqueue', async (req, res) => {
+  try {
+    const { caseId, portalUrl, provider, instructions, jobId } = req.body;
+    if (!caseId || !portalUrl) {
+      return res.status(400).json({ success: false, error: 'caseId and portalUrl required' });
+    }
+
+    const { portalQueue } = require('../queues/email-queue');
+    if (!portalQueue) {
+      return res.status(503).json({ success: false, error: 'Portal queue not available (no Redis connection)' });
+    }
+
+    const job = await portalQueue.add('portal-submit', {
+      caseId,
+      portalUrl,
+      provider: provider || null,
+      instructions: instructions || null,
+    }, {
+      jobId: jobId || `${caseId}:portal-submit:${Date.now()}`,
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 100,
+    });
+
+    logger.info('Portal job enqueued via API', { caseId, jobId: job.id });
+    res.json({ success: true, jobId: job.id });
+  } catch (error) {
+    logger.error('Error enqueuing portal job', { error: error.message });
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
  * GET /portal-tasks/case/:caseId
  *
  * Get all portal tasks for a specific case

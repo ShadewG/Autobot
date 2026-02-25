@@ -402,6 +402,19 @@ async function deterministicRouting(
   if (classification === "FEE_QUOTE") {
     const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
     if (fee === null || !isFinite(fee) || fee < 0) {
+      // No actual fee amount quoted — check if agency is asking a question
+      // (e.g., "Do you want to proceed? We'll send an estimate.")
+      const feeAnalysis = await db.getLatestResponseAnalysis(caseId);
+      const unansweredQ = feeAnalysis?.full_analysis_json?.unanswered_agency_question;
+      if (unansweredQ) {
+        return decision("SEND_FOLLOWUP", {
+          pauseReason: "FEE_QUOTE",
+          reasoning: [
+            `Fee mentioned but no specific amount quoted`,
+            `Agency is asking: "${unansweredQ}"`,
+          ],
+        });
+      }
       return decision("NEGOTIATE_FEE", {
         pauseReason: "FEE_QUOTE",
         reasoning: [`Fee amount invalid/missing (${extractedFeeAmount})`],
