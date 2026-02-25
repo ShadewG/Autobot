@@ -13,6 +13,30 @@ class AIService {
     }
 
     /**
+     * Call OpenAI Responses API with Anthropic fallback.
+     * Returns the output text string.
+     */
+    async callAI(input, { effort = 'medium', maxTokens = 4000 } = {}) {
+        try {
+            const response = await this.openai.responses.create({
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+                reasoning: { effort },
+                text: { verbosity: 'medium' },
+                input,
+            });
+            return response.output_text?.trim() || '';
+        } catch (openaiError) {
+            console.error('OpenAI failed, falling back to Anthropic:', openaiError.message);
+            const response = await this.anthropic.messages.create({
+                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                max_tokens: maxTokens,
+                messages: [{ role: 'user', content: input }],
+            });
+            return response.content[0].text?.trim() || '';
+        }
+    }
+
+    /**
      * Strip quoted reply history from email bodies
      */
     stripQuotedText(text) {
@@ -586,17 +610,10 @@ Generate an appropriate reply that:
 
 Return ONLY the email body text, no subject line or metadata.`;
 
-            // Use GPT-5 with medium reasoning for normal replies
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },  // Medium reasoning for all communication
-                text: { verbosity: 'medium' },
-                input: `${responseHandlingPrompts.autoReplySystemPrompt}
-
-${prompt}`
-            });
-
-            let replyText = response.output_text;
+            let replyText = await this.callAI(
+                `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
+                { effort: 'medium' }
+            );
 
             // Guardrail: if intent requires response but model says "no response needed", fallback
             if (responseIntents.includes(analysis.intent) && /no response needed|no reply needed/i.test(replyText || '')) {
@@ -795,17 +812,10 @@ ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researche
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text, no subject line.`;
 
-            // Use GPT-5 with medium reasoning for strategic rebuttal generation
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },  // Medium reasoning for strategic legal writing
-                text: { verbosity: 'medium' },
-                input: `${denialResponsePrompts.denialRebuttalSystemPrompt}
-
-${prompt}`
-            });
-
-            const rebuttalText = response.output_text;
+            const rebuttalText = await this.callAI(
+                `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`,
+                { effort: 'medium' }
+            );
 
             console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars) with GPT-5`);
 
@@ -916,23 +926,10 @@ ${followUpCount > 0 ? '6. Note this is a follow-up and we\'re still awaiting res
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text.`;
 
-            const response = await this.openai.chat.completions.create({
-                model: 'gpt-5.2-2025-12-11',
-                messages: [
-                    {
-                        role: 'system',
-                        content: responseHandlingPrompts.followUpSystemPrompt
-                    },
-                    {
-                        role: 'user',
-                        content: prompt
-                    }
-                ],
-                temperature: 0.7,
-                max_completion_tokens: 600  // gpt-5 models use max_completion_tokens
-            });
-
-            const bodyText = response.choices[0].message.content;
+            const bodyText = await this.callAI(
+                `${responseHandlingPrompts.followUpSystemPrompt}\n\n${prompt}`,
+                { effort: 'low' }
+            );
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
@@ -1039,16 +1036,10 @@ Email requirements:
 Return ONLY the email body, no greetings beyond what belongs in the email.`;
 
         try {
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
-                text: { verbosity: 'medium' },
-                input: `${responseHandlingPrompts.autoReplySystemPrompt}
-
-${prompt}`
-            });
-
-            const bodyText = response.output_text?.trim();
+            const bodyText = await this.callAI(
+                `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
+                { effort: 'low' }
+            );
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
@@ -1470,14 +1461,10 @@ Generate a professional, helpful response that:
 Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
 
         try {
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
-                text: { verbosity: 'medium' },
-                input: `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`
-            });
-
-            const bodyText = response.output_text?.trim() || '';
+            const bodyText = await this.callAI(
+                `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
+                { effort: 'low' }
+            );
             const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
 
             return {
@@ -1532,14 +1519,10 @@ ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${a
 
 Generate a formal appeal letter under 300 words. Return ONLY the letter body, no subject line.`;
 
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },
-                text: { verbosity: 'medium' },
-                input: `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`
-            });
-
-            const bodyText = response.output_text?.trim();
+            const bodyText = await this.callAI(
+                `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`,
+                { effort: 'medium' }
+            );
 
             return {
                 subject: `Administrative Appeal - ${caseData.subject_name || caseData.case_name || 'Records Request'}`,
@@ -1582,14 +1565,10 @@ The response should:
 Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
 
         try {
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
-                text: { verbosity: 'medium' },
-                input: `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`
-            });
-
-            const bodyText = response.output_text?.trim() || '';
+            const bodyText = await this.callAI(
+                `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
+                { effort: 'low' }
+            );
             const subject = `RE: Fee Acceptance - ${caseData.subject_name || caseData.case_name || 'Records Request'}`;
 
             return {
