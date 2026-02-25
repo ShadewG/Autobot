@@ -1411,11 +1411,23 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             instructions: appendedResearch
         });
 
+        // Clear review flags so case leaves the queue
         await db.updateCaseStatus(caseId, 'portal_in_progress', {
             substatus: 'Monitor-triggered portal submission queued',
+            requires_human: false,
+            pause_reason: null,
             last_portal_status: 'Portal submission queued (monitor trigger)',
             last_portal_status_at: new Date()
         });
+
+        // Dismiss pending proposals — human chose portal retry
+        try {
+            await db.query(
+                `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+                 WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')`,
+                [caseId]
+            );
+        } catch (_) {}
 
         await db.logActivity('monitor_portal_trigger', `Portal submission queued from monitor for case ${caseId}`, {
             case_id: caseId,
