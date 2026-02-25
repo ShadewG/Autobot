@@ -803,12 +803,14 @@ function MonitorPageContent() {
     return formatReasoning(selectedItem.data.reasoning);
   })();
 
+  const INTERNAL_FLAGS = new Set(["NO_DRAFT", "MISSING_DRAFT", "DRAFT_EMPTY"]);
   const riskFlags = (() => {
     if (selectedItem?.type !== "proposal") return [];
     // Prefer detail data (more complete), fall back to overview
     const detailFlags = proposalDetail?.proposal?.risk_flags;
     const overviewFlags = selectedItem.data.risk_flags;
-    return (detailFlags && detailFlags.length > 0 ? detailFlags : overviewFlags) || [];
+    const raw = (detailFlags && detailFlags.length > 0 ? detailFlags : overviewFlags) || [];
+    return raw.filter((f: string) => !INTERNAL_FLAGS.has(f));
   })();
 
   const warnings = (() => {
@@ -1200,21 +1202,23 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Draft response */}
-          <div className="border p-3">
-            <SectionLabel>Draft Response</SectionLabel>
-            {draftSubject && (
-              <p className="text-xs mb-2">
-                <span className="text-muted-foreground">Subj:</span>{" "}
-                {draftSubject}
-              </p>
-            )}
-            <div className="bg-background border p-2 max-h-64 overflow-auto">
-              <pre className="text-xs whitespace-pre-wrap font-[inherit]">
-                {draftBody || (selectedProposalId && !proposalDetail ? "(loading draft...)" : "(no draft)")}
-              </pre>
+          {/* Draft response — only shown when there's actually a draft */}
+          {(draftBody || draftSubject || (selectedProposalId && !proposalDetail)) && (
+            <div className="border p-3">
+              <SectionLabel>Draft Response</SectionLabel>
+              {draftSubject && (
+                <p className="text-xs mb-2">
+                  <span className="text-muted-foreground">Subj:</span>{" "}
+                  {draftSubject}
+                </p>
+              )}
+              <div className="bg-background border p-2 max-h-64 overflow-auto">
+                <pre className="text-xs whitespace-pre-wrap font-[inherit]">
+                  {draftBody || "(loading draft...)"}
+                </pre>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Action buttons */}
           <div className="border-t pt-4 space-y-2">
