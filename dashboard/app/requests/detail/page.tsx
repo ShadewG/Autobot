@@ -79,7 +79,7 @@ import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
 import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
 
 // Gate icons and colors
-const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; label: string }> = {
+const GATE_DISPLAY: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   FEE_QUOTE: {
     icon: <DollarSign className="h-4 w-4" />,
     color: "text-amber-400 bg-amber-500/10 border-amber-700/50",
@@ -110,6 +110,21 @@ const GATE_DISPLAY: Record<PauseReason, { icon: React.ReactNode; color: string; 
     color: "text-green-400 bg-green-500/10 border-green-700/50",
     label: "Ready to Close",
   },
+  INITIAL_REQUEST: {
+    icon: <Send className="h-4 w-4" />,
+    color: "text-blue-400 bg-blue-500/10 border-blue-700/50",
+    label: "Pending Approval",
+  },
+  PENDING_APPROVAL: {
+    icon: <Clock className="h-4 w-4" />,
+    color: "text-blue-400 bg-blue-500/10 border-blue-700/50",
+    label: "Pending Approval",
+  },
+};
+const FALLBACK_GATE_DISPLAY = {
+  icon: <AlertTriangle className="h-4 w-4" />,
+  color: "text-yellow-400 bg-yellow-500/10 border-yellow-700/50",
+  label: "Needs Review",
 };
 
 function RequestDetailContent() {
@@ -417,7 +432,9 @@ function RequestDetailContent() {
     request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
     request.status?.toLowerCase().includes("needs_human");
 
-  const gateDisplay = request.pause_reason ? GATE_DISPLAY[request.pause_reason] : null;
+  const gateDisplay = request.pause_reason
+    ? (GATE_DISPLAY[request.pause_reason] || FALLBACK_GATE_DISPLAY)
+    : null;
 
   // Build pause context string
   const getPauseContext = () => {

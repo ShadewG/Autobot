@@ -587,11 +587,11 @@ export function DecisionPanel({
   // Get config - NEVER return null, use UNKNOWN fallback
   const config = normalized === "UNKNOWN"
     ? UNKNOWN_GATE_CONFIG
-    : GATE_CONFIGS[normalized];
+    : (GATE_CONFIGS[normalized] || UNKNOWN_GATE_CONFIG);
 
   // If we have a review_reason, show the review-specific panel with action buttons
   if (request.review_reason && onResolveReview) {
-    const reviewConfig = REVIEW_CONFIGS[request.review_reason];
+    const reviewConfig = REVIEW_CONFIGS[request.review_reason] || REVIEW_CONFIGS.GENERAL;
 
     const handleReviewAction = async (actionId: string) => {
       setReviewActionLoading(actionId);
