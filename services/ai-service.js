@@ -1232,6 +1232,43 @@ Return ONLY valid JSON.`;
     }
 
     /**
+     * Suggest next step after a phone call based on outcome and notes.
+     */
+    async suggestNextStepAfterCall({ outcome, notes, checked_points, case_name, agency_name, case_status }) {
+        try {
+            const prompt = `You are helping manage a FOIA case after a phone call. Based on the call outcome and notes, suggest the single best next step.
+
+Case: ${case_name || 'Unknown'} (agency: ${agency_name || 'Unknown'}, current status: ${case_status || 'unknown'})
+Call outcome: ${outcome}
+Call notes: ${notes || 'No notes'}
+${checked_points?.length ? `Talking points covered: ${checked_points.join(', ')}` : ''}
+
+Respond with JSON:
+{
+  "next_action": "one of: SEND_FOLLOWUP_EMAIL, SEND_CLARIFICATION, WAIT_FOR_RESPONSE, ACCEPT_FEE, NEGOTIATE_FEE, CLOSE_CASE, ESCALATE, SEND_APPEAL, NARROW_SCOPE, RESUBMIT, CALL_AGAIN, NO_ACTION",
+  "explanation": "brief explanation of why this is the right next step",
+  "draft_notes": "if email action, brief outline of what the email should say based on the call"
+}`;
+
+            const response = await this.openai.responses.create({
+                model: 'gpt-4o-mini',
+                input: [{ role: 'user', content: prompt }],
+                text: { format: { type: 'json_object' } },
+            });
+
+            const raw = response.output_text?.trim();
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                return JSON.parse(jsonMatch[0]);
+            }
+            return null;
+        } catch (error) {
+            console.warn('Error suggesting next step after call:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Triage a stuck case in needs_human_review.
      * Looks at case context, recent messages, and prior proposals to recommend the right action.
      */

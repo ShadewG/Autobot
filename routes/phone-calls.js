@@ -276,7 +276,7 @@ router.post('/:id/claim', async (req, res) => {
 router.post('/:id/complete', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
-        const { outcome, notes, completedBy } = req.body;
+        const { outcome, notes, completedBy, checked_points } = req.body;
 
         const task = await db.getPhoneCallById(id);
         if (!task) {
@@ -285,6 +285,33 @@ router.post('/:id/complete', async (req, res) => {
 
         if (task.status === 'completed') {
             return res.status(409).json({ success: false, error: 'Task already completed' });
+        }
+
+        // "Call later" outcomes: stay in queue at lower priority
+        const RETRY_OUTCOMES = ['voicemail', 'no_answer', 'busy'];
+        if (RETRY_OUTCOMES.includes(outcome)) {
+            // Lower priority to move to bottom of queue, add note, keep pending
+            await db.query(`
+                UPDATE phone_call_queue
+                SET priority = GREATEST(priority - 1, -5),
+                    notes = COALESCE(notes, '') || E'\n' || $2,
+                    call_outcome = $3,
+                    status = 'pending',
+                    updated_at = NOW()
+                WHERE id = $1
+            `, [id, `[${new Date().toISOString().slice(0, 16)}] ${outcome}: ${notes || 'no notes'}`, outcome]);
+
+            await db.logActivity('phone_call_retry',
+                `Phone call task ${id}: ${outcome} — staying in queue`,
+                { case_id: task.case_id, outcome, notes }
+            );
+
+            return res.json({
+                success: true,
+                message: `${outcome} — call stays in queue for retry`,
+                stays_in_queue: true,
+                outcome
+            });
         }
 
         const updated = await db.completePhoneCall(id, outcome, notes, completedBy || 'unknown');
@@ -296,13 +323,16 @@ router.post('/:id/complete', async (req, res) => {
             });
         } else if (outcome === 'connected' || outcome === 'transferred') {
             await db.updateCaseStatus(task.case_id, 'awaiting_response', {
-                substatus: `Phone call: ${outcome}`
+                substatus: `Phone call: ${outcome}${notes ? ' — ' + notes.substring(0, 100) : ''}`
             });
+        } else if (outcome === 'wrong_number') {
+            // Clear the bad phone number
+            await db.query('UPDATE phone_call_queue SET agency_phone = NULL WHERE id = $1', [id]);
         }
 
         await db.logActivity('phone_call_completed',
             `Phone call task ${id} completed: ${outcome}`,
-            { case_id: task.case_id, outcome, notes }
+            { case_id: task.case_id, outcome, notes, checked_points }
         );
 
         // Sync to Notion
@@ -313,7 +343,32 @@ router.post('/:id/complete', async (req, res) => {
             console.warn('Failed to sync phone call completion to Notion:', err.message);
         }
 
-        res.json({ success: true, message: 'Task completed', task: updated });
+        // Fire-and-forget: AI suggests next step based on call outcome
+        let nextStepSuggestion = null;
+        if (notes && (outcome === 'connected' || outcome === 'resolved' || outcome === 'transferred')) {
+            try {
+                const aiService = require('../services/ai-service');
+                const caseData = await db.getCaseById(task.case_id);
+                nextStepSuggestion = await aiService.suggestNextStepAfterCall({
+                    outcome,
+                    notes,
+                    checked_points: checked_points || [],
+                    case_name: caseData?.case_name,
+                    agency_name: caseData?.agency_name,
+                    case_status: caseData?.status,
+                });
+            } catch (err) {
+                console.warn('Failed to generate next step suggestion:', err.message);
+            }
+        }
+
+        res.json({
+            success: true,
+            message: 'Task completed',
+            task: updated,
+            next_step: nextStepSuggestion,
+            outcome
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

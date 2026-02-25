@@ -202,6 +202,7 @@ interface PhoneCallTask {
     notion?: { phone: string; source: string; pd_page_url?: string };
     web_search?: { phone: string; source: string; confidence?: string; reasoning?: string };
   } | null;
+  call_outcome?: string | null;
   created_at?: string;
   case_status?: string | null;
 }
@@ -490,6 +491,10 @@ function MonitorPageContent() {
   const [expandedPhoneCallId, setExpandedPhoneCallId] = useState<number | null>(null);
   const [phoneCallSubmitting, setPhoneCallSubmitting] = useState<number | null>(null);
   const [addingToPhoneQueue, setAddingToPhoneQueue] = useState(false);
+  const [checkedPoints, setCheckedPoints] = useState<Set<number>>(new Set());
+  const [callNotes, setCallNotes] = useState("");
+  const [callOutcome, setCallOutcome] = useState<string | null>(null);
+  const [nextStepSuggestion, setNextStepSuggestion] = useState<{ next_action: string; explanation: string; draft_notes?: string } | null>(null);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const initialCaseApplied = useRef(false);
 
@@ -866,63 +871,59 @@ function MonitorPageContent() {
     }
   };
 
-  const handleClaimPhoneCall = async (taskId: number) => {
-    setPhoneCallSubmitting(taskId);
-    try {
-      const res = await fetch(`/api/phone-calls/${taskId}/claim`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignedTo: "dashboard" }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-      mutatePhone();
-    } catch (err) {
-      alert(`Claim failed: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      setPhoneCallSubmitting(null);
-    }
-  };
-
   const handleCompletePhoneCall = async (taskId: number, outcome: string) => {
-    const notes = prompt("Call notes (optional):");
     setPhoneCallSubmitting(taskId);
     try {
       const res = await fetch(`/api/phone-calls/${taskId}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ outcome, notes: notes || undefined, completedBy: "dashboard" }),
+        body: JSON.stringify({
+          outcome,
+          notes: callNotes || undefined,
+          checked_points: Array.from(checkedPoints),
+          completedBy: "dashboard",
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
       mutatePhone();
+      if (data.stays_in_queue) {
+        showToast(`${outcome.replace(/_/g, " ")} — call moved to bottom of queue`);
+      } else {
+        showToast(`Call completed: ${outcome.replace(/_/g, " ")}`);
+        if (data.next_step) {
+          setNextStepSuggestion(data.next_step);
+        }
+      }
+      // Reset form
+      setCallNotes("");
+      setCallOutcome(null);
+      setCheckedPoints(new Set());
     } catch (err) {
-      alert(`Complete failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Complete failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setPhoneCallSubmitting(null);
     }
   };
 
   const handleSkipPhoneCall = async (taskId: number) => {
-    const notes = prompt("Skip reason (optional):");
     setPhoneCallSubmitting(taskId);
     try {
       const res = await fetch(`/api/phone-calls/${taskId}/skip`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notes: notes || undefined }),
+        body: JSON.stringify({ notes: "Skipped from dashboard" }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Failed (${res.status})`);
       }
       mutatePhone();
+      showToast("Call skipped");
     } catch (err) {
-      alert(`Skip failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Skip failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setPhoneCallSubmitting(null);
     }
@@ -2122,18 +2123,26 @@ function MonitorPageContent() {
                     key={task.id}
                     className={cn(
                       "border transition-colors",
-                      task.status === "claimed" && "border-blue-700/30 bg-blue-950/5",
+                      task.call_outcome && "border-amber-700/20 bg-amber-950/5",
                       isExpanded && "ring-1 ring-foreground/20"
                     )}
                   >
                     {/* Row header — clickable to expand */}
                     <button
                       className="w-full text-left px-3 py-2.5 flex items-center gap-3 hover:bg-muted/20"
-                      onClick={() => setExpandedPhoneCallId(isExpanded ? null : task.id)}
+                      onClick={() => {
+                        setExpandedPhoneCallId(isExpanded ? null : task.id);
+                        if (!isExpanded) {
+                          setCheckedPoints(new Set());
+                          setCallNotes("");
+                          setCallOutcome(null);
+                          setNextStepSuggestion(null);
+                        }
+                      }}
                     >
                       <Phone className={cn(
                         "h-4 w-4 flex-shrink-0",
-                        task.status === "claimed" ? "text-blue-400" : "text-amber-400"
+                        task.call_outcome ? "text-muted-foreground" : "text-amber-400"
                       )} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
@@ -2143,16 +2152,15 @@ function MonitorPageContent() {
                           {task.agency_state && (
                             <span className="text-[10px] text-muted-foreground">{task.agency_state}</span>
                           )}
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px]",
-                              task.status === "pending" && "text-amber-400 border-amber-700/50",
-                              task.status === "claimed" && "text-blue-400 border-blue-700/50"
-                            )}
-                          >
-                            {task.status.toUpperCase()}
-                          </Badge>
+                          {task.call_outcome ? (
+                            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                              {task.call_outcome.replace(/_/g, " ")} — retry
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-700/50">
+                              PENDING
+                            </Badge>
+                          )}
                         </div>
                         <div className="flex items-center gap-3">
                           {task.agency_phone && (
@@ -2272,18 +2280,6 @@ function MonitorPageContent() {
                                   <p className="text-foreground/80">{String(briefing.call_justification)}</p>
                                 </div>
                               )}
-                              {typeof briefing === "object" && "talking_points" in briefing && Array.isArray(briefing.talking_points) && (
-                                <div>
-                                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Talking points</p>
-                                  <ul className="space-y-0.5">
-                                    {(briefing.talking_points as string[]).map((point, i) => (
-                                      <li key={i} className="text-foreground/80 pl-2 border-l-2 border-muted">
-                                        {point}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
                               {typeof briefing === "object" && "key_details" in briefing && briefing.key_details && (
                                 <div>
                                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Key details</p>
@@ -2324,6 +2320,44 @@ function MonitorPageContent() {
                           </div>
                         )}
 
+                        {/* Talking Points Checklist */}
+                        {typeof briefing === "object" && "talking_points" in briefing && Array.isArray(briefing.talking_points) && (briefing.talking_points as string[]).length > 0 && (
+                          <div className="border p-3 bg-background">
+                            <SectionLabel>Talking Points</SectionLabel>
+                            <div className="space-y-1.5 mt-1">
+                              {(briefing.talking_points as string[]).map((point, i) => (
+                                <label
+                                  key={i}
+                                  className={cn(
+                                    "flex items-start gap-2 cursor-pointer group text-xs",
+                                    checkedPoints.has(i) && "opacity-60"
+                                  )}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checkedPoints.has(i)}
+                                    onChange={() => {
+                                      setCheckedPoints((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(i)) next.delete(i);
+                                        else next.add(i);
+                                        return next;
+                                      });
+                                    }}
+                                    className="mt-0.5 rounded border-muted-foreground/50"
+                                  />
+                                  <span className={cn(
+                                    "text-foreground/80",
+                                    checkedPoints.has(i) && "line-through"
+                                  )}>
+                                    {point}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Correspondence button */}
                         <Button
                           variant="ghost"
@@ -2334,59 +2368,126 @@ function MonitorPageContent() {
                           View Full Correspondence
                         </Button>
 
-                        {/* Action buttons */}
-                        <div className="border-t pt-3 space-y-2">
-                          {task.status === "pending" && (
-                            <Button
-                              className="w-full bg-blue-700 hover:bg-blue-600 text-white"
-                              onClick={() => handleClaimPhoneCall(task.id)}
-                              disabled={isTaskSubmitting}
-                            >
-                              {isTaskSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
-                              CLAIM CALL
-                            </Button>
-                          )}
-                          {(task.status === "pending" || task.status === "claimed") && (
-                            <div className="flex gap-2">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button
-                                    className="flex-1 bg-green-700 hover:bg-green-600 text-white"
-                                    disabled={isTaskSubmitting}
-                                  >
-                                    <CheckCircle className="h-3 w-3 mr-1.5" />
-                                    COMPLETE
-                                    <ChevronDown className="h-3 w-3 ml-1" />
-                                  </Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="start">
-                                  {[
-                                    { outcome: "resolved", label: "Resolved" },
-                                    { outcome: "connected", label: "Connected / Spoke with someone" },
-                                    { outcome: "transferred", label: "Transferred to right dept" },
-                                    { outcome: "voicemail", label: "Left voicemail" },
-                                    { outcome: "no_answer", label: "No answer" },
-                                    { outcome: "wrong_number", label: "Wrong number" },
-                                  ].map((opt) => (
-                                    <DropdownMenuItem
-                                      key={opt.outcome}
-                                      onClick={() => handleCompletePhoneCall(task.id, opt.outcome)}
-                                      className="text-xs"
-                                    >
-                                      {opt.label}
-                                    </DropdownMenuItem>
-                                  ))}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                              <Button
-                                variant="outline"
-                                className="flex-1"
-                                onClick={() => handleSkipPhoneCall(task.id)}
-                                disabled={isTaskSubmitting}
+                        {/* Call Completion Form */}
+                        <div className="border-t pt-3 space-y-3">
+                          <SectionLabel>Call Result</SectionLabel>
+
+                          {/* Outcome buttons */}
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {[
+                              { outcome: "connected", label: "Spoke with someone", color: "text-green-400 border-green-700/50" },
+                              { outcome: "resolved", label: "Issue resolved", color: "text-emerald-400 border-emerald-700/50" },
+                              { outcome: "transferred", label: "Transferred", color: "text-blue-400 border-blue-700/50" },
+                              { outcome: "voicemail", label: "Left voicemail", color: "text-amber-400 border-amber-700/50" },
+                              { outcome: "no_answer", label: "No answer", color: "text-orange-400 border-orange-700/50" },
+                              { outcome: "wrong_number", label: "Wrong number", color: "text-red-400 border-red-700/50" },
+                            ].map((opt) => (
+                              <button
+                                key={opt.outcome}
+                                onClick={() => setCallOutcome(callOutcome === opt.outcome ? null : opt.outcome)}
+                                className={cn(
+                                  "border px-2 py-1.5 text-[10px] uppercase tracking-wider transition-colors",
+                                  callOutcome === opt.outcome
+                                    ? `${opt.color} bg-background ring-1 ring-current font-semibold`
+                                    : "text-muted-foreground border-muted hover:text-foreground"
+                                )}
                               >
-                                SKIP
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Notes — shown when outcome is selected */}
+                          {callOutcome && (
+                            <div className="space-y-2">
+                              {(callOutcome === "connected" || callOutcome === "resolved" || callOutcome === "transferred") && (
+                                <Textarea
+                                  placeholder="What was discussed? What did you agree on? Any next steps mentioned..."
+                                  value={callNotes}
+                                  onChange={(e) => setCallNotes(e.target.value)}
+                                  className="text-xs bg-background min-h-[80px]"
+                                />
+                              )}
+                              {(callOutcome === "voicemail" || callOutcome === "no_answer") && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Call will move to the bottom of the queue for a retry later.
+                                </p>
+                              )}
+                              {callOutcome === "wrong_number" && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  Phone number will be cleared. You can search for the correct number after.
+                                </p>
+                              )}
+                              <Button
+                                className={cn(
+                                  "w-full text-white",
+                                  (callOutcome === "voicemail" || callOutcome === "no_answer")
+                                    ? "bg-amber-700 hover:bg-amber-600"
+                                    : "bg-green-700 hover:bg-green-600"
+                                )}
+                                onClick={() => handleCompletePhoneCall(task.id, callOutcome)}
+                                disabled={isTaskSubmitting || ((callOutcome === "connected" || callOutcome === "resolved") && !callNotes.trim())}
+                              >
+                                {isTaskSubmitting ? (
+                                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                                ) : (callOutcome === "voicemail" || callOutcome === "no_answer") ? (
+                                  <Phone className="h-3 w-3 mr-1.5" />
+                                ) : (
+                                  <CheckCircle className="h-3 w-3 mr-1.5" />
+                                )}
+                                {(callOutcome === "voicemail" || callOutcome === "no_answer")
+                                  ? "MARK & RETRY LATER"
+                                  : "SUBMIT CALL RESULT"}
                               </Button>
                             </div>
+                          )}
+
+                          {/* AI Next Step Suggestion */}
+                          {nextStepSuggestion && (
+                            <div className="border border-blue-700/50 bg-blue-950/20 p-3 space-y-2">
+                              <SectionLabel>AI Suggested Next Step</SectionLabel>
+                              <p className="text-xs font-medium text-blue-300">
+                                {nextStepSuggestion.next_action.replace(/_/g, " ")}
+                              </p>
+                              <p className="text-xs text-foreground/70">{nextStepSuggestion.explanation}</p>
+                              {nextStepSuggestion.draft_notes && (
+                                <p className="text-xs text-foreground/60 italic border-l-2 border-blue-700/50 pl-2">
+                                  {nextStepSuggestion.draft_notes}
+                                </p>
+                              )}
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  className="flex-1 bg-blue-700 hover:bg-blue-600 text-white text-xs"
+                                  onClick={() => {
+                                    showToast("Next step accepted — processing...");
+                                    setNextStepSuggestion(null);
+                                  }}
+                                >
+                                  ACCEPT
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1 text-xs"
+                                  onClick={() => setNextStepSuggestion(null)}
+                                >
+                                  DISMISS
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Skip */}
+                          {!callOutcome && (
+                            <Button
+                              variant="ghost"
+                              className="w-full text-xs text-muted-foreground"
+                              onClick={() => handleSkipPhoneCall(task.id)}
+                              disabled={isTaskSubmitting}
+                            >
+                              Skip this call for now
+                            </Button>
                           )}
                         </div>
                       </div>
