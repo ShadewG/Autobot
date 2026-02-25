@@ -1430,14 +1430,15 @@ class DatabaseService {
             proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
         }
 
-        // DEDUP GUARD: Prevent duplicate PENDING_APPROVAL proposals for the same case.
-        // If the incoming proposal has the SAME key as an existing pending proposal, return
+        // DEDUP GUARD: Prevent duplicate active proposals for the same case.
+        // If the incoming proposal has the SAME key as an existing active proposal, return
         // the existing one (true dedup — same work). If the key is DIFFERENT, the new run's
         // analysis supersedes the old one: dismiss the stale proposal and create the new one.
+        // Checks PENDING_APPROVAL + BLOCKED to prevent duplicates when old proposal is blocked.
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const existing = await this.query(
-                `SELECT id, action_type, proposal_key FROM proposals
-                 WHERE case_id = $1 AND status = 'PENDING_APPROVAL'
+                `SELECT id, action_type, proposal_key, status FROM proposals
+                 WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
                  LIMIT 1`,
                 [proposalData.caseId]
             );
