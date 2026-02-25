@@ -250,6 +250,58 @@ function formatReasoning(reasoning: unknown): string[] {
   return [];
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  SEND_REBUTTAL: "SEND REBUTTAL",
+  SEND_APPEAL: "SEND APPEAL",
+  SEND_FOLLOWUP: "SEND FOLLOW-UP",
+  SEND_INITIAL_REQUEST: "SEND REQUEST",
+  SEND_CLARIFICATION: "SEND CLARIFICATION",
+  SEND_FEE_WAIVER_REQUEST: "SEND FEE WAIVER",
+  SEND_STATUS_UPDATE: "SEND STATUS UPDATE",
+  NEGOTIATE_FEE: "SEND FEE NEGOTIATION",
+  ACCEPT_FEE: "ACCEPT FEE",
+  DECLINE_FEE: "DECLINE FEE",
+  RESPOND_PARTIAL_APPROVAL: "RESPOND TO PARTIAL",
+  SUBMIT_PORTAL: "SUBMIT VIA PORTAL",
+  SEND_PDF_EMAIL: "SEND PDF REQUEST",
+  RESEARCH_AGENCY: "RUN RESEARCH",
+  REFORMULATE_REQUEST: "REFORMULATE REQUEST",
+  CLOSE_CASE: "CLOSE CASE",
+  ESCALATE: "ESCALATE",
+};
+
+function getApproveLabel(actionType: string | null): string {
+  if (!actionType) return "APPROVE & EXECUTE";
+  return ACTION_LABELS[actionType] || `APPROVE: ${actionType.replace(/_/g, " ")}`;
+}
+
+function getActionExplanation(actionType: string | null, hasDraft: boolean): string {
+  if (!actionType) return "Approve this proposal to execute it.";
+  const explanations: Record<string, string> = {
+    SEND_REBUTTAL: "Will send a rebuttal challenging the agency's denial, citing relevant statutes.",
+    SEND_APPEAL: "Will file a formal appeal of the agency's denial.",
+    SEND_FOLLOWUP: "Will send a follow-up email asking for a status update.",
+    SEND_INITIAL_REQUEST: "Will send the initial FOIA/public records request to the agency.",
+    SEND_CLARIFICATION: "Will respond to the agency's question or request for clarification.",
+    SEND_FEE_WAIVER_REQUEST: "Will request a fee waiver from the agency.",
+    NEGOTIATE_FEE: "Will send a fee negotiation response to the agency.",
+    ACCEPT_FEE: "Will accept the quoted fee and authorize payment.",
+    DECLINE_FEE: "Will decline the quoted fee.",
+    RESPOND_PARTIAL_APPROVAL: "Will respond to the agency's partial approval/release.",
+    SUBMIT_PORTAL: "Will submit the request through the agency's online portal.",
+    SEND_PDF_EMAIL: "Will email a PDF copy of the request to the agency.",
+    RESEARCH_AGENCY: "Will research the agency's contact information and procedures.",
+    REFORMULATE_REQUEST: "Will rewrite and resubmit a narrower/clearer request.",
+    CLOSE_CASE: "Will close this case.",
+    ESCALATE: "Will escalate this case for manual intervention.",
+  };
+  let explanation = explanations[actionType] || `Will execute: ${actionType.replace(/_/g, " ").toLowerCase()}.`;
+  if (!hasDraft && actionType.startsWith("SEND")) {
+    explanation += " The AI will generate the draft before sending.";
+  }
+  return explanation;
+}
+
 function getPauseReason(item: QueueItem): string | null {
   if (item.type === "proposal") {
     return item.data.proposal_pause_reason || item.data.case_pause_reason || null;
@@ -1166,6 +1218,10 @@ function MonitorPageContent() {
 
           {/* Action buttons */}
           <div className="border-t pt-4 space-y-2">
+            {/* Action explanation */}
+            <p className="text-[10px] text-muted-foreground">
+              {getActionExplanation(selectedItem.data.action_type, !!draftBody)}
+            </p>
             <div className="flex gap-2">
               <Button
                 className="flex-1 bg-green-700 hover:bg-green-600 text-white"
@@ -1177,7 +1233,7 @@ function MonitorPageContent() {
                 ) : (
                   <Send className="h-3 w-3 mr-1.5" />
                 )}
-                APPROVE & EXECUTE
+                {getApproveLabel(selectedItem.data.action_type)}
                 <span className="ml-2 text-[10px] opacity-60 border border-white/20 px-1">
                   A
                 </span>
@@ -1771,8 +1827,8 @@ function MonitorPageContent() {
 
       {/* ── Correspondence Dialog ─────────── */}
       <Dialog open={showCorrespondence} onOpenChange={setShowCorrespondence}>
-        <DialogContent className="bg-card border max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
+        <DialogContent className="bg-card border max-w-4xl w-[90vw] h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle className="text-sm flex items-center gap-2">
               <MessageSquare className="h-4 w-4" />
               Full Correspondence
@@ -1789,7 +1845,7 @@ function MonitorPageContent() {
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>
             ) : correspondenceMessages.length > 0 ? (
-              <Thread messages={correspondenceMessages} />
+              <Thread messages={correspondenceMessages} maxHeight="h-full" />
             ) : (
               <p className="text-sm text-muted-foreground text-center py-8">
                 No messages found

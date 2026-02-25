@@ -48,26 +48,33 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
         )}
       </div>
 
-      {/* Classification and sentiment badges for inbound messages */}
-      {!isOutbound && (message.classification || message.sentiment) && (
-        <div className="flex items-center gap-1 mt-0.5 mb-0.5">
-          {message.classification && (
-            <Badge variant="outline" className="text-[10px]">
-              {message.classification}
-            </Badge>
-          )}
-          {message.sentiment && (
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                message.sentiment.toUpperCase() === 'POSITIVE' && "text-green-400",
-                message.sentiment.toUpperCase() === 'NEGATIVE' && "text-red-400",
-                message.sentiment.toUpperCase() === 'HOSTILE' && "text-red-300 bg-red-500/10"
-              )}
-            >
-              {message.sentiment}
-            </Badge>
+      {/* Classification, sentiment, and AI summary for inbound messages */}
+      {!isOutbound && (message.classification || message.sentiment || message.summary) && (
+        <div className="mt-0.5 mb-0.5 space-y-1">
+          <div className="flex items-center gap-1">
+            {message.classification && (
+              <Badge variant="outline" className="text-[10px]">
+                {message.classification}
+              </Badge>
+            )}
+            {message.sentiment && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "text-[10px]",
+                  message.sentiment.toUpperCase() === 'POSITIVE' && "text-green-400",
+                  message.sentiment.toUpperCase() === 'NEGATIVE' && "text-red-400",
+                  message.sentiment.toUpperCase() === 'HOSTILE' && "text-red-300 bg-red-500/10"
+                )}
+              >
+                {message.sentiment}
+              </Badge>
+            )}
+          </div>
+          {message.summary && (
+            <p className="text-[11px] text-muted-foreground italic pl-1 border-l-2 border-muted">
+              {message.summary}
+            </p>
           )}
         </div>
       )}
@@ -101,11 +108,12 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
 
 interface ThreadProps {
   messages: ThreadMessage[];
+  maxHeight?: string;
 }
 
 const STORAGE_KEY = 'email-view-mode';
 
-export function Thread({ messages }: ThreadProps) {
+export function Thread({ messages, maxHeight }: ThreadProps) {
   const [showRaw, setShowRaw] = useState(false);
 
   // Load preference from localStorage on mount
@@ -160,7 +168,7 @@ export function Thread({ messages }: ThreadProps) {
           </Button>
         </div>
       )}
-      <ScrollArea className="h-[400px] w-full">
+      <ScrollArea className={cn(maxHeight || "h-[400px]", "w-full")}>
         <div className="space-y-4 pr-2 w-full">
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} showRaw={showRaw} />
