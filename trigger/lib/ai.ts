@@ -13,4 +13,5 @@ export const anthropic = createAnthropic({
 export const classifyModel = openai("gpt-4o");
 export const draftModel = openai("gpt-4o");
 export const researchModel = openai("gpt-4o");
+export const decisionModel = openai("gpt-4o-mini");
 export const fallbackDraftModel = anthropic("claude-sonnet-4-20250514");

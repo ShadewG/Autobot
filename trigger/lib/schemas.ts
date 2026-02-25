@@ -122,4 +122,45 @@ export const draftSchema = z.object({
   body_html: z.string().nullable(),
 });
 
+// Decision schema - what action to take for an inbound message
+export const decisionSchema = z.object({
+  action: z.enum([
+    "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
+    "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
+    "ESCALATE", "NONE", "CLOSE_CASE", "WITHDRAW", "RESEARCH_AGENCY",
+    "REFORMULATE_REQUEST", "SUBMIT_PORTAL", "SEND_PDF_EMAIL",
+  ]).describe("The best next action to take for this case"),
+  reasoning: z.array(z.string()).describe("Step-by-step reasoning for this decision"),
+  requiresHuman: z.boolean().describe("Whether this action needs human approval before execution"),
+  pauseReason: z.string().nullable().describe("Why human review is needed (e.g., 'FEE_QUOTE', 'DENIAL', 'SENSITIVE')"),
+  confidence: z.number().min(0).max(1).describe("Confidence in this decision (0-1)"),
+  adjustmentInstruction: z.string().nullable().describe("Specific instructions for drafting (e.g., 'negotiate fee down to $50')"),
+}).strict();
+
+export type DecisionOutput = z.infer<typeof decisionSchema>;
+
+// Constraint extraction schema - what constraints to add/update from an agency response
+export const constraintExtractionSchema = z.object({
+  constraintsToAdd: z.array(z.string()).describe("Constraint tags to add (e.g., 'BWC_EXEMPT', 'FEE_REQUIRED', 'ID_REQUIRED', 'INVESTIGATION_ACTIVE', 'DENIAL_RECEIVED')"),
+  scopeUpdates: z.array(z.object({
+    name: z.string().describe("Record item name"),
+    status: z.enum(["REQUESTED", "DELIVERED", "DENIED", "PARTIAL", "EXEMPT"]).describe("Updated status"),
+    reason: z.string().nullable().describe("Reason for status change"),
+    confidence: z.number().min(0).max(1).nullable().describe("Confidence in this assessment"),
+  })).describe("Updates to individual record items"),
+  reasoning: z.string().describe("Explanation of what constraints were extracted and why"),
+}).strict();
+
+export type ConstraintExtractionOutput = z.infer<typeof constraintExtractionSchema>;
+
+// Safety review schema - is the draft safe to send
+export const safetyReviewSchema = z.object({
+  safe: z.boolean().describe("Whether the draft is safe to send as-is"),
+  riskFlags: z.array(z.string()).describe("Critical risk flags (e.g., 'REQUESTS_EXEMPT_ITEM', 'CONTRADICTS_FEE_ACCEPTANCE', 'CONTAINS_PII')"),
+  warnings: z.array(z.string()).describe("Non-critical warnings about the draft"),
+  reasoning: z.string().describe("Explanation of the safety assessment"),
+}).strict();
+
+export type SafetyReviewOutput = z.infer<typeof safetyReviewSchema>;
+
 export type DraftOutput = z.infer<typeof draftSchema>;

@@ -1,51 +1,30 @@
 /**
  * Safety Check Step
  *
- * Port of langgraph/nodes/safety-check.js
- * Validates draft against constraints. Prevents contradictory requests.
+ * Runs regex-based checks and AI safety review, then merges results.
  */
 
+import { generateObject } from "ai";
+import { decisionModel } from "../lib/ai";
+import { safetyReviewSchema, type SafetyReviewOutput } from "../lib/schemas";
+import { logger } from "../lib/db";
 import type { SafetyResult, ScopeItem } from "../lib/types";
 
-export async function safetyCheck(
-  draftBodyText: string | null,
-  draftSubject: string | null,
+const CRITICAL_RISK_FLAGS = ["REQUESTS_EXEMPT_ITEM", "CONTRADICTS_FEE_ACCEPTANCE", "CONTAINS_PII"];
+
+function runRegexSafetyChecks(
+  draftBodyText: string,
   proposalActionType: string,
   constraints: string[],
   scopeItems: ScopeItem[]
-): Promise<SafetyResult> {
+): { riskFlags: string[]; warnings: string[]; hasCriticalRisk: boolean } {
   const riskFlags: string[] = [];
   const warnings: string[] = [];
 
-  if (!draftBodyText) {
-    return {
-      riskFlags: ["NO_DRAFT"],
-      warnings: [],
-      canAutoExecute: true,
-      requiresHuman: false,
-      pauseReason: null,
-    };
-  }
-
   const draftLower = draftBodyText.toLowerCase();
 
-  // Parse constraints/scopeItems if they came as strings
-  const safeConstraints = Array.isArray(constraints)
-    ? constraints
-    : typeof constraints === "string"
-      ? (() => { try { return JSON.parse(constraints); } catch { return []; } })()
-      : [];
-
-  const safeScope = Array.isArray(scopeItems)
-    ? scopeItems
-    : typeof scopeItems === "string"
-      ? (() => { try { return JSON.parse(scopeItems); } catch { return []; } })()
-      : [];
-
-  // === Constraint Violations ===
-
   // BWC exempt check
-  if (safeConstraints.includes("BWC_EXEMPT")) {
+  if (constraints.includes("BWC_EXEMPT")) {
     if (
       draftLower.includes("body camera") ||
       draftLower.includes("bwc") ||
@@ -63,7 +42,7 @@ export async function safetyCheck(
   }
 
   // Fee acceptance contradiction
-  if (safeConstraints.includes("FEE_ACCEPTED")) {
+  if (constraints.includes("FEE_ACCEPTED")) {
     if (
       draftLower.includes("negotiate") ||
       draftLower.includes("reduce") ||
@@ -75,9 +54,7 @@ export async function safetyCheck(
   }
 
   // Re-requesting delivered items
-  const deliveredItems = safeScope.filter(
-    (s: ScopeItem) => s.status === "DELIVERED"
-  );
+  const deliveredItems = scopeItems.filter((s: ScopeItem) => s.status === "DELIVERED");
   for (const item of deliveredItems) {
     const itemName = (item.name || (item as any).item || "").toLowerCase();
     if (itemName && draftLower.includes(itemName)) {
@@ -88,13 +65,11 @@ export async function safetyCheck(
   }
 
   // Investigation-active rebuttal warning
-  if (safeConstraints.includes("INVESTIGATION_ACTIVE")) {
-    if (proposalActionType === "SEND_REBUTTAL") {
-      warnings.push("Rebuttal sent while investigation is active - may be futile");
-    }
+  if (constraints.includes("INVESTIGATION_ACTIVE") && proposalActionType === "SEND_REBUTTAL") {
+    warnings.push("Rebuttal sent while investigation is active - may be futile");
   }
 
-  // === Tone/Content Checks ===
+  // Tone checks
   const aggressiveTerms = ["demand", "lawsuit", "attorney", "legal action", "violation", "sue"];
   const aggressiveFound = aggressiveTerms.filter((t) => draftLower.includes(t));
   if (aggressiveFound.length > 0 && proposalActionType !== "SEND_REBUTTAL") {
@@ -119,15 +94,109 @@ export async function safetyCheck(
     warnings.push(`Draft contains email addresses: ${suspiciousEmails.join(", ")}`);
   }
 
-  // === Determine if safe ===
-  const hasCriticalRisk = riskFlags.some((f) =>
-    ["REQUESTS_EXEMPT_ITEM", "CONTRADICTS_FEE_ACCEPTANCE", "CONTAINS_PII"].includes(f)
-  );
+  return {
+    riskFlags,
+    warnings,
+    hasCriticalRisk: riskFlags.some((f) => CRITICAL_RISK_FLAGS.includes(f)),
+  };
+}
 
-  if (hasCriticalRisk) {
+async function runAiSafetyReview(params: {
+  draftBodyText: string;
+  proposalActionType: string;
+  constraints: string[];
+  scopeItems: ScopeItem[];
+}): Promise<SafetyReviewOutput> {
+  const { draftBodyText, proposalActionType, constraints, scopeItems } = params;
+
+  const { object } = await generateObject({
+    model: decisionModel,
+    schema: safetyReviewSchema,
+    prompt: `Review this outbound draft for safety.
+
+## Action type
+${proposalActionType}
+
+## Draft text
+${draftBodyText.substring(0, 6000)}
+
+## Current constraints
+${JSON.stringify(constraints, null, 2)}
+
+## Scope items
+${JSON.stringify(scopeItems, null, 2)}
+
+Is this draft safe to send?
+Check for contradictions with constraints, PII, aggressive tone, re-requesting exempt items, and internal inconsistency.
+Return critical risk flags only in riskFlags and non-critical issues in warnings.`,
+  });
+
+  return object as SafetyReviewOutput;
+}
+
+export async function safetyCheck(
+  draftBodyText: string | null,
+  draftSubject: string | null,
+  proposalActionType: string,
+  constraints: string[],
+  scopeItems: ScopeItem[]
+): Promise<SafetyResult> {
+  if (!draftBodyText) {
     return {
-      riskFlags,
-      warnings,
+      riskFlags: ["NO_DRAFT"],
+      warnings: [],
+      canAutoExecute: true,
+      requiresHuman: false,
+      pauseReason: null,
+    };
+  }
+
+  // Parse constraints/scopeItems if they came as strings
+  const safeConstraints = Array.isArray(constraints)
+    ? constraints
+    : typeof constraints === "string"
+      ? (() => { try { return JSON.parse(constraints); } catch { return []; } })()
+      : [];
+
+  const safeScope = Array.isArray(scopeItems)
+    ? scopeItems
+    : typeof scopeItems === "string"
+      ? (() => { try { return JSON.parse(scopeItems); } catch { return []; } })()
+      : [];
+
+  const [regexResult, aiResult] = await Promise.all([
+    Promise.resolve(runRegexSafetyChecks(draftBodyText, proposalActionType, safeConstraints, safeScope)),
+    runAiSafetyReview({
+      draftBodyText,
+      proposalActionType,
+      constraints: safeConstraints,
+      scopeItems: safeScope,
+    }).catch((error: any) => {
+      logger.warn("AI safety review failed, continuing with regex safety checks", {
+        error: error.message,
+        proposalActionType,
+      });
+      return null;
+    }),
+  ]);
+
+  const mergedRiskFlags = Array.from(new Set([
+    ...regexResult.riskFlags,
+    ...(aiResult?.riskFlags || []),
+  ]));
+  const mergedWarnings = Array.from(new Set([
+    ...regexResult.warnings,
+    ...(aiResult?.warnings || []),
+  ]));
+
+  const aiHasCriticalRisk = aiResult
+    ? (!aiResult.safe || aiResult.riskFlags.length > 0)
+    : false;
+
+  if (regexResult.hasCriticalRisk || aiHasCriticalRisk) {
+    return {
+      riskFlags: mergedRiskFlags,
+      warnings: mergedWarnings,
       canAutoExecute: false,
       requiresHuman: true,
       pauseReason: "SENSITIVE",
@@ -135,9 +204,9 @@ export async function safetyCheck(
   }
 
   return {
-    riskFlags,
-    warnings,
-    canAutoExecute: true,  // Safety check passed, doesn't override decision's setting
+    riskFlags: mergedRiskFlags,
+    warnings: mergedWarnings,
+    canAutoExecute: true,
     requiresHuman: false,
     pauseReason: null,
   };

@@ -5,6 +5,9 @@
  * Updates constraints and scope based on agency response analysis.
  */
 
+import { generateObject } from "ai";
+import { decisionModel } from "../lib/ai";
+import { constraintExtractionSchema } from "../lib/schemas";
 import db, { logger } from "../lib/db";
 import type { ScopeItem } from "../lib/types";
 
@@ -73,9 +76,49 @@ export async function updateConstraints(
   const scopeItems =
     caseData.scope_items_jsonb || caseData.scope_items || currentScopeItems;
 
+  let extractedConstraints: string[] = Array.isArray(parsed.constraints_to_add)
+    ? parsed.constraints_to_add
+    : [];
+  let extractedScopeUpdates: any[] = Array.isArray(parsed.scope_updates)
+    ? parsed.scope_updates
+    : [];
+
+  if (extractedConstraints.length === 0) {
+    try {
+      const message = await db.getMessageById(messageId);
+      const { object } = await generateObject({
+        model: decisionModel,
+        schema: constraintExtractionSchema,
+        prompt: `Extract constraints and scope updates from this agency response.
+
+## Classification
+${classification}
+
+## Existing analysis JSON
+${JSON.stringify(parsed, null, 2)}
+
+## Agency message
+Subject: ${message?.subject || "No subject"}
+Body:
+${(message?.body_text || message?.body_html || "").substring(0, 4000)}
+
+Return constraint tags and scope item updates only when supported by the message content.`,
+      });
+
+      extractedConstraints = object.constraintsToAdd;
+      extractedScopeUpdates = object.scopeUpdates;
+    } catch (error: any) {
+      logger.warn("AI constraint extraction failed, using fallback pattern matching", {
+        caseId,
+        messageId,
+        error: error.message,
+      });
+    }
+  }
+
   // Add constraints from AI analysis
-  if (parsed.constraints_to_add && Array.isArray(parsed.constraints_to_add)) {
-    for (const constraint of parsed.constraints_to_add) {
+  if (extractedConstraints.length > 0) {
+    for (const constraint of extractedConstraints) {
       if (!constraints.includes(constraint)) {
         constraints.push(constraint);
       }
@@ -83,7 +126,7 @@ export async function updateConstraints(
   }
 
   // Fallback: extract from key_points
-  if (!parsed.constraints_to_add && parsed.key_points) {
+  if (extractedConstraints.length === 0 && parsed.key_points) {
     for (const point of parsed.key_points) {
       const pl = point.toLowerCase();
       if (
@@ -120,8 +163,8 @@ export async function updateConstraints(
 
   // Merge scope updates
   const updatedScopeItems =
-    parsed.scope_updates && Array.isArray(parsed.scope_updates)
-      ? mergeScopeUpdates(scopeItems, parsed.scope_updates)
+    extractedScopeUpdates.length > 0
+      ? mergeScopeUpdates(scopeItems, extractedScopeUpdates)
       : scopeItems;
 
   // Build fee quote update
