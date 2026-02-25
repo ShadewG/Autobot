@@ -44,7 +44,7 @@ export const classificationSchema = z.object({
   fee_amount: z
     .number()
     .nullable()
-    .describe("Fee amount if quoted (in dollars, or null)"),
+    .describe("The FOIA processing fee the agency is charging to produce records (in dollars). Only populate if the agency explicitly requires payment to fulfill this records request. Return null if the dollar amount is incidental content within the records (e.g., prices, bail, damages) rather than a charge for records production."),
 
   requires_response: z
     .boolean()

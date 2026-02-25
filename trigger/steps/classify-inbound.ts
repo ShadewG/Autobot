@@ -120,7 +120,7 @@ IMPORTANT: If attachments include PDFs or documents and the message references t
 
 ## Extraction Instructions
 1. **Intent**: Choose the single best-fit intent from the definitions above.
-2. **Fee amount**: Extract the EXACT dollar amount if quoted. Look for "$X", "cost of $X", "estimated fee: $X".
+2. **Fee amount**: Extract the amount ONLY if the agency is explicitly charging a processing fee for fulfilling this public records request (e.g., "processing fee of $X", "your cost to produce these records is $X", "we require a $X deposit before we can begin processing"). Do NOT extract incidental dollar amounts that appear in the records or correspondence content itself — such as prices of equipment, bail amounts, fines, damages, settlements, salaries, or any figure that is part of the subject matter of the records rather than a charge for the FOIA request itself. When in doubt, return null.
 3. **Portal URL**: Extract any URL that appears to be an online records portal.
 4. **Denial subtype**: Only populate if intent is "denial" or "partial_denial".
 5. **Exemption citations**: Extract any statute numbers, legal codes, or exemption names cited by the agency (e.g., "5 ILCS 140/7(1)(c)", "FOIA Exemption 7(A)").

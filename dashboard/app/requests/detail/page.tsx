@@ -315,6 +315,27 @@ function RequestDetailContent() {
     }
   };
 
+  const handleResimulateLatestInbound = async () => {
+    if (!id || !lastInboundMessage) return;
+    setIsRunningInbound(true);
+    try {
+      const result = await casesAPI.runInbound(parseInt(id), lastInboundMessage.id, {
+        autopilotMode: 'SUPERVISED',
+      });
+      if (result.success) {
+        mutate();
+        mutateRuns();
+      } else {
+        alert("Failed to resimulate inbound message");
+      }
+    } catch (error: any) {
+      console.error("Error resimulating inbound message:", error);
+      alert(error.message || "Failed to resimulate inbound message");
+    } finally {
+      setIsRunningInbound(false);
+    }
+  };
+
   // Get unprocessed inbound messages
   const unprocessedInboundMessages = useMemo(() => {
     if (!data?.thread_messages) return [];
@@ -476,6 +497,13 @@ function RequestDetailContent() {
                     {unprocessedInboundMessages.length}
                   </Badge>
                 )}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleResimulateLatestInbound}
+                disabled={!lastInboundMessage}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Resimulate Latest Inbound
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleRunFollowup}>
                 <RotateCcw className="h-4 w-4 mr-2" />
