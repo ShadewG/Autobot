@@ -490,6 +490,7 @@ function MonitorPageContent() {
   const [expandedPhoneCallId, setExpandedPhoneCallId] = useState<number | null>(null);
   const [phoneCallSubmitting, setPhoneCallSubmitting] = useState<number | null>(null);
   const [addingToPhoneQueue, setAddingToPhoneQueue] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const initialCaseApplied = useRef(false);
 
   // ── Deep linking & user filter ─────────────
@@ -794,7 +795,7 @@ function MonitorPageContent() {
       const res = await fetch(`/api/requests/${caseId}/workspace`);
       const data = await res.json();
       if (data.success && data.thread_messages) {
-        setCorrespondenceMessages(data.thread_messages);
+        setCorrespondenceMessages([...data.thread_messages].reverse());
       }
     } catch (err) {
       console.error("Failed to load correspondence:", err);
