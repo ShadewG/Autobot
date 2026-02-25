@@ -101,12 +101,14 @@ function runRegexSafetyChecks(
 
   // Law-fit checks: detect federal FOIA citation when addressing local/state agency
   if (jurisdictionLevel && jurisdictionLevel !== "federal") {
-    if (/5\s*U\.?S\.?C\.?\s*§?\s*552\b/.test(draftBodyText) || /freedom of information act/i.test(draftBodyText)) {
-      // Check it's not just a general reference alongside state law
+    // Only flag explicit federal statute citation (5 USC 552), not general "Freedom of Information Act" phrases
+    // which are commonly used as shorthand for state-level equivalents
+    const citesFederalStatute = /5\s*U\.?S\.?C\.?\s*§?\s*552\b/.test(draftBodyText);
+    if (citesFederalStatute) {
       const hasStateLaw = /\d+\s+(ILCS|Gov\.?\s*Code|C\.?R\.?S|O\.?R\.?S|R\.?C\.?W|M\.?G\.?L)/i.test(draftBodyText);
       if (!hasStateLaw) {
         riskFlags.push("LAW_JURISDICTION_MISMATCH");
-        warnings.push(`Draft cites federal FOIA (5 USC 552) but agency is ${jurisdictionLevel}-level. Use state public records law instead.`);
+        warnings.push(`Draft cites federal FOIA statute (5 USC 552) but agency is ${jurisdictionLevel}-level. Use state public records law instead.`);
       }
     }
   }
@@ -141,8 +143,10 @@ async function runAiSafetyReview(params: {
   proposalActionType: string;
   constraints: string[];
   scopeItems: ScopeItem[];
+  jurisdictionLevel?: string | null;
+  caseState?: string | null;
 }): Promise<SafetyReviewOutput> {
-  const { draftBodyText, proposalActionType, constraints, scopeItems } = params;
+  const { draftBodyText, proposalActionType, constraints, scopeItems, jurisdictionLevel, caseState } = params;
 
   const { object } = await generateObject({
     model: decisionModel,
@@ -160,6 +164,10 @@ ${JSON.stringify(constraints, null, 2)}
 
 ## Scope items
 ${JSON.stringify(scopeItems, null, 2)}
+
+## Jurisdiction context
+- Jurisdiction level: ${jurisdictionLevel || "unknown"}
+- State: ${caseState || "unknown"}
 
 ## Safety Checks (evaluate ALL of these)
 
@@ -228,6 +236,8 @@ export async function safetyCheck(
   const [regexResult, aiResult] = await Promise.all([
     Promise.resolve(runRegexSafetyChecks(draftBodyText, proposalActionType, safeConstraints, safeScope, jurisdictionLevel, caseState)),
     runAiSafetyReview({
+      jurisdictionLevel,
+      caseState,
       draftBodyText,
       proposalActionType,
       constraints: safeConstraints,

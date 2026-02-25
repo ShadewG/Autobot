@@ -216,7 +216,7 @@ export async function draftResponse(
 
     case "SEND_FEE_WAIVER_REQUEST": {
       draft = await aiService.generateFeeResponse(caseData, {
-        feeAmount: extractedFeeAmount || 0,
+        feeAmount: extractedFeeAmount || null,
         recommendedAction: "waiver",
         instructions: adjustmentInstruction,
         lessonsContext,

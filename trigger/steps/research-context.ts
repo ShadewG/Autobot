@@ -53,6 +53,11 @@ export function determineResearchLevel(
     return "light";
   }
 
+  // Wrong agency always needs research to find correct custodian
+  if (classification === "WRONG_AGENCY") {
+    return "medium";
+  }
+
   // Clarification: medium (we need context to answer their question)
   if (classification === "CLARIFICATION_REQUEST") {
     return "medium";

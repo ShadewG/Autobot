@@ -77,7 +77,9 @@ export const processInbound = task({
       autopilotMode, "INBOUND_MESSAGE",
       classification.requiresResponse, classification.portalUrl,
       classification.suggestedAction, classification.reasonNoResponse,
-      classification.denialSubtype
+      classification.denialSubtype,
+      undefined, undefined, undefined,
+      classification.jurisdiction_level
     );
 
     // If no action needed, commit and return

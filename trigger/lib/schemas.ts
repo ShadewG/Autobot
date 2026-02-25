@@ -87,6 +87,7 @@ export const classificationSchema = z.object({
       "sealed_court_order",
       "third_party_confidential",
       "records_not_yet_created",
+      "format_issue",
     ])
     .nullable()
     .describe("If intent is 'denial', the specific subtype"),

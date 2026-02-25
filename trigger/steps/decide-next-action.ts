@@ -657,7 +657,8 @@ export async function decideNextAction(
   denialSubtype: string | null,
   reviewAction?: string | null,
   reviewInstruction?: string | null,
-  humanDecision?: HumanDecision | null
+  humanDecision?: HumanDecision | null,
+  jurisdictionLevel?: string | null
 ): Promise<DecisionResult> {
   const reasoning: string[] = [];
 
@@ -842,7 +843,7 @@ export async function decideNextAction(
       sentiment,
       autopilotMode,
       denialSubtype,
-      jurisdictionLevel: null, // Populated by classify step in Phase 5
+      jurisdictionLevel: jurisdictionLevel || null,
     });
 
     if (aiResult) {

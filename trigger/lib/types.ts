@@ -20,7 +20,8 @@ export type DenialSubtype =
   | "privacy_exemption" | "excessive_fees" | "retention_expired"
   | "glomar_ncnd" | "not_reasonably_described" | "no_duty_to_create"
   | "privilege_attorney_work_product" | "juvenile_records" | "sealed_court_order"
-  | "third_party_confidential" | "records_not_yet_created";
+  | "third_party_confidential" | "records_not_yet_created"
+  | "format_issue";
 
 export type JurisdictionLevel = "federal" | "state" | "local";
 export type ResponseNature = "substantive" | "procedural" | "administrative" | "mixed";

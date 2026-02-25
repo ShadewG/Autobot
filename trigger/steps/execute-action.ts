@@ -202,8 +202,8 @@ export async function executeAction(
         } catch (e: any) { /* non-fatal */ }
       }
 
-      // Schedule next followup if this was a followup
-      if (actionType === "SEND_FOLLOWUP" && !emailResult.dryRun) {
+      // Schedule next followup if this was a followup or status update
+      if ((actionType === "SEND_FOLLOWUP" || actionType === "SEND_STATUS_UPDATE") && !emailResult.dryRun) {
         const followupDays = parseInt(process.env.FOLLOWUP_DELAY_DAYS || "7", 10);
         const nextDate = new Date();
         nextDate.setDate(nextDate.getDate() + followupDays);

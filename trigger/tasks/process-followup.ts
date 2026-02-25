@@ -15,7 +15,7 @@ import { safetyCheck } from "../steps/safety-check";
 import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
-import { researchContext, emptyResearchContext } from "../steps/research-context";
+import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger } from "../lib/db";
 import type { FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 
@@ -64,8 +64,12 @@ export const processFollowup = task({
 
     // Step 2b: Research context (lightweight for followups)
     let research: ResearchContext = emptyResearchContext();
-    if (decision.researchLevel && decision.researchLevel !== "none") {
-      research = await researchContext(caseId, decision.actionType, "NO_RESPONSE", null, decision.researchLevel);
+    const followupResearchLevel = determineResearchLevel(
+      decision.actionType, "NO_RESPONSE", null,
+      decision.researchLevel, !!(context.caseData.contact_research_notes)
+    );
+    if (followupResearchLevel !== "none") {
+      research = await researchContext(caseId, decision.actionType, "NO_RESPONSE", null, followupResearchLevel);
     }
 
     // Step 3: Draft follow-up
