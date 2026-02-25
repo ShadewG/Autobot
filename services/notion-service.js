@@ -44,9 +44,12 @@ const NOTION_STATUS_MAP = {
     'fee_negotiation': 'Fee Negotiation',
     'needs_human_fee_approval': 'Needs Human Approval',
     'needs_human_review': 'Needs Human Review',
+    'needs_contact_info': 'Needs Human Review',
     'portal_in_progress': 'Portal Submission',
     'portal_submission_failed': 'Portal Issue',
-    'needs_phone_call': 'Needs Phone Call'
+    'needs_phone_call': 'Needs Phone Call',
+    'pending': 'Ready to Send',
+    'pending_fee_decision': 'Needs Human Approval',
 };
 
 const POLICE_DEPARTMENT_FIELD_SPECS = [
@@ -1679,9 +1682,12 @@ Look for a records division email, FOIA email, or general agency email that acce
             'fee_negotiation': 'Fee Negotiation',
             'needs_human_fee_approval': 'Needs Human Approval',
             'needs_human_review': 'Needs Human Review',
+            'needs_contact_info': 'Needs Human Review',
             'portal_in_progress': 'Portal Submission',
             'portal_submission_failed': 'Portal Issue',
-            'needs_phone_call': 'Needs Phone Call'
+            'needs_phone_call': 'Needs Phone Call',
+            'pending': 'Ready to Send',
+            'pending_fee_decision': 'Needs Human Approval',
         };
 
         return statusMap[internalStatus] || internalStatus;

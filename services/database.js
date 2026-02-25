@@ -307,6 +307,14 @@ class DatabaseService {
                     portal_request_number: updatedCase.portal_request_number
                 });
             } catch (_) {}
+
+            // Sync portal status changes to Notion
+            try {
+                const notionService = require('./notion-service');
+                notionService.syncStatusToNotion(caseId).catch(err =>
+                    console.warn(`[DB] Notion sync (portal) failed for case ${caseId}:`, err.message)
+                );
+            } catch (e) { /* notion service not available */ }
         }
 
         return updatedCase;
@@ -338,6 +346,17 @@ class DatabaseService {
                 case_name: updated.case_name
             });
         }
+
+        // Sync to Notion whenever status or substatus changes
+        if (updated && (updates.status || updates.substatus || updates.last_portal_status)) {
+            try {
+                const notionService = require('./notion-service');
+                notionService.syncStatusToNotion(caseId).catch(err =>
+                    console.warn(`[DB] Notion sync failed for case ${caseId}:`, err.message)
+                );
+            } catch (e) { /* notion service not available */ }
+        }
+
         return updated;
     }
 
