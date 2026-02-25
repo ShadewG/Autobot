@@ -87,7 +87,6 @@ export async function commitState(
       await withTimeout(
         db.updateCase(caseId, {
           next_due_at: dueInfo.next_due_at,
-          updated_at: new Date(),
         }),
         COMMIT_STEP_TIMEOUT_MS,
         "updateCase(next_due_at)"

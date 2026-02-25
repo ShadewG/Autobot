@@ -317,7 +317,7 @@ class DatabaseService {
             return await this.getCaseById(caseId);
         }
 
-        const entries = Object.entries(updates).filter(([, value]) => value !== undefined);
+        const entries = Object.entries(updates).filter(([key, value]) => value !== undefined && key !== 'updated_at');
         if (entries.length === 0) {
             return await this.getCaseById(caseId);
         }
@@ -1625,10 +1625,12 @@ class DatabaseService {
             adjustmentCount: 'adjustment_count'
         };
 
-        const entries = Object.entries(updates).map(([key, value]) => {
-            const dbKey = fieldMap[key] || key;
-            return [dbKey, value];
-        });
+        const entries = Object.entries(updates)
+            .filter(([key]) => key !== 'updated_at')
+            .map(([key, value]) => {
+                const dbKey = fieldMap[key] || key;
+                return [dbKey, value];
+            });
 
         const setClauseParts = entries.map(([key], idx) => `${key} = $${idx + 2}`);
         setClauseParts.push('updated_at = CURRENT_TIMESTAMP');
