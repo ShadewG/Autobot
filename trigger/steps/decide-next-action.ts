@@ -102,6 +102,7 @@ function buildDecisionPrompt(params: {
   threadMessages: any[];
   denialSubtype?: string | null;
   jurisdictionLevel?: string | null;
+  dismissedProposals?: any[];
 }): string {
   const {
     caseData,
@@ -207,6 +208,13 @@ ${threadSummary || "No thread messages available."}
 - "medium" = contacts + state law research (most denials, complex clarifications)
 - "deep" = full custodian chain research (no_records without verified custodian, wrong_agency)
 
+${params.dismissedProposals && params.dismissedProposals.length > 0 ? `
+## Previously Dismissed Proposals (DO NOT repeat these)
+The human reviewer has already rejected the following proposals for this case.
+Do NOT propose the same action type again unless you have fundamentally new information.
+${params.dismissedProposals.map((p: any) => `- ${p.action_type} (dismissed ${p.created_at})`).join("\n")}
+${params.dismissedProposals.length >= 3 ? "\nWARNING: 3+ proposals dismissed. Strongly consider ESCALATE to let a human decide the next step." : ""}
+` : ""}
 Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 
@@ -218,12 +226,28 @@ async function validateDecision(
     extractedFeeAmount: number | null;
     autopilotMode: AutopilotMode;
     denialSubtype?: string | null;
+    dismissedProposals?: any[];
   }
 ): Promise<{ valid: boolean; reason?: string }> {
-  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype } = context;
+  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype, dismissedProposals } = context;
 
   if (aiDecisionResult.confidence < 0.5) {
     return { valid: false, reason: `AI decision confidence too low (${aiDecisionResult.confidence})` };
+  }
+
+  // Reject actions that have been dismissed 2+ times for this case
+  if (dismissedProposals && dismissedProposals.length > 0) {
+    const dismissedActionCounts: Record<string, number> = {};
+    for (const p of dismissedProposals) {
+      dismissedActionCounts[p.action_type] = (dismissedActionCounts[p.action_type] || 0) + 1;
+    }
+    const thisActionDismissals = dismissedActionCounts[aiDecisionResult.action] || 0;
+    if (thisActionDismissals >= 2) {
+      return {
+        valid: false,
+        reason: `${aiDecisionResult.action} has been dismissed ${thisActionDismissals} times for this case — must try a different approach`,
+      };
+    }
   }
 
   // SEND_INITIAL_REQUEST is only valid for process-initial-request, not inbound routing
@@ -302,10 +326,16 @@ async function aiDecision(params: {
   jurisdictionLevel?: string | null;
 }): Promise<DecisionResult | null> {
   try {
-    const [caseData, threadMessages, latestAnalysis] = await Promise.all([
+    const [caseData, threadMessages, latestAnalysis, dismissedProposals] = await Promise.all([
       db.getCaseById(params.caseId),
       db.getMessagesByCaseId(params.caseId),
       db.getLatestResponseAnalysis(params.caseId),
+      db.query(
+        `SELECT action_type, reasoning, created_at FROM proposals
+         WHERE case_id = $1 AND status = 'DISMISSED'
+         ORDER BY created_at DESC LIMIT 5`,
+        [params.caseId]
+      ).then((r: any) => r.rows),
     ]);
 
     const constraints = Array.isArray(params.constraints) ? params.constraints : [];
@@ -327,6 +357,7 @@ async function aiDecision(params: {
       threadMessages: Array.isArray(threadMessages) ? threadMessages : [],
       denialSubtype: params.denialSubtype,
       jurisdictionLevel: params.jurisdictionLevel,
+      dismissedProposals,
     });
 
     const { object } = await generateObject({
@@ -342,6 +373,7 @@ async function aiDecision(params: {
       extractedFeeAmount: params.extractedFeeAmount,
       autopilotMode: params.autopilotMode,
       denialSubtype: params.denialSubtype,
+      dismissedProposals,
     });
 
     if (!validation.valid) {
