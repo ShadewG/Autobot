@@ -36,6 +36,11 @@ CONTENT STRUCTURE (use natural language, not templates):
 DO NOT include email addresses or mailing addresses in the body.
 The email's From header already provides the reply address.
 
+FORMATTING:
+- Write in plain text only. NO markdown formatting (no **bold**, no *italic*, no # headings).
+- Use plain dashes (-) or numbered lists for bullet points.
+- This text will be sent as an email — markdown symbols like asterisks will appear as literal characters.
+
 IMPORTANT:
 - Write naturally - vary your language between requests
 - Don't use rigid templates or repeated exact phrases

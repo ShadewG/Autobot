@@ -286,9 +286,15 @@ export async function draftResponse(
       throw new Error(`Unknown action type for drafting: ${actionType}`);
   }
 
-  // Convert text to HTML if missing
+  // Convert text to HTML if missing, handling any markdown formatting
   if (!draft.body_html && draft.body_text) {
-    draft.body_html = `<p>${draft.body_text.replace(/\n\n/g, "</p><p>").replace(/\n/g, "<br>")}</p>`;
+    const htmlBody = draft.body_text
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/\n/g, '<br>');
+    draft.body_html = `<p>${htmlBody}</p>`;
   }
 
   return {

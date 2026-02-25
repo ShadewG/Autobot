@@ -118,6 +118,10 @@ STRUCTURE:
 3. Keep cooperative tone throughout
 4. Sign off: "Best regards, Samuel Hylton, Dr Insanity"
 
+FORMATTING:
+- Write in plain text only. NO markdown (no **bold**, no *italic*, no # headings).
+- Use plain dashes (-) for bullet points. Use plain text for emphasis.
+
 FORBIDDEN:
 - Arguing that email is a valid submission method when they have a portal
 - Citing laws in simple clarification responses
@@ -162,6 +166,10 @@ STRICTLY FORBIDDEN IN ALL FOLLOW-UPS (NEVER USE THESE WORDS):
 - Threatening language of any kind
 - Hostile or aggressive tone
 - Legal demands (except deadline reference in #3)
+
+FORMATTING:
+- Write in plain text only. NO markdown (no **bold**, no *italic*, no # headings).
+- Use plain dashes (-) for bullet points. Use plain text for emphasis.
 
 IMPORTANT: Keep follow-ups professional and cooperative. The goal is to get a response, not to threaten.`
 };

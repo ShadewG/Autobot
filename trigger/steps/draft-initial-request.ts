@@ -74,9 +74,16 @@ export async function draftInitialRequest(
     );
   }
 
+  // Convert markdown to HTML when generating fallback HTML
+  const markdownToHtml = (text: string) => text
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/\n/g, '<br>');
+
   const bodyHtml =
     draftResult.body_html ||
-    `<div style="font-family: Arial, sans-serif;">${bodyText.replace(/\n/g, "<br>")}</div>`;
+    `<div style="font-family: Arial, sans-serif;">${markdownToHtml(bodyText)}</div>`;
 
   const canAutoExecute = autopilotMode === "AUTO";
   const requiresHuman = !canAutoExecute;

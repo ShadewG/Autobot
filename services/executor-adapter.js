@@ -208,50 +208,91 @@ const emailExecutor = {
       // Lazy load email queue to avoid circular deps
       const { emailQueue } = require('../queues/email-queue');
 
-      const job = await emailQueue.add('send-email', {
-        caseId,
-        proposalId,
-        executionKey,
-        executionId: execution.id,
+      // If Redis/queue is available, queue the email (supports delayed send)
+      if (emailQueue) {
+        const job = await emailQueue.add('send-email', {
+          caseId,
+          proposalId,
+          executionKey,
+          executionId: execution.id,
+          to,
+          subject,
+          bodyText,
+          bodyHtml,
+          messageType: actionType?.toLowerCase().replace('send_', '').replace('approve_', '') || 'reply',
+          originalMessageId,
+          threadId,
+          headers
+        }, {
+          delay: delayMs,
+          jobId: executionKey  // Idempotency via execution key
+        });
+
+        // Update execution with job info
+        await updateExecutionRecord(executionKey, {
+          providerPayload: {
+            to,
+            subject,
+            delayMs,
+            jobId: job.id,
+            queuedAt: new Date().toISOString()
+          }
+        });
+
+        logger.info('Email queued for sending', {
+          executionKey,
+          caseId,
+          jobId: job.id,
+          delayMs
+        });
+
+        return {
+          success: true,
+          dryRun: false,
+          executionKey,
+          executionId: execution.id,
+          jobId: job.id,
+          status: 'QUEUED',
+          scheduledFor: delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : 'immediate'
+        };
+      }
+
+      // Fallback: send directly via SendGrid when no Redis/queue available
+      logger.warn('No email queue available, sending directly via SendGrid', { caseId, executionKey });
+      const sendgridService = require('./sendgrid-service');
+      const directResult = await sendgridService.sendEmail({
         to,
         subject,
-        bodyText,
-        bodyHtml,
+        text: bodyText,
+        html: bodyHtml,
+        inReplyTo: headers?.['In-Reply-To'] || originalMessageId || null,
+        references: headers?.References || null,
+        caseId,
         messageType: actionType?.toLowerCase().replace('send_', '').replace('approve_', '') || 'reply',
-        originalMessageId,
-        threadId,
-        headers
-      }, {
-        delay: delayMs,
-        jobId: executionKey  // Idempotency via execution key
       });
 
-      // Update execution with job info
       await updateExecutionRecord(executionKey, {
+        status: 'SENT',
         providerPayload: {
           to,
           subject,
-          delayMs,
-          jobId: job.id,
-          queuedAt: new Date().toISOString()
+          directSend: true,
+          messageId: directResult.messageId,
+          sendgridMessageId: directResult.sendgridMessageId,
+          sentAt: new Date().toISOString()
         }
       });
 
-      logger.info('Email queued for sending', {
-        executionKey,
-        caseId,
-        jobId: job.id,
-        delayMs
-      });
+      logger.info('Email sent directly (no queue)', { executionKey, caseId, messageId: directResult.messageId });
 
       return {
         success: true,
         dryRun: false,
         executionKey,
         executionId: execution.id,
-        jobId: job.id,
-        status: 'QUEUED',
-        scheduledFor: delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : 'immediate'
+        jobId: `direct_${executionKey}`,
+        status: 'SENT',
+        scheduledFor: 'immediate'
       };
 
     } catch (error) {

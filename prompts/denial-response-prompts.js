@@ -33,6 +33,11 @@ TONE:
 - Show good faith throughout
 - Don't fight battles that don't need fighting
 
+FORMATTING:
+- Write in plain text only. NO markdown formatting (no **bold**, no *italic*, no # headings).
+- Use plain dashes (-) for bullet points.
+- Use plain text labels like "Phase 1:" instead of markdown bold.
+
 PRINCIPLE: The goal is getting records, not winning arguments.`,
 
     // Specific strategies for each denial type
@@ -69,11 +74,11 @@ DO NOT:
 
             exampleRebuttal: `Thank you for your response. I'm happy to narrow immediately.
 
-**Phase 1** (minimal burden):
+Phase 1 (minimal burden):
 - Incident/offense report for [incident date/location]
 - 911 call audio
 
-**Phase 2** (after I have the report):
+Phase 2 (after I have the report):
 - BWC from primary responding officer only (I'll specify name/badge from report)
 - Limited to 90-minute window around incident time
 
@@ -252,10 +257,10 @@ Please provide immediately:
 
 Under [State statute cite], fees must reflect actual direct costs only and cannot include general overhead or be used as a barrier to access. Review time cannot be charged in most states - only search, redaction, and copying costs.
 
-**Fee Waiver Request:**
+Fee Waiver Request:
 This request is for documentary journalism purposes investigating police accountability, which serves a clear and significant public interest. Under [State statute], a public interest fee waiver is REQUIRED when disclosure primarily benefits the general public. This is not a commercial request.
 
-**Proposed Narrowing to Reduce Costs:**
+Proposed Narrowing to Reduce Costs:
 To reduce costs while fulfilling public interest, I propose narrowing to:
 - Primary responding officer body-worn camera only (Officer [Name/Badge] if identifiable from incident report)
 - 911 call audio
@@ -263,7 +268,7 @@ To reduce costs while fulfilling public interest, I propose narrowing to:
 
 This focuses on essential documentary footage. Even with this narrowed scope, I request a full public interest fee waiver as legally required.
 
-**If the estimate remains excessive or fee waiver is denied:**
+If the estimate remains excessive or fee waiver is denied:
 I reserve the right to file an administrative appeal of this fee determination and request review by the [State Attorney General/Public Access Counselor/relevant oversight body]. Case law in [State] establishes that fees exceeding $[reasonable amount] for similar requests are considered barriers to access.
 
 I'm prepared to pay reasonable actual costs, but the current estimate appears to significantly exceed standard rates and statutory limits. Please reconsider the fee waiver and provide the detailed breakdown requested above.`
@@ -386,11 +391,11 @@ TEMPLATE STRUCTURE:
             exampleRebuttal: `Thank you for your response. I'm happy to provide additional details to help locate these records.
 
 To clarify my request:
-- **Incident Date**: [specific date]
-- **Location**: [specific address/intersection]
-- **Subject**: [name if known]
-- **Incident/Case Number**: [if available]
-- **Specific Records**: [list each type clearly]
+- Incident Date: [specific date]
+- Location: [specific address/intersection]
+- Subject: [name if known]
+- Incident/Case Number: [if available]
+- Specific Records: [list each type clearly]
 
 Please let me know if you need any additional identifying information. I'm also available to discuss by phone if that would be more efficient.`
         },
@@ -412,10 +417,10 @@ TEMPLATE STRUCTURE:
 
             exampleRebuttal: `I understand agencies have no duty to create new records. However, my request is for records that already exist in your systems:
 
-- **Incident/offense reports** are routinely generated for every call for service
-- **911/CAD records** are automatically logged
-- **Body-worn camera footage** is automatically recorded per department policy
-- **Dispatch recordings** are archived per retention schedules
+- Incident/offense reports are routinely generated for every call for service
+- 911/CAD records are automatically logged
+- Body-worn camera footage is automatically recorded per department policy
+- Dispatch recordings are archived per retention schedules
 
 Compiling or retrieving these existing records is not "creating" new records — it is fulfilling a standard records request. Under [State statute], agencies must conduct a reasonable search of existing systems.
 

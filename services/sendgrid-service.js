@@ -78,7 +78,7 @@ class SendGridService {
                 },
                 replyTo: fromEmail,
                 subject: subject,
-                text: requestText,
+                text: this.stripMarkdown(requestText),
                 html: this.formatEmailHtml(requestText),
                 headers: headers,
                 customArgs: {
@@ -141,7 +141,7 @@ class SendGridService {
                 },
                 replyTo: fromEmail,
                 subject: `Re: ${subject}`,
-                text: followUpText,
+                text: this.stripMarkdown(followUpText),
                 html: this.formatEmailHtml(followUpText),
                 headers: {
                     'Message-ID': messageId,
@@ -212,7 +212,7 @@ class SendGridService {
                 },
                 replyTo: fromEmail,
                 subject: replySubject,
-                text: replyText,
+                text: this.stripMarkdown(replyText),
                 html: this.formatEmailHtml(replyText),
                 headers: {
                     'Message-ID': messageId,
@@ -1778,11 +1778,32 @@ class SendGridService {
     }
 
     /**
-     * Format email body as HTML
+     * Strip markdown syntax from text for clean plain-text emails.
+     * Removes **bold**, *italic*, and converts markdown bullets to plain dashes.
+     */
+    stripMarkdown(text) {
+        if (!text) return text;
+        return text
+            .replace(/\*\*([^*]+)\*\*/g, '$1')   // **bold** → bold
+            .replace(/\*([^*]+)\*/g, '$1')         // *italic* → italic
+            .replace(/^#{1,6}\s+/gm, '')           // # headings → plain text
+            .replace(/`([^`]+)`/g, '$1');           // `code` → code
+    }
+
+    /**
+     * Format email body as HTML, converting markdown to proper HTML tags.
      */
     formatEmailHtml(text) {
-        // Simple formatting: convert line breaks to <br> and wrap in basic HTML
-        const formatted = text.replace(/\n/g, '<br>');
+        if (!text) return '';
+        let formatted = text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')  // **bold** → <strong>
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>')               // *italic* → <em>
+            .replace(/^#{1,6}\s+(.+)$/gm, '<strong>$1</strong>') // # headings → <strong>
+            .replace(/`([^`]+)`/g, '<code>$1</code>')             // `code` → <code>
+            .replace(/\n/g, '<br>');
         return `
 <!DOCTYPE html>
 <html>
@@ -1837,7 +1858,7 @@ class SendGridService {
                 },
                 replyTo: fromEmail,
                 subject,
-                text,
+                text: this.stripMarkdown(text),
                 html: html || this.formatEmailHtml(text),
                 headers: {
                     'Message-ID': messageId,
