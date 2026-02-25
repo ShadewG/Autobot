@@ -4737,18 +4737,44 @@
             const pending = (proposals || []).filter(p => p.status === 'PENDING_APPROVAL');
             if (!pending.length) return '';
 
-            let html = `<h3 style="margin-bottom:8px;">Pending Actions</h3>`;
+            const SEND_LABELS = {
+                'NEGOTIATE_FEE': 'Send Negotiation Email',
+                'ACCEPT_FEE': 'Send Fee Acceptance',
+                'DECLINE_FEE': 'Send Fee Decline',
+                'SEND_REBUTTAL': 'Send Appeal',
+                'SEND_FOLLOWUP': 'Send Follow-up',
+                'SEND_INITIAL_REQUEST': 'Send Request',
+                'SEND_APPEAL': 'Send Appeal',
+                'SEND_CLARIFICATION': 'Send Clarification',
+                'SEND_PDF_EMAIL': 'Send PDF Email',
+            };
+
+            let html = `<h3 style="margin-bottom:8px;">Draft Ready for Review</h3>`;
             for (const p of pending) {
                 const actionLabel = String(p.action_type || 'action').replace(/_/g, ' ');
                 const isInitial = String(p.action_type) === 'SEND_INITIAL_REQUEST';
                 const isHybrid = !!p.portal_url && !!p.agency_email;
                 const showRouteApprove = isInitial && isHybrid;
 
+                // Action-specific descriptions so the user knows what happens when they approve
+                const ACTION_DESCRIPTIONS = {
+                    'NEGOTIATE_FEE': 'This email will negotiate the fee with the agency. Review it and click Send to proceed.',
+                    'ACCEPT_FEE': 'This email will accept the quoted fee. Review and click Send to proceed.',
+                    'DECLINE_FEE': 'This email will decline the quoted fee. Review and click Send to proceed.',
+                    'SEND_REBUTTAL': 'This email will appeal the denial. Review and click Send to proceed.',
+                    'SEND_FOLLOWUP': 'This follow-up email will check on the status of your request.',
+                    'SEND_INITIAL_REQUEST': 'This is the initial FOIA request email. Review and click Send to proceed.',
+                    'SEND_APPEAL': 'This formal appeal will challenge the denial. Review and click Send.',
+                    'SEND_CLARIFICATION': 'This email will clarify your request. Review and click Send.',
+                };
+                const description = ACTION_DESCRIPTIONS[p.action_type] || 'Review this draft and click Send to proceed.';
+
                 html += `<div class="proposal-action-card" id="pac_${p.id}">`;
                 html += `<div class="pac-header">`;
                 html += `<span class="pac-badge">${actionLabel}</span>`;
                 html += `<span style="font-size:11px;color:#8b949e;">Proposal #${p.id} · Confidence: ${p.confidence || '-'}</span>`;
                 html += `</div>`;
+                html += `<div style="font-size:12px;color:#7ee787;margin:4px 0 8px 0;">${description}</div>`;
 
                 const reasoningText = formatReasoning(p.reasoning);
                 if (reasoningText) {
@@ -4791,8 +4817,9 @@
 
                 // Action buttons
                 html += `<div class="pac-actions">`;
+                const reviewLabel = SEND_LABELS[p.action_type] ? `Review & ${SEND_LABELS[p.action_type]}` : 'Review & Confirm';
                 html += hasDraftContent
-                    ? `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Review & Confirm</button>`
+                    ? `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">${reviewLabel}</button>`
                     : `<button class="drawer-btn primary" onclick="expandProposalCard(${p.id})">Generate Draft & Review</button>`;
                 html += `<div class="dismiss-dropdown" style="display:inline-block;">`;
                 html += `<button class="drawer-btn" onclick="showDismissMenu(${p.id}, this)" style="color:#f85149;">Dismiss &#9662;</button>`;
@@ -4863,8 +4890,9 @@
 
                 const hasDraft = !!(p.draft_subject || p.draft_body_text);
                 html += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">`;
+                const sendLabel = SEND_LABELS[p.action_type] || 'Approve &amp; Send';
                 if (hasDraft) {
-                    html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="padding:10px 24px;font-size:13px;">Approve &amp; Send</button>`;
+                    html += `<button class="send-btn" onclick="approveProposal(${p.id}).then(()=>openCase(${caseData.id}))" style="padding:10px 24px;font-size:13px;">${sendLabel}</button>`;
                     if (showRouteApprove) {
                         html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'email').then(()=>openCase(${caseData.id}))">Approve Email</button>`;
                         html += `<button class="drawer-btn warn" onclick="approveProposalWithRoute(${p.id},'portal').then(()=>openCase(${caseData.id}))">Approve Portal</button>`;

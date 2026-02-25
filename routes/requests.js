@@ -1167,6 +1167,33 @@ router.post('/:id/resolve-review', async (req, res) => {
             ? `${baseInstruction}. Additional instructions: ${instruction}`
             : baseInstruction;
 
+        // Loop prevention: if there's already a PENDING_APPROVAL proposal matching
+        // this action, don't dismiss it and start over — tell the user to review it.
+        const ACTION_TO_PROPOSAL_TYPE = {
+            negotiate_fee: 'NEGOTIATE_FEE', accept_fee: 'ACCEPT_FEE', decline_fee: 'DECLINE_FEE',
+            appeal: 'SEND_REBUTTAL', narrow_scope: 'SEND_REBUTTAL',
+            send_via_email: 'SEND_INITIAL_REQUEST',
+        };
+        const matchingProposalType = ACTION_TO_PROPOSAL_TYPE[action];
+        if (matchingProposalType) {
+            const existingProposal = await db.query(
+                `SELECT id, action_type, draft_body_text FROM proposals
+                 WHERE case_id = $1 AND status = 'PENDING_APPROVAL' AND action_type = $2
+                 LIMIT 1`,
+                [requestId, matchingProposalType]
+            );
+            if (existingProposal.rows.length > 0) {
+                const ep = existingProposal.rows[0];
+                log.info(`Loop prevention: existing ${ep.action_type} proposal #${ep.id} already pending`);
+                return res.json({
+                    success: true,
+                    message: `A ${action.replace(/_/g, ' ')} draft is already waiting for your review (proposal #${ep.id}). Open the case to approve, adjust, or dismiss it.`,
+                    immediate: true,
+                    existing_proposal_id: ep.id
+                });
+            }
+        }
+
         // Complete waitpoint tokens on active proposals before dismissing.
         // This unblocks any Trigger.dev tasks waiting on human approval so they exit cleanly.
         try {
