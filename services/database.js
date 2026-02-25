@@ -2705,7 +2705,7 @@ class DatabaseService {
     async getAttachmentsByCaseId(caseId) {
         const result = await this.query(`
             SELECT a.id, a.message_id, a.case_id, a.filename, a.content_type, a.size_bytes,
-                   a.storage_path, a.storage_url, a.created_at,
+                   a.storage_path, a.storage_url, a.extracted_text, a.created_at,
                    m.subject AS message_subject, m.direction AS message_direction
             FROM attachments a
             LEFT JOIN messages m ON a.message_id = m.id

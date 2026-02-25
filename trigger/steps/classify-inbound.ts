@@ -69,8 +69,11 @@ ${(message.body_text || message.body_html || "").substring(0, 3000)}
 ${attachments.length > 0 ? `
 **Attachments** (${attachments.length} file${attachments.length > 1 ? "s" : ""}):
 ${attachments.map((a: any) => `- ${a.filename} (${a.content_type}, ${Math.round((a.size_bytes || 0) / 1024)}KB)`).join("\n")}
+${attachments.filter((a: any) => a.extracted_text).map((a: any) => `
+### Extracted text from "${a.filename}":
+${a.extracted_text.substring(0, 4000)}${a.extracted_text.length > 4000 ? "\n[...truncated]" : ""}`).join("\n")}
 
-IMPORTANT: If attachments include PDFs or documents and the message references them as records/responses, classify as "records_ready" or "delivery", NOT as "acknowledgment" or "other".` : ""}
+IMPORTANT: If attachments include PDFs or documents and the message references them as records/responses, classify as "records_ready" or "delivery", NOT as "acknowledgment" or "other". Use the extracted text from attachments to inform your classification — it may contain fee quotes, denial letters, records, or other substantive content.` : ""}
 
 ## Intent Definitions (choose the BEST match)
 - **fee_request**: Agency quotes a cost/fee for records production. Look for dollar amounts, invoices, cost estimates, payment instructions.

@@ -18,7 +18,7 @@ import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
-import db, { logger } from "../lib/db";
+import db, { logger, attachmentProcessor } from "../lib/db";
 import type { HumanDecision, InboundPayload, ResearchContext } from "../lib/types";
 
 const DRAFT_REQUIRED_ACTIONS = [
@@ -75,6 +75,26 @@ export const processInbound = task({
 
     // Step 1: Load context
     const context = await loadContext(caseId, messageId);
+
+    // Step 1b: Extract text from any unprocessed PDF attachments
+    const inboundAttachments = context.attachments.filter(
+      (a: any) => a.message_id === messageId && !a.extracted_text
+    );
+    if (inboundAttachments.length > 0) {
+      try {
+        const processed = await attachmentProcessor.processAttachmentsForCase(caseId);
+        // Refresh attachments in context with extracted text
+        for (const p of processed) {
+          const existing = context.attachments.find((a: any) => a.id === p.id);
+          if (existing) existing.extracted_text = p.extracted_text;
+        }
+        logger.info("Extracted text from attachments", {
+          caseId, processed: processed.length,
+        });
+      } catch (err: any) {
+        logger.warn("Attachment text extraction failed", { caseId, error: err.message });
+      }
+    }
 
     // Step 2: Classify inbound (Vercel AI SDK + Zod)
     const classification = await classifyInbound(context, messageId, "INBOUND_MESSAGE");

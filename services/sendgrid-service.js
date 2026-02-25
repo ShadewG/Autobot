@@ -628,7 +628,7 @@ class SendGridService {
                         }
 
                         // Tier 3: Save to DB — always store binary as BYTEA fallback
-                        await db.createAttachment({
+                        const savedAtt = await db.createAttachment({
                             message_id: message.id,
                             case_id: caseData.id,
                             filename: att.filename || 'unnamed',
@@ -638,6 +638,18 @@ class SendGridService {
                             storage_url: storageUrl,
                             file_data: att.buffer || null
                         });
+
+                        // Extract text from PDFs so the agent can read them
+                        if (att.buffer && savedAtt?.id) {
+                            try {
+                                const attachmentProcessor = require('./attachment-processor');
+                                await attachmentProcessor.processAttachment(
+                                    savedAtt.id, att.buffer, att.mimetype
+                                );
+                            } catch (extractErr) {
+                                console.error(`Text extraction failed for ${att.filename}:`, extractErr.message);
+                            }
+                        }
                     } catch (attErr) {
                         console.error(`Failed to save attachment ${att.filename}:`, attErr.message);
                     }
