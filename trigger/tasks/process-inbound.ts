@@ -25,13 +25,21 @@ const DRAFT_REQUIRED_ACTIONS = [
   "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
 ];
 
-async function waitForHumanDecision(tokenId: string): Promise<{ ok: true; output: HumanDecision } | { ok: false }> {
+async function waitForHumanDecision(
+  idempotencyKey: string,
+  proposalId: number
+): Promise<{ ok: true; output: HumanDecision } | { ok: false }> {
   // Create a Trigger.dev waitpoint token with 30-day timeout
-  // Use tokenId as idempotencyKey to allow dashboard lookup
+  // Use our UUID as idempotencyKey for dedup, but store the real Trigger.dev token ID
   const token = await wait.createToken({
-    idempotencyKey: tokenId,
+    idempotencyKey,
     timeout: "30d",
   });
+
+  // Update proposal with the real Trigger.dev token ID (needed for wait.completeToken from dashboard)
+  await db.updateProposal(proposalId, { waitpoint_token: token.id });
+  logger.info("Waitpoint token created", { proposalId, idempotencyKey, triggerTokenId: token.id });
+
   // Wait for it to be completed
   const result = await wait.forToken<HumanDecision>(token);
   if (!result.ok) return { ok: false };
@@ -113,7 +121,7 @@ export const processInbound = task({
         caseId, proposalId: gate.proposalId, tokenId: gate.waitpointTokenId,
       });
 
-      const result = await waitForHumanDecision(gate.waitpointTokenId);
+      const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
 
       // Timeout: auto-escalate
       if (!result.ok) {
@@ -133,16 +141,11 @@ export const processInbound = task({
       const humanDecision = result.output;
       logger.info("Human decision received", { caseId, action: humanDecision.action });
 
-      // Compare-and-swap: validate proposal still PENDING_APPROVAL AND token matches
+      // Compare-and-swap: validate proposal still PENDING_APPROVAL
       const currentProposal = await db.getProposalById(gate.proposalId);
       if (currentProposal?.status !== "PENDING_APPROVAL") {
         throw new Error(
           `Proposal ${gate.proposalId} is ${currentProposal?.status}, not PENDING_APPROVAL`
-        );
-      }
-      if (currentProposal?.waitpoint_token !== gate.waitpointTokenId) {
-        throw new Error(
-          `Proposal ${gate.proposalId} token mismatch — stale approval rejected`
         );
       }
 
@@ -180,7 +183,7 @@ export const processInbound = task({
         );
 
         if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
-          const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId);
+          const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
           if (!adjustResult.ok) {
             await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });

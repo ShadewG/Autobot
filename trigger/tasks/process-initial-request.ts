@@ -17,8 +17,16 @@ import { commitState } from "../steps/commit-state";
 import db, { logger } from "../lib/db";
 import type { HumanDecision, InitialRequestPayload } from "../lib/types";
 
-async function waitForHumanDecision(tokenId: string): Promise<{ ok: true; output: HumanDecision } | { ok: false }> {
-  const token = await wait.createToken({ idempotencyKey: tokenId, timeout: "30d" });
+async function waitForHumanDecision(
+  idempotencyKey: string,
+  proposalId: number
+): Promise<{ ok: true; output: HumanDecision } | { ok: false }> {
+  const token = await wait.createToken({ idempotencyKey, timeout: "30d" });
+
+  // Update proposal with real Trigger.dev token ID (needed for wait.completeToken from dashboard)
+  await db.updateProposal(proposalId, { waitpoint_token: token.id });
+  logger.info("Waitpoint token created", { proposalId, idempotencyKey, triggerTokenId: token.id });
+
   const result = await wait.forToken<HumanDecision>(token);
   if (!result.ok) return { ok: false };
   return { ok: true, output: result.output };
@@ -58,7 +66,7 @@ export const processInitialRequest = task({
         caseId, proposalId: draft.proposalId, tokenId,
       });
 
-      const result = await waitForHumanDecision(tokenId);
+      const result = await waitForHumanDecision(tokenId, draft.proposalId);
 
       if (!result.ok) {
         await db.updateProposal(draft.proposalId, { status: "EXPIRED" });
@@ -74,16 +82,11 @@ export const processInitialRequest = task({
       const humanDecision = result.output;
       logger.info("Human decision received for initial request", { caseId, action: humanDecision.action });
 
-      // Validate proposal state AND token match
+      // Validate proposal still PENDING_APPROVAL
       const currentProposal = await db.getProposalById(draft.proposalId);
       if (currentProposal?.status !== "PENDING_APPROVAL") {
         throw new Error(
           `Proposal ${draft.proposalId} is ${currentProposal?.status}, not PENDING_APPROVAL`
-        );
-      }
-      if (currentProposal?.waitpoint_token !== tokenId) {
-        throw new Error(
-          `Proposal ${draft.proposalId} token mismatch — stale approval rejected`
         );
       }
 
@@ -107,7 +110,7 @@ export const processInitialRequest = task({
         const adjustTokenId = crypto.randomUUID();
         await db.updateProposal(draft.proposalId, { waitpoint_token: adjustTokenId });
 
-        const adjustResult = await waitForHumanDecision(adjustTokenId);
+        const adjustResult = await waitForHumanDecision(adjustTokenId, draft.proposalId);
 
         if (!adjustResult.ok || adjustResult.output.action !== "APPROVE") {
           await db.updateProposal(draft.proposalId, {

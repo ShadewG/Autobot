@@ -18,8 +18,16 @@ import { commitState } from "../steps/commit-state";
 import db, { logger } from "../lib/db";
 import type { FollowupPayload, HumanDecision } from "../lib/types";
 
-async function waitForHumanDecision(tokenId: string): Promise<{ ok: true; output: HumanDecision } | { ok: false }> {
-  const token = await wait.createToken({ idempotencyKey: tokenId, timeout: "30d" });
+async function waitForHumanDecision(
+  idempotencyKey: string,
+  proposalId: number
+): Promise<{ ok: true; output: HumanDecision } | { ok: false }> {
+  const token = await wait.createToken({ idempotencyKey, timeout: "30d" });
+
+  // Update proposal with real Trigger.dev token ID (needed for wait.completeToken from dashboard)
+  await db.updateProposal(proposalId, { waitpoint_token: token.id });
+  logger.info("Waitpoint token created", { proposalId, idempotencyKey, triggerTokenId: token.id });
+
   const result = await wait.forToken<HumanDecision>(token);
   if (!result.ok) return { ok: false };
   return { ok: true, output: result.output };
@@ -76,23 +84,18 @@ export const processFollowup = task({
 
     // Step 6: Wait if needed
     if (gate.shouldWait && gate.waitpointTokenId) {
-      const result = await waitForHumanDecision(gate.waitpointTokenId);
+      const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
 
       if (!result.ok) {
         await db.updateProposal(gate.proposalId, { status: "EXPIRED" });
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
-      // Validate proposal still PENDING_APPROVAL and token matches
+      // Validate proposal still PENDING_APPROVAL
       const currentProposal = await db.getProposalById(gate.proposalId);
       if (currentProposal?.status !== "PENDING_APPROVAL") {
         throw new Error(
           `Proposal ${gate.proposalId} is ${currentProposal?.status}, not PENDING_APPROVAL`
-        );
-      }
-      if (currentProposal?.waitpoint_token !== gate.waitpointTokenId) {
-        throw new Error(
-          `Proposal ${gate.proposalId} token mismatch — stale approval rejected`
         );
       }
 

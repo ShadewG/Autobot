@@ -335,6 +335,40 @@ router.post('/proposals/:id/decision', async (req, res) => {
       decidedBy: req.body.decidedBy || 'human'
     };
 
+    // === Trigger.dev path: complete waitpoint token ===
+    if (proposal.waitpoint_token) {
+      const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+
+      // For ALL actions (APPROVE, ADJUST, DISMISS, WITHDRAW), complete the token
+      // The waiting Trigger.dev task handles each action type internally
+      await triggerWait.completeToken(proposal.waitpoint_token, {
+        action,
+        instruction: instruction || null,
+        reason: reason || null,
+      });
+
+      await db.updateProposal(proposalId, {
+        human_decision: humanDecision,
+        status: 'DECISION_RECEIVED'
+      });
+
+      logger.info('Trigger.dev waitpoint token completed', {
+        proposalId,
+        caseId,
+        action,
+        tokenId: proposal.waitpoint_token,
+      });
+
+      return res.status(202).json({
+        success: true,
+        message: 'Decision received, Trigger.dev task resuming',
+        proposal_id: proposalId,
+        action,
+      });
+    }
+
+    // === Legacy BullMQ path: for proposals without waitpoint_token ===
+
     // For DISMISS/WITHDRAW, update proposal and return — no need to resume graph
     if (action === 'DISMISS' || action === 'WITHDRAW') {
       await db.updateProposal(proposalId, {
