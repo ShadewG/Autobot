@@ -357,11 +357,25 @@ router.post('/proposals/:id/decision', async (req, res) => {
         status: 'DECISION_RECEIVED'
       });
 
-      await triggerWait.completeToken(tokenId, {
-        action,
-        instruction: instruction || null,
-        reason: reason || null,
-      });
+      // Complete the waitpoint token via direct HTTP (SDK completeToken is unreliable
+      // for tokens created inside running tasks — returns sporadic 500 errors)
+      const triggerApiUrl = process.env.TRIGGER_API_URL || 'https://api.trigger.dev';
+      const completeResp = await fetch(
+        `${triggerApiUrl}/api/v1/waitpoints/tokens/${tokenId}/complete`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+          },
+          body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null } }),
+        }
+      );
+
+      if (!completeResp.ok) {
+        const errorBody = await completeResp.text();
+        throw new Error(`Failed to complete waitpoint token ${tokenId}: ${completeResp.status} ${errorBody}`);
+      }
 
       logger.info('Trigger.dev waitpoint token completed', {
         proposalId,
