@@ -327,6 +327,11 @@ async function validateDecision(
     return { valid: false, reason: "UNKNOWN classification must escalate" };
   }
 
+  // WRONG_AGENCY must always route to RESEARCH_AGENCY — never follow up with the wrong agency
+  if (classification === "WRONG_AGENCY" && aiDecisionResult.action !== "RESEARCH_AGENCY") {
+    return { valid: false, reason: "WRONG_AGENCY classification must route to RESEARCH_AGENCY" };
+  }
+
   if (aiDecisionResult.action === "CLOSE_CASE" && !aiDecisionResult.requiresHuman) {
     return { valid: false, reason: "CLOSE_CASE must require human review" };
   }
