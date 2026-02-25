@@ -123,6 +123,7 @@ export const processInbound = task({
         caseId, runId, decision.actionType, decision.reasoning,
         classification.confidence, "INBOUND_MESSAGE", false, null
       );
+      await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
       return { status: "completed", action: "none", reasoning: decision.reasoning };
     }
 
@@ -193,6 +194,7 @@ export const processInbound = task({
         await db.updateCaseStatus(caseId, "needs_human_review", {
           requires_human: true, pause_reason: "TIMED_OUT",
         });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
@@ -213,6 +215,7 @@ export const processInbound = task({
 
       if (humanDecision.action === "DISMISS") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed", proposalId: gate.proposalId };
       }
 
@@ -220,6 +223,7 @@ export const processInbound = task({
         await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "withdrawn", proposalId: gate.proposalId };
       }
 
@@ -251,6 +255,7 @@ export const processInbound = task({
 
           if (!adjustResult.ok) {
             await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
             return { status: "timed_out", proposalId: adjustedGate.proposalId };
           }
 
@@ -258,6 +263,7 @@ export const processInbound = task({
             await db.updateProposal(adjustedGate.proposalId, {
               status: adjustResult.output.action === "DISMISS" ? "DISMISSED" : "WITHDRAWN",
             });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
             return { status: adjustResult.output.action.toLowerCase(), proposalId: adjustedGate.proposalId };
           }
 
@@ -270,6 +276,7 @@ export const processInbound = task({
             classification.confidence, "INBOUND_MESSAGE",
             adjustedExecution.actionExecuted, adjustedExecution.executionResult
           );
+          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
           return { status: "completed", proposalId: adjustedGate.proposalId };
         }
       }
@@ -290,6 +297,7 @@ export const processInbound = task({
       execution.actionExecuted, execution.executionResult
     );
 
+    await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
     return {
       status: "completed",
       proposalId: gate.proposalId,

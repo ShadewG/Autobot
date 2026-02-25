@@ -73,6 +73,7 @@ export const processFollowup = task({
         caseId, runId, decision.actionType, decision.reasoning,
         1.0, "SCHEDULED_FOLLOWUP", false, null
       );
+      await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
       return { status: "completed", action: "none" };
     }
 
@@ -116,6 +117,7 @@ export const processFollowup = task({
 
       if (!result.ok) {
         await db.updateProposal(gate.proposalId, { status: "EXPIRED" });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
@@ -137,11 +139,13 @@ export const processFollowup = task({
         await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "withdrawn", proposalId: gate.proposalId };
       }
 
       if (humanDecision.action !== "APPROVE") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed", proposalId: gate.proposalId };
       }
     }
@@ -158,6 +162,7 @@ export const processFollowup = task({
       1.0, "SCHEDULED_FOLLOWUP", execution.actionExecuted, execution.executionResult
     );
 
+    await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
     return {
       status: "completed",
       proposalId: gate.proposalId,
