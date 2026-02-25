@@ -995,7 +995,7 @@ Return ONLY the email body text.`;
 
         const actionGuidance = {
             accept: 'Politely accept the cost, confirm willingness to pay, and request next steps for invoice/payment.',
-            negotiate: 'Push back on the cost, request itemized breakdowns, cite state fee statutes, and offer a phased or narrowed request to reduce cost.',
+            negotiate: 'Propose narrowing the scope to reduce the number of videos and cost. Focus on: (1) limiting to the primary responding officer(s) and arresting officer(s) only, (2) proposing a tighter time window around the incident, (3) asking what the agency needs to identify the most critical footage — such as whether a police report or incident number can help narrow it. If the agency already provided an itemized fee breakdown, do NOT re-ask for it — acknowledge their breakdown and use it to propose a specific narrowed scope. Also request a public/media interest fee waiver citing state statute. Do NOT suggest in-person viewing or inspection — we are a remote team and cannot visit in person.',
             decline: 'Explain the fee exceeds budget, request fee waiver or narrowing help, and keep door open for partial fulfillment.',
             escalate: 'Flag that the fee far exceeds norms, request supervisor review, and cite public interest considerations.',
             waiver: 'Request a full fee waiver citing documentary journalism public interest. Cite state statute requiring fee waivers for public interest requests. Note that this request is for documentary production investigating police accountability, which primarily benefits the general public. If a waiver is not granted, request the statutory basis for denial of the waiver.'
@@ -1031,9 +1031,10 @@ ${lessonsContext}
 Email requirements:
 1. Reference the request using the SHORT case reference ("${shortReference}") - NOT the full case name
 2. Mention the quoted fee amount explicitly
-3. Ask for itemized breakdowns or statutory authority where relevant
-4. Keep tone professional, collaborative, and human-sounding
-5. Keep under 200 words
+3. Do NOT re-ask for an itemized breakdown if the agency already provided one — acknowledge it and use it
+4. Do NOT suggest in-person viewing or in-office inspection — we are a remote team
+5. Keep tone professional, collaborative, and human-sounding
+6. Keep under 200 words
 
 Return ONLY the email body, no greetings beyond what belongs in the email.`;
 

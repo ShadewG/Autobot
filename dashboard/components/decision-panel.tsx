@@ -291,7 +291,7 @@ const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
     },
     secondaryAction: {
       label: "Negotiate",
-      description: "AI drafts a pushback email requesting itemized breakdown, citing state fee statutes, and offering to narrow scope to reduce cost. You'll review the draft before it's sent.",
+      description: "AI proposes narrowing to key officers and tighter time window to cut cost. Acknowledges the agency's breakdown and requests public interest fee waiver. You'll review the draft before it's sent.",
       recommended: false,
     },
     overflowActions: [

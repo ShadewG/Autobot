@@ -177,7 +177,7 @@ function RequestDetailContent() {
 
   const handleNegotiate = () => {
     handleRevise(
-      "Draft a fee negotiation email. Request an itemized breakdown of all charges, cite the applicable state FOIA fee statute to challenge any excessive charges, and offer to narrow the scope of the request to reduce cost. Keep the tone professional but firm."
+      "Draft a fee negotiation email proposing to narrow the scope to reduce cost. Focus on limiting to the primary responding and arresting officers only, and offering a tighter time window around the incident. If the agency already provided an itemized fee breakdown, acknowledge it and propose a specific narrowed scope using that info. Ask about public/media interest fee waivers under state statute. Do NOT suggest in-person viewing — we are a remote team."
     );
   };
 

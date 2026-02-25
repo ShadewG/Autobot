@@ -151,6 +151,8 @@ export async function draftResponse(
         recommendedAction: "negotiate",
         instructions: adjustmentInstruction,
         lessonsContext,
+        agencyMessage: latestInbound,
+        agencyAnalysis: latestAnalysis,
       });
       break;
     }
