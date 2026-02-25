@@ -176,7 +176,7 @@ export function AdjustModal({
               <p className="text-xs font-medium mb-2">Will remove references to:</p>
               <div className="flex flex-wrap gap-1">
                 {constraints.flatMap((c) =>
-                  c.affected_items.map((item, i) => (
+                  (c.affected_items || []).map((item, i) => (
                     <Badge key={`${c.type}-${i}`} variant="outline" className="text-[10px]">
                       {item}
                     </Badge>

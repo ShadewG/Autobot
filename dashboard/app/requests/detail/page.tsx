@@ -1051,7 +1051,7 @@ function RequestDetailContent() {
                         <div className="bg-muted rounded p-3 text-sm">
                           <p className="font-medium mb-2">AI Analysis:</p>
                           <ul className="space-y-1">
-                            {event.ai_audit.summary.map((point, i) => (
+                            {(event.ai_audit.summary || []).map((point, i) => (
                               <li key={i}>• {point}</li>
                             ))}
                           </ul>

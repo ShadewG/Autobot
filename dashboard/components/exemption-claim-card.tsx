@@ -73,7 +73,7 @@ export function ExemptionClaimCard({
 
   const handleChallenge = () => {
     const instruction = `Challenge the exemption claim: "${constraint.description}".
-The agency cited ${constraint.source || 'exemption'} as the basis for withholding ${constraint.affected_items.join(', ')}.
+The agency cited ${constraint.source || 'exemption'} as the basis for withholding ${(constraint.affected_items || []).join(', ') || 'records'}.
 ${matchingExemption ? `Known exceptions to this exemption include: ${matchingExemption.exceptions.join(', ')}.` : ''}
 Draft a response that respectfully challenges this exemption and requests the records be released or that the agency provide more specific justification.`;
 
