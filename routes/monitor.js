@@ -961,7 +961,7 @@ router.get('/live-overview', async (req, res) => {
                 (SELECT COALESCE(m4.received_at, m4.created_at) FROM messages m4 WHERE m4.case_id = c.id AND m4.direction = 'inbound' ORDER BY COALESCE(m4.received_at, m4.created_at) DESC LIMIT 1) AS last_inbound_date
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
-            WHERE p.status = 'PENDING_APPROVAL'
+            WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
             ${caseUserFilter}
             ORDER BY
                 CASE WHEN p.risk_flags IS NOT NULL AND array_length(p.risk_flags, 1) > 0 THEN 0
@@ -1084,7 +1084,7 @@ router.get('/live-overview', async (req, res) => {
                 (SELECT m2.body_text FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
             FROM cases c
             WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
-              AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status = 'PENDING_APPROVAL')
+              AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status IN ('PENDING_APPROVAL', 'BLOCKED'))
               ${caseUserFilter}
             ORDER BY
                 CASE c.pause_reason WHEN 'FEE_QUOTE' THEN 0 WHEN 'DENIAL' THEN 1

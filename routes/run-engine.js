@@ -300,8 +300,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
-    // Check proposal is pending approval
-    if (proposal.status !== 'PENDING_APPROVAL') {
+    // Check proposal is in a decidable state (PENDING_APPROVAL = old queue, BLOCKED = Trigger.dev waitpoint)
+    if (!['PENDING_APPROVAL', 'BLOCKED'].includes(proposal.status)) {
       return res.status(409).json({
         success: false,
         error: `Proposal is not pending approval`,
