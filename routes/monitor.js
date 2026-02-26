@@ -263,6 +263,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         } catch (_) {}
 
         notify('info', `PDF email sent to ${targetEmail} for case ${caseId}`, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
         return {
             success: true,
             message: `PDF email sent to ${targetEmail}`,
@@ -320,6 +321,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         await db.updateProposal(proposalId, { status: 'PENDING_PORTAL' });
 
         notify('info', `Portal submission approved — Trigger.dev task started for case ${caseId}`, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
         return {
             success: true,
             message: 'Portal submission approved and triggered',
@@ -344,6 +346,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 
         await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
         notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
         return {
             success: true,
             message: 'Decision received, Trigger.dev task resuming',
@@ -394,6 +397,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     }
 
     notify('info', `Proposal ${action.toLowerCase()} — re-triggered via Trigger.dev for case ${caseId}`, { case_id: caseId });
+    emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
     return {
         success: true,
         message: 'Decision received, re-processing via Trigger.dev',

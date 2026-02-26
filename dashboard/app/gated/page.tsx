@@ -942,9 +942,10 @@ function MonitorPageContent() {
       }
       setReviewInstruction("");
       removeCurrentItem();
+      showToast(data.message || `Resolved: ${action.replace(/_/g, " ")}`);
       revalidateQueue();
     } catch (err) {
-      alert(`Resolve failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Resolve failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setIsSubmitting(false);
     }
