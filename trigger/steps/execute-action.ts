@@ -119,14 +119,21 @@ export async function executeAction(
   const hasPortal = portalExecutor.requiresPortal({ ...caseData, portal_url: targetPortalUrl });
 
   // Portal check for SEND_ actions or explicit SUBMIT_PORTAL
+  // If SUBMIT_PORTAL but no portal, downgrade to email send (common after agency redirect)
+  let resolvedActionType: ActionType = actionType;
   if (actionType === "SUBMIT_PORTAL" && !hasPortal) {
-    throw new Error(`SUBMIT_PORTAL requested but no portal_url for case ${caseId}`);
+    if (targetEmail) {
+      logger.info("SUBMIT_PORTAL downgraded to email — no portal_url after agency override", { caseId, targetEmail });
+      resolvedActionType = "SEND_INITIAL_REQUEST";
+    } else {
+      throw new Error(`SUBMIT_PORTAL requested but no portal_url or email for case ${caseId}`);
+    }
   }
-  const shouldForcePortal = hasPortal && (actionType.startsWith("SEND_") || actionType === "SUBMIT_PORTAL");
+  const shouldForcePortal = hasPortal && (resolvedActionType.startsWith("SEND_") || resolvedActionType === "SUBMIT_PORTAL");
   if (shouldForcePortal) {
     // For follow-ups on portals with existing request numbers,
     // use the request-specific URL instead of /requests/new
-    const isFollowup = actionType !== "SEND_INITIAL_REQUEST" && actionType !== "SUBMIT_PORTAL";
+    const isFollowup = resolvedActionType !== "SEND_INITIAL_REQUEST" && resolvedActionType !== "SUBMIT_PORTAL";
     const requestNumber = caseData?.portal_request_number;
     let portalInstructions = bodyText || bodyHtml || null;
 
@@ -174,7 +181,7 @@ export async function executeAction(
 
   let executionResult: ExecutionResult | null = null;
 
-  switch (actionType) {
+  switch (resolvedActionType) {
     case "SUBMIT_PORTAL":
       // SUBMIT_PORTAL should always be caught by shouldForcePortal above.
       // If we get here, it means hasPortal was false but we didn't throw — should not happen.
@@ -207,7 +214,7 @@ export async function executeAction(
 
       const thread = await db.getThreadByCaseId(caseId);
       const latestInbound = await db.getLatestInboundMessage(caseId);
-      const isInitial = actionType === "SEND_INITIAL_REQUEST";
+      const isInitial = resolvedActionType === "SEND_INITIAL_REQUEST";
       const delayMinutes = isInitial ? 0 : Math.floor(Math.random() * 480) + 120;
       const delayMs = delayMinutes * 60 * 1000;
 
@@ -220,7 +227,7 @@ export async function executeAction(
         caseId,
         proposalId,
         runId,
-        actionType,
+        actionType: resolvedActionType,
         delayMs,
         threadId: thread?.id,
         originalMessageId: latestInbound?.message_id,
@@ -239,7 +246,7 @@ export async function executeAction(
       executionResult = { action: emailResult.dryRun ? "dry_run_skipped" : "email_queued", ...emailResult };
 
       await createExecutionRecord({
-        caseId, proposalId, runId, executionKey, actionType,
+        caseId, proposalId, runId, executionKey, actionType: resolvedActionType,
         status: emailResult.dryRun ? "DRY_RUN" : "QUEUED",
         provider: emailResult.dryRun ? "dry_run" : "email",
         providerPayload: { to: targetEmail, subject, jobId: emailResult.jobId, delayMinutes },
@@ -252,15 +259,15 @@ export async function executeAction(
       });
 
       // Log fee events
-      if (["ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE"].includes(actionType) && !emailResult.dryRun) {
+      if (["ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE"].includes(resolvedActionType) && !emailResult.dryRun) {
         try {
           const feeEventMap: Record<string, string> = { ACCEPT_FEE: "accepted", NEGOTIATE_FEE: "negotiated", DECLINE_FEE: "declined" };
-          await db.logFeeEvent(caseId, feeEventMap[actionType], caseData?.last_fee_quote_amount || null, `${actionType} executed via proposal ${proposalId}`, null);
+          await db.logFeeEvent(caseId, feeEventMap[resolvedActionType], caseData?.last_fee_quote_amount || null, `${resolvedActionType} executed via proposal ${proposalId}`, null);
         } catch (e: any) { /* non-fatal */ }
       }
 
       // Schedule next followup if this was a followup or status update
-      if ((actionType === "SEND_FOLLOWUP" || actionType === "SEND_STATUS_UPDATE") && !emailResult.dryRun) {
+      if ((resolvedActionType === "SEND_FOLLOWUP" || resolvedActionType === "SEND_STATUS_UPDATE") && !emailResult.dryRun) {
         const followupDays = parseInt(process.env.FOLLOWUP_DELAY_DAYS || "7", 10);
         const nextDate = new Date();
         nextDate.setDate(nextDate.getDate() + followupDays);
@@ -429,18 +436,18 @@ export async function executeAction(
     }
 
     default:
-      throw new Error(`Unknown action type: ${actionType}`);
+      throw new Error(`Unknown action type: ${resolvedActionType}`);
   }
 
   // Log activity
-  await db.logActivity("agent_action_executed", `Executed ${actionType}`, {
+  await db.logActivity("agent_action_executed", `Executed ${resolvedActionType}`, {
     caseId, proposalId, executionKey, mode: EXECUTION_MODE, result: executionResult,
   });
 
   // Dismiss other pending proposals (except RESEARCH_AGENCY which creates follow-ups)
-  if (actionType !== "RESEARCH_AGENCY") {
+  if (resolvedActionType !== "RESEARCH_AGENCY") {
     try {
-      await db.dismissPendingProposals(caseId, `Superseded by executed ${actionType}`);
+      await db.dismissPendingProposals(caseId, `Superseded by executed ${resolvedActionType}`);
     } catch (e: any) { /* non-fatal */ }
   }
 

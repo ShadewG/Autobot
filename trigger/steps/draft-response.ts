@@ -359,6 +359,13 @@ export async function draftResponse(
             enrichedCaseData.agency_name = referralName;
             enrichedCaseData.agency_email = contactNotes.contactResult.contact_email;
             enrichedCaseData.portal_url = contactNotes.contactResult.portal_url || null;
+
+            // Persist override to DB so executeAction sends to the right address
+            await db.updateCase(caseId, {
+              agency_name: referralName,
+              agency_email: contactNotes.contactResult.contact_email,
+              portal_url: contactNotes.contactResult.portal_url || null,
+            });
           }
         } catch (e: any) {
           logger.warn("Failed to parse contact_research_notes for agency override", { caseId, error: e.message });
