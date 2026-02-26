@@ -153,7 +153,7 @@ export const ACTION_TYPE_LABELS: Record<string, { label: string; color: string }
   DECLINE_FEE: { label: "Decline Fee", color: "bg-red-500/10 text-red-400" },
   SUBMIT_PORTAL: { label: "Portal Submission", color: "bg-cyan-500/10 text-cyan-400" },
   SEND_PDF_EMAIL: { label: "PDF Email", color: "bg-indigo-500/10 text-indigo-400" },
-  ESCALATE: { label: "Escalate", color: "bg-yellow-500/10 text-yellow-400" },
+  ESCALATE: { label: "Human Action Needed", color: "bg-yellow-500/10 text-yellow-400" },
   CLOSE_CASE: { label: "Close Case", color: "bg-gray-500/10 text-gray-400" },
   WITHDRAW: { label: "Withdraw", color: "bg-red-500/10 text-red-400" },
   RESEARCH_AGENCY: { label: "Research Agency", color: "bg-violet-500/10 text-violet-400" },

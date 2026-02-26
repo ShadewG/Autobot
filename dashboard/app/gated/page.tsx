@@ -297,7 +297,7 @@ const ACTION_LABELS: Record<string, string> = {
   RESEARCH_AGENCY: "RUN RESEARCH",
   REFORMULATE_REQUEST: "REFORMULATE REQUEST",
   CLOSE_CASE: "CLOSE CASE",
-  ESCALATE: "ESCALATE",
+  ESCALATE: "REVIEW & DECIDE",
 };
 
 function getApproveLabel(actionType: string | null): string {
@@ -323,7 +323,7 @@ function getActionExplanation(actionType: string | null, hasDraft: boolean, port
     RESEARCH_AGENCY: "Will research the agency's contact information and procedures.",
     REFORMULATE_REQUEST: "Will rewrite and resubmit a narrower/clearer request.",
     CLOSE_CASE: "Will close this case.",
-    ESCALATE: "Will escalate this case for manual intervention.",
+    ESCALATE: "The system couldn't determine next steps. Review the reasoning and choose an action.",
   };
   let explanation = explanations[actionType] || `Will execute: ${actionType.replace(/_/g, " ").toLowerCase()}.`;
   if (!hasDraft && actionType.startsWith("SEND")) {
@@ -1474,7 +1474,7 @@ function MonitorPageContent() {
                 {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Delivery: Portal" :
                  selectedItem.data.action_type.startsWith("SEND") ? "Delivery: Email" :
                  selectedItem.data.action_type === "CLOSE_CASE" ? "Action: Close Case" :
-                 selectedItem.data.action_type === "ESCALATE" ? "Action: Escalate" :
+                 selectedItem.data.action_type === "ESCALATE" ? "Human Action Needed" :
                  "Action"}
               </SectionLabel>
               {selectedItem.data.action_type === "SUBMIT_PORTAL" && (
@@ -1503,7 +1503,7 @@ function MonitorPageContent() {
                 <p className="text-xs text-muted-foreground">Will mark this case as closed/denial accepted.</p>
               )}
               {selectedItem.data.action_type === "ESCALATE" && (
-                <p className="text-xs text-muted-foreground">Will flag for manual review.</p>
+                <p className="text-xs text-muted-foreground">Review the reasoning below and choose an action — approve, adjust, or dismiss.</p>
               )}
             </div>
           )}

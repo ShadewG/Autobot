@@ -143,7 +143,7 @@ const ACTION_TYPE_CONFIG: Record<string, { label: string; icon: React.ReactNode;
   NARROW_SCOPE: { label: "Narrow & Retry", icon: <Edit className="h-4 w-4" />, color: "text-purple-400" },
   FOLLOW_UP: { label: "Follow Up", icon: <Clock className="h-4 w-4" />, color: "text-muted-foreground" },
   WITHDRAWAL: { label: "Withdraw", icon: <Trash2 className="h-4 w-4" />, color: "text-red-400" },
-  ESCALATE: { label: "Escalate", icon: <AlertTriangle className="h-4 w-4" />, color: "text-yellow-400" },
+  ESCALATE: { label: "Human Action Needed", icon: <AlertTriangle className="h-4 w-4" />, color: "text-yellow-400" },
 };
 
 export function DraftApprovalPanel({
