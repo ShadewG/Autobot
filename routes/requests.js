@@ -596,7 +596,7 @@ router.get('/', async (req, res) => {
         let query = `
             SELECT c.*
             FROM cases c
-            WHERE 1=1
+            WHERE (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
         `;
         const params = [];
 

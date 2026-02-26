@@ -218,6 +218,7 @@ router.get('/cases', async (req, res) => {
             FROM cases c
             LEFT JOIN users u ON u.id = c.user_id
             WHERE c.status NOT IN ('completed', 'cancelled')
+              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
         `;
         const params = [];
 

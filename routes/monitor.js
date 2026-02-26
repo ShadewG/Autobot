@@ -1059,6 +1059,7 @@ router.get('/live-overview', async (req, res) => {
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
             WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+            AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
             ${caseUserFilter}
             ORDER BY
                 CASE WHEN p.risk_flags IS NOT NULL AND array_length(p.risk_flags, 1) > 0 THEN 0
@@ -1182,6 +1183,7 @@ router.get('/live-overview', async (req, res) => {
             FROM cases c
             WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
               AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status IN ('PENDING_APPROVAL', 'BLOCKED'))
+              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
               ${caseUserFilter}
             ORDER BY
                 CASE c.pause_reason WHEN 'FEE_QUOTE' THEN 0 WHEN 'DENIAL' THEN 1
