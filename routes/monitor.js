@@ -333,26 +333,31 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 
     // Trigger.dev path: if proposal has waitpoint_token, complete it
     if (proposal.waitpoint_token) {
-        await triggerWait.completeToken(proposal.waitpoint_token, {
-            action,
-            instruction: instruction || null,
-            reason: reason || null,
-        });
+        try {
+            await triggerWait.completeToken(proposal.waitpoint_token, {
+                action,
+                instruction: instruction || null,
+                reason: reason || null,
+            });
 
-        await db.updateProposal(proposalId, {
-            human_decision: humanDecision,
-            status: 'DECISION_RECEIVED'
-        });
+            await db.updateProposal(proposalId, {
+                human_decision: humanDecision,
+                status: 'DECISION_RECEIVED'
+            });
 
-        await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
-        notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
-        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
-        return {
-            success: true,
-            message: 'Decision received, Trigger.dev task resuming',
-            proposal_id: proposalId,
-            action,
-        };
+            await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
+            notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
+            emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
+            return {
+                success: true,
+                message: 'Decision received, Trigger.dev task resuming',
+                proposal_id: proposalId,
+                action,
+            };
+        } catch (tokenError) {
+            // Token expired or task timed out — fall through to legacy re-trigger path
+            console.warn(`Waitpoint token stale for proposal ${proposalId}: ${tokenError.message}`);
+        }
     }
 
     // Legacy path: re-trigger through Trigger.dev (old LangGraph proposals)
