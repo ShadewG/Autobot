@@ -193,7 +193,8 @@ function buildDecisionPrompt(params: {
     : caseData?.requested_records || "Various records";
 
   const threadSummary = threadMessages
-    .slice(-8)
+    .slice(0, 8)
+    .reverse()
     .map((m: any) => {
       const body = (m.body_text || m.body_html || "").replace(/\s+/g, " ").trim().substring(0, 240);
       return `[${String(m.direction || "unknown").toUpperCase()}] ${m.subject || "(no subject)"} | ${body}`;
@@ -967,7 +968,7 @@ export async function decideNextAction(
               researchLevel: "deep",
             });
           }
-          return decision("SEND_FOLLOWUP", {
+          return decision("SEND_INITIAL_REQUEST", {
             adjustmentInstruction: ri || "Send the original FOIA request via email instead of portal",
             reasoning,
           });
@@ -1038,6 +1039,13 @@ export async function decideNextAction(
       };
 
       const handler = reviewMap[reviewAction];
+      logger.info("HUMAN_REVIEW_RESOLUTION routing", {
+        caseId,
+        classification,
+        reviewAction,
+        isWrongAgency,
+        chosenHandler: handler ? reviewAction : "fallback_escalate_unknown_review_action",
+      });
       if (handler) return handler();
       return decision("ESCALATE", { reasoning: [...reasoning, `Unknown review action: ${reviewAction}`] });
     }
@@ -1086,10 +1094,15 @@ export async function decideNextAction(
     });
 
     if (aiResult) {
+      logger.info("AI decision selected action", {
+        caseId,
+        classification,
+        aiRecommendedAction: aiResult.actionType,
+      });
       return aiResult;
     }
 
-    return await deterministicRouting(
+    const deterministicResult = await deterministicRouting(
       caseId,
       classification,
       extractedFeeAmount,
@@ -1100,6 +1113,12 @@ export async function decideNextAction(
       portalUrl,
       denialSubtype
     );
+    logger.info("Deterministic routing selected action", {
+      caseId,
+      classification,
+      routedAction: deterministicResult.actionType,
+    });
+    return deterministicResult;
   } catch (error: any) {
     logger.error("decide_next_action step error", { caseId, error: error.message });
     return decision("ESCALATE", {

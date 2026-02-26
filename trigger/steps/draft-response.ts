@@ -44,9 +44,9 @@ export async function draftResponse(
   let lessonsContext = "";
   try {
     const allMessages = await db.getMessagesByCaseId(caseId);
+    const recentMessages = allMessages.slice(0, 15).reverse();
 
-    correspondenceContext = allMessages
-      .slice(-15)
+    correspondenceContext = recentMessages
       .map((m: any) => {
         const dir = m.direction === "inbound" ? "AGENCY REPLY" : "OUR MESSAGE";
         const date = m.sent_at || m.received_at || m.created_at;
@@ -54,6 +54,11 @@ export async function draftResponse(
         return `[${dir} ${dateStr}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`;
       })
       .join("\n---\n");
+    logger.info("Draft correspondence context prepared", {
+      caseId,
+      messageCount: recentMessages.length,
+      preview: correspondenceContext.substring(0, 200),
+    });
 
     const priorProposals = await db.getAllProposalsByCaseId(caseId);
     const followupSchedule = await db.getFollowUpScheduleByCaseId(caseId);

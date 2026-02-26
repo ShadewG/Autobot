@@ -38,7 +38,8 @@ function buildClassificationPrompt(
   attachments: any[] = []
 ): string {
   const threadContext = threadMessages
-    .slice(-10)
+    .slice(0, 10)
+    .reverse()
     .map(
       (m: any) =>
         `[${m.direction?.toUpperCase()}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`
