@@ -175,13 +175,15 @@ class CronService {
         // Stale run reaper: clean up stuck agent_runs every 15 minutes
         this.jobs.staleRunReaper = new CronJob('*/15 * * * *', async () => {
             try {
-                // Mark runs stuck in created/queued/running/waiting for >2 hours as failed
+                // Mark runs stuck in created/queued/running for >2 hours as failed
+                // NOTE: 'waiting' is excluded — it's the normal state while paused for human input
+                // 'paused' is also excluded — it indicates a human gate in progress
                 const result = await db.query(`
                     UPDATE agent_runs
                     SET status = 'failed',
                         error = 'Reaped: stuck in ' || status || ' for >2 hours',
                         ended_at = NOW()
-                    WHERE status IN ('created', 'queued', 'running', 'waiting')
+                    WHERE status IN ('created', 'queued', 'running')
                       AND started_at < NOW() - INTERVAL '2 hours'
                     RETURNING id, case_id, status
                 `);

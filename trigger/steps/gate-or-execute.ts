@@ -57,7 +57,7 @@ export async function createProposalAndGate(
   // Safe actions with high confidence can auto-execute without human review
   const SAFE_AUTO_ACTIONS: string[] = ["CLOSE_CASE", "RESEARCH_AGENCY"];
   const MEDIUM_AUTO_ACTIONS: string[] = ["SEND_FOLLOWUP", "SEND_CLARIFICATION"];
-  const effectiveConfidence = confidence || 0.8;
+  const effectiveConfidence = confidence ?? 0.8;
 
   let confidenceAutoExecute = false;
   if (!decisionRequiresHuman && safety.canAutoExecute) {
@@ -92,7 +92,7 @@ export async function createProposalAndGate(
     draftBodyText: draft.bodyText,
     draftBodyHtml: draft.bodyHtml,
     reasoning,
-    confidence: confidence || 0.8,
+    confidence: confidence ?? 0.8,
     riskFlags: safety.riskFlags || [],
     warnings: safety.warnings || [],
     canAutoExecute,

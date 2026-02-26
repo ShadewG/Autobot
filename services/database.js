@@ -1250,8 +1250,9 @@ class DatabaseService {
      * Create a new agent run record.
      */
     async createAgentRun(caseId, triggerType, metadata = {}) {
+        if (!triggerType) throw new Error('triggerType is required for createAgentRun');
         // Normalize trigger type to lowercase for consistency
-        const normalizedTrigger = (triggerType || '').toLowerCase().replace(/^inbound$/, 'inbound_message');
+        const normalizedTrigger = triggerType.toLowerCase().replace(/^inbound$/, 'inbound_message');
         const query = `
             INSERT INTO agent_runs (case_id, trigger_type, metadata)
             VALUES ($1, $2, $3)
@@ -2700,8 +2701,9 @@ class DatabaseService {
      * Create agent run with full context (including new fields from migration 019)
      */
     async createAgentRunFull(data) {
+        if (!data.trigger_type) throw new Error('trigger_type is required for createAgentRunFull');
         // Normalize trigger type to lowercase for consistency
-        const normalizedTrigger = (data.trigger_type || '').toLowerCase().replace(/^inbound$/, 'inbound_message');
+        const normalizedTrigger = data.trigger_type.toLowerCase().replace(/^inbound$/, 'inbound_message');
         const result = await this.query(`
             INSERT INTO agent_runs (
                 case_id, trigger_type, langgraph_thread_id, message_id,
@@ -2802,7 +2804,7 @@ class DatabaseService {
         // Dedup: skip if same case + amount + event_type was logged in the last 24 hours
         if (amount != null) {
             const dup = await this.query(`
-                SELECT id FROM fee_history
+                SELECT * FROM fee_history
                 WHERE case_id = $1 AND event_type = $2 AND amount = $3
                   AND created_at > NOW() - INTERVAL '24 hours'
                 LIMIT 1
