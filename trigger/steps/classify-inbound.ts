@@ -301,7 +301,7 @@ export async function classifyInbound(
   }
 
   // Fee sanity check: flag suspiciously low fees (likely parsing errors)
-  if (feeAmount !== null && feeAmount > 0 && feeAmount < 1) {
+  if (feeAmount !== null && feeAmount > 0 && feeAmount < 0.10) {
     logger.warn("Suspiciously low fee detected — likely a parsing error", {
       caseId: context.caseId,
       extractedAmount: feeAmount,
@@ -431,7 +431,7 @@ export async function classifyMessageContent(
 
   const classification: Classification = CLASSIFICATION_MAP[aiResult.intent] || "UNKNOWN";
   let feeAmount = aiResult.fee_amount != null ? Number(aiResult.fee_amount) : null;
-  if (feeAmount !== null && (isNaN(feeAmount) || feeAmount < 1)) feeAmount = null;
+  if (feeAmount !== null && (isNaN(feeAmount) || feeAmount < 0.10)) feeAmount = null;
 
   let requiresResponse = aiResult.requires_response;
   if (aiResult.unanswered_agency_question && !requiresResponse) requiresResponse = true;

@@ -44,10 +44,10 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
   ).length;
 
   // The classifier's denial_subtype is itself strong evidence — it already analyzed the message
+  // Note: privacy_exemption is NOT auto-weighted here because "exemption" already appears in strongIndicators;
+  // the key_points themselves must provide 2+ matches to be "strong" (avoids false positives for weak legal citations)
   if (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") {
     strongCount += 1; // Subtype adds weight but requires a corroborating key_point to reach "strong"
-  } else if (denialSubtype === "privacy_exemption") {
-    strongCount += 1; // Privacy exemption adds weight toward strong
   }
 
   if (strongCount >= 2) return "strong";
@@ -354,9 +354,9 @@ async function validateDecision(
     return { valid: false, reason: "WRONG_AGENCY classification must route to RESEARCH_AGENCY" };
   }
 
-  // PORTAL_REDIRECT uses the deterministic portal-task path — reject SUBMIT_PORTAL from AI
-  if (classification === "PORTAL_REDIRECT" && aiDecisionResult.action === "SUBMIT_PORTAL") {
-    return { valid: false, reason: "PORTAL_REDIRECT is handled by deterministic portal-task creation, not AI SUBMIT_PORTAL" };
+  // PORTAL_REDIRECT is handled entirely by deterministic portal-task creation — reject ALL AI decisions
+  if (classification === "PORTAL_REDIRECT") {
+    return { valid: false, reason: "PORTAL_REDIRECT is handled by deterministic portal-task creation (always falls to deterministic)" };
   }
 
   // PARTIAL_APPROVAL must always use RESPOND_PARTIAL_APPROVAL — don't let AI override with SEND_REBUTTAL or SEND_APPEAL
@@ -369,9 +369,10 @@ async function validateDecision(
     return { valid: false, reason: "RECORDS_READY classification must use NONE (records already delivered)" };
   }
 
-  // FEE_QUOTE must use a fee-handling action — SEND_CLARIFICATION is not appropriate
-  if (classification === "FEE_QUOTE" && aiDecisionResult.action === "SEND_CLARIFICATION") {
-    return { valid: false, reason: "FEE_QUOTE classification must use a fee action (ACCEPT_FEE, NEGOTIATE_FEE, SEND_FEE_WAIVER_REQUEST, SEND_FOLLOWUP), not SEND_CLARIFICATION" };
+  // FEE_QUOTE must use a fee-handling action — SEND_CLARIFICATION and SEND_FOLLOWUP are not appropriate
+  // (deterministic routing handles null-fee edge cases correctly via the fee sanity check and unansweredQ logic)
+  if (classification === "FEE_QUOTE" && (aiDecisionResult.action === "SEND_CLARIFICATION" || aiDecisionResult.action === "SEND_FOLLOWUP")) {
+    return { valid: false, reason: "FEE_QUOTE classification must use a fee action (ACCEPT_FEE, NEGOTIATE_FEE, SEND_FEE_WAIVER_REQUEST), not SEND_CLARIFICATION/SEND_FOLLOWUP" };
   }
 
   // DENIAL with a known specific subtype should not use SEND_CLARIFICATION (only not_reasonably_described warrants it)
