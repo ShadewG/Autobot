@@ -165,7 +165,7 @@ function UserSettings({ user }: { user: User }) {
               <Input
                 value={form.signature_title}
                 onChange={(e) => set("signature_title", e.target.value)}
-                placeholder="e.g. Journalist, Researcher"
+                placeholder="e.g. Documentary Researcher, Dr Insanity Media"
                 className="h-8 text-xs"
               />
             </div>
@@ -174,7 +174,7 @@ function UserSettings({ user }: { user: User }) {
               <Input
                 value={form.signature_organization}
                 onChange={(e) => set("signature_organization", e.target.value)}
-                placeholder="e.g. Independent Researcher"
+                placeholder="e.g. Dr Insanity Media"
                 className="h-8 text-xs"
               />
             </div>
