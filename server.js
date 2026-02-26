@@ -82,6 +82,30 @@ app.use('/api/auth', authRoutes);  // Auth: login/logout/me
 app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency support per case
 app.use('/api/eval', evalRoutes);  // Eval: AI decision quality tracking
 
+// SSE endpoint for real-time dashboard updates
+const { eventBus } = require('./services/event-bus');
+app.get('/api/events', (req, res) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+    });
+    res.write(':\n\n'); // initial comment to flush headers
+
+    const onUpdate = (data) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+    eventBus.on('data_update', onUpdate);
+
+    // Keep-alive every 30s
+    const keepAlive = setInterval(() => res.write(':\n\n'), 30000);
+
+    req.on('close', () => {
+        eventBus.off('data_update', onUpdate);
+        clearInterval(keepAlive);
+    });
+});
+
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');
 const discordService = require('./services/discord-service');

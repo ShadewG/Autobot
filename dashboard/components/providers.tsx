@@ -2,8 +2,10 @@
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SWRConfig } from "swr";
+import { Toaster } from "sonner";
 import { AuthProvider } from "./auth-provider";
 import { UserFilterProvider } from "./user-filter";
+import { useEventStream } from "@/lib/use-events";
 
 const fetcher = async (url: string) => {
   const res = await fetch(url, { credentials: "include" });
@@ -13,6 +15,11 @@ const fetcher = async (url: string) => {
   }
   return res.json();
 };
+
+function EventStreamSubscriber({ children }: { children: React.ReactNode }) {
+  useEventStream();
+  return <>{children}</>;
+}
 
 interface ProvidersProps {
   children: React.ReactNode;
@@ -34,7 +41,16 @@ export function Providers({ children }: ProvidersProps) {
       <AuthProvider>
         <UserFilterProvider>
           <TooltipProvider delayDuration={300}>
-            {children}
+            <EventStreamSubscriber>
+              {children}
+            </EventStreamSubscriber>
+            <Toaster
+              theme="dark"
+              position="bottom-right"
+              toastOptions={{
+                style: { background: "#18181b", border: "1px solid #27272a", color: "#fafafa", fontSize: "12px" },
+              }}
+            />
           </TooltipProvider>
         </UserFilterProvider>
       </AuthProvider>
