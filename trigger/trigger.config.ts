@@ -29,7 +29,6 @@ export default defineConfig({
         const vars = [
           "OPENAI_API_KEY",
           "ANTHROPIC_API_KEY",
-          "DATABASE_URL",
           "SENDGRID_API_KEY",
           "SENDGRID_FROM_EMAIL",
           "SENDGRID_FROM_NAME",
@@ -43,9 +42,17 @@ export default defineConfig({
           "SKYVERN_PROXY_LOCATION",
           "REQUESTS_INBOX",
         ];
-        return vars
+        const result = vars
           .filter((name) => process.env[name])
           .map((name) => ({ name, value: process.env[name]! }));
+
+        // Use DATABASE_PUBLIC_URL for Trigger.dev (runs outside Railway network)
+        const dbUrl = process.env["DATABASE_PUBLIC_URL"] || process.env["DATABASE_URL"];
+        if (dbUrl) {
+          result.push({ name: "DATABASE_URL", value: dbUrl });
+        }
+
+        return result;
       }),
     ],
   },
