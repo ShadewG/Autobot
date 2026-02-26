@@ -2240,12 +2240,18 @@ router.get('/events', (req, res) => {
     });
     res.write(':\n\n'); // initial comment to flush headers
 
-    const heartbeat = setInterval(() => res.write(':\n\n'), 30000);
+    let closed = false;
+    const safeSend = (msg) => {
+        if (closed || res.writableEnded || res.destroyed) return;
+        try { res.write(msg); } catch (_) { /* connection gone */ }
+    };
+
+    const heartbeat = setInterval(() => safeSend(':\n\n'), 30000);
 
     const onNotification = async (data) => {
         // If no user filter (All Users), send everything
         if (!userId && !unownedOnly) {
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
+            safeSend(`data: ${JSON.stringify(data)}\n\n`);
             return;
         }
 
@@ -2263,7 +2269,7 @@ router.get('/events', (req, res) => {
             // System-level events (no case_id) — only send for "All Users"
             return;
         }
-        res.write(`data: ${JSON.stringify(data)}\n\n`);
+        safeSend(`data: ${JSON.stringify(data)}\n\n`);
     };
     eventBus.on('notification', onNotification);
 
@@ -2281,11 +2287,12 @@ router.get('/events', (req, res) => {
             }
         }
         // Send as named SSE event so client can use addEventListener
-        res.write(`event: ${data.event}\ndata: ${JSON.stringify(data)}\n\n`);
+        safeSend(`event: ${data.event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
     eventBus.on('data_update', onDataUpdate);
 
     req.on('close', () => {
+        closed = true;
         clearInterval(heartbeat);
         eventBus.off('notification', onNotification);
         eventBus.off('data_update', onDataUpdate);

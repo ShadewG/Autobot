@@ -901,7 +901,7 @@ function MonitorPageContent() {
       setManualCaseId("");
       mutateInbound();
     } catch (err) {
-      alert(`Match failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Match failed: ${err instanceof Error ? err.message : err}`, "error");
     }
   };
 
