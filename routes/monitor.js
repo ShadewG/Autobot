@@ -2155,27 +2155,32 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
             return res.status(400).json({ success: false, error: 'Proposal already has draft content' });
         }
 
-        const { draftResponseNode } = require('../langgraph/nodes/draft-response');
+        const aiService = require('../services/ai-service');
+        const caseData = await db.getCaseById(p.case_id);
+        const latestInbound = p.trigger_message_id ? await db.getMessageById(p.trigger_message_id) : null;
+        const latestAnalysis = latestInbound ? await db.getResponseAnalysisByMessageId(latestInbound.id) : null;
 
-        // Build minimal state for the draft node
-        const state = {
-            caseId: p.case_id,
-            proposalActionType: p.action_type,
-            constraints: p.metadata?.constraints || [],
-            scopeItems: p.metadata?.scope_items || [],
-            extractedFeeAmount: p.metadata?.fee_amount || null,
-            latestInboundMessageId: p.trigger_message_id || null,
-            adjustmentInstruction: null,
-            llmStubs: null
-        };
+        let draft = { subject: null, body_text: null, body_html: null };
+        const actionType = p.action_type;
 
-        const result = await draftResponseNode(state);
-
-        if (result.errors && result.errors.length > 0) {
-            return res.status(500).json({ success: false, error: result.errors.join('; ') });
+        if (actionType === 'SEND_FOLLOWUP' || actionType === 'SEND_STATUS_UPDATE') {
+            const followup = await db.getFollowUpScheduleByCaseId(p.case_id);
+            draft = await aiService.generateFollowUp(caseData, (followup?.followup_count || 0) + 1, {});
+        } else if (actionType === 'SEND_REBUTTAL' || actionType === 'SEND_APPEAL') {
+            draft = await aiService.generateDenialRebuttal(latestInbound, latestAnalysis, caseData, {
+                scopeItems: p.metadata?.scope_items || [],
+            });
+        } else if (actionType === 'ACCEPT_FEE' || actionType === 'NEGOTIATE_FEE' || actionType === 'DECLINE_FEE' || actionType === 'SEND_FEE_WAIVER_REQUEST') {
+            const feeAmt = p.metadata?.fee_amount || caseData.fee_amount || 0;
+            const actionMap = { ACCEPT_FEE: 'accept', NEGOTIATE_FEE: 'negotiate', DECLINE_FEE: 'decline', SEND_FEE_WAIVER_REQUEST: 'waiver' };
+            draft = await aiService.generateFeeResponse(caseData, { feeAmount: feeAmt, recommendedAction: actionMap[actionType], agencyMessage: latestInbound, agencyAnalysis: latestAnalysis });
+        } else if (actionType === 'SEND_CLARIFICATION') {
+            draft = await aiService.generateAutoReply(latestInbound, latestAnalysis, caseData);
+        } else {
+            return res.status(400).json({ success: false, error: `Draft generation not supported for action type: ${actionType}` });
         }
 
-        if (!result.draftBodyText && !result.draftSubject) {
+        if (!draft.body_text && !draft.subject) {
             return res.status(500).json({ success: false, error: 'Draft generation returned empty content' });
         }
 
@@ -2184,14 +2189,14 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
             UPDATE proposals
             SET draft_subject = $1, draft_body_text = $2, draft_body_html = $3, updated_at = NOW()
             WHERE id = $4
-        `, [result.draftSubject || null, result.draftBodyText || null, result.draftBodyHtml || null, proposalId]);
+        `, [draft.subject || null, draft.body_text || null, draft.body_html || null, proposalId]);
 
         res.json({
             success: true,
             draft: {
-                subject: result.draftSubject,
-                body_text: result.draftBodyText,
-                body_html: result.draftBodyHtml
+                subject: draft.subject,
+                body_text: draft.body_text,
+                body_html: draft.body_html
             }
         });
     } catch (error) {
