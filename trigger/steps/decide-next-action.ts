@@ -34,13 +34,14 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
   if (citizenRestriction) return "strong";
 
   const strongIndicators = [
-    // Note: "exemption" and "statute" removed — too broad; almost all denials cite legal exemptions/statutes
-    // which doesn't by itself indicate an unwinnable denial. Concrete/absolute language is more reliable.
+    // Note: "exemption", "statute", "ongoing" (standalone), and "pending litigation" removed — too broad.
+    // Standalone "ongoing" matches "ongoing civil proceedings" (challengeable); "pending litigation" matches
+    // civil holds that are NOT unwinnable. Require explicit criminal/investigation language instead.
     "law enforcement", "ongoing investigation",
-    "ongoing", "in court", "cannot be provided", "nothing can be provided",
-    "confidential", "sealed", "court", "pending litigation",
+    "in court", "cannot be provided", "nothing can be provided",
+    "confidential", "sealed", "court",
     "active case", "pending case", "active prosecution",
-  ]; // Note: "privacy" also excluded — too generic, matches weak privacy denials
+  ]; // Note: "privacy", "exemption", "statute" also excluded — too generic
   let strongCount = keyPoints.filter((p: string) =>
     strongIndicators.some((ind) => p.toLowerCase().includes(ind))
   ).length;
@@ -944,7 +945,7 @@ export async function decideNextAction(
     const actionOverrides = responseRequiringActions.includes(suggestedAction || "") ||
       (suggestedAction === "respond" && classification === "DENIAL");
 
-    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL")) {
+    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL" || classification === "FEE_QUOTE" || classification === "WRONG_AGENCY")) {
       reasoning.push(`No response needed: ${reasonNoResponse || "Analysis determined no email required"}`);
 
       // Check for unanswered clarification on denial
