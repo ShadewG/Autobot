@@ -118,6 +118,78 @@ router.post('/cases', async (req, res) => {
 });
 
 /**
+ * POST /api/eval/cases/from-simulation
+ * Save a simulator result as an eval case (no real proposal required).
+ * Body: {
+ *   expectedAction,        // correct action per human
+ *   notes?,
+ *   predictedAction,       // what the simulator decided
+ *   reasoning,             // string[]
+ *   draftBody?,            // simulated draft reply body
+ *   messageBody,           // the input message text
+ *   fromEmail,
+ *   subject,
+ *   caseId?                // real case ID if one was selected
+ * }
+ */
+router.post('/cases/from-simulation', async (req, res) => {
+    try {
+        const {
+            expectedAction, notes,
+            predictedAction, reasoning, draftBody,
+            messageBody, fromEmail, subject, caseId,
+        } = req.body;
+
+        if (!expectedAction || !KNOWN_ACTION_TYPES.has(expectedAction)) {
+            return res.status(400).json({ success: false, error: `expectedAction is required and must be a known action type` });
+        }
+        if (!predictedAction || typeof predictedAction !== 'string' || !KNOWN_ACTION_TYPES.has(predictedAction)) {
+            return res.status(400).json({ success: false, error: 'predictedAction must be a known action type' });
+        }
+        if (!messageBody || typeof messageBody !== 'string') {
+            return res.status(400).json({ success: false, error: 'messageBody is required' });
+        }
+
+        let resolvedCaseId = null;
+        if (caseId) {
+            const parsed = parseInt(caseId, 10);
+            if (!isNaN(parsed) && parsed > 0) {
+                const caseCheck = await db.getCaseById(parsed).catch(() => null);
+                if (!caseCheck) {
+                    return res.status(400).json({ success: false, error: `Case ${parsed} not found` });
+                }
+                resolvedCaseId = parsed;
+            }
+        }
+
+        const result = await db.query(
+            `INSERT INTO eval_cases
+               (case_id, expected_action, notes,
+                simulated_message_body, simulated_from_email, simulated_subject,
+                simulated_predicted_action, simulated_reasoning, simulated_draft_body)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             RETURNING *`,
+            [
+                resolvedCaseId,
+                expectedAction,
+                notes || null,
+                messageBody.substring(0, 10000),
+                fromEmail || null,
+                subject || null,
+                predictedAction,
+                JSON.stringify(Array.isArray(reasoning) ? reasoning : []),
+                draftBody ? draftBody.substring(0, 5000) : null,
+            ]
+        );
+
+        res.json({ success: true, eval_case: result.rows[0] });
+    } catch (error) {
+        console.error('Error saving simulation eval case:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * DELETE /api/eval/cases/:id
  * Deactivate an eval case.
  */

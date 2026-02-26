@@ -20,6 +20,7 @@ import {
   Brain,
   FileText,
   ClipboardList,
+  BookmarkPlus,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -76,6 +77,14 @@ interface SimResult {
   draftReply: SimDraftReply | null;
   simulationLog: SimLogEntry[];
 }
+
+const KNOWN_ACTIONS = [
+  "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION", "SEND_APPEAL",
+  "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE", "SEND_INITIAL_REQUEST",
+  "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "RESPOND_PARTIAL_APPROVAL",
+  "SUBMIT_PORTAL", "SEND_PDF_EMAIL", "RESEARCH_AGENCY", "REFORMULATE_REQUEST",
+  "CLOSE_CASE", "ESCALATE", "NONE", "DISMISSED",
+] as const;
 
 // ── Presets ────────────────────────────────────────────────────────────────────
 
@@ -197,6 +206,14 @@ export default function SimulatePage() {
   const [result, setResult] = useState<SimResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Save as eval state
+  const [evalOpen, setEvalOpen] = useState(false);
+  const [evalExpected, setEvalExpected] = useState("");
+  const [evalNotes, setEvalNotes] = useState("");
+  const [evalSaving, setEvalSaving] = useState(false);
+  const [evalSaved, setEvalSaved] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
+
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Clear any in-flight poll timer on unmount
@@ -256,6 +273,11 @@ export default function SimulatePage() {
     setStatus("running");
     setResult(null);
     setErrorMsg(null);
+    setEvalOpen(false);
+    setEvalSaved(false);
+    setEvalExpected("");
+    setEvalNotes("");
+    setEvalError(null);
 
     try {
       const data = await fetchAPI<{ success: boolean; runId: string; error?: string }>(
@@ -284,6 +306,33 @@ export default function SimulatePage() {
 
   const canSimulate =
     messageBody.trim().length >= 10 && fromEmail.trim() && subject.trim() && status !== "running";
+
+  const handleSaveEval = async () => {
+    if (!result || !evalExpected) return;
+    setEvalSaving(true);
+    try {
+      await fetchAPI("/eval/cases/from-simulation", {
+        method: "POST",
+        body: JSON.stringify({
+          expectedAction: evalExpected,
+          notes: evalNotes || undefined,
+          predictedAction: result.decision.action,
+          reasoning: result.decision.reasoning,
+          draftBody: result.draftReply?.body || undefined,
+          messageBody: messageBody.trim(),
+          fromEmail: fromEmail.trim(),
+          subject: subject.trim(),
+          caseId: caseId || undefined,
+        }),
+      });
+      setEvalSaved(true);
+      setEvalOpen(false);
+    } catch (e: any) {
+      setEvalError(e.message || "Failed to save");
+    } finally {
+      setEvalSaving(false);
+    }
+  };
 
   return (
     <div className="flex gap-4 h-[calc(100vh-9rem)] min-h-0">
@@ -417,6 +466,79 @@ export default function SimulatePage() {
 
           {status === "done" && result && (
             <div className="space-y-3 pb-4">
+              {/* ── Save as Eval ── */}
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs text-muted-foreground">
+                  AI decided: <ActionBadge action={result.decision.action} />
+                </span>
+                {evalSaved ? (
+                  <Badge variant="outline" className="text-green-400 bg-green-500/10 gap-1 text-xs">
+                    <CheckCircle className="h-3 w-3" /> Saved to Evals
+                  </Badge>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs gap-1.5"
+                    onClick={() => setEvalOpen((o) => !o)}
+                  >
+                    <BookmarkPlus className="h-3.5 w-3.5" />
+                    Save as Eval
+                  </Button>
+                )}
+              </div>
+
+              {evalOpen && !evalSaved && (
+                <Card className="border-amber-500/30 bg-amber-500/5">
+                  <CardContent className="pt-4 pb-4 px-4 space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      The AI chose <span className="font-mono text-foreground">{result.decision.action}</span>.
+                      What should it have done?
+                    </p>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Correct Action</label>
+                      <select
+                        value={evalExpected}
+                        onChange={(e) => setEvalExpected(e.target.value)}
+                        className="w-full text-sm bg-background border border-border rounded px-3 py-1.5 outline-none focus:ring-1 focus:ring-ring"
+                      >
+                        <option value="">Select the correct action…</option>
+                        {KNOWN_ACTIONS.map((a) => (
+                          <option key={a} value={a}>{a}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Notes (optional)</label>
+                      <textarea
+                        value={evalNotes}
+                        onChange={(e) => setEvalNotes(e.target.value)}
+                        placeholder="Why was this the correct action? Any context..."
+                        rows={2}
+                        className="w-full text-sm bg-background border border-border rounded px-3 py-1.5 outline-none focus:ring-1 focus:ring-ring resize-none placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+                    {evalError && (
+                      <p className="text-xs text-destructive">{evalError}</p>
+                    )}
+                    <div className="flex gap-2 justify-end">
+                      <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setEvalOpen(false); setEvalError(null); }}>
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={!evalExpected || evalSaving}
+                        onClick={handleSaveEval}
+                      >
+                        {evalSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                        Save
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* ── Decision Card ── */}
               <CollapsibleCard
                 title="Decision"

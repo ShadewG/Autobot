@@ -37,9 +37,11 @@ async function runJudge(
   triggerMessage: any,
   latestAnalysis: any
 ): Promise<{ score: number; reasoning: string; failure_category: string | null }> {
-  const requestedRecords = Array.isArray(caseData.requested_records)
-    ? caseData.requested_records.join(", ")
-    : caseData.requested_records || "Various records";
+  const requestedRecords = caseData
+    ? Array.isArray(caseData.requested_records)
+      ? caseData.requested_records.join(", ")
+      : caseData.requested_records || "Various records"
+    : "Not available (simulated case)";
 
   const messageSnippet = triggerMessage
     ? `Subject: ${triggerMessage.subject || "N/A"}\nBody: ${(triggerMessage.body_text || "").substring(0, 600)}`
@@ -56,10 +58,10 @@ async function runJudge(
   const prompt = `You are an expert FOIA case manager evaluating an AI decision.
 
 ## Case Context
-Agency: ${caseData.agency_name || "Unknown"} (${caseData.state || "Unknown"})
-Status before decision: ${caseData.status || "Unknown"}
+Agency: ${caseData?.agency_name || "Unknown"} (${caseData?.state || "Unknown"})
+Status before decision: ${caseData?.status || "Unknown"}
 Records requested: ${requestedRecords}
-Fee amount on file: ${caseData.fee_amount != null ? `$${caseData.fee_amount}` : "None"}
+Fee amount on file: ${caseData?.fee_amount != null ? `$${caseData.fee_amount}` : "None"}
 
 ## Trigger Message
 ${messageSnippet}
@@ -142,16 +144,29 @@ export const evalDecision = task({
 
     for (const evalCase of evalCases) {
       try {
-        // Load the stored proposal (AI's actual decision)
-        const proposalResult = await db.query(
-          "SELECT * FROM proposals WHERE id = $1",
-          [evalCase.proposal_id]
-        );
-        const proposal = proposalResult.rows[0];
-
-        if (!proposal) {
-          logger.warn("Eval case has no proposal", { evalCaseId: evalCase.id });
-          results.push({ evalCaseId: evalCase.id, error: "Proposal not found", skipped: true });
+        // Build proposal-like object — either from a real proposal or simulation columns
+        let proposal: any;
+        if (evalCase.proposal_id) {
+          const proposalResult = await db.query(
+            "SELECT * FROM proposals WHERE id = $1",
+            [evalCase.proposal_id]
+          );
+          proposal = proposalResult.rows[0];
+          if (!proposal) {
+            logger.warn("Eval case has no proposal", { evalCaseId: evalCase.id });
+            results.push({ evalCaseId: evalCase.id, error: "Proposal not found", skipped: true });
+            continue;
+          }
+        } else if (evalCase.simulated_predicted_action) {
+          // Simulator-sourced eval case — construct a synthetic proposal from stored sim data
+          proposal = {
+            action_type: evalCase.simulated_predicted_action,
+            reasoning: evalCase.simulated_reasoning || [],
+            draft_body_text: evalCase.simulated_draft_body || "",
+          };
+        } else {
+          logger.warn("Eval case has no proposal or simulation data", { evalCaseId: evalCase.id });
+          results.push({ evalCaseId: evalCase.id, error: "No decision data", skipped: true });
           continue;
         }
 
@@ -160,14 +175,21 @@ export const evalDecision = task({
         const actionCorrect = predictedAction === expectedAction;
 
         // Load supporting context for the judge
-        const caseData = await db.getCaseById(evalCase.case_id);
+        const caseData = evalCase.case_id ? await db.getCaseById(evalCase.case_id) : null;
 
+        // For simulation cases, construct a synthetic trigger message from stored fields
         const triggerMessage = evalCase.trigger_message_id
           ? await db.getMessageById(evalCase.trigger_message_id)
+          : evalCase.simulated_message_body
+          ? {
+              subject: evalCase.simulated_subject || null,
+              body_text: evalCase.simulated_message_body,
+              from_email: evalCase.simulated_from_email || null,
+            }
           : null;
 
-        const latestAnalysis = triggerMessage
-          ? await db.getResponseAnalysisByMessageId(triggerMessage.id)
+        const latestAnalysis = evalCase.trigger_message_id && triggerMessage
+          ? await db.getResponseAnalysisByMessageId((triggerMessage as any).id)
           : null;
 
         // Run LLM-as-judge
@@ -200,7 +222,9 @@ export const evalDecision = task({
             judgeScore,
             judgeReasoning,
             failureCategory,
-            JSON.stringify({ proposal_id: proposal.id, reasoning: proposal.reasoning }),
+            JSON.stringify(evalCase.proposal_id
+              ? { proposal_id: evalCase.proposal_id, reasoning: proposal.reasoning }
+              : { source: "simulation", reasoning: proposal.reasoning }),
           ]
         );
 
