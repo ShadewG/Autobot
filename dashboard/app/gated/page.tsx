@@ -728,11 +728,22 @@ function MonitorPageContent() {
 
   // ── Actions ────────────────────────────────
 
-  // Optimistically remove current item from queue and advance to next
+  // Optimistically remove current item from queue and advance to next.
+  // Also removes the case's "other key" — when a proposal is acted on, the case
+  // may reappear as a human_review item (or vice versa). Removing both keys
+  // prevents the same case from bouncing back into the queue during revalidation.
   const removeCurrentItem = useCallback(() => {
     if (!selectedItem) return;
     const key = selectedItem.type === "proposal" ? `p:${selectedItem.data.id}` : `r:${selectedItem.data.id}`;
-    setRemovedIds((prev) => new Set(prev).add(key));
+    const caseId = selectedItem.type === "proposal"
+      ? (selectedItem.data as PendingProposal).case_id
+      : selectedItem.data.id;
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      next.add(`r:${caseId}`); // prevent case reappearing as review item
+      return next;
+    });
     // If we're at the end, move back; otherwise stay (next item slides in)
     if (currentIndex >= queue.length - 1 && currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
@@ -780,9 +791,10 @@ function MonitorPageContent() {
         throw new Error(data.error || `Failed (${res.status})`);
       }
       removeCurrentItem();
+      showToast("Approved — sending now");
       revalidateQueue();
     } catch (err) {
-      alert(`Approve failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Approve failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -834,9 +846,10 @@ function MonitorPageContent() {
       setShowAdjustModal(false);
       setAdjustInstruction("");
       removeCurrentItem();
+      showToast("Adjusted — AI is regenerating");
       revalidateQueue();
     } catch (err) {
-      alert(`Adjust failed: ${err instanceof Error ? err.message : err}`);
+      showToast(`Adjust failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setIsSubmitting(false);
     }

@@ -140,6 +140,7 @@ export interface ClassificationResult {
   detected_exemption_citations?: string[];
   decision_evidence_quotes?: string[];
   referralContact?: ReferralContact | null;
+  keyPoints?: string[];
 }
 
 export interface DecisionResult {

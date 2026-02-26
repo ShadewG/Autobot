@@ -6,7 +6,7 @@ const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const { portalQueue } = require('../queues/email-queue');
 const crypto = require('crypto');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
-const { eventBus, notify } = require('../services/event-bus');
+const { eventBus, notify, emitDataUpdate } = require('../services/event-bus');
 const pdContactService = require('../services/pd-contact-service');
 
 // Initialize SendGrid
@@ -118,12 +118,17 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     const caseId = proposal.case_id;
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
-        if (existingRun.status === 'paused') {
+        // If the run is paused/running — it's likely the run that created this proposal
+        // and is waiting on the human decision. Mark it completed so we can proceed.
+        // Only block if the run is truly new and unrelated (queued in last 30s).
+        const runAge = Date.now() - new Date(existingRun.started_at).getTime();
+        const isStale = runAge > 30000; // >30s old = likely the gating run
+        if (existingRun.status === 'paused' || isStale) {
             await db.updateAgentRun(existingRun.id, {
                 status: 'completed',
                 ended_at: new Date()
             });
-        } else {
+        } else if (existingRun.status === 'queued' || existingRun.status === 'running') {
             const err = new Error('Case already has an active agent run');
             err.status = 409;
             err.payload = {
@@ -168,6 +173,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 
         await db.logActivity('proposal_dismissed', `Proposal #${proposalId} (${proposal.action_type}) dismissed${reason ? ': ' + reason : ''}`, { case_id: caseId, user_id: userId || undefined });
         notify('info', `Proposal dismissed for case ${caseId}`, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action: 'DISMISS' });
         return {
             success: true,
             message: 'Proposal dismissed',

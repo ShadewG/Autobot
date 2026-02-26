@@ -23,9 +23,10 @@ const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || "100
 const FEE_NEGOTIATE_THRESHOLD = parseFloat(process.env.FEE_NEGOTIATE_THRESHOLD || "500");
 const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "2", 10);
 
-async function assessDenialStrength(caseId: number, denialSubtype?: string | null): Promise<"strong" | "medium" | "weak"> {
+async function assessDenialStrength(caseId: number, denialSubtype?: string | null, inlineKeyPoints?: string[]): Promise<"strong" | "medium" | "weak"> {
   const analysis = await db.getLatestResponseAnalysis(caseId);
-  const keyPoints: string[] = analysis?.key_points || [];
+  // Use DB key_points when available; fall back to inline key_points from classification (e.g. mock/simulator context)
+  const keyPoints: string[] = analysis?.key_points?.length ? analysis.key_points : (inlineKeyPoints || []);
   const fullText = keyPoints.join(" ").toLowerCase();
 
   // Legally unappealable: citizen/residency restrictions (McBurney v. Young)
@@ -35,16 +36,18 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
   const strongIndicators = [
     "exemption", "statute", "law enforcement", "ongoing investigation",
     "ongoing", "in court", "cannot be provided", "nothing can be provided",
-    "privacy", "confidential", "sealed", "court", "pending litigation",
+    "confidential", "sealed", "court", "pending litigation",
     "active case", "pending case", "active prosecution",
-  ];
+  ]; // Note: "privacy" removed — too generic, matches weak privacy denials
   let strongCount = keyPoints.filter((p: string) =>
     strongIndicators.some((ind) => p.toLowerCase().includes(ind))
   ).length;
 
   // The classifier's denial_subtype is itself strong evidence — it already analyzed the message
   if (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") {
-    strongCount += 1;
+    strongCount += 1; // Subtype adds weight but requires a corroborating key_point to reach "strong"
+  } else if (denialSubtype === "privacy_exemption") {
+    strongCount += 1; // Privacy exemption adds weight toward strong
   }
 
   if (strongCount >= 2) return "strong";
@@ -299,9 +302,10 @@ async function validateDecision(
     denialSubtype?: string | null;
     dismissedProposals?: any[];
     constraints?: string[];
+    inlineKeyPoints?: string[];
   }
 ): Promise<{ valid: boolean; reason?: string }> {
-  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype, dismissedProposals, constraints } = context;
+  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype, dismissedProposals, constraints, inlineKeyPoints } = context;
 
   if (aiDecisionResult.confidence < 0.5) {
     return { valid: false, reason: `AI decision confidence too low (${aiDecisionResult.confidence})` };
@@ -350,17 +354,53 @@ async function validateDecision(
     return { valid: false, reason: "WRONG_AGENCY classification must route to RESEARCH_AGENCY" };
   }
 
+  // PORTAL_REDIRECT uses the deterministic portal-task path — reject SUBMIT_PORTAL from AI
+  if (classification === "PORTAL_REDIRECT" && aiDecisionResult.action === "SUBMIT_PORTAL") {
+    return { valid: false, reason: "PORTAL_REDIRECT is handled by deterministic portal-task creation, not AI SUBMIT_PORTAL" };
+  }
+
+  // PARTIAL_APPROVAL must always use RESPOND_PARTIAL_APPROVAL — don't let AI override with SEND_REBUTTAL or SEND_APPEAL
+  if (classification === "PARTIAL_APPROVAL" && aiDecisionResult.action !== "RESPOND_PARTIAL_APPROVAL") {
+    return { valid: false, reason: "PARTIAL_APPROVAL classification must use RESPOND_PARTIAL_APPROVAL" };
+  }
+
+  // RECORDS_READY means records are already here — no follow-up needed
+  if (classification === "RECORDS_READY" && aiDecisionResult.action !== "NONE") {
+    return { valid: false, reason: "RECORDS_READY classification must use NONE (records already delivered)" };
+  }
+
+  // FEE_QUOTE must use a fee-handling action — SEND_CLARIFICATION is not appropriate
+  if (classification === "FEE_QUOTE" && aiDecisionResult.action === "SEND_CLARIFICATION") {
+    return { valid: false, reason: "FEE_QUOTE classification must use a fee action (ACCEPT_FEE, NEGOTIATE_FEE, SEND_FEE_WAIVER_REQUEST, SEND_FOLLOWUP), not SEND_CLARIFICATION" };
+  }
+
+  // DENIAL with a known specific subtype should not use SEND_CLARIFICATION (only not_reasonably_described warrants it)
+  if (
+    classification === "DENIAL" &&
+    context.denialSubtype &&
+    context.denialSubtype !== "not_reasonably_described" &&
+    aiDecisionResult.action === "SEND_CLARIFICATION"
+  ) {
+    return { valid: false, reason: `DENIAL with subtype ${context.denialSubtype} should not use SEND_CLARIFICATION` };
+  }
+
+  // Vague denials (no subtype) should not route to RESEARCH_AGENCY or SEND_CLARIFICATION
+  if (classification === "DENIAL" && !context.denialSubtype &&
+      (aiDecisionResult.action === "RESEARCH_AGENCY" || aiDecisionResult.action === "SEND_CLARIFICATION")) {
+    return { valid: false, reason: "DENIAL without a specific subtype should use SEND_REBUTTAL or CLOSE_CASE, not RESEARCH_AGENCY/SEND_CLARIFICATION" };
+  }
+
   if (aiDecisionResult.action === "CLOSE_CASE" && !aiDecisionResult.requiresHuman) {
     return { valid: false, reason: "CLOSE_CASE must require human review" };
   }
 
-  // Strong ongoing_investigation or sealed_court_order denials should close, not rebuttal
+  // Strong ongoing_investigation, sealed_court_order, or privacy_exemption denials should close, not rebuttal
   if (
     classification === "DENIAL" &&
-    (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") &&
+    (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order" || denialSubtype === "privacy_exemption") &&
     aiDecisionResult.action === "SEND_REBUTTAL"
   ) {
-    const strength = await assessDenialStrength(caseId, denialSubtype);
+    const strength = await assessDenialStrength(caseId, denialSubtype, inlineKeyPoints);
     if (strength === "strong") {
       return {
         valid: false,
@@ -411,6 +451,7 @@ async function aiDecision(params: {
   autopilotMode: AutopilotMode;
   denialSubtype?: string | null;
   jurisdictionLevel?: string | null;
+  inlineKeyPoints?: string[];
 }): Promise<DecisionResult | null> {
   try {
     const [caseData, threadMessages, latestAnalysis, dismissedProposals, humanDirectives, phoneNotes] = await Promise.all([
@@ -479,6 +520,7 @@ async function aiDecision(params: {
       denialSubtype: params.denialSubtype,
       dismissedProposals,
       constraints: params.constraints,
+      inlineKeyPoints: params.inlineKeyPoints,
     });
 
     if (!validation.valid) {
@@ -530,7 +572,8 @@ async function deterministicRouting(
   triggerType: string,
   requiresResponse: boolean | undefined,
   portalUrl: string | null,
-  denialSubtype: string | null
+  denialSubtype: string | null,
+  inlineKeyPoints?: string[]
 ): Promise<DecisionResult> {
   const reasoning: string[] = [];
   const isFollowupTrigger = ["SCHEDULED_FOLLOWUP", "time_based_followup", "followup_trigger"].includes(triggerType);
@@ -659,7 +702,7 @@ async function deterministicRouting(
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", reasoning: [...reasoning, "Overly broad - narrowing scope"] });
       case "ongoing_investigation":
       case "privacy_exemption": {
-        const strength = await assessDenialStrength(caseId, resolvedSubtype);
+        const strength = await assessDenialStrength(caseId, resolvedSubtype, inlineKeyPoints);
         if (strength === "strong") {
           return decision("CLOSE_CASE", {
             pauseReason: "DENIAL",
@@ -724,7 +767,7 @@ async function deterministicRouting(
         });
       }
       default: {
-        const strength = await assessDenialStrength(caseId, resolvedSubtype);
+        const strength = await assessDenialStrength(caseId, resolvedSubtype, inlineKeyPoints);
         if (strength === "strong" && autopilotMode !== "AUTO") {
           return decision("CLOSE_CASE", {
             pauseReason: "DENIAL",
@@ -886,7 +929,8 @@ export async function decideNextAction(
   reviewAction?: string | null,
   reviewInstruction?: string | null,
   humanDecision?: HumanDecision | null,
-  jurisdictionLevel?: string | null
+  jurisdictionLevel?: string | null,
+  inlineKeyPoints?: string[]
 ): Promise<DecisionResult> {
   const reasoning: string[] = [];
 
@@ -897,7 +941,7 @@ export async function decideNextAction(
     const actionOverrides = responseRequiringActions.includes(suggestedAction || "") ||
       (suggestedAction === "respond" && classification === "DENIAL");
 
-    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE")) {
+    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL")) {
       reasoning.push(`No response needed: ${reasonNoResponse || "Analysis determined no email required"}`);
 
       // Check for unanswered clarification on denial
@@ -1116,6 +1160,7 @@ export async function decideNextAction(
       autopilotMode,
       denialSubtype,
       jurisdictionLevel: jurisdictionLevel || null,
+      inlineKeyPoints,
     });
 
     if (aiResult) {
@@ -1136,7 +1181,8 @@ export async function decideNextAction(
       triggerType,
       requiresResponse,
       portalUrl,
-      denialSubtype
+      denialSubtype,
+      inlineKeyPoints
     );
     logger.info("Deterministic routing selected action", {
       caseId,

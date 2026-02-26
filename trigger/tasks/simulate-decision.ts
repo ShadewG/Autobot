@@ -173,7 +173,12 @@ export const simulateDecision = task({
       classification.portalUrl,
       classification.suggestedAction,
       null,
-      classification.denialSubtype
+      classification.denialSubtype,
+      undefined,    // reviewAction
+      undefined,    // reviewInstruction
+      undefined,    // humanDecision
+      undefined,    // jurisdictionLevel
+      classification.keyPoints || []  // inlineKeyPoints for mock-context denial strength
     );
 
     log.push({

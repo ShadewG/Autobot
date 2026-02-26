@@ -12,6 +12,7 @@ import {
 interface User {
   id: number;
   name: string;
+  is_admin?: boolean;
 }
 
 interface AuthContextValue {

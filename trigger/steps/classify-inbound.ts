@@ -77,36 +77,37 @@ ${a.extracted_text.substring(0, 4000)}${a.extracted_text.length > 4000 ? "\n[...
 IMPORTANT: If attachments include PDFs or documents and the message references them as records/responses, classify as "records_ready" or "delivery", NOT as "acknowledgment" or "other". Use the extracted text from attachments to inform your classification — it may contain fee quotes, denial letters, records, or other substantive content.` : ""}
 
 ## Intent Definitions (choose the BEST match)
-- **fee_request**: Agency quotes a cost/fee for records production. Look for dollar amounts, invoices, cost estimates, payment instructions.
-- **question / more_info_needed**: Agency asks the requester to clarify, narrow scope, provide ID, or answer a question before proceeding.
+- **fee_request**: Agency quotes a cost/fee for records production. Look for dollar amounts, invoices, cost estimates, payment instructions, or conditional authorization requests (e.g., "authorize fees up to $X before we proceed"). Also includes cases where the agency asks the requester to confirm willingness to pay before sending a formal estimate, even if no dollar amount is yet specified.
+- **question / more_info_needed**: Agency asks the requester to clarify, narrow scope, provide ID, or answer a question before proceeding. Use this when the agency is politely requesting that the scope be narrowed to help them process it (e.g., "please narrow to 3 years so we can process it"). Do NOT use this when the agency **formally refuses/denies** the request because it is too broad or burdensome (e.g., "your request is overly burdensome and cannot be processed" or "50,000 pages is unduly burdensome") — that is a **denial** with subtype **overly_broad**.
 - **hostile**: Agency response is threatening, abusive, or overtly adversarial beyond normal bureaucratic friction.
-- **denial**: Agency explicitly refuses to produce some or all records. Includes claims of exemption, no responsive records, etc.
-- **partial_denial**: Agency releases some records but denies/withholds others citing an exemption.
-- **partial_approval**: Agency approves part of the request with conditions (redactions, fee for remainder, etc.).
+- **denial**: Agency explicitly refuses to produce some or all records. Includes claims of exemption, no responsive records, ongoing internal review that functions as a hold, or any indication that records will be withheld (even conditionally or due to a pending review process). Also use **denial** when an agency states that some information "may be withheld" or will be withheld citing an exemption, even if no records are being released in this response. If a denial exemption is combined with a separate fee for other records, classify as **denial** (not partial_approval) and address the fee issue second.
+- **partial_denial**: Agency releases some records but denies/withholds others citing an exemption. NOTE: partial_denial and partial_approval REQUIRE that records are actually being delivered or released in this response. If no records are released but some are mentioned as withheld alongside a fee, denial, or conditional statement, classify as **denial** or **fee_request** instead.
+- **partial_approval**: Agency approves part of the request with conditions (redactions, fee for remainder, etc.). NOTE: Requires actual delivery of at least some records. A message mentioning redactions without releasing any records is not partial_approval — it is a **denial**. If records are attached or explicitly released with redactions noted, this is partial_approval.
 - **partial_release / partial_delivery**: Agency provides some records with more to follow later.
 - **portal_redirect**: Agency says to use an online portal (GovQA, NextRequest, JustFOIA, etc.) instead of email.
-- **acknowledgment**: Agency confirms receipt of the request and says they are working on it. No records or fees yet.
+- **acknowledgment**: Agency confirms receipt of the request and says they are working on it. No records or fees yet. NOTE: If the agency says records are unavailable now but WILL be available in the future (e.g., "not yet created", "will exist after the event"), classify as **denial** with subtype **records_not_yet_created**, NOT acknowledgment.
 - **records_ready**: Agency says records are ready for pickup/download/delivery. Includes links, attachments, or portal notifications.
 - **delivery**: Records are attached to or delivered in this message.
 - **wrong_agency**: Agency says they are not the correct custodian and may redirect to another agency.
 - **other**: Does not clearly fit any category above.
 
 ## Denial Subtype Definitions (only if intent is "denial" or "partial_denial")
-- **no_records**: Agency claims no responsive records exist
+- **no_records**: Agency claims no responsive records exist. If the agency also offers clarification help alongside the no_records claim (e.g., "if you provide an incident number we can search more specifically"), use subtype **not_reasonably_described** instead.
 - **wrong_agency**: Agency says records are held by a different entity
 - **overly_broad**: Agency says request is too broad or unduly burdensome
-- **ongoing_investigation**: Records withheld due to active investigation/litigation
-- **privacy_exemption**: Records withheld citing privacy of individuals
+- **ongoing_investigation**: Records withheld due to active investigation/litigation, or an internal review process that is being used to withhold records
+- **privacy_exemption**: Records withheld citing privacy of specific individuals (PII, personnel records, medical records, etc.). Requires explicit mention of individual privacy rights or personal identifying information — do NOT use for vague "internal policy" or "departmental policy" restrictions that don't specifically mention personal privacy
 - **excessive_fees**: Denial is effectively a prohibitive cost barrier
 - **retention_expired**: Records destroyed per retention schedule
 - **glomar_ncnd**: Agency neither confirms nor denies the existence of records
 - **not_reasonably_described**: Agency claims request is too vague to search
-- **no_duty_to_create**: Agency claims it would need to create records to fulfill request
+- **no_duty_to_create**: Agency claims it would need to create records to fulfill request. If the message also emphasizes that the request is overly broad or that data does not exist in the requested form due to scope, prefer **overly_broad** as the subtype instead.
 - **privilege_attorney_work_product**: Records withheld claiming attorney-client privilege or work product
 - **juvenile_records**: Records withheld due to juvenile protections
 - **sealed_court_order**: Records sealed by court order
 - **third_party_confidential**: Records withheld to protect third-party confidential information
 - **records_not_yet_created**: Records don't exist yet (pending processing, future report)
+- **format_issue**: Agency cannot process the request in its current format (missing required form, needs to be resubmitted via specific channel, improper request format). Do NOT use for substantive exemptions or policy-based denials — only for procedural/format problems with the submission itself
 
 ## Jurisdiction Detection
 - **federal**: Agency is a federal entity (e.g., FBI, DEA, federal court). Look for mentions of 5 USC 552, FOIA (federal), federal department names.
@@ -377,6 +378,7 @@ export async function classifyInbound(
     detected_exemption_citations: (aiResult as any).detected_exemption_citations || [],
     decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
     referralContact: (aiResult as any).referral_contact || null,
+    keyPoints: aiResult.key_points || [],
   };
 }
 
@@ -451,5 +453,6 @@ export async function classifyMessageContent(
     detected_exemption_citations: (aiResult as any).detected_exemption_citations || [],
     decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
     referralContact: (aiResult as any).referral_contact || null,
+    keyPoints: aiResult.key_points || [],
   };
 }

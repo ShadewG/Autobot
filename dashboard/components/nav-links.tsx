@@ -10,14 +10,14 @@ import { useAuth } from "./auth-provider";
 
 export function NavLinks() {
   const pathname = usePathname();
-  const { appendUser } = useUserFilter();
+  const { appendUser, isAdmin, viewAll, setViewAll } = useUserFilter();
   const { user, logout } = useAuth();
 
   const { data: liveData } = useSWR<{
     success: boolean;
     summary: { pending_approvals_total: number; human_review_total: number };
   }>(appendUser("/api/monitor/live-overview?limit=1"), {
-    refreshInterval: 30000,
+    refreshInterval: 10000,
   });
   const queueCount =
     (liveData?.summary?.pending_approvals_total || 0) +
@@ -31,6 +31,7 @@ export function NavLinks() {
     { href: "/eval", label: "EVALS" },
     { href: "/simulate", label: "SIM" },
     { href: "/settings", label: "SETTINGS" },
+    ...(isAdmin ? [{ href: "/admin", label: "ADMIN" }] : []),
   ];
 
   return (
@@ -62,17 +63,31 @@ export function NavLinks() {
           );
         })}
       </nav>
-      {user && (
-        <div className="flex items-center gap-3 text-xs">
-          <span className="text-muted-foreground">{user.name}</span>
+      <div className="flex items-center gap-3 text-xs">
+        {isAdmin && (
           <button
-            onClick={logout}
-            className="text-muted-foreground hover:text-foreground transition-colors uppercase tracking-wider"
+            onClick={() => setViewAll(!viewAll)}
+            className={cn(
+              "uppercase tracking-wider transition-colors",
+              viewAll ? "text-amber-400" : "text-muted-foreground hover:text-foreground"
+            )}
+            title={viewAll ? "Viewing all users" : "Viewing your cases only"}
           >
-            Logout
+            {viewAll ? "ALL USERS" : "MY CASES"}
           </button>
-        </div>
-      )}
+        )}
+        {user && (
+          <>
+            <span className="text-muted-foreground">{user.name}</span>
+            <button
+              onClick={logout}
+              className="text-muted-foreground hover:text-foreground transition-colors uppercase tracking-wider"
+            >
+              Logout
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
