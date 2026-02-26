@@ -364,40 +364,32 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         }
     }
 
-    // Legacy path: re-trigger through Trigger.dev (old LangGraph proposals)
+    // Legacy path: re-trigger through Trigger.dev (stale waitpoint or old proposals)
+    // Don't create agent_run here — the Trigger.dev task creates its own run with proper lifecycle.
+    // Creating one here leads to orphaned 'queued' runs if Trigger.dev fails to start.
     await db.updateProposal(proposalId, {
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
     });
 
-    const run = await db.createAgentRunFull({
-        case_id: caseId,
-        trigger_type: 'resume',
-        status: 'queued',
-        autopilot_mode: proposal.autopilot_mode || 'SUPERVISED',
-        langgraph_thread_id: `resume:${caseId}:proposal-${proposalId}`
-    });
-
     let handle;
-    // Pass the human's decision context so the agent follows the instruction
     const triggerContext = {
         triggerType: action === 'ADJUST' ? 'ADJUSTMENT' : 'HUMAN_REVIEW_RESOLUTION',
         reviewAction: action,
         reviewInstruction: instruction || null,
-        // For ADJUST: carry the original action type so the agent re-drafts with the same action
         originalActionType: action === 'ADJUST' ? proposal.action_type : undefined,
         originalProposalId: proposalId,
     };
     if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
         handle = await tasks.trigger('process-initial-request', {
-            runId: run.id,
+            runId: 0, // placeholder — task creates its own agent_run
             caseId,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
             ...triggerContext,
         }, triggerOptsDebounced(caseId, 'approve-initial', proposalId));
     } else {
         handle = await tasks.trigger('process-inbound', {
-            runId: run.id,
+            runId: 0,
             caseId,
             messageId: proposal.trigger_message_id,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
@@ -410,7 +402,6 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     return {
         success: true,
         message: 'Decision received, re-processing via Trigger.dev',
-        run: { id: run.id, status: run.status },
         proposal_id: proposalId,
         action,
         trigger_run_id: handle.id

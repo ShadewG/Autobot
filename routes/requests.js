@@ -1814,7 +1814,11 @@ router.get('/:id/agent-runs', async (req, res) => {
         const runs = await db.getAgentRunsByCaseId(requestId, limit);
 
         // Transform runs for API response
-        const transformedRuns = runs.map(run => ({
+        const transformedRuns = runs.map(run => {
+            // Map DB statuses to frontend-friendly values
+            const statusMap = { created: 'running', queued: 'running', waiting: 'running', paused: 'running' };
+            const displayStatus = statusMap[run.status] || run.status;
+            return {
             id: run.id,
             trigger_type: run.trigger_type,
             started_at: run.started_at,
@@ -1822,7 +1826,7 @@ router.get('/:id/agent-runs', async (req, res) => {
             duration_ms: run.ended_at && run.started_at
                 ? new Date(run.ended_at) - new Date(run.started_at)
                 : null,
-            status: run.status,
+            status: displayStatus,
             error: run.error || null,
             lock_acquired: run.lock_acquired,
             proposal: run.proposal_id ? {
@@ -1834,7 +1838,8 @@ router.get('/:id/agent-runs', async (req, res) => {
                     : null
             } : null,
             metadata: run.metadata || {}
-        }));
+        };
+        });
 
         res.json({
             success: true,

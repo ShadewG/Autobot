@@ -743,7 +743,7 @@ function RequestDetailContent() {
           <SafetyHints
             lastInboundProcessed={lastInboundMessage?.processed_at !== undefined && lastInboundMessage?.processed_at !== null}
             lastInboundProcessedAt={lastInboundMessage?.processed_at || undefined}
-            hasActiveRun={runsData?.runs?.some(r => r.status === 'running')}
+            hasActiveRun={runsData?.runs?.some(r => ['running', 'queued', 'created', 'waiting'].includes(r.status))}
           />
         </div>
 
