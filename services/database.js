@@ -870,7 +870,7 @@ class DatabaseService {
         return result.rows[0];
     }
 
-    async getPortalAccountByDomain(domain, { email = null, userId = null } = {}) {
+    async getPortalAccountByDomain(domain, { email = null, userId = null, includeInactive = false } = {}) {
         let query = 'SELECT * FROM portal_accounts WHERE portal_domain = $1';
         const params = [domain];
         let idx = 2;
@@ -889,7 +889,11 @@ class DatabaseService {
             query += ' AND user_id IS NULL';
         }
 
-        query += ' AND account_status IN (\'active\', \'no_account_needed\') ORDER BY created_at DESC LIMIT 1';
+        if (!includeInactive) {
+            query += ' AND account_status IN (\'active\', \'no_account_needed\')';
+        }
+        // When includeInactive, prioritize active accounts over locked/inactive
+        query += ' ORDER BY CASE account_status WHEN \'active\' THEN 0 WHEN \'no_account_needed\' THEN 1 ELSE 2 END, created_at DESC LIMIT 1';
 
         const result = await this.query(query, params);
         if (result.rows.length > 0) {
@@ -907,7 +911,10 @@ class DatabaseService {
                 fallbackQuery += ' AND email = $2';
                 fallbackParams.push(email);
             }
-            fallbackQuery += ' AND account_status IN (\'active\', \'no_account_needed\') ORDER BY created_at DESC LIMIT 1';
+            if (!includeInactive) {
+                fallbackQuery += ' AND account_status IN (\'active\', \'no_account_needed\')';
+            }
+            fallbackQuery += ' ORDER BY CASE account_status WHEN \'active\' THEN 0 WHEN \'no_account_needed\' THEN 1 ELSE 2 END, created_at DESC LIMIT 1';
             const fallbackResult = await this.query(fallbackQuery, fallbackParams);
             if (fallbackResult.rows.length > 0) {
                 const account = fallbackResult.rows[0];
@@ -920,9 +927,9 @@ class DatabaseService {
         return null;
     }
 
-    async getPortalAccountByUrl(portalUrl, userId = null) {
+    async getPortalAccountByUrl(portalUrl, userId = null, options = {}) {
         const domain = this._extractDomain(portalUrl);
-        return await this.getPortalAccountByDomain(domain, { userId });
+        return await this.getPortalAccountByDomain(domain, { userId, ...options });
     }
 
     async updatePortalAccountLastUsed(accountId) {

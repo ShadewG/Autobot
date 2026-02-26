@@ -552,7 +552,7 @@ class PortalAgentServiceSkyvern {
      * Generate a secure password for new accounts
      */
     _generateSecurePassword() {
-        return process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
+        return process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
     }
 
     /**
@@ -845,7 +845,7 @@ class PortalAgentServiceSkyvern {
         // Always send login credentials — either from saved account or defaults.
         // This ensures Skyvern uses OUR password when creating accounts, not a random one.
         const defaultEmail = personalInfo.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
+        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
         const loginPayload = JSON.stringify({
             email: portalAccount?.email || defaultEmail,
             password: portalAccount?.password || defaultPassword
@@ -854,9 +854,50 @@ class PortalAgentServiceSkyvern {
         return {
             URL: portalUrl,
             login: loginPayload,
+            login_strategy: 'Always attempt login first with provided credentials. Only create account if login fails and no account exists.',
             case_info: caseInfo,
             personal_info: personalInfo
         };
+    }
+
+    _isLoginFailureText(value) {
+        if (!value) return false;
+        return /(login failed|invalid password|wrong password|incorrect password|invalid credentials|authentication failed|account locked|locked out|too many (login |sign.?in )?attempts|sign.?in failed|could not (log|sign) ?in)/i.test(String(value));
+    }
+
+    async _lockPortalAccountAfterLoginFailure({ portalAccount, portalUrl, userId, failureReason, caseData, runId }) {
+        try {
+            let account = portalAccount;
+            if (!account) {
+                account = await database.getPortalAccountByUrl(portalUrl, userId, { includeInactive: true });
+            }
+
+            if (!account?.id) {
+                console.warn(`⚠️ Login failed for ${portalUrl} but no matching account found to lock`);
+                return;
+            }
+
+            if (account.account_status !== 'locked') {
+                await database.updatePortalAccountStatus(account.id, 'locked');
+            }
+
+            await database.logActivity(
+                'portal_account_locked',
+                `Portal account locked after login failure for ${portalUrl}`,
+                {
+                    case_id: caseData?.id || null,
+                    portal_url: portalUrl,
+                    portal_account_id: account.id,
+                    account_email: account.email,
+                    run_id: runId || null,
+                    reason: String(failureReason || 'Login failed').substring(0, 500)
+                }
+            );
+
+            console.warn(`🔒 Locked portal account ${account.email} for ${portalUrl} after login failure`);
+        } catch (lockErr) {
+            console.warn('Could not lock portal account after login failure:', lockErr.message);
+        }
     }
 
     async _generateRetryGuidance(caseData, portalUrl, error, workflowResponse) {
@@ -917,7 +958,7 @@ class PortalAgentServiceSkyvern {
         // 2. No account found — run scout task using the case owner's email
         console.log(`🔍 No portal account found for ${portalUrl} (user_id=${userId}) — running scout task...`);
         const email = caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-        const password = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
+        const password = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
 
         await database.logActivity('portal_scout_started', `Scout task started for ${portalUrl}`, {
             case_id: caseData.id || null,
@@ -1038,10 +1079,18 @@ class PortalAgentServiceSkyvern {
         console.log('⚙️ Skyvern workflow mode enabled. Building parameters…');
         let portalAccount = null;
         if (!retryContext) {
-            // First attempt: run scout to ensure credentials exist
-            portalAccount = await this._ensurePortalAccount({ portalUrl, caseData, caseOwner });
+            // First attempt: do a cheap DB credential lookup only.
+            // If none exists, workflow uses default password and attempts login first.
+            portalAccount = await database.getPortalAccountByUrl(portalUrl, userId);
+            if (portalAccount?.account_status === 'no_account_needed') portalAccount = null;
+            if (portalAccount) {
+                await database.updatePortalAccountLastUsed(portalAccount.id);
+                console.log(`🔑 Using stored portal account for ${portalUrl} (${portalAccount.email}, user_id=${portalAccount.user_id || 'shared'})`);
+            } else {
+                console.log(`🔑 No stored portal account for ${portalUrl} (user_id=${userId}) — using default login password and login-first workflow path`);
+            }
         } else {
-            // Retry: just fetch existing account (scout already ran)
+            // Retry: fetch existing account; if absent, keep using default credentials
             portalAccount = await database.getPortalAccountByUrl(portalUrl, userId);
             if (portalAccount?.account_status === 'no_account_needed') portalAccount = null;
             if (portalAccount) await database.updatePortalAccountLastUsed(portalAccount.id);
@@ -1229,7 +1278,7 @@ class PortalAgentServiceSkyvern {
                 // Auto-save portal account if we didn't have one — so future cases reuse it
                 if (!portalAccount) {
                     try {
-                        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
+                        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
                         await database.createPortalAccount({
                             portal_url: portalUrl,
                             portal_type: caseData.portal_provider || null,
@@ -1273,6 +1322,11 @@ class PortalAgentServiceSkyvern {
 
             const failureReason = finalResult.error || finalResult.failure_reason || finalResult.message || 'Workflow run failed';
             const fullRunText = JSON.stringify(finalResult).toLowerCase();
+            const extractedInfoText = JSON.stringify(extractedData || {}).toLowerCase();
+            const loginFailureDetected =
+                this._isLoginFailureText(failureReason) ||
+                this._isLoginFailureText(fullRunText) ||
+                this._isLoginFailureText(extractedInfoText);
 
             // NOT A REAL PORTAL: PDF download, fax-only, cannot-automate, etc.
             // Delegate to shared handler which researches then falls back to PDF.
@@ -1298,6 +1352,52 @@ class PortalAgentServiceSkyvern {
                 return this._handleNotRealPortal(caseData, portalUrl, dryRun, failureReason);
             }
 
+            // Login failures indicate bad credentials or account lock state.
+            // Lock known credentials and stop retries to avoid burning Skyvern credits.
+            if (loginFailureDetected) {
+                await this._lockPortalAccountAfterLoginFailure({
+                    portalAccount,
+                    portalUrl,
+                    userId,
+                    failureReason,
+                    caseData,
+                    runId: workflowRunId
+                });
+
+                const truncatedReason = String(failureReason || 'Login failed').substring(0, 80);
+                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: `Portal login failed: ${truncatedReason}`.substring(0, 100),
+                    requires_human: true
+                });
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
+                await database.logActivity(
+                    'portal_stage_failed',
+                    `Skyvern workflow login failed for ${caseData.case_name}: ${failureReason}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        run_id: workflowRunId,
+                        engine: 'skyvern_workflow',
+                        error: failureReason,
+                        task_url: finalWorkflowRunLink || workflowRunLink || null,
+                        do_not_retry: true
+                    }
+                );
+
+                return {
+                    success: false,
+                    status: finalResult.status || 'failed',
+                    runId: workflowRunId,
+                    recording_url: recordingUrl || null,
+                    workflow_url: finalWorkflowRunLink || null,
+                    error: failureReason,
+                    workflow_response: finalResult,
+                    doNotRetry: true,
+                    engine: 'skyvern_workflow'
+                };
+            }
+
             // ── Re-check case status before any retry — prevents duplicate submissions
             //    when Skyvern reports "failed" but the form was actually submitted ──
             const _retrySkipStatuses = ['sent', 'awaiting_response', 'responded', 'completed', 'needs_phone_call'];
@@ -1316,7 +1416,7 @@ class PortalAgentServiceSkyvern {
             const accountAlreadyExists = /email.*already exists|account.*already|duplicate.*email/i.test(failureReason + ' ' + fullRunText);
             if (accountAlreadyExists && !portalAccount && !retryContext) {
                 console.log(`🔑 Account already exists on ${portalUrl} — saving credentials and retrying with login`);
-                const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
+                const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
                 try {
                     await database.createPortalAccount({
                         portal_url: portalUrl,

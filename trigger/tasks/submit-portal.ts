@@ -28,6 +28,7 @@ const MAX_RECENT_FAILURES = 2;
 const FAILURE_WINDOW_HOURS = 24;
 const MAX_PORTAL_RUNS_PER_DAY = 3;
 const MAX_PORTAL_RUNS_TOTAL = 8;
+const STALE_CREDENTIAL_DAYS = 30;
 
 export const submitPortal = task({
   id: "submit-portal",
@@ -173,7 +174,57 @@ export const submitPortal = task({
 
     const targetUrl = portalUrl || caseData.portal_url;
     if (!targetUrl) {
-      throw new Error(`No portal URL available for case ${caseId}`);
+      logger.warn("Portal submission skipped — missing portal URL", { caseId });
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        requires_human: true,
+        substatus: "No portal URL available for submission",
+      });
+      if (portalTaskId) {
+        await db.query(
+          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Missing portal URL' WHERE id = $1`,
+          [portalTaskId]
+        );
+      }
+      return { success: false, skipped: true, reason: "invalid_portal_url" };
+    }
+
+    // ── Pre-flight: check if portal account is locked (don't waste Skyvern credits) ──
+    // Note: document URLs are NOT blocked here — Skyvern service handles fallback to PDF/research
+    const portalAccount = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null, { includeInactive: true });
+    if (portalAccount) {
+      const blockedStatuses = new Set(["locked", "inactive"]);
+      if (blockedStatuses.has(portalAccount.account_status)) {
+        logger.warn("Portal submission skipped — account not active", {
+          caseId, targetUrl,
+          accountId: portalAccount.id,
+          accountStatus: portalAccount.account_status,
+          accountEmail: portalAccount.email,
+        });
+        await db.updateCaseStatus(caseId, "needs_human_review", {
+          requires_human: true,
+          substatus: `Portal account ${portalAccount.account_status} — manual login needed`,
+        });
+        if (portalTaskId) {
+          await db.query(
+            `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = $2 WHERE id = $1`,
+            [portalTaskId, `Portal account blocked: ${portalAccount.account_status}`]
+          );
+        }
+        return { success: false, skipped: true, reason: `portal_account_${portalAccount.account_status}` };
+      }
+
+      if (portalAccount.last_used_at) {
+        const daysSinceUse = (Date.now() - new Date(portalAccount.last_used_at).getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSinceUse > STALE_CREDENTIAL_DAYS) {
+          logger.warn("Portal credentials are stale (>30 days since last use)", {
+            caseId, targetUrl, accountId: portalAccount.id, daysSinceUse: Math.floor(daysSinceUse),
+          });
+        }
+      }
+    } else {
+      logger.info("No portal credentials found — will use default login-first workflow", {
+        caseId, targetUrl, userId: caseData.user_id || null,
+      });
     }
 
     // ── Mark case as portal in progress ──
