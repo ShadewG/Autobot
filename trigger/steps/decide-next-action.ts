@@ -34,20 +34,22 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
   if (citizenRestriction) return "strong";
 
   const strongIndicators = [
-    "exemption", "statute", "law enforcement", "ongoing investigation",
+    // Note: "exemption" and "statute" removed — too broad; almost all denials cite legal exemptions/statutes
+    // which doesn't by itself indicate an unwinnable denial. Concrete/absolute language is more reliable.
+    "law enforcement", "ongoing investigation",
     "ongoing", "in court", "cannot be provided", "nothing can be provided",
     "confidential", "sealed", "court", "pending litigation",
     "active case", "pending case", "active prosecution",
-  ]; // Note: "privacy" removed — too generic, matches weak privacy denials
+  ]; // Note: "privacy" also excluded — too generic, matches weak privacy denials
   let strongCount = keyPoints.filter((p: string) =>
     strongIndicators.some((ind) => p.toLowerCase().includes(ind))
   ).length;
 
   // The classifier's denial_subtype is itself strong evidence — it already analyzed the message
-  // Note: privacy_exemption is NOT auto-weighted here because "exemption" already appears in strongIndicators;
-  // the key_points themselves must provide 2+ matches to be "strong" (avoids false positives for weak legal citations)
   if (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") {
     strongCount += 1; // Subtype adds weight but requires a corroborating key_point to reach "strong"
+  } else if (denialSubtype === "privacy_exemption") {
+    strongCount += 1; // Privacy exemption requires concrete language (confidential/sealed/cannot be provided) to reach "strong"
   }
 
   if (strongCount >= 2) return "strong";
