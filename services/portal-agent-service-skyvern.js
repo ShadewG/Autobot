@@ -774,10 +774,12 @@ class PortalAgentServiceSkyvern {
     }
 
     _buildWorkflowCaseInfo(caseData, portalUrl, dryRun) {
-        // Truncate additional_details to avoid bloating the payload
-        let additionalDetails = caseData.additional_details || '';
+        // Truncate additional_details to avoid bloating the Skyvern payload
+        let additionalDetails = String(caseData.additional_details || '');
         if (additionalDetails.length > 3000) {
-            additionalDetails = additionalDetails.substring(0, 3000) + '\n[truncated]';
+            // Cut at last newline before limit to avoid splitting mid-record
+            const cutPoint = additionalDetails.lastIndexOf('\n', 3000);
+            additionalDetails = additionalDetails.substring(0, cutPoint > 2000 ? cutPoint : 3000) + '\n[truncated]';
         }
 
         return {
@@ -835,14 +837,9 @@ class PortalAgentServiceSkyvern {
             caseInfo.request_text = instructions;
         }
 
-        // Inject previous submission memory if available
-        try {
-            const memorySummary = await notionService.getSubmissionMemorySummary(caseData.id);
-            if (memorySummary) {
-                caseInfo.previous_submission_notes = memorySummary;
-                console.log(`📚 Injected submission memory for case ${caseData.id}: ${memorySummary.substring(0, 100)}...`);
-            }
-        } catch (_) { /* non-critical */ }
+        // NOTE: Do NOT inject previous submission status/memory into case_info.
+        // Skyvern's AI interprets "Previously submitted successfully" as "already done"
+        // and skips all form filling. Submission memory removed to prevent false positives.
 
         // Always send login credentials — either from saved account or defaults.
         // This ensures Skyvern uses OUR password when creating accounts, not a random one.
@@ -2243,7 +2240,7 @@ SUBMISSION STAGE OBJECTIVE:
             phone: caseData.requester_phone || process.env.REQUESTER_PHONE || '206-555-0198',
             address1: caseData.requester_address || process.env.REQUESTER_ADDRESS || '3021 21st Ave W Apt 202',
             city: caseData.requester_city || process.env.REQUESTER_CITY || 'Seattle',
-            state: caseData.requester_state || process.env.REQUESTER_STATE || caseData.state || 'WA',
+            state: caseData.requester_state || process.env.REQUESTER_STATE || 'WA',
             zip: caseData.requester_zip || process.env.REQUESTER_ZIP || '98199'
         };
     }
