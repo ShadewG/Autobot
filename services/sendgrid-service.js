@@ -1814,6 +1814,7 @@ class SendGridService {
      */
     stripMarkdown(text) {
         if (!text) return text;
+        if (typeof text !== 'string') text = String(text);
         return text
             .replace(/\*\*([^*]+)\*\*/g, '$1')   // **bold** → bold
             .replace(/\*([^*]+)\*/g, '$1')         // *italic* → italic
@@ -1826,6 +1827,7 @@ class SendGridService {
      */
     formatEmailHtml(text) {
         if (!text) return '';
+        if (typeof text !== 'string') text = String(text);
         let formatted = text
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')

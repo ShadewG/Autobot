@@ -829,6 +829,9 @@ Then analyze the situation and decide what action to take.`
         logger.proposalEvent('created', proposal);
 
         const queue = getEmailQueue();
+        if (!queue) {
+            throw new Error('Email queue unavailable — Redis connection failed. Cannot send email.');
+        }
         const jobType = (message_type === 'follow_up' || message_type === 'followup')
             ? 'follow_up'
             : 'auto_reply';

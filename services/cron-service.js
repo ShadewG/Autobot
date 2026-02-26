@@ -172,6 +172,61 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Stale run reaper: clean up stuck agent_runs every 15 minutes
+        this.jobs.staleRunReaper = new CronJob('*/15 * * * *', async () => {
+            try {
+                // Mark runs stuck in created/queued/running/waiting for >2 hours as failed
+                const result = await db.query(`
+                    UPDATE agent_runs
+                    SET status = 'failed',
+                        error = 'Reaped: stuck in ' || status || ' for >2 hours',
+                        ended_at = NOW()
+                    WHERE status IN ('created', 'queued', 'running', 'waiting')
+                      AND started_at < NOW() - INTERVAL '2 hours'
+                    RETURNING id, case_id, status
+                `);
+                if (result.rowCount > 0) {
+                    console.log(`[reaper] Cleaned ${result.rowCount} stuck agent runs`);
+                    await db.logActivity('stale_run_reaped', `Cleaned ${result.rowCount} stuck agent runs`, {
+                        run_ids: result.rows.map(r => r.id)
+                    });
+                }
+            } catch (error) {
+                console.error('Error in stale run reaper:', error);
+            }
+        }, null, true, 'America/New_York');
+
+        // Loop breaker: detect cases with excessive failed runs (circuit breaker)
+        this.jobs.loopBreaker = new CronJob('*/30 * * * *', async () => {
+            try {
+                // Find cases with 10+ failed runs in the last 24 hours
+                const result = await db.query(`
+                    SELECT case_id, COUNT(*) as fail_count
+                    FROM agent_runs
+                    WHERE status = 'failed'
+                      AND started_at > NOW() - INTERVAL '24 hours'
+                    GROUP BY case_id
+                    HAVING COUNT(*) >= 10
+                `);
+                for (const row of result.rows) {
+                    // Check if already flagged
+                    const caseData = await db.getCaseById(row.case_id);
+                    if (!caseData || caseData.pause_reason === 'LOOP_DETECTED') continue;
+
+                    await db.updateCaseStatus(row.case_id, 'needs_human_review', {
+                        substatus: `Circuit breaker: ${row.fail_count} failed runs in 24h`,
+                        pause_reason: 'LOOP_DETECTED'
+                    });
+                    console.log(`[loop-breaker] Case ${row.case_id} flagged: ${row.fail_count} failed runs in 24h`);
+                    await db.logActivity('loop_detected', `Circuit breaker tripped: ${row.fail_count} failed runs in 24h`, {
+                        case_id: row.case_id, fail_count: row.fail_count
+                    });
+                }
+            } catch (error) {
+                console.error('Error in loop breaker:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
@@ -179,6 +234,8 @@ class CronService {
         console.log('✓ Agency sync: Every hour + on startup');
         console.log('✓ Deadline escalation sweep: Daily at 10 AM');
         console.log('✓ Stuck portal sweep: Every 30 minutes');
+        console.log('✓ Stale run reaper: Every 15 minutes');
+        console.log('✓ Loop breaker: Every 30 minutes');
     }
 
     /**

@@ -1250,12 +1250,14 @@ class DatabaseService {
      * Create a new agent run record.
      */
     async createAgentRun(caseId, triggerType, metadata = {}) {
+        // Normalize trigger type to lowercase for consistency
+        const normalizedTrigger = (triggerType || '').toLowerCase().replace(/^inbound$/, 'inbound_message');
         const query = `
             INSERT INTO agent_runs (case_id, trigger_type, metadata)
             VALUES ($1, $2, $3)
             RETURNING *
         `;
-        const result = await this.query(query, [caseId, triggerType, JSON.stringify(metadata)]);
+        const result = await this.query(query, [caseId, normalizedTrigger, JSON.stringify(metadata)]);
         return result.rows[0];
     }
 
@@ -2698,6 +2700,8 @@ class DatabaseService {
      * Create agent run with full context (including new fields from migration 019)
      */
     async createAgentRunFull(data) {
+        // Normalize trigger type to lowercase for consistency
+        const normalizedTrigger = (data.trigger_type || '').toLowerCase().replace(/^inbound$/, 'inbound_message');
         const result = await this.query(`
             INSERT INTO agent_runs (
                 case_id, trigger_type, langgraph_thread_id, message_id,
@@ -2706,7 +2710,7 @@ class DatabaseService {
             RETURNING *
         `, [
             data.case_id,
-            data.trigger_type,
+            normalizedTrigger,
             data.langgraph_thread_id,
             data.message_id,
             data.scheduled_key,
@@ -2754,7 +2758,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT * FROM agent_runs
             WHERE case_id = $1
-              AND status IN ('created', 'queued', 'running', 'paused')
+              AND status IN ('created', 'queued', 'running', 'paused', 'waiting')
             ORDER BY started_at DESC
             LIMIT 1
         `, [caseId]);
@@ -2795,6 +2799,18 @@ class DatabaseService {
     // =========================================================================
 
     async logFeeEvent(caseId, eventType, amount = null, notes = null, sourceMessageId = null) {
+        // Dedup: skip if same case + amount + event_type was logged in the last 24 hours
+        if (amount != null) {
+            const dup = await this.query(`
+                SELECT id FROM fee_history
+                WHERE case_id = $1 AND event_type = $2 AND amount = $3
+                  AND created_at > NOW() - INTERVAL '24 hours'
+                LIMIT 1
+            `, [caseId, eventType, amount]);
+            if (dup.rows.length > 0) {
+                return dup.rows[0]; // Return existing record instead of creating duplicate
+            }
+        }
         const result = await this.query(`
             INSERT INTO fee_history (case_id, event_type, amount, notes, source_message_id)
             VALUES ($1, $2, $3, $4, $5)
