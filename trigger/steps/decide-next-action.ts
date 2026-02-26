@@ -182,6 +182,7 @@ function buildDecisionPrompt(params: {
   dismissedProposals?: any[];
   humanDirectives?: any[];
   phoneNotes?: any[];
+  latestAnalysis?: any;
 }): string {
   const {
     caseData,
@@ -222,23 +223,65 @@ function buildDecisionPrompt(params: {
     params.dismissedProposals, params.humanDirectives, params.phoneNotes
   );
 
+  // Build research context summary
+  const research = caseData?.research_context_jsonb;
+  let researchSection = "";
+  if (research) {
+    const parts: string[] = [];
+    if (research.state_law_notes) parts.push(`State Law Notes:\n${String(research.state_law_notes).substring(0, 1500)}`);
+    if (research.rebuttal_support_points?.length) parts.push(`Rebuttal Support Points:\n${research.rebuttal_support_points.map((p: string) => `- ${p}`).join("\n")}`);
+    if (research.likely_record_custodians?.length) parts.push(`Likely Record Custodians:\n${research.likely_record_custodians.map((c: string) => `- ${c}`).join("\n")}`);
+    if (research.official_records_submission_methods?.length) parts.push(`Official Submission Methods:\n${research.official_records_submission_methods.map((m: string) => `- ${m}`).join("\n")}`);
+    if (research.record_type_handoff_notes) parts.push(`Record Type Notes: ${String(research.record_type_handoff_notes).substring(0, 500)}`);
+    if (parts.length) researchSection = `\n## Research Context (previously gathered)\n${parts.join("\n\n")}`;
+  }
+
+  // Build fee context
+  const feeQuote = caseData?.fee_quote_jsonb;
+  const feeSection = feeQuote ? `\n## Fee Quote Details\n${JSON.stringify(feeQuote, null, 2)}` : "";
+
+  // Build portal context
+  let portalSection = "";
+  if (caseData?.portal_url || caseData?.last_portal_status) {
+    portalSection = `\n## Portal Status\n- Portal URL: ${caseData.portal_url || "none"}\n- Provider: ${caseData.portal_provider || "none"}\n- Last portal status: ${caseData.last_portal_status || "none"}\n- Portal request #: ${caseData.portal_request_number || "none"}`;
+  }
+
+  // Build deadline/timing context
+  let timingSection = "";
+  const timingParts: string[] = [];
+  if (caseData?.deadline_date) timingParts.push(`Deadline: ${new Date(caseData.deadline_date).toISOString().split("T")[0]}`);
+  if (caseData?.days_overdue > 0) timingParts.push(`Days overdue: ${caseData.days_overdue}`);
+  if (caseData?.send_date) timingParts.push(`Initial request sent: ${new Date(caseData.send_date).toISOString().split("T")[0]}`);
+  if (caseData?.last_response_date) timingParts.push(`Last agency response: ${new Date(caseData.last_response_date).toISOString().split("T")[0]}`);
+  if (caseData?.incident_date) timingParts.push(`Incident date: ${caseData.incident_date}`);
+  if (caseData?.incident_location) timingParts.push(`Incident location: ${caseData.incident_location}`);
+  if (timingParts.length) timingSection = `\n## Timing & Deadlines\n${timingParts.map(p => `- ${p}`).join("\n")}`;
+
+  // Build latest analysis context (key points from the classifier)
+  const latestAnalysisSection = params.latestAnalysis?.key_points?.length
+    ? `\n## Latest Analysis Key Points\n${params.latestAnalysis.key_points.map((p: string) => `- ${p}`).join("\n")}`
+    : "";
+
   return `You are the decision engine for a FOIA (public records) automation system. Choose the single best next action.
 ${humanDirectivesSection}
 ## Case Context
 - Agency: ${caseData?.agency_name || "Unknown"}
+- Agency email: ${caseData?.agency_email || "Unknown"}
 - State: ${caseData?.state || "Unknown"}
 - Subject: ${caseData?.subject_name || "Unknown"}
 - Records requested: ${requestedRecords}
+- Additional details: ${caseData?.additional_details || "none"}
 - Current status: ${caseData?.status || "Unknown"}
+- Substatus: ${caseData?.substatus || "none"}
 - Jurisdiction: ${jurisdictionLevel || "unknown"}
-
+${timingSection}
 ## Classifier Result
 - Classification: ${classification}
 - Confidence: ${classificationConfidence ?? "unknown"}
 - Sentiment: ${sentiment}
 - Fee amount: ${extractedFeeAmount ?? "none"}
 - Denial subtype: ${denialSubtype || "none"}
-
+${latestAnalysisSection}
 ## Constraints
 ${JSON.stringify(constraints || [], null, 2)}
 
@@ -246,7 +289,7 @@ ${JSON.stringify(constraints || [], null, 2)}
 ${JSON.stringify(scopeItems || [], null, 2)}
 
 ## Autopilot Mode: ${autopilotMode}
-
+${feeSection}${portalSection}${researchSection}
 ## Thread Summary
 IMPORTANT: Messages labeled [PORTAL_NOTIFICATION:*] are automated emails from records portals (NextRequest, GovQA, etc.) and reflect ONLY the portal track status. A portal marked "closed" or "completed" does NOT mean the case is resolved — there may be active direct email correspondence with the agency that still needs a response. Base your decision on the classifier result and direct agency correspondence.
 ${threadSummary || "No thread messages available."}
@@ -515,6 +558,7 @@ async function aiDecision(params: {
       dismissedProposals,
       humanDirectives,
       phoneNotes,
+      latestAnalysis,
     });
 
     const { object } = await generateObject({
