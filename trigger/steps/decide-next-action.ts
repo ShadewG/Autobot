@@ -298,12 +298,23 @@ async function validateDecision(
     autopilotMode: AutopilotMode;
     denialSubtype?: string | null;
     dismissedProposals?: any[];
+    constraints?: string[];
   }
 ): Promise<{ valid: boolean; reason?: string }> {
-  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype, dismissedProposals } = context;
+  const { caseId, classification, extractedFeeAmount, autopilotMode, denialSubtype, dismissedProposals, constraints } = context;
 
   if (aiDecisionResult.confidence < 0.5) {
     return { valid: false, reason: `AI decision confidence too low (${aiDecisionResult.confidence})` };
+  }
+
+  // Citizenship/residency restrictions: only CLOSE_CASE or ESCALATE allowed
+  const CITIZENSHIP_CONSTRAINTS = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
+  const hasCitizenshipRestriction = (constraints || []).some(c => CITIZENSHIP_CONSTRAINTS.includes(c));
+  if (hasCitizenshipRestriction && aiDecisionResult.action !== "CLOSE_CASE" && aiDecisionResult.action !== "ESCALATE") {
+    return {
+      valid: false,
+      reason: `Citizenship/residency restriction detected — cannot ${aiDecisionResult.action}, must CLOSE_CASE or ESCALATE`,
+    };
   }
 
   // Reject actions that have been dismissed 2+ times for this case
@@ -467,6 +478,7 @@ async function aiDecision(params: {
       autopilotMode: params.autopilotMode,
       denialSubtype: params.denialSubtype,
       dismissedProposals,
+      constraints: params.constraints,
     });
 
     if (!validation.valid) {
@@ -588,6 +600,17 @@ async function deterministicRouting(
   if (classification === "DENIAL") {
     reasoning.push("Denial received from agency");
     const caseData = await db.getCaseById(caseId);
+
+    // Citizenship/residency restriction: force CLOSE_CASE immediately
+    const caseConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+    const CITIZEN_CONSTRAINTS = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
+    if (CITIZEN_CONSTRAINTS.some(c => caseConstraints.includes(c))) {
+      return decision("CLOSE_CASE", {
+        pauseReason: "DENIAL",
+        gateOptions: ["APPROVE", "ADJUST", "DISMISS"],
+        reasoning: [...reasoning, "Citizenship/residency restriction — cannot satisfy, recommending closure"],
+      });
+    }
 
     // Check for unanswered clarification
     const unansweredMsgId = await checkUnansweredClarification(caseId);

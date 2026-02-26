@@ -845,10 +845,10 @@ class DatabaseService {
         const query = `
             INSERT INTO portal_accounts (
                 portal_url, portal_domain, portal_type, email, password_encrypted,
-                first_name, last_name, additional_info, account_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                first_name, last_name, additional_info, account_status, user_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id, portal_url, portal_domain, portal_type, email, first_name, last_name,
-                      additional_info, account_status, created_at, updated_at
+                      additional_info, account_status, user_id, created_at, updated_at
         `;
         const domain = this._extractDomain(accountData.portal_url);
         const encryptedPassword = this._encryptPassword(accountData.password);
@@ -862,20 +862,27 @@ class DatabaseService {
             accountData.first_name || null,
             accountData.last_name || null,
             accountData.additional_info || null,
-            accountData.account_status || 'active'
+            accountData.account_status || 'active',
+            accountData.user_id || null
         ];
 
         const result = await this.query(query, values);
         return result.rows[0];
     }
 
-    async getPortalAccountByDomain(domain, email = null) {
+    async getPortalAccountByDomain(domain, { email = null, userId = null } = {}) {
         let query = 'SELECT * FROM portal_accounts WHERE portal_domain = $1';
         const params = [domain];
+        let idx = 2;
 
         if (email) {
-            query += ' AND email = $2';
+            query += ` AND email = $${idx++}`;
             params.push(email);
+        }
+
+        if (userId) {
+            query += ` AND user_id = $${idx++}`;
+            params.push(userId);
         }
 
         query += ' AND account_status IN (\'active\', \'no_account_needed\') ORDER BY created_at DESC LIMIT 1';
@@ -883,17 +890,35 @@ class DatabaseService {
         const result = await this.query(query, params);
         if (result.rows.length > 0) {
             const account = result.rows[0];
-            // Decrypt password for use
             account.password = this._decryptPassword(account.password_encrypted);
-            delete account.password_encrypted; // Don't expose encrypted version
+            delete account.password_encrypted;
             return account;
         }
+
+        // If userId was provided but no user-specific account found, fall back to shared (null user_id)
+        if (userId) {
+            let fallbackQuery = 'SELECT * FROM portal_accounts WHERE portal_domain = $1 AND user_id IS NULL';
+            const fallbackParams = [domain];
+            if (email) {
+                fallbackQuery += ' AND email = $2';
+                fallbackParams.push(email);
+            }
+            fallbackQuery += ' AND account_status IN (\'active\', \'no_account_needed\') ORDER BY created_at DESC LIMIT 1';
+            const fallbackResult = await this.query(fallbackQuery, fallbackParams);
+            if (fallbackResult.rows.length > 0) {
+                const account = fallbackResult.rows[0];
+                account.password = this._decryptPassword(account.password_encrypted);
+                delete account.password_encrypted;
+                return account;
+            }
+        }
+
         return null;
     }
 
-    async getPortalAccountByUrl(portalUrl) {
+    async getPortalAccountByUrl(portalUrl, userId = null) {
         const domain = this._extractDomain(portalUrl);
-        return await this.getPortalAccountByDomain(domain);
+        return await this.getPortalAccountByDomain(domain, { userId });
     }
 
     async updatePortalAccountLastUsed(accountId) {

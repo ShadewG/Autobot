@@ -775,19 +775,26 @@ class PortalAgentServiceSkyvern {
         };
     }
 
-    _buildWorkflowPersonalInfo(caseData, preferredEmail) {
+    _buildWorkflowPersonalInfo(caseData, preferredEmail, caseOwner = null) {
+        // Use case owner's info if available, fall back to env vars / defaults
+        const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const ownerEmail = preferredEmail || caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
+        const ownerOrg = caseOwner?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team';
+        const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
+
         return {
-            name: process.env.REQUESTER_NAME || 'Samuel Hylton',
-            email: preferredEmail || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-            phone: process.env.REQUESTER_PHONE || '209-800-7702',
-            organization: process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team',
-            title: process.env.REQUESTER_TITLE || 'Documentary Researcher',
+            name: ownerName,
+            email: ownerEmail,
+            phone: ownerPhone,
+            organization: ownerOrg,
+            title: ownerTitle,
             address: {
-                line1: process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
-                line2: process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
-                city: process.env.REQUESTER_CITY || 'Seattle',
-                state: process.env.REQUESTER_STATE || caseData.state || 'WA',
-                zip: process.env.REQUESTER_ZIP || '98199'
+                line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
+                line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
+                city: caseOwner?.address_city || process.env.REQUESTER_CITY || 'Seattle',
+                state: caseOwner?.address_state || process.env.REQUESTER_STATE || caseData.state || 'WA',
+                zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || '98199'
             },
             preferred_delivery: 'electronic',
             fee_waiver: {
@@ -797,9 +804,9 @@ class PortalAgentServiceSkyvern {
         };
     }
 
-    async _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions = null }) {
+    async _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions = null, caseOwner = null }) {
         const caseInfo = this._buildWorkflowCaseInfo(caseData, portalUrl, dryRun);
-        const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email);
+        const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email, caseOwner);
 
         // Include the drafted FOIA request text so Skyvern uses it instead of raw case_name
         if (instructions) {
@@ -863,30 +870,39 @@ class PortalAgentServiceSkyvern {
     }
 
     async _ensurePortalAccount({ portalUrl, caseData }) {
+        // Resolve case owner for per-user portal accounts
+        const userId = caseData.user_id || null;
+        let caseOwner = null;
+        if (userId) {
+            try {
+                caseOwner = await database.getUserById(userId);
+            } catch (e) { /* non-fatal */ }
+        }
+
         // Kill switch
         if (process.env.PORTAL_SCOUT_DISABLED === 'true') {
             console.log('🔇 Portal scout disabled via PORTAL_SCOUT_DISABLED — falling back to DB lookup');
-            const existing = await database.getPortalAccountByUrl(portalUrl);
+            const existing = await database.getPortalAccountByUrl(portalUrl, userId);
             if (existing?.account_status === 'no_account_needed') return null;
             if (existing) await database.updatePortalAccountLastUsed(existing.id);
             return existing;
         }
 
-        // 1. Check DB for existing account
-        const existing = await database.getPortalAccountByUrl(portalUrl);
+        // 1. Check DB for existing account (user-specific first, then shared)
+        const existing = await database.getPortalAccountByUrl(portalUrl, userId);
         if (existing) {
             if (existing.account_status === 'no_account_needed') {
                 console.log(`⏭️  Portal ${portalUrl} marked as no-account-needed — skipping scout`);
                 return null;
             }
-            console.log(`🔑 Found existing portal account for ${portalUrl} (${existing.email})`);
+            console.log(`🔑 Found existing portal account for ${portalUrl} (${existing.email}, user_id=${existing.user_id || 'shared'})`);
             await database.updatePortalAccountLastUsed(existing.id);
             return existing;
         }
 
-        // 2. No account found — run scout task
-        console.log(`🔍 No portal account found for ${portalUrl} — running scout task...`);
-        const email = process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        // 2. No account found — run scout task using the case owner's email
+        console.log(`🔍 No portal account found for ${portalUrl} (user_id=${userId}) — running scout task...`);
+        const email = caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
         const password = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
 
         await database.logActivity('portal_scout_started', `Scout task started for ${portalUrl}`, {
@@ -920,6 +936,10 @@ class PortalAgentServiceSkyvern {
             });
 
             // 3. Parse scout results
+            // Derive name from case owner or env
+            const ownerFirstName = caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel';
+            const ownerLastName = caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton';
+
             if (extracted.requires_account === false) {
                 console.log(`📋 Portal ${portalUrl} does not require an account — saving marker`);
                 try {
@@ -928,9 +948,10 @@ class PortalAgentServiceSkyvern {
                         portal_type: extracted.portal_type || null,
                         email,
                         password,
-                        first_name: 'Samuel',
-                        last_name: 'Hylton',
-                        account_status: 'no_account_needed'
+                        first_name: ownerFirstName,
+                        last_name: ownerLastName,
+                        account_status: 'no_account_needed',
+                        user_id: userId
                     });
                 } catch (saveErr) {
                     console.warn('Could not save no_account_needed marker:', saveErr.message);
@@ -939,16 +960,17 @@ class PortalAgentServiceSkyvern {
             }
 
             if (extracted.account_created || extracted.account_already_existed) {
-                console.log(`✅ Scout ${extracted.account_created ? 'created' : 'found existing'} account on ${portalUrl}`);
+                console.log(`✅ Scout ${extracted.account_created ? 'created' : 'found existing'} account on ${portalUrl} for user_id=${userId}`);
                 try {
                     const saved = await database.createPortalAccount({
                         portal_url: portalUrl,
                         portal_type: extracted.portal_type || null,
                         email,
                         password,
-                        first_name: 'Samuel',
-                        last_name: 'Hylton',
+                        first_name: ownerFirstName,
+                        last_name: ownerLastName,
                         account_status: 'active',
+                        user_id: userId,
                         additional_info: {
                             created_by: 'portal_scout',
                             scout_task_id: taskId,
@@ -990,6 +1012,15 @@ class PortalAgentServiceSkyvern {
             throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode requested');
         }
 
+        // Resolve case owner for per-user accounts and personal info
+        const userId = caseData.user_id || null;
+        let caseOwner = null;
+        if (userId) {
+            try {
+                caseOwner = await database.getUserById(userId);
+            } catch (e) { /* non-fatal */ }
+        }
+
         console.log('⚙️ Skyvern workflow mode enabled. Building parameters…');
         let portalAccount = null;
         if (!retryContext) {
@@ -997,13 +1028,13 @@ class PortalAgentServiceSkyvern {
             portalAccount = await this._ensurePortalAccount({ portalUrl, caseData });
         } else {
             // Retry: just fetch existing account (scout already ran)
-            portalAccount = await database.getPortalAccountByUrl(portalUrl);
+            portalAccount = await database.getPortalAccountByUrl(portalUrl, userId);
             if (portalAccount?.account_status === 'no_account_needed') portalAccount = null;
             if (portalAccount) await database.updatePortalAccountLastUsed(portalAccount.id);
         }
 
-        const totpIdentifier = process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
-        const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions });
+        const totpIdentifier = caseOwner?.email || process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
+        const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions, caseOwner });
         if (retryContext?.navigation_goal) {
             parameters.navigation_goal = retryContext.navigation_goal;
             console.log(`🔄 Retry with AI guidance: ${retryContext.navigation_goal}`);
@@ -1188,13 +1219,14 @@ class PortalAgentServiceSkyvern {
                         await database.createPortalAccount({
                             portal_url: portalUrl,
                             portal_type: caseData.portal_provider || null,
-                            email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                            email: caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
                             password: defaultPassword,
-                            first_name: process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
-                            last_name: process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
-                            account_status: 'active'
+                            first_name: caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
+                            last_name: caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
+                            account_status: 'active',
+                            user_id: userId
                         });
-                        console.log(`💾 Auto-saved portal account for ${portalUrl}`);
+                        console.log(`💾 Auto-saved portal account for ${portalUrl} (user_id=${userId})`);
                     } catch (saveErr) {
                         // Duplicate or other error — not critical
                         console.warn('Could not auto-save portal account:', saveErr.message);
@@ -1275,13 +1307,14 @@ class PortalAgentServiceSkyvern {
                     await database.createPortalAccount({
                         portal_url: portalUrl,
                         portal_type: caseData.portal_provider || null,
-                        email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        email: caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
                         password: defaultPassword,
-                        first_name: process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
-                        last_name: process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
-                        account_status: 'active'
+                        first_name: caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
+                        last_name: caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
+                        account_status: 'active',
+                        user_id: userId
                     });
-                    console.log(`💾 Auto-saved portal account for ${portalUrl}`);
+                    console.log(`💾 Auto-saved portal account for ${portalUrl} (user_id=${userId})`);
                 } catch (saveErr) {
                     console.warn('Could not save portal account (may already exist):', saveErr.message);
                 }
@@ -2122,7 +2155,8 @@ SUBMISSION STAGE OBJECTIVE:
             throw new Error('SKYVERN_API_KEY not set! Get your key from https://app.skyvern.com');
         }
 
-        const account = await database.getPortalAccountByUrl(portalUrl);
+        const userId = caseData.user_id || null;
+        const account = await database.getPortalAccountByUrl(portalUrl, userId);
         if (!account) {
             throw new Error('No saved portal account found for this portal');
         }
