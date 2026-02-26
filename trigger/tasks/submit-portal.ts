@@ -249,19 +249,42 @@ export const submitPortal = task({
         // Approval gate: proposal created, waiting for human — not a failure
         if (result?.needsApproval) {
           logger.info("Portal submission blocked — needs approval", { caseId, reason: result.reason });
+          // Status already set to needs_human_review by the service; ensure portal_task is updated
+          if (portalTaskId) {
+            await db.query(
+              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Waiting for approval' WHERE id = $1 AND status = 'PENDING'`,
+              [portalTaskId]
+            );
+          }
           return result;
         }
         // PDF fallback / not-real-portal handled inside Skyvern service
         if (result?.status === "pdf_form_pending" || result?.status === "not_real_portal") {
           logger.info("Portal handled via alternative path", { caseId, status: result.status });
+          await db.updateCaseStatus(caseId, "needs_human_review", {
+            requires_human: true,
+            substatus: `Portal requires manual handling: ${result.status}`,
+          });
+          if (portalTaskId) {
+            await db.query(
+              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = $2 WHERE id = $1 AND status = 'PENDING'`,
+              [portalTaskId, `Alternative path: ${result.status}`]
+            );
+          }
           return result;
         }
         throw new Error(result?.error || "Portal submission failed");
       }
 
-      // ── Dedup skip: Skyvern service detected this was already submitted — don't re-update status ──
+      // ── Dedup skip: Skyvern service detected this was already submitted ──
       if (result.skipped) {
         logger.info("Portal submission was a dedup skip", { caseId, reason: result.reason });
+        // Reset status from portal_in_progress if it was set
+        if (caseData.status === "portal_in_progress") {
+          await db.updateCaseStatus(caseId, "needs_human_review", {
+            substatus: `Portal skipped: ${result.reason}`,
+          });
+        }
         return result;
       }
 

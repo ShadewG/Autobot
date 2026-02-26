@@ -1829,7 +1829,8 @@ class PortalAgentServiceSkyvern {
                     status: 'PENDING_APPROVAL'
                 });
                 await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: 'No real portal found — PDF form filled but no email address on file'
+                    substatus: 'No real portal found — PDF form filled but no email address on file',
+                    requires_human: true
                 });
                 await database.logActivity('pdf_form_fallback', `PDF form filled for case ${caseData.id} (no real portal, no email)`, {
                     case_id: caseData.id, portal_url: originalUrl,
