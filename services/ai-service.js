@@ -652,10 +652,7 @@ Return ONLY the email body text, no subject line or metadata.`;
      * Research state-specific FOIA laws using GPT-5 with web search
      */
     async researchStateLaws(state, denialType) {
-        try {
-            console.log(`🔍 Researching ${state} public records laws for ${denialType} denials using GPT-5 + web search...`);
-
-            const researchPrompt = `Research ${state} state public records laws and FOIA exemptions related to ${denialType} denials.
+        const researchPrompt = `Research ${state} state public records laws and FOIA exemptions related to ${denialType} denials.
 
 Find:
 1. Exact statute citations for ${state} public records law
@@ -674,44 +671,47 @@ Focus on:
 
 Return concise legal citations and key statutory language with sources.`;
 
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },  // Medium reasoning for legal analysis
-                text: { verbosity: 'medium' },
-                tools: [
-                    { type: 'web_search' }  // Enable web search for live legal research
-                ],
-                input: researchPrompt
-            });
+        // Try OpenAI with web search first (45s timeout to prevent task-level timeout)
+        try {
+            console.log(`🔍 Researching ${state} public records laws for ${denialType} denials using GPT-5 + web search...`);
 
-            const research = response.output_text;
-            console.log(`✅ Legal research complete (${research.length} chars) with live web search`);
-
-            return research;
-        } catch (error) {
-            console.warn('GPT-5 legal research failed, falling back to GPT-5-mini:', error.message);
-
-            // Fallback to GPT-5-mini without web search
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 45_000);
             try {
-                const fallbackResponse = await this.openai.chat.completions.create({
+                const response = await this.openai.responses.create({
                     model: 'gpt-5.2-2025-12-11',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: 'You are a legal research expert specializing in state public records laws and FOIA litigation. Provide exact citations and statutory language.'
-                        },
-                        {
-                            role: 'user',
-                            content: researchPrompt
-                        }
-                    ],
-                    temperature: 0.3,
-                    max_completion_tokens: 1500  // gpt-5 models use max_completion_tokens
-                });
+                    reasoning: { effort: 'medium' },
+                    text: { verbosity: 'medium' },
+                    tools: [{ type: 'web_search' }],
+                    input: researchPrompt
+                }, { signal: controller.signal });
 
-                return fallbackResponse.choices[0].message.content;
+                clearTimeout(timeout);
+                const research = response.output_text;
+                console.log(`✅ Legal research complete (${research.length} chars) with live web search`);
+                return research;
+            } catch (e) {
+                clearTimeout(timeout);
+                throw e;
+            }
+        } catch (error) {
+            console.warn('GPT-5 legal research failed, falling back to Anthropic:', error.message);
+
+            // Fallback to Anthropic (reliable, no web search but has strong legal knowledge)
+            try {
+                const response = await this.anthropic.messages.create({
+                    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                    max_tokens: 1500,
+                    messages: [{
+                        role: 'user',
+                        content: `You are a legal research expert specializing in state public records laws and FOIA litigation.\n\n${researchPrompt}`
+                    }],
+                });
+                const research = response.content[0].text?.trim() || '';
+                console.log(`✅ Legal research complete via Anthropic (${research.length} chars)`);
+                return research;
             } catch (fallbackError) {
-                console.error('Fallback research also failed:', fallbackError.message);
+                console.error('Anthropic research fallback also failed:', fallbackError.message);
                 return null;
             }
         }
@@ -874,15 +874,30 @@ Return a JSON object with:
 If nothing better is found, set the relevant fields to null but explain in notes.
 Respond with JSON ONLY.`;
 
-            const response = await this.openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
-                text: { verbosity: 'low' },
-                tools: [{ type: 'web_search' }],
-                input: prompt
-            });
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 45_000);
+            let raw;
+            try {
+                const response = await this.openai.responses.create({
+                    model: 'gpt-5.2-2025-12-11',
+                    reasoning: { effort: 'low' },
+                    text: { verbosity: 'low' },
+                    tools: [{ type: 'web_search' }],
+                    input: prompt
+                }, { signal: controller.signal });
+                clearTimeout(timeout);
+                raw = response.output_text?.trim();
+            } catch (openaiError) {
+                clearTimeout(timeout);
+                console.warn('OpenAI alternate contacts failed, falling back to Anthropic:', openaiError.message);
+                const response = await this.anthropic.messages.create({
+                    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                    max_tokens: 800,
+                    messages: [{ role: 'user', content: prompt }],
+                });
+                raw = response.content[0].text?.trim();
+            }
 
-            const raw = response.output_text?.trim();
             if (!raw) {
                 return null;
             }
@@ -890,7 +905,12 @@ Respond with JSON ONLY.`;
             try {
                 return JSON.parse(raw);
             } catch (parseError) {
-                console.error('Failed to parse alternate contact research JSON:', parseError.message, raw);
+                // Try extracting JSON from markdown code blocks
+                const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+                if (jsonMatch) {
+                    try { return JSON.parse(jsonMatch[1].trim()); } catch {}
+                }
+                console.error('Failed to parse alternate contact research JSON:', parseError.message, raw.substring(0, 200));
                 return null;
             }
         } catch (error) {
@@ -1655,14 +1675,29 @@ Return JSON:
 Return ONLY valid JSON.`;
 
         try {
-            const response = await this.openai.responses.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'medium' },
-                tools: [{ type: 'web_search' }],
-                input: prompt
-            });
+            let raw;
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 45_000);
+            try {
+                const response = await this.openai.responses.create({
+                    model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+                    reasoning: { effort: 'medium' },
+                    tools: [{ type: 'web_search' }],
+                    input: prompt
+                }, { signal: controller.signal });
+                clearTimeout(timeout);
+                raw = response.output_text?.trim();
+            } catch (openaiError) {
+                clearTimeout(timeout);
+                console.warn('OpenAI agency research failed, falling back to Anthropic:', openaiError.message);
+                const response = await this.anthropic.messages.create({
+                    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                    max_tokens: 1000,
+                    messages: [{ role: 'user', content: prompt }],
+                });
+                raw = response.content[0].text?.trim();
+            }
 
-            const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
