@@ -53,8 +53,23 @@ export async function createProposalAndGate(
     return { proposalId: 0, proposalKey: "", shouldWait: false, waitpointTokenId: null };
   }
 
+  // Confidence-based auto-execution tiers (even in SUPERVISED mode)
+  // Safe actions with high confidence can auto-execute without human review
+  const SAFE_AUTO_ACTIONS: string[] = ["CLOSE_CASE", "RESEARCH_AGENCY"];
+  const MEDIUM_AUTO_ACTIONS: string[] = ["SEND_FOLLOWUP", "SEND_CLARIFICATION"];
+  const effectiveConfidence = confidence || 0.8;
+
+  let confidenceAutoExecute = false;
+  if (!decisionRequiresHuman && safety.canAutoExecute) {
+    if (SAFE_AUTO_ACTIONS.includes(actionType) && effectiveConfidence >= 0.90) {
+      confidenceAutoExecute = true;
+    } else if (MEDIUM_AUTO_ACTIONS.includes(actionType) && effectiveConfidence >= 0.85) {
+      confidenceAutoExecute = true;
+    }
+  }
+
   // Merge safety into auto-execute decision
-  const canAutoExecute = decisionCanAutoExecute && safety.canAutoExecute;
+  const canAutoExecute = (decisionCanAutoExecute || confidenceAutoExecute) && safety.canAutoExecute;
   const requiresHuman = decisionRequiresHuman || safety.requiresHuman;
 
   const proposalKey = generateProposalKey(

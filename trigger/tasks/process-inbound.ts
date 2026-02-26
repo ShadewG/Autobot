@@ -282,8 +282,32 @@ export const processInbound = task({
       classification.jurisdiction_level
     );
 
-    // If no action needed, commit and return
+    // If no action needed, commit and return — but detect decision spin
     if (decision.isComplete || decision.actionType === "NONE") {
+      // Decision spin detection: if 3+ consecutive NONE decisions for this case, escalate
+      const noneCount = await db.query(
+        `SELECT COUNT(*) as cnt FROM agent_decisions
+         WHERE case_id = $1 AND action_taken = 'NONE'
+           AND created_at > NOW() - INTERVAL '24 hours'`,
+        [caseId]
+      );
+      const noneDecisions = parseInt(noneCount.rows[0]?.cnt || "0", 10);
+      if (noneDecisions >= 3) {
+        logger.warn("Decision spin detected: 3+ NONE decisions in 24h — escalating to human review", {
+          caseId, noneDecisions,
+        });
+        await db.updateCaseStatus(caseId, "needs_human_review", {
+          substatus: `Decision spin: ${noneDecisions} NONE decisions in 24h`,
+          pause_reason: "LOOP_DETECTED",
+        });
+        await db.logActivity("decision_spin_detected",
+          `${noneDecisions} consecutive NONE decisions in 24h — escalated to human review`,
+          { case_id: caseId }
+        );
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
+      }
+
       await commitState(
         caseId, runId, decision.actionType, decision.reasoning,
         classification.confidence, "INBOUND_MESSAGE", false, null
