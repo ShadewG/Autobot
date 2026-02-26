@@ -1008,7 +1008,7 @@ export async function decideNextAction(
             portalTaskId: task?.id || null,
           }, {
             queue: `case-${caseId}`,
-            idempotencyKey: `use-portal:${caseId}:${messageId || "sched"}`,
+            idempotencyKey: `use-portal:${caseId}:${Date.now()}`,
             idempotencyKeyTTL: "1h",
           });
         } catch (e: any) {
