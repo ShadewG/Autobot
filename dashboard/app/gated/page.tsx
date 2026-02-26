@@ -549,8 +549,8 @@ function MonitorPageContent() {
     refreshInterval: 12000,
   });
 
-  // Build the queue: proposals first, then human review cases — filter out acted-on items
-  const queue = useMemo<QueueItem[]>(() => {
+  // Build the full queue (unfiltered by type) — filter out acted-on items via removedIds
+  const allQueueItems = useMemo<QueueItem[]>(() => {
     if (!overview) return [];
     const proposals: QueueItem[] = (overview.pending_approvals || []).map((p) => ({
       type: "proposal" as const,
@@ -560,15 +560,23 @@ function MonitorPageContent() {
       type: "review" as const,
       data: r,
     }));
-    let items = [...proposals, ...reviews].filter((item) => {
+    return [...proposals, ...reviews].filter((item) => {
       const key = item.type === "proposal" ? `p:${item.data.id}` : `r:${item.data.id}`;
       return !removedIds.has(key);
     });
-    // Apply stat card filter
-    if (queueFilter === "proposals") items = items.filter(i => i.type === "proposal");
-    if (queueFilter === "reviews") items = items.filter(i => i.type === "review");
-    return items;
-  }, [overview, removedIds, queueFilter]);
+  }, [overview, removedIds]);
+
+  // Local counts — instantly responsive to removals
+  const localTotalAttention = allQueueItems.length;
+  const localProposalCount = allQueueItems.filter(i => i.type === "proposal").length;
+  const localReviewCount = allQueueItems.filter(i => i.type === "review").length;
+
+  // Apply stat card type filter for display queue
+  const queue = useMemo<QueueItem[]>(() => {
+    if (queueFilter === "proposals") return allQueueItems.filter(i => i.type === "proposal");
+    if (queueFilter === "reviews") return allQueueItems.filter(i => i.type === "review");
+    return allQueueItems;
+  }, [allQueueItems, queueFilter]);
 
   // Clamp index when queue shrinks
   const safeIndex = queue.length === 0 ? 0 : Math.min(currentIndex, queue.length - 1);
@@ -732,8 +740,22 @@ function MonitorPageContent() {
   }, [selectedItem, currentIndex, queue.length]);
 
   // Background revalidate + clear removedIds once server data is fresh
+  // Smart revalidate: fetch fresh data, then only keep removedIds that the server still returns
+  // (items gone from server don't need filtering; items still present stay hidden)
   const revalidateQueue = useCallback(() => {
-    mutate().then(() => setRemovedIds(new Set()));
+    mutate().then((freshData) => {
+      if (!freshData) return;
+      const serverIds = new Set<string>();
+      for (const p of (freshData as LiveOverview).pending_approvals || []) serverIds.add(`p:${p.id}`);
+      for (const r of (freshData as LiveOverview).human_review_cases || []) serverIds.add(`r:${r.id}`);
+      setRemovedIds((prev) => {
+        const next = new Set<string>();
+        for (const id of prev) {
+          if (serverIds.has(id)) next.add(id); // server still has it — keep filtering
+        }
+        return next;
+      });
+    });
   }, [mutate]);
 
   const handleApprove = async () => {
@@ -1107,12 +1129,11 @@ function MonitorPageContent() {
   // ── Extract display data ───────────────────
 
   const summary = overview?.summary;
-  const totalAttention = (summary?.pending_approvals_total || 0) + (summary?.human_review_total || 0);
 
-  // Tab title badge — show count when items need attention
+  // Tab title badge — use local count so it updates instantly on actions
   useEffect(() => {
-    document.title = totalAttention > 0 ? `(${totalAttention}) AUTOBOT` : "AUTOBOT";
-  }, [totalAttention]);
+    document.title = localTotalAttention > 0 ? `(${localTotalAttention}) AUTOBOT` : "AUTOBOT";
+  }, [localTotalAttention]);
 
   // For the selected proposal: use detail data if available, fallback to overview data
   const draftBody = (() => {
@@ -1187,15 +1208,15 @@ function MonitorPageContent() {
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-6">
         <StatBox
           label="Attention"
-          value={totalAttention}
+          value={localTotalAttention}
           icon={AlertCircle}
-          color={totalAttention > 0 ? "text-amber-400" : "text-green-400"}
+          color={localTotalAttention > 0 ? "text-amber-400" : "text-green-400"}
           onClick={() => { setActiveTab("queue"); setQueueFilter("all"); setCurrentIndex(0); }}
           active={activeTab === "queue" && queueFilter === "all"}
         />
         <StatBox
           label="Proposals"
-          value={summary?.pending_approvals_total ?? 0}
+          value={localProposalCount}
           icon={FileText}
           color="text-blue-400"
           onClick={() => { setActiveTab("queue"); setQueueFilter("proposals"); setCurrentIndex(0); }}
@@ -1203,7 +1224,7 @@ function MonitorPageContent() {
         />
         <StatBox
           label="Review"
-          value={summary?.human_review_total ?? 0}
+          value={localReviewCount}
           icon={Shield}
           color="text-purple-400"
           onClick={() => { setActiveTab("queue"); setQueueFilter("reviews"); setCurrentIndex(0); }}
@@ -1240,7 +1261,7 @@ function MonitorPageContent() {
       {/* ── Tab Bar ─────────────────────────── */}
       <div className="flex items-center gap-0 border-b mb-4">
         {([
-          { id: "queue" as TabId, label: "QUEUE", icon: AlertCircle, count: totalAttention },
+          { id: "queue" as TabId, label: "QUEUE", icon: AlertCircle, count: localTotalAttention },
           { id: "inbound" as TabId, label: "INBOUND", icon: Mail, count: inboundData?.count },
           { id: "calls" as TabId, label: "PHONE CALLS", icon: Phone, count: phoneData?.stats?.pending },
         ]).map((tab) => {
