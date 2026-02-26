@@ -1118,26 +1118,40 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
                 return;
             }
 
-            // Map AI analysis to outcome type
-            let outcomeType = 'no_response';
+            // Only record definitive/final outcomes — intermediate responses
+            // (ack, fee request, wrong agency, etc.) should NOT lock in outcome_recorded
+            // so the real outcome can be captured when it arrives.
+            let outcomeType = null;
             let feeWaived = false;
 
             switch (analysis.intent) {
+                // --- Final outcomes: record and lock ---
                 case 'delivery':
+                case 'records_ready':
                     outcomeType = 'full_approval';
+                    break;
+                case 'partial_release':
+                    outcomeType = 'partial_approval';
                     break;
                 case 'denial':
                     outcomeType = 'denial';
                     break;
-                case 'fee_request':
-                    outcomeType = 'partial_approval';
-                    feeWaived = false;
+                case 'partial_denial':
+                    outcomeType = 'partial_denial';
                     break;
+
+                // --- Intermediate responses: not final outcomes, skip recording ---
                 case 'acknowledgment':
-                    outcomeType = 'partial_approval';
-                    break;
+                case 'fee_request':
+                case 'wrong_agency':
+                case 'portal_redirect':
+                case 'more_info_needed':
+                case 'question':
+                case 'other':
                 default:
-                    outcomeType = 'partial_approval';
+                    // Not a final outcome — don't set outcome_recorded so the
+                    // real outcome gets captured when a definitive response arrives
+                    return;
             }
 
             // Check if fee was waived
