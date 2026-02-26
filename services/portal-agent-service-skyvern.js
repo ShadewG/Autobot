@@ -1,6 +1,6 @@
 const axios = require('axios');
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
+// Use built-in crypto.randomUUID() instead of uuid package (ESM-only in v10+)
 const database = require('./database');
 const notionService = require('./notion-service');
 const EmailVerificationHelper = require('../agentkit/email-helper');
@@ -680,7 +680,7 @@ class PortalAgentServiceSkyvern {
             return { success: false, needsApproval: true, reason: 'no_approved_proposal' };
         }
 
-        const runId = uuidv4();
+        const runId = crypto.randomUUID();
 
         console.log(`🤖 Starting Skyvern workflow for case: ${caseData.case_name}`);
         console.log(`   Portal: ${portalUrl}`);
@@ -1440,7 +1440,7 @@ class PortalAgentServiceSkyvern {
 
                 return this._submitViaWorkflow({
                     caseData, portalUrl, dryRun,
-                    runId: uuidv4(),
+                    runId: crypto.randomUUID(),
                     retryContext: { navigation_goal: 'Log in with existing credentials and submit the FOIA request. Do NOT create a new account.', previousError: failureReason }
                 });
             }
@@ -1461,7 +1461,7 @@ class PortalAgentServiceSkyvern {
                     console.log(`🔄 Retrying portal for case ${caseData.id} with AI guidance`);
                     return this._submitViaWorkflow({
                         caseData, portalUrl, dryRun,
-                        runId: uuidv4(),
+                        runId: crypto.randomUUID(),
                         retryContext: { navigation_goal: guidance.navigation_goal, previousError: failureReason }
                     });
                 }

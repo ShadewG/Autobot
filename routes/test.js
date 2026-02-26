@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const sgMail = require('@sendgrid/mail');
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const discordService = require('../services/discord-service');
@@ -232,7 +232,7 @@ router.post('/send-and-reply', async (req, res) => {
         const caseId = testCase.rows[0].id;
 
         // Generate a unique Message-ID
-        const messageId = `<test-${Date.now()}-${uuidv4()}@foib-request.com>`;
+        const messageId = `<test-${Date.now()}-${crypto.randomUUID()}@foib-request.com>`;
         const threadId = `<thread-${caseId}-${Date.now()}@foib-request.com>`;
 
         // Send test email
@@ -1297,8 +1297,7 @@ router.post('/simulate-reply', async (req, res) => {
         }
 
         // Create fake message ID
-        const { v4: uuidv4 } = require('uuid');
-        const messageId = `<sim-${Date.now()}-${uuidv4()}@test.com>`;
+        const messageId = `<sim-${Date.now()}-${crypto.randomUUID()}@test.com>`;
 
         // Store inbound message
         const message = await db.createMessage({

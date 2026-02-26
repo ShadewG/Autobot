@@ -1,6 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { chromium } = require('playwright');
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const PortalAgentKit = require('../agentkit/portal-agent-kit');
 const db = require('./database');
 
@@ -42,7 +42,7 @@ class PortalAgentService {
 
         let context, page;
         const stepLog = [];
-        const runId = uuidv4();
+        const runId = crypto.randomUUID();
 
         try {
             console.log(`🤖 Starting autonomous portal submission for case: ${caseData.case_name}`);
