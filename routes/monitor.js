@@ -386,7 +386,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             caseId,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
             ...triggerContext,
-        }, triggerOptsDebounced(caseId, 'approve-initial', proposalId));
+        }, triggerOpts(caseId, 'approve-initial', proposalId));
     } else {
         handle = await tasks.trigger('process-inbound', {
             runId: 0,
@@ -394,7 +394,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             messageId: proposal.trigger_message_id,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
             ...triggerContext,
-        }, triggerOptsDebounced(caseId, 'approve-inbound', proposalId));
+        }, triggerOpts(caseId, 'approve-inbound', proposalId));
     }
 
     notify('info', `Proposal ${action.toLowerCase()} — re-triggered via Trigger.dev for case ${caseId}`, { case_id: caseId });
