@@ -2021,6 +2021,10 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
                 caseId: requestId,
                 messageId: proposal.message_id || 0,
                 autopilotMode: 'SUPERVISED'
+            }, {
+                queue: { name: `case-${requestId}`, concurrencyLimit: 1 },
+                idempotencyKey: `req-approve:${requestId}:${proposalId}`,
+                idempotencyKeyTTL: "1h",
             });
             log.info(`Re-triggered process-inbound for legacy proposal ${proposalId}`);
         }
@@ -2101,6 +2105,10 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
                 caseId: requestId,
                 messageId: proposal.message_id || 0,
                 autopilotMode: 'SUPERVISED'
+            }, {
+                queue: { name: `case-${requestId}`, concurrencyLimit: 1 },
+                idempotencyKey: `req-adjust:${requestId}:${proposalId}`,
+                idempotencyKeyTTL: "1h",
             });
             log.info(`Re-triggered process-inbound for legacy adjust on proposal ${proposalId}`);
         }

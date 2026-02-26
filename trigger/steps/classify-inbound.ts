@@ -293,7 +293,19 @@ export async function classifyInbound(
 
   // Map intent to classification enum
   const classification: Classification = CLASSIFICATION_MAP[aiResult.intent] || "UNKNOWN";
-  const feeAmount = aiResult.fee_amount != null ? Number(aiResult.fee_amount) : null;
+  let feeAmount = aiResult.fee_amount != null ? Number(aiResult.fee_amount) : null;
+  if (feeAmount !== null && isNaN(feeAmount)) {
+    feeAmount = null;
+  }
+
+  // Fee sanity check: flag suspiciously low fees (likely parsing errors)
+  if (feeAmount !== null && feeAmount > 0 && feeAmount < 1) {
+    logger.warn("Suspiciously low fee detected — likely a parsing error", {
+      caseId: context.caseId,
+      extractedAmount: feeAmount,
+    });
+    feeAmount = null; // Discard unreliable extraction
+  }
 
   // Save analysis to DB
   await db.saveResponseAnalysis({

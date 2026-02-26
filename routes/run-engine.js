@@ -19,6 +19,28 @@ const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const logger = require('../services/logger');
 const { emailExecutor } = require('../services/executor-adapter');
 
+// Trigger.dev queue + idempotency options for per-case concurrency control
+function triggerOpts(caseId, taskType, uniqueId) {
+  return {
+    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    idempotencyKey: `${taskType}:${caseId}:${uniqueId || Date.now()}`,
+    idempotencyKeyTTL: "1h",
+  };
+}
+
+// Trigger options with debounce for human review resolution paths
+// NOTE: idempotency keys take precedence over debounce, so we omit them here
+function triggerOptsDebounced(caseId, taskType, uniqueId) {
+  return {
+    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    debounce: {
+      key: `${taskType}:${caseId}`,
+      delay: "5s",
+      mode: "trailing",
+    },
+  };
+}
+
 // Save Trigger.dev run ID in agent_run metadata for dashboard linking
 async function saveTriggerRunId(runId, triggerRunId) {
   try {
@@ -98,7 +120,7 @@ router.post('/cases/:id/run-initial', async (req, res) => {
         runId: run.id,
         caseId,
         autopilotMode,
-      });
+      }, triggerOpts(caseId, 'initial', caseId));
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -229,7 +251,7 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
         caseId,
         messageId,
         autopilotMode,
-      });
+      }, triggerOpts(caseId, 'inbound', messageId));
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -515,14 +537,14 @@ router.post('/proposals/:id/decision', async (req, res) => {
           runId: run.id,
           caseId,
           autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-        });
+        }, triggerOptsDebounced(caseId, 'resume-initial', proposalId));
       } else {
         handle = await tasks.trigger('process-inbound', {
           runId: run.id,
           caseId,
           messageId: proposal.trigger_message_id,
           autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-        });
+        }, triggerOptsDebounced(caseId, 'resume-inbound', proposalId));
       }
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
@@ -658,7 +680,7 @@ router.post('/cases/:id/run-followup', async (req, res) => {
         runId: run.id,
         caseId,
         followupScheduleId: followupSchedule?.id || null,
-      });
+      }, triggerOpts(caseId, 'followup', followupSchedule?.id || 'manual'));
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -781,7 +803,7 @@ router.post('/followups/:id/trigger', async (req, res) => {
         runId: run.id,
         caseId,
         followupScheduleId: followupId,
-      });
+      }, triggerOpts(caseId, 'followup', followupId));
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -1311,7 +1333,7 @@ router.post('/runs/:id/retry', async (req, res) => {
           runId: newRun.id,
           caseId: originalRun.case_id,
           autopilotMode: newRun.autopilot_mode || 'SUPERVISED',
-        });
+        }, triggerOpts(originalRun.case_id, 'retry-initial', newRun.id));
       } else if (triggerType.includes('inbound') || triggerType.includes('manual')) {
         const messageId = originalRun.message_id;
         if (!messageId) {
@@ -1323,13 +1345,13 @@ router.post('/runs/:id/retry', async (req, res) => {
           caseId: originalRun.case_id,
           messageId,
           autopilotMode: newRun.autopilot_mode || 'SUPERVISED',
-        });
+        }, triggerOpts(originalRun.case_id, 'retry-inbound', newRun.id));
       } else if (triggerType.includes('followup')) {
         handle = await tasks.trigger('process-followup', {
           runId: newRun.id,
           caseId: originalRun.case_id,
           followupScheduleId: null,
-        });
+        }, triggerOpts(originalRun.case_id, 'retry-followup', newRun.id));
       } else {
         await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: `Unsupported trigger type for retry: ${triggerType}` });
         return res.status(400).json({ success: false, error: `Cannot retry trigger type: ${triggerType}` });
@@ -1571,7 +1593,7 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
           caseId,
           messageId: message.id,
           autopilotMode: autopilot_mode,
-        });
+        }, triggerOpts(caseId, 'inbound', message.id));
         job = { id: handle.id };
       } catch (triggerError) {
         await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
@@ -1798,7 +1820,7 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
           caseId,
           messageId: message.id,
           autopilotMode: 'SUPERVISED',
-        });
+        }, triggerOpts(caseId, 'inbound', message.id));
         job = { id: handle.id };
       } catch (triggerError) {
         await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
@@ -1979,7 +2001,7 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
         caseId,
         messageId: message.id,
         autopilotMode,
-      });
+      }, triggerOpts(caseId, 'inbound', message.id));
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;

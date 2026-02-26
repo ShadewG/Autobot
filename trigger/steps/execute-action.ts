@@ -55,6 +55,39 @@ export async function executeAction(
     };
   }
 
+  // OUTBOUND RATE LIMIT: max 1 outbound per case per cooldown period
+  const OUTBOUND_ACTIONS = [
+    "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
+    "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
+    "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
+    "REFORMULATE_REQUEST", "SUBMIT_PORTAL",
+  ];
+  if (OUTBOUND_ACTIONS.includes(actionType)) {
+    const cooldownHours = parseInt(process.env.OUTBOUND_COOLDOWN_HOURS || "24", 10);
+    if (cooldownHours > 0) {
+      const recent = await db.query(
+        `SELECT id FROM executions
+         WHERE case_id = $1 AND status IN ('QUEUED', 'SENT')
+           AND action_type = ANY($2::text[])
+           AND created_at > NOW() - make_interval(hours => $3)
+         LIMIT 1`,
+        [caseId, OUTBOUND_ACTIONS, cooldownHours]
+      );
+      if (recent.rows.length > 0) {
+        logger.warn("Outbound rate limit hit", { caseId, proposalId, actionType, cooldownHours });
+        await db.updateProposal(proposalId, { status: "BLOCKED", execution_key: null });
+        await db.updateCaseStatus(caseId, "needs_human_review", {
+          requires_human: true,
+          substatus: `Rate limit: already sent within ${cooldownHours}h. Approve to override.`,
+        });
+        return {
+          actionExecuted: false,
+          executionResult: { action: "rate_limited", cooldownHours },
+        };
+      }
+    }
+  }
+
   // Recover missing draft data from proposal
   const subject = draft.subject || existingProposal?.draft_subject;
   const bodyText = draft.bodyText || existingProposal?.draft_body_text;
@@ -127,6 +160,10 @@ export async function executeAction(
       provider: caseData.portal_provider || null,
       instructions: portalInstructions,
       portalTaskId: portalResult.taskId || null,
+    }, {
+      queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+      idempotencyKey: `exec-portal:${caseId}:${proposalId}`,
+      idempotencyKeyTTL: "1h",
     });
 
     return {

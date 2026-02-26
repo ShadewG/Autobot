@@ -723,7 +723,10 @@ Return concise legal citations and key statutory language with sources.`;
     async generateDenialRebuttal(messageData, analysis, caseData, options = {}) {
         try {
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
-            const { adjustmentInstruction, lessonsContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const { adjustmentInstruction, lessonsContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const correspondenceSection = correspondenceContext
+                ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
+                : '';
 
             const denialSubtype = analysis.denial_subtype || 'overly_broad';
 
@@ -809,7 +812,7 @@ Generate a STRONG, legally-grounded rebuttal that:
 6. References relevant case law if provided in research
 7. Is under 250 words
 ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researched Support Points (use these):**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
-${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
+${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 Return ONLY the email body text, no subject line.`;
 
             const rebuttalText = await this.callAI(
@@ -902,11 +905,15 @@ Respond with JSON ONLY.`;
     async generateFollowUp(caseData, followUpCount = 0, options = {}) {
         try {
             console.log(`Generating follow-up #${followUpCount + 1} for case: ${caseData.case_name}`);
-            const { adjustmentInstruction, lessonsContext } = options;
+            const { adjustmentInstruction, lessonsContext, correspondenceContext } = options;
 
             const tone = followUpCount === 0 ? 'polite and professional' : 'firm but professional';
             const stateDeadline = await db.getStateDeadline(caseData.state);
             const deadlineDays = stateDeadline?.response_days || 10;
+
+            const correspondenceSection = correspondenceContext
+                ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. If the agency has already responded, do NOT claim they haven't responded. Acknowledge any prior replies.`
+                : '';
 
             const prompt = `Generate a follow-up email for a FOIA request that hasn't received a response.
 
@@ -920,6 +927,7 @@ Respond with JSON ONLY.`;
 **Follow-up Context:**
 - This is follow-up #${followUpCount + 1}
 - ${followUpCount === 0 ? 'First follow-up, be polite' : 'Subsequent follow-up, be firmer'}
+${correspondenceSection}
 
 The email should:
 1. Reference the original request
@@ -983,9 +991,13 @@ Return ONLY the email body text.`;
             recommendedAction = 'negotiate', // accept | negotiate | decline | waiver
             instructions = null,
             lessonsContext = '',
+            correspondenceContext = '',
             agencyMessage = null,
             agencyAnalysis = null
         } = options;
+        const correspondenceSection = correspondenceContext
+            ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
+            : '';
 
         // feeAmount is optional for waiver mode
         if (!feeAmount && recommendedAction !== 'waiver') {
@@ -1029,7 +1041,7 @@ If the agency denied or withheld ANY record types, you MUST aggressively challen
 - For BWC specifically: Note that BWC is routinely released in other jurisdictions, that the public interest in police accountability outweighs privacy concerns for on-duty conduct, and that redaction of sensitive portions (e.g. faces of bystanders) is the appropriate remedy — NOT blanket withholding.
 - Be firm but professional. Make clear that withholding without proper legal basis will be appealed.` : ''}
 ${customInstruction}
-${lessonsContext}
+${lessonsContext}${correspondenceSection}
 Email requirements:
 1. Reference the request using the SHORT case reference ("${shortReference}") - NOT the full case name
 2. Mention the quoted fee amount explicitly
@@ -1440,6 +1452,10 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
         const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
         const lessonsContext = options.lessonsContext || '';
         const clarificationResearch = options.clarificationResearch || '';
+        const correspondenceContext = options.correspondenceContext || '';
+        const correspondenceSection = correspondenceContext
+            ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
+            : '';
 
         const prompt = `You are responding to a public records request clarification from a government agency.
 
@@ -1455,7 +1471,7 @@ ORIGINAL REQUEST:
 
 ${clarificationResearch ? `PRE-RESEARCHED CONTEXT (use this to answer their question):\n${clarificationResearch}\n` : ''}
 ${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
-${lessonsContext}
+${lessonsContext}${correspondenceSection}
 Generate a professional, helpful response that:
 1. Directly addresses their specific questions or requests for clarification
 2. Provides any additional details they need
@@ -1490,7 +1506,10 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
      */
     async generateAppealLetter(messageData, analysis, caseData, options = {}) {
         try {
-            const { adjustmentInstruction, lessonsContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const { adjustmentInstruction, lessonsContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const correspondenceSection = correspondenceContext
+                ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your appeal MUST be consistent with the thread above. Reference specific prior correspondence where relevant.`
+                : '';
             const denialSubtype = analysis?.denial_subtype || 'general';
             const stateDeadline = await db.getStateDeadline(caseData.state);
             const stateName = stateDeadline?.state_name || caseData.state;
@@ -1520,7 +1539,7 @@ ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Support Point
 - Records requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
 - Incident date: ${caseData.incident_date || 'Unknown'}
 
-${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
+${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 
 Generate a formal appeal letter under 300 words. Return ONLY the letter body, no subject line.`;
 

@@ -601,12 +601,12 @@ class CronService {
         let proposalsCreated = 0;
         let followUpFixed = 0;
 
-        // Sweep 1: Stuck portal_in_progress > 60 minutes
+        // Sweep 1: Stuck portal_in_progress > 30 minutes
         try {
             const stuckPortal = await db.query(`
                 SELECT c.* FROM cases c
                 WHERE c.status = 'portal_in_progress'
-                  AND c.updated_at < NOW() - INTERVAL '60 minutes'
+                  AND c.updated_at < NOW() - INTERVAL '30 minutes'
             `);
 
             for (const caseData of stuckPortal.rows) {
@@ -623,7 +623,7 @@ class CronService {
                     }
 
                     await db.updateCaseStatus(caseData.id, 'needs_human_review', {
-                        substatus: `Portal timed out (>60 min): ${portalError}`.substring(0, 100),
+                        substatus: `Portal timed out (>30 min): ${portalError}`.substring(0, 100),
                         requires_human: true
                     });
 
@@ -633,7 +633,7 @@ class CronService {
                         caseId: caseData.id,
                         actionType: 'SUBMIT_PORTAL',
                         reasoning: [
-                            'Automated portal submission timed out after 60+ minutes',
+                            'Automated portal submission timed out after 30+ minutes',
                             `Error: ${portalError}`,
                             'Approve to retry automated submission, or dismiss to handle manually'
                         ],

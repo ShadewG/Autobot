@@ -39,10 +39,22 @@ export async function draftResponse(
       : null;
   }
 
-  // Fetch decision memory lessons
+  // Build correspondence context for AI grounding (last 15 messages)
+  let correspondenceContext = "";
   let lessonsContext = "";
   try {
     const allMessages = await db.getMessagesByCaseId(caseId);
+
+    correspondenceContext = allMessages
+      .slice(-15)
+      .map((m: any) => {
+        const dir = m.direction === "inbound" ? "AGENCY REPLY" : "OUR MESSAGE";
+        const date = m.sent_at || m.received_at || m.created_at;
+        const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
+        return `[${dir} ${dateStr}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`;
+      })
+      .join("\n---\n");
+
     const priorProposals = await db.getAllProposalsByCaseId(caseId);
     const followupSchedule = await db.getFollowUpScheduleByCaseId(caseId);
     const enrichedCaseData = {
@@ -83,6 +95,7 @@ export async function draftResponse(
       draft = await aiService.generateFollowUp(caseData, attemptNumber, {
         adjustmentInstruction,
         lessonsContext,
+        correspondenceContext,
       });
       break;
     }
@@ -103,6 +116,7 @@ export async function draftResponse(
           scopeItems,
           adjustmentInstruction: rebuttalAdjust || undefined,
           lessonsContext,
+          correspondenceContext,
           legalResearchOverride: researchCtx?.state_law_notes || undefined,
           rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
             ? researchCtx.rebuttal_support_points
@@ -121,6 +135,7 @@ export async function draftResponse(
           {
             adjustmentInstruction,
             lessonsContext,
+            correspondenceContext,
             clarificationResearch: researchCtx?.clarification_answer_support || undefined,
           }
         );
@@ -138,6 +153,7 @@ export async function draftResponse(
         recommendedAction: "accept",
         instructions: adjustmentInstruction,
         lessonsContext,
+        correspondenceContext,
         agencyMessage: latestInbound,
         agencyAnalysis: latestAnalysis,
       });
@@ -151,6 +167,7 @@ export async function draftResponse(
         recommendedAction: "negotiate",
         instructions: adjustmentInstruction,
         lessonsContext,
+        correspondenceContext,
         agencyMessage: latestInbound,
         agencyAnalysis: latestAnalysis,
       });
@@ -164,6 +181,7 @@ export async function draftResponse(
         recommendedAction: "decline",
         instructions: adjustmentInstruction,
         lessonsContext,
+        correspondenceContext,
       });
       break;
     }
@@ -174,14 +192,14 @@ export async function draftResponse(
           latestInbound,
           latestAnalysis,
           caseData,
-          { feeAmount: extractedFeeAmount, adjustmentInstruction, lessonsContext }
+          { feeAmount: extractedFeeAmount, adjustmentInstruction, lessonsContext, correspondenceContext }
         );
       } else {
         draft = await aiService.generateDenialRebuttal(
           latestInbound,
           latestAnalysis,
           caseData,
-          { scopeItems, adjustmentInstruction, lessonsContext }
+          { scopeItems, adjustmentInstruction, lessonsContext, correspondenceContext }
         );
       }
       break;
@@ -196,6 +214,7 @@ export async function draftResponse(
           {
             adjustmentInstruction,
             lessonsContext,
+            correspondenceContext,
             legalResearchOverride: researchCtx?.state_law_notes || undefined,
             rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
               ? researchCtx.rebuttal_support_points
@@ -212,6 +231,7 @@ export async function draftResponse(
             scopeItems,
             adjustmentInstruction: (adjustmentInstruction || "") + "\nFrame this as a formal administrative appeal, not just a rebuttal. Cite appeal procedures and deadlines.",
             lessonsContext,
+            correspondenceContext,
             legalResearchOverride: researchCtx?.state_law_notes || undefined,
           }
         );
@@ -225,6 +245,7 @@ export async function draftResponse(
         recommendedAction: "waiver",
         instructions: adjustmentInstruction,
         lessonsContext,
+        correspondenceContext,
         agencyMessage: latestInbound,
         agencyAnalysis: latestAnalysis,
       });
@@ -236,6 +257,7 @@ export async function draftResponse(
       draft = await aiService.generateFollowUp(caseData, 0, {
         adjustmentInstruction: (adjustmentInstruction || "") + "\nThis is a brief status inquiry, not a follow-up. Keep it under 100 words. Ask for an update on when records will be available.",
         lessonsContext,
+        correspondenceContext,
       });
       break;
     }

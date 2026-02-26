@@ -14,6 +14,23 @@ if (process.env.SENDGRID_API_KEY) {
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 }
 
+// Trigger.dev queue + idempotency options for per-case concurrency control
+function triggerOpts(caseId, taskType, uniqueId) {
+  return {
+    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    idempotencyKey: `${taskType}:${caseId}:${uniqueId || Date.now()}`,
+    idempotencyKeyTTL: "1h",
+  };
+}
+
+// NOTE: idempotency keys take precedence over debounce, so we omit them here
+function triggerOptsDebounced(caseId, taskType, uniqueId) {
+  return {
+    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    debounce: { key: `${taskType}:${caseId}`, delay: "5s", mode: "trailing" },
+  };
+}
+
 function deriveMessageSource(message) {
     if (!message) return 'unknown';
     if (message.message_type === 'manual_trigger') return 'manual trigger clone';
@@ -67,7 +84,7 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
         caseId: caseData.id,
         messageId: message.id,
         autopilotMode,
-    });
+    }, triggerOpts(caseData.id, 'monitor-inbound', message.id));
 
     return {
         caseData,
@@ -290,7 +307,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             provider: caseData.portal_provider || null,
             instructions: proposal.draft_body_text || null,
             portalTaskId,
-        });
+        }, triggerOpts(caseId, 'portal', proposalId));
 
         // Update proposal to PENDING_PORTAL
         await db.updateProposal(proposalId, { status: 'PENDING_PORTAL' });
@@ -357,7 +374,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             caseId,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
             ...triggerContext,
-        });
+        }, triggerOptsDebounced(caseId, 'approve-initial', proposalId));
     } else {
         handle = await tasks.trigger('process-inbound', {
             runId: run.id,
@@ -365,7 +382,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             messageId: proposal.trigger_message_id,
             autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
             ...triggerContext,
-        });
+        }, triggerOptsDebounced(caseId, 'approve-inbound', proposalId));
     }
 
     notify('info', `Proposal ${action.toLowerCase()} — re-triggered via Trigger.dev for case ${caseId}`, { case_id: caseId });

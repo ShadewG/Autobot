@@ -33,8 +33,7 @@ logger.info('Executor adapter initialized', { mode: EXECUTION_MODE });
  * Generate unique execution key
  */
 function generateExecutionKey(caseId, actionType, proposalId) {
-  const timestamp = Date.now();
-  return `exec:${caseId}:${actionType}:${proposalId || 'none'}:${timestamp}`;
+  return `exec:${caseId}:${actionType}:${proposalId || 'none'}`;
 }
 
 /**
