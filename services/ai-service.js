@@ -8,7 +8,7 @@ const adaptiveLearning = require('./adaptive-learning-service');
 
 class AIService {
     constructor() {
-        this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60_000 });
         this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     }
 
