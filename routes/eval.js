@@ -229,4 +229,75 @@ router.get('/cases/:id/history', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/eval/export?format=csv|json
+ * Export all eval cases with latest run results.
+ * Default: JSON. Pass ?format=csv to download a CSV file.
+ */
+router.get('/export', async (req, res) => {
+    try {
+        const result = await db.query(`
+            SELECT
+                ec.id              AS eval_case_id,
+                ec.proposal_id,
+                ec.case_id,
+                ec.expected_action,
+                ec.notes,
+                ec.created_at,
+                p.action_type      AS ai_proposed_action,
+                c.case_name,
+                c.agency_name,
+                c.state,
+                er.id              AS last_run_id,
+                er.predicted_action AS last_predicted_action,
+                er.action_correct  AS last_action_correct,
+                er.judge_score     AS last_judge_score,
+                er.failure_category AS last_failure_category,
+                er.judge_reasoning AS last_judge_reasoning,
+                er.ran_at          AS last_ran_at
+            FROM eval_cases ec
+            LEFT JOIN proposals p ON p.id = ec.proposal_id
+            LEFT JOIN cases c ON c.id = ec.case_id
+            LEFT JOIN LATERAL (
+                SELECT * FROM eval_runs
+                WHERE eval_case_id = ec.id
+                ORDER BY ran_at DESC
+                LIMIT 1
+            ) er ON true
+            WHERE ec.is_active = true
+            ORDER BY ec.created_at ASC
+        `);
+
+        if (req.query.format === 'csv') {
+            const cols = [
+                'eval_case_id', 'proposal_id', 'case_id', 'case_name', 'agency_name', 'state',
+                'expected_action', 'ai_proposed_action', 'notes', 'created_at',
+                'last_run_id', 'last_predicted_action', 'last_action_correct',
+                'last_judge_score', 'last_failure_category', 'last_judge_reasoning', 'last_ran_at',
+            ];
+
+            const escape = (v) => {
+                if (v == null) return '';
+                const s = String(v).replace(/"/g, '""');
+                return /[,"\n\r]/.test(s) ? `"${s}"` : s;
+            };
+
+            const lines = [
+                cols.join(','),
+                ...result.rows.map(row => cols.map(col => escape(row[col])).join(',')),
+            ];
+
+            const date = new Date().toISOString().split('T')[0];
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="eval-cases-${date}.csv"`);
+            return res.send(lines.join('\n'));
+        }
+
+        res.json({ success: true, cases: result.rows, total: result.rows.length });
+    } catch (error) {
+        console.error('Error exporting eval cases:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

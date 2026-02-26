@@ -34,6 +34,7 @@ import {
   TrendingUp,
   AlertTriangle,
   ChevronRight,
+  Download,
 } from "lucide-react";
 
 interface EvalCase {
@@ -217,6 +218,16 @@ export default function EvalPage() {
               View last run →
             </a>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+          >
+            <a href="/api/eval/export?format=csv" download>
+              <Download className="h-4 w-4 mr-1" />
+              Export CSV
+            </a>
+          </Button>
           <Button variant="outline" size="sm" onClick={() => { mutateCases(); mutateSummary(); }}>
             <RefreshCw className="h-4 w-4 mr-1" />
             Refresh
