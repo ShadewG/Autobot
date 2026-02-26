@@ -813,7 +813,7 @@ class PortalAgentServiceSkyvern {
                 line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
                 line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
                 city: caseOwner?.address_city || process.env.REQUESTER_CITY || 'Seattle',
-                state: caseOwner?.address_state || process.env.REQUESTER_STATE || caseData.state || 'WA',
+                state: caseOwner?.address_state || process.env.REQUESTER_STATE || 'WA',
                 zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || '98199'
             },
             preferred_delivery: 'electronic',
