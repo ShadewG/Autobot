@@ -869,15 +869,9 @@ class PortalAgentServiceSkyvern {
         }
     }
 
-    async _ensurePortalAccount({ portalUrl, caseData }) {
-        // Resolve case owner for per-user portal accounts
+    async _ensurePortalAccount({ portalUrl, caseData, caseOwner = null }) {
+        // userId and caseOwner are passed in from the caller to avoid double-resolution
         const userId = caseData.user_id || null;
-        let caseOwner = null;
-        if (userId) {
-            try {
-                caseOwner = await database.getUserById(userId);
-            } catch (e) { /* non-fatal */ }
-        }
 
         // Kill switch
         if (process.env.PORTAL_SCOUT_DISABLED === 'true') {
@@ -1025,7 +1019,7 @@ class PortalAgentServiceSkyvern {
         let portalAccount = null;
         if (!retryContext) {
             // First attempt: run scout to ensure credentials exist
-            portalAccount = await this._ensurePortalAccount({ portalUrl, caseData });
+            portalAccount = await this._ensurePortalAccount({ portalUrl, caseData, caseOwner });
         } else {
             // Retry: just fetch existing account (scout already ran)
             portalAccount = await database.getPortalAccountByUrl(portalUrl, userId);

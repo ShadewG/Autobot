@@ -881,8 +881,12 @@ class DatabaseService {
         }
 
         if (userId) {
+            // User-specific lookup
             query += ` AND user_id = $${idx++}`;
             params.push(userId);
+        } else {
+            // No userId: only return shared (unowned) accounts — never cross user boundaries
+            query += ' AND user_id IS NULL';
         }
 
         query += ' AND account_status IN (\'active\', \'no_account_needed\') ORDER BY created_at DESC LIMIT 1';
