@@ -58,7 +58,7 @@ export interface SimulationResult {
   };
   decision: {
     action: ActionType;
-    confidence: number;
+    classificationConfidence: number;
     reasoning: string[];
     requiresHuman: boolean;
     canAutoExecute: boolean;
@@ -161,7 +161,20 @@ export const simulateDecision = task({
     }
 
     // ── Step 3: Decide next action ────────────────────────────────────────────
-    const decision = await decideNextAction(context, classification, context.constraints);
+    const decision = await decideNextAction(
+      context.caseId,
+      classification.classification,
+      context.constraints,
+      classification.extractedFeeAmount,
+      classification.sentiment,
+      context.autopilotMode,
+      "INBOUND_MESSAGE",
+      classification.requiresResponse,
+      classification.portalUrl,
+      classification.suggestedAction,
+      null,
+      classification.denialSubtype
+    );
 
     log.push({
       step: "decide_next_action",
@@ -187,7 +200,14 @@ export const simulateDecision = task({
     let draftReply: SimulationResult["draftReply"] = null;
 
     if (DRAFT_ACTIONS.has(decision.actionType)) {
-      try {
+      if (!context.caseId) {
+        // draftResponse requires a real DB case — skip gracefully for mock context
+        log.push({
+          step: "draft_response",
+          skipped: true,
+          details: `Would draft ${decision.actionType} (skipped: no real case selected — draft generation requires case DB record)`,
+        });
+      } else try {
         const draft = await draftResponse(
           context.caseId,
           decision.actionType,
@@ -265,7 +285,7 @@ export const simulateDecision = task({
       },
       decision: {
         action: decision.actionType,
-        confidence: classification.confidence,
+        classificationConfidence: classification.confidence,
         reasoning: decision.reasoning,
         requiresHuman: decision.requiresHuman,
         canAutoExecute: decision.canAutoExecute,

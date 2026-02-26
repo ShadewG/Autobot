@@ -13,7 +13,7 @@ const express = require('express');
 const router = express.Router();
 const { tasks, runs } = require('@trigger.dev/sdk/v3');
 const db = require('../services/database');
-const logger = require('./run-engine').logger || console;
+const logger = console;
 
 // POST /api/simulate
 // Body: { messageBody, fromEmail, subject, caseId?, hasAttachments? }

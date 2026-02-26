@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,7 @@ interface SimClassification {
 
 interface SimDecision {
   action: string;
-  confidence: number;
+  classificationConfidence: number;
   reasoning: string[];
   requiresHuman: boolean;
   canAutoExecute: boolean;
@@ -198,6 +198,9 @@ export default function SimulatePage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any in-flight poll timer on unmount
+  useEffect(() => () => { if (pollRef.current) clearTimeout(pollRef.current); }, []);
 
   const loadCases = useCallback(async () => {
     if (casesLoaded) return;
