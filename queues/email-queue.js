@@ -894,7 +894,7 @@ async function runPortalStatusJob({ job, caseId, portalUrl, provider, messageId,
             throw new Error(`No portal URL available for case ${caseId}`);
         }
 
-        const account = await db.getPortalAccountByUrl(targetUrl);
+        const account = await db.getPortalAccountByUrl(targetUrl, caseData.user_id || null);
         if (!account) {
             console.log(`⚠️  Skipping portal status for case ${caseId} - no saved account yet`);
             await db.logActivity('portal_status_skipped', 'Skipping portal status check (no saved account)', {

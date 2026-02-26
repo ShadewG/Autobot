@@ -1380,7 +1380,7 @@ router.get('/case/:id', async (req, res) => {
         }
 
         const portalAccount = caseData.portal_url
-            ? await db.getPortalAccountByUrl(caseData.portal_url).catch(() => null)
+            ? await db.getPortalAccountByUrl(caseData.portal_url, caseData.user_id || null).catch(() => null)
             : null;
 
         const [threadResult, messagesResult, runsResult, proposalsResult, portalTasksResult, caseAgencies] = await Promise.all([
