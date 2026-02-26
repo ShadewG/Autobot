@@ -17,7 +17,7 @@ if (process.env.SENDGRID_API_KEY) {
 // Trigger.dev queue + idempotency options for per-case concurrency control
 function triggerOpts(caseId, taskType, uniqueId) {
   return {
-    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    queue: `case-${caseId}`,
     idempotencyKey: `${taskType}:${caseId}:${uniqueId || Date.now()}`,
     idempotencyKeyTTL: "1h",
   };
@@ -26,7 +26,7 @@ function triggerOpts(caseId, taskType, uniqueId) {
 // NOTE: idempotency keys take precedence over debounce, so we omit them here
 function triggerOptsDebounced(caseId, taskType, uniqueId) {
   return {
-    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    queue: `case-${caseId}`,
     debounce: { key: `${taskType}:${caseId}`, delay: "5s", mode: "trailing" },
   };
 }

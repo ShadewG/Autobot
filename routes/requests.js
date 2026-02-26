@@ -2022,7 +2022,7 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
                 messageId: proposal.message_id || 0,
                 autopilotMode: 'SUPERVISED'
             }, {
-                queue: { name: `case-${requestId}`, concurrencyLimit: 1 },
+                queue: `case-${requestId}`,
                 idempotencyKey: `req-approve:${requestId}:${proposalId}`,
                 idempotencyKeyTTL: "1h",
             });
@@ -2106,7 +2106,7 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
                 messageId: proposal.message_id || 0,
                 autopilotMode: 'SUPERVISED'
             }, {
-                queue: { name: `case-${requestId}`, concurrencyLimit: 1 },
+                queue: `case-${requestId}`,
                 idempotencyKey: `req-adjust:${requestId}:${proposalId}`,
                 idempotencyKeyTTL: "1h",
             });

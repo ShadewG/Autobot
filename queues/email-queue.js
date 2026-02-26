@@ -427,7 +427,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                         messageId,
                         autopilotMode,
                     }, {
-                        queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+                        queue: `case-${caseId}`,
                         idempotencyKey: `analysis:${caseId}:${messageId}`,
                         idempotencyKeyTTL: "1h",
                     });

@@ -161,10 +161,10 @@ export async function executeAction(
       instructions: portalInstructions,
       portalTaskId: portalResult.taskId || null,
     }, {
-      queue: { name: `case-${caseId}`, concurrencyLimit: 1 } as any,
+      queue: `case-${caseId}`,
       idempotencyKey: `exec-portal:${caseId}:${proposalId}`,
       idempotencyKeyTTL: "1h",
-    } as any);
+    });
 
     return {
       actionExecuted: false,
