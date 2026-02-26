@@ -46,6 +46,55 @@ export async function draftResponse(
     const allMessages = await db.getMessagesByCaseId(caseId);
     const recentMessages = allMessages.slice(0, 15).reverse();
 
+    // Build case brief — gives every ai-service method full context
+    const briefParts: string[] = [];
+    briefParts.push(`## Case Brief`);
+    briefParts.push(`- Agency: ${caseData.agency_name || "Unknown"} (${caseData.agency_email || "no email"})`);
+    briefParts.push(`- State: ${caseData.state || "Unknown"}`);
+    briefParts.push(`- Subject: ${caseData.subject_name || "Unknown"}`);
+    briefParts.push(`- Status: ${caseData.status || "Unknown"} (${caseData.substatus || "none"})`);
+    if (caseData.incident_date) briefParts.push(`- Incident date: ${caseData.incident_date}`);
+    if (caseData.incident_location) briefParts.push(`- Incident location: ${caseData.incident_location}`);
+    if (caseData.send_date) briefParts.push(`- Initial request sent: ${new Date(caseData.send_date).toISOString().split("T")[0]}`);
+    if (caseData.deadline_date) briefParts.push(`- Deadline: ${new Date(caseData.deadline_date).toISOString().split("T")[0]}`);
+    if (caseData.days_overdue > 0) briefParts.push(`- Days overdue: ${caseData.days_overdue}`);
+
+    // Constraints
+    const constraints = caseData.constraints_jsonb || caseData.constraints || [];
+    if (Array.isArray(constraints) && constraints.length > 0) {
+      briefParts.push(`- Constraints: ${constraints.join(", ")}`);
+    }
+
+    // Scope items
+    const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
+    if (Array.isArray(scopeItems) && scopeItems.length > 0) {
+      briefParts.push(`- Scope items: ${scopeItems.map((s: any) => `${s.name || s.description || JSON.stringify(s)} [${s.status || "REQUESTED"}]`).join("; ")}`);
+    }
+
+    // Fee info
+    const feeQuote = caseData.fee_quote_jsonb;
+    if (feeQuote) {
+      briefParts.push(`- Fee quote: $${feeQuote.amount || feeQuote.fee_amount || "unknown"} (${feeQuote.status || "quoted"})`);
+    } else if (caseData.fee_amount) {
+      briefParts.push(`- Fee on file: $${caseData.fee_amount}`);
+    }
+
+    // Portal info
+    if (caseData.portal_url || caseData.last_portal_status) {
+      briefParts.push(`- Portal: ${caseData.portal_provider || "unknown"} — ${caseData.last_portal_status || "unknown"} (${caseData.portal_url || "no URL"})`);
+    }
+
+    // Research context
+    const research = caseData.research_context_jsonb;
+    if (research) {
+      if (research.state_law_notes) briefParts.push(`- State law notes: ${String(research.state_law_notes).substring(0, 500)}`);
+      if (research.rebuttal_support_points?.length) {
+        briefParts.push(`- Rebuttal points: ${research.rebuttal_support_points.slice(0, 5).join("; ")}`);
+      }
+    }
+
+    const caseBrief = briefParts.join("\n");
+
     correspondenceContext = recentMessages
       .map((m: any) => {
         let dir: string;
@@ -60,9 +109,14 @@ export async function draftResponse(
         return `[${dir} | ${dateStr} | ${sender}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 800)}`;
       })
       .join("\n---\n");
+
+    // Prepend case brief so all ai-service methods get full context
+    correspondenceContext = `${caseBrief}\n\n## Correspondence Thread (most recent last)\n${correspondenceContext}`;
+
     logger.info("Draft correspondence context prepared", {
       caseId,
       messageCount: recentMessages.length,
+      briefLength: caseBrief.length,
       preview: correspondenceContext.substring(0, 200),
     });
 

@@ -35,7 +35,14 @@ export function buildClassificationPrompt(
   message: any,
   caseData: any,
   threadMessages: any[],
-  attachments: any[] = []
+  attachments: any[] = [],
+  enrichment?: {
+    constraints?: string[];
+    scopeItems?: any[];
+    priorProposals?: any[];
+    feeQuote?: any;
+    research?: any;
+  }
 ): string {
   const threadContext = threadMessages
     .slice(0, 10)
@@ -55,14 +62,68 @@ export function buildClassificationPrompt(
     ? caseData.requested_records.join(", ")
     : caseData.requested_records || "Various records";
 
+  // Build enriched context sections
+  const constraints = enrichment?.constraints || caseData?.constraints_jsonb || caseData?.constraints || [];
+  const constraintsSection = constraints.length > 0
+    ? `- **Known Constraints**: ${constraints.join(", ")}`
+    : "";
+
+  const scopeItems = enrichment?.scopeItems || caseData?.scope_items_jsonb || [];
+  const scopeSection = Array.isArray(scopeItems) && scopeItems.length > 0
+    ? `- **Scope Items**: ${scopeItems.map((s: any) => `${s.name || s.description || JSON.stringify(s)} (${s.status || "REQUESTED"})`).join("; ")}`
+    : "";
+
+  // Fee context
+  const feeQuote = enrichment?.feeQuote || caseData?.fee_quote_jsonb;
+  const feeSection = feeQuote
+    ? `- **Fee Quote**: $${feeQuote.amount || feeQuote.fee_amount || "unknown"} (${feeQuote.status || "quoted"})`
+    : caseData?.fee_amount ? `- **Fee on File**: $${caseData.fee_amount}` : "";
+
+  // Portal context
+  let portalSection = "";
+  if (caseData?.portal_url || caseData?.last_portal_status) {
+    portalSection = `- **Portal**: ${caseData.portal_provider || "unknown"} — status: ${caseData.last_portal_status || "unknown"}`;
+  }
+
+  // Timing
+  const timingParts: string[] = [];
+  if (caseData?.send_date) timingParts.push(`sent ${new Date(caseData.send_date).toISOString().split("T")[0]}`);
+  if (caseData?.deadline_date) timingParts.push(`deadline ${new Date(caseData.deadline_date).toISOString().split("T")[0]}`);
+  if (caseData?.days_overdue > 0) timingParts.push(`${caseData.days_overdue} days overdue`);
+  const timingSection = timingParts.length > 0 ? `- **Timing**: ${timingParts.join(", ")}` : "";
+
+  // Prior proposals (what we've already tried)
+  const proposals = enrichment?.priorProposals || [];
+  const proposalSection = proposals.length > 0
+    ? `- **Prior Actions Tried**: ${proposals.map((p: any) => `${p.action_type} (${p.status})`).join(", ")}`
+    : "";
+
+  // Incident details
+  const incidentParts: string[] = [];
+  if (caseData?.incident_date) incidentParts.push(`date: ${caseData.incident_date}`);
+  if (caseData?.incident_location) incidentParts.push(`location: ${caseData.incident_location}`);
+  const incidentSection = incidentParts.length > 0 ? `- **Incident**: ${incidentParts.join(", ")}` : "";
+
+  // Research context summary
+  const research = enrichment?.research || caseData?.research_context_jsonb;
+  let researchSection = "";
+  if (research?.state_law_notes) {
+    researchSection = `- **State Law Notes**: ${String(research.state_law_notes).substring(0, 300)}`;
+  }
+
+  const extraSections = [incidentSection, constraintsSection, scopeSection, feeSection, portalSection, timingSection, proposalSection, researchSection].filter(Boolean).join("\n");
+
   return `You are an expert FOIA analyst classifying an agency response to a public records request.
 
 ## Case Context
 - **Agency**: ${caseData.agency_name || "Unknown"}
+- **Agency Email**: ${caseData.agency_email || "Unknown"}
 - **State**: ${caseData.state || "Unknown"}
 - **Subject**: ${caseData.subject_name || "Unknown"}
 - **Records Requested**: ${requestedRecords}
 - **Current Status**: ${caseData.status || "Unknown"}
+- **Substatus**: ${caseData.substatus || "none"}
+${extraSections}
 
 ## Thread History (most recent last)
 NOTE: Messages labeled [PORTAL_NOTIFICATION:*] are automated system emails from records portals (NextRequest, GovQA, etc.). These reflect the STATUS OF THE PORTAL TRACK ONLY, not the overall case status. A portal showing "closed" or "completed" does NOT mean the direct email correspondence with the agency is resolved. Classify based on the TRIGGER MESSAGE below, not portal status notifications.
@@ -250,13 +311,29 @@ export async function classifyInbound(
     };
   }
 
-  // Load thread messages for context
-  const threadMessages = await db.getMessagesByCaseId(context.caseId);
+  // Load thread messages and enrichment data in parallel
+  const [threadMessages, priorProposalsResult] = await Promise.all([
+    db.getMessagesByCaseId(context.caseId),
+    db.query(
+      `SELECT action_type, status FROM proposals
+       WHERE case_id = $1 ORDER BY created_at DESC LIMIT 10`,
+      [context.caseId]
+    ),
+  ]);
 
   // Get attachments for this specific message
   const messageAttachments = (context.attachments || []).filter(
     (a: any) => a.message_id === messageId
   );
+
+  // Build enrichment context for the classifier
+  const enrichment = {
+    constraints: context.caseData?.constraints_jsonb || context.caseData?.constraints || [],
+    scopeItems: context.caseData?.scope_items_jsonb || context.caseData?.scope_items || [],
+    priorProposals: priorProposalsResult.rows,
+    feeQuote: context.caseData?.fee_quote_jsonb,
+    research: context.caseData?.research_context_jsonb,
+  };
 
   // === Vercel AI SDK: generateObject with Zod schema ===
   let aiResult: ClassificationOutput;
@@ -264,7 +341,7 @@ export async function classifyInbound(
     const { object } = await generateObject({
       model: classifyModel,
       schema: classificationSchema,
-      prompt: buildClassificationPrompt(message, context.caseData, threadMessages, messageAttachments),
+      prompt: buildClassificationPrompt(message, context.caseData, threadMessages, messageAttachments, enrichment),
       providerOptions: classifyOptions,
     });
     aiResult = object;
