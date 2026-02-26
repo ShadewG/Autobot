@@ -338,9 +338,10 @@ export async function draftResponse(
     case "SUBMIT_PORTAL": {
       let enrichedCaseData = { ...caseData };
 
-      // If research found a referral agency (e.g. from WRONG_AGENCY redirect),
-      // override the case agency so the FOIA request addresses the correct recipient
-      if (researchCtx && researchCtx.likely_record_custodians?.length > 0) {
+      // When re-drafting with an adjustment, check for a referral agency in
+      // contact_research_notes. This data is set by RESEARCH_AGENCY/WRONG_AGENCY
+      // steps and tells us who actually holds the records.
+      if (adjustmentInstruction) {
         try {
           const contactNotes = caseData.contact_research_notes
             ? (typeof caseData.contact_research_notes === "string"
@@ -349,10 +350,11 @@ export async function draftResponse(
             : null;
           if (contactNotes?.contactResult?.contact_email) {
             const referralName = contactNotes.brief?.suggested_agencies?.[0]?.name
-              || researchCtx.likely_record_custodians[0]?.split(" (")[0]
+              || researchCtx?.likely_record_custodians?.[0]?.split(" (")[0]
               || enrichedCaseData.agency_name;
-            logger.info("Overriding agency for FOIA re-draft", {
+            logger.info("Overriding agency for FOIA re-draft from referral", {
               caseId, from: enrichedCaseData.agency_name, to: referralName,
+              email: contactNotes.contactResult.contact_email,
             });
             enrichedCaseData.agency_name = referralName;
             enrichedCaseData.agency_email = contactNotes.contactResult.contact_email;
@@ -361,9 +363,7 @@ export async function draftResponse(
         } catch (e: any) {
           logger.warn("Failed to parse contact_research_notes for agency override", { caseId, error: e.message });
         }
-      }
 
-      if (adjustmentInstruction) {
         enrichedCaseData.additional_details = `${enrichedCaseData.additional_details || ''}\n\nCRITICAL ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}`.trim();
       }
 
