@@ -26,6 +26,8 @@ const getDiscord = lazy(() => require("../../services/discord-service"));
 
 const MAX_RECENT_FAILURES = 2;
 const FAILURE_WINDOW_HOURS = 24;
+const MAX_PORTAL_RUNS_PER_DAY = 3;
+const MAX_PORTAL_RUNS_TOTAL = 8;
 
 export const submitPortal = task({
   id: "submit-portal",
@@ -92,6 +94,36 @@ export const submitPortal = task({
         );
       }
       return { success: false, skipped: true, reason: "circuit_breaker" };
+    }
+
+    // ── Hard rate limit: max portal runs per case per day AND total ever ──
+    const portalRunCounts = await db.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as today,
+         COUNT(*) as total
+       FROM activity_log
+       WHERE event_type IN ('portal_workflow_triggered', 'portal_stage_started')
+         AND case_id = $1`,
+      [caseId]
+    );
+    const todayRuns = parseInt(portalRunCounts.rows[0]?.today || "0", 10);
+    const totalRuns = parseInt(portalRunCounts.rows[0]?.total || "0", 10);
+    if (todayRuns >= MAX_PORTAL_RUNS_PER_DAY || totalRuns >= MAX_PORTAL_RUNS_TOTAL) {
+      logger.error("HARD LIMIT: portal submission blocked — too many runs for this case", {
+        caseId, todayRuns, totalRuns,
+        dailyLimit: MAX_PORTAL_RUNS_PER_DAY, totalLimit: MAX_PORTAL_RUNS_TOTAL,
+      });
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        requires_human: true,
+        substatus: `Portal hard limit: ${todayRuns} today (max ${MAX_PORTAL_RUNS_PER_DAY}), ${totalRuns} total (max ${MAX_PORTAL_RUNS_TOTAL})`,
+      });
+      if (portalTaskId) {
+        await db.query(
+          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Hard rate limit hit' WHERE id = $1`,
+          [portalTaskId]
+        );
+      }
+      return { success: false, skipped: true, reason: "hard_rate_limit" };
     }
 
     // ── Load case ──

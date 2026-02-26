@@ -580,6 +580,26 @@ class PortalAgentServiceSkyvern {
             throw new Error('SKYVERN_WORKFLOW_ID not set but workflow mode is required');
         }
 
+        // ── HARD RATE LIMIT: absolute cap on portal runs per case ──
+        const runCounts = await database.query(
+            `SELECT
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '24 hours') as today,
+               COUNT(*) as total
+             FROM activity_log
+             WHERE event_type IN ('portal_workflow_triggered', 'portal_stage_started')
+               AND case_id = $1`,
+            [caseData.id]
+        );
+        const todayRuns = parseInt(runCounts.rows[0]?.today || '0', 10);
+        const totalRuns = parseInt(runCounts.rows[0]?.total || '0', 10);
+        if (todayRuns >= 3 || totalRuns >= 8) {
+            console.error(`🛑 HARD LIMIT: case ${caseData.id} has ${todayRuns} runs today, ${totalRuns} total — blocking portal submission`);
+            await database.logActivity('portal_hard_limit', `Portal hard limit hit for case ${caseData.id}: ${todayRuns}/day, ${totalRuns}/total`, {
+                case_id: caseData.id, portal_url: portalUrl, today_runs: todayRuns, total_runs: totalRuns
+            });
+            return { success: false, skipped: true, reason: 'hard_rate_limit' };
+        }
+
         // ── Dedup guard: skip if case already advanced past submission ──
         const freshCase = await database.getCaseById(caseData.id);
         const portalSkipStatuses = ['sent', 'awaiting_response', 'responded', 'completed', 'needs_phone_call'];
@@ -825,7 +845,7 @@ class PortalAgentServiceSkyvern {
         // Always send login credentials — either from saved account or defaults.
         // This ensures Skyvern uses OUR password when creating accounts, not a random one.
         const defaultEmail = personalInfo.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
         const loginPayload = JSON.stringify({
             email: portalAccount?.email || defaultEmail,
             password: portalAccount?.password || defaultPassword
@@ -897,7 +917,7 @@ class PortalAgentServiceSkyvern {
         // 2. No account found — run scout task using the case owner's email
         console.log(`🔍 No portal account found for ${portalUrl} (user_id=${userId}) — running scout task...`);
         const email = caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
-        const password = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+        const password = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
 
         await database.logActivity('portal_scout_started', `Scout task started for ${portalUrl}`, {
             case_id: caseData.id || null,
@@ -1209,7 +1229,7 @@ class PortalAgentServiceSkyvern {
                 // Auto-save portal account if we didn't have one — so future cases reuse it
                 if (!portalAccount) {
                     try {
-                        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+                        const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
                         await database.createPortalAccount({
                             portal_url: portalUrl,
                             portal_type: caseData.portal_provider || null,
@@ -1296,7 +1316,7 @@ class PortalAgentServiceSkyvern {
             const accountAlreadyExists = /email.*already exists|account.*already|duplicate.*email/i.test(failureReason + ' ' + fullRunText);
             if (accountAlreadyExists && !portalAccount && !retryContext) {
                 console.log(`🔑 Account already exists on ${portalUrl} — saving credentials and retrying with login`);
-                const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'S0methingS@fe!2026';
+                const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity!0M';
                 try {
                     await database.createPortalAccount({
                         portal_url: portalUrl,
