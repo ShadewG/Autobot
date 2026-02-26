@@ -108,13 +108,20 @@ export const processInbound = task({
         const currentScopeItems = context.scopeItems || [];
         const adjustmentReasoning = [`Re-drafted per human instruction: ${reviewInstruction}`];
 
+        // Do research if instruction mentions research keywords
+        const RESEARCH_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
+        let adjustResearch: ResearchContext = emptyResearchContext();
+        if (RESEARCH_RE.test(reviewInstruction)) {
+          adjustResearch = await researchContext(caseId, originalActionType as any, "UNKNOWN" as any, null, "medium", undefined, messageId);
+        }
+
         // Re-draft with the user's adjustment instruction
         const adjustedDraft = await draftResponse(
           caseId, originalActionType as any, currentConstraints, currentScopeItems,
           context.caseData.fee_amount ?? null,
           reviewInstruction,
           messageId,
-          emptyResearchContext()
+          adjustResearch
         );
 
         // Safety check the adjusted draft
@@ -425,12 +432,19 @@ export const processInbound = task({
       }
 
       if (humanDecision.action === "ADJUST") {
+        // Upgrade research if instruction mentions research keywords and original research was empty
+        const ADJUST_RESEARCH_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
+        let adjustResearch = research;
+        if (ADJUST_RESEARCH_RE.test(humanDecision.instruction || "") && research.level === "none") {
+          adjustResearch = await researchContext(caseId, decision.actionType, classification.classification, classification.denialSubtype, "medium", undefined, messageId);
+        }
+
         const adjustedDraft = await draftResponse(
           caseId, decision.actionType, constraints, scopeItems,
           classification.extractedFeeAmount,
           humanDecision.instruction || null,
           decision.overrideMessageId || messageId,
-          research
+          adjustResearch
         );
 
         const adjustedSafety = await safetyCheck(

@@ -10,12 +10,17 @@
 import { task, wait } from "@trigger.dev/sdk/v3";
 import { loadContext } from "../steps/load-context";
 import { draftInitialRequest } from "../steps/draft-initial-request";
+import { draftResponse } from "../steps/draft-response";
 import { safetyCheck } from "../steps/safety-check";
+import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { scheduleFollowups } from "../steps/schedule-followups";
 import { commitState } from "../steps/commit-state";
+import { researchContext, emptyResearchContext } from "../steps/research-context";
 import db, { logger } from "../lib/db";
-import type { HumanDecision, InitialRequestPayload } from "../lib/types";
+import type { HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
+
+const RESEARCH_INSTRUCTION_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -50,7 +55,7 @@ export const processInitialRequest = task({
   },
 
   run: async (payload: InitialRequestPayload) => {
-    const { caseId, autopilotMode } = payload;
+    const { caseId, autopilotMode, triggerType, reviewInstruction, originalActionType, originalProposalId } = payload;
 
     // Clear any stale agent_runs that would block the unique constraint
     await db.query(
@@ -66,7 +71,114 @@ export const processInitialRequest = task({
     });
     const runId = agentRun.id;
 
-    logger.info("process-initial-request started", { runId, caseId, autopilotMode });
+    logger.info("process-initial-request started", { runId, caseId, autopilotMode, triggerType });
+
+    // ── ADJUSTMENT FAST-PATH ──
+    // When human clicks ADJUST on a proposal, skip the normal flow.
+    // Re-draft with the original action type + human's instruction, then re-gate.
+    if (triggerType === "ADJUSTMENT" && originalActionType && reviewInstruction) {
+      logger.info("Adjustment fast-path (initial request)", { caseId, originalActionType, instruction: reviewInstruction });
+
+      if (originalProposalId) {
+        await db.updateProposal(originalProposalId, { status: "DISMISSED" });
+      }
+
+      try {
+        const context = await loadContext(caseId, null);
+        const currentConstraints = context.constraints || [];
+        const currentScopeItems = context.scopeItems || [];
+        const adjustmentReasoning = [`Re-drafted per human instruction: ${reviewInstruction}`];
+
+        let research: ResearchContext = emptyResearchContext();
+        if (RESEARCH_INSTRUCTION_RE.test(reviewInstruction)) {
+          research = await researchContext(caseId, originalActionType as any, "UNKNOWN" as any, null, "medium");
+        }
+
+        const adjustedDraft = await draftResponse(
+          caseId, originalActionType as any, currentConstraints, currentScopeItems,
+          context.caseData.fee_amount ?? null,
+          reviewInstruction,
+          null,
+          research
+        );
+
+        const adjustedSafety = await safetyCheck(
+          adjustedDraft.bodyText, adjustedDraft.subject,
+          originalActionType, currentConstraints, currentScopeItems
+        );
+
+        const adjustedGate = await createProposalAndGate(
+          caseId, runId, originalActionType as any,
+          null, adjustedDraft, adjustedSafety,
+          false, true, null,
+          adjustmentReasoning,
+          0.9, 1, null, adjustedDraft.lessonsApplied
+        );
+
+        if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
+          await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
+          const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
+
+          if (!result.ok) {
+            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "timed_out", proposalId: adjustedGate.proposalId };
+          }
+
+          const humanDecision = result.output;
+
+          if (humanDecision.action === "DISMISS") {
+            await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "dismissed", proposalId: adjustedGate.proposalId };
+          }
+
+          if (humanDecision.action === "ADJUST") {
+            await db.updateProposal(adjustedGate.proposalId, {
+              status: "DISMISSED",
+              human_decision: { action: "ADJUST", instruction: humanDecision.instruction, decidedAt: new Date().toISOString() },
+            });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
+          }
+
+          if (humanDecision.action === "WITHDRAW") {
+            await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
+            await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "withdrawn", proposalId: adjustedGate.proposalId };
+          }
+
+          // APPROVE: execute
+          await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          const execution = await executeAction(
+            caseId, adjustedGate.proposalId, originalActionType as any, runId,
+            adjustedDraft, null, adjustmentReasoning
+          );
+
+          if (execution.actionExecuted) {
+            await db.updateProposal(adjustedGate.proposalId, { status: "EXECUTED", executedAt: new Date() });
+            await scheduleFollowups(caseId, execution.actionExecuted, execution.executionResult);
+          }
+
+          await commitState(
+            caseId, runId, originalActionType as any,
+            adjustmentReasoning,
+            0.9, "ADJUSTMENT", execution.actionExecuted, execution.executionResult
+          );
+        }
+
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return { status: "completed", action: originalActionType, adjusted: true };
+      } catch (err: any) {
+        logger.error("Adjustment fast-path failed", { caseId, error: err.message });
+        await db.query(
+          "UPDATE agent_runs SET status = 'failed', error = $2, ended_at = NOW() WHERE id = $1",
+          [runId, `Adjustment failed: ${err.message}`.substring(0, 500)]
+        );
+        throw err;
+      }
+    }
 
     // Pre-check: abort if case already has denial correspondence
     // (don't blindly send a new FOIA when the agency already said no)
@@ -168,27 +280,75 @@ export const processInitialRequest = task({
       }
 
       if (humanDecision.action === "ADJUST") {
-        // Update proposal with adjustment and wait again
-        await db.updateProposal(draft.proposalId, {
-          reasoning: [...draft.reasoning, `Adjusted per human: ${humanDecision.instruction}`],
-        });
+        // Dismiss old proposal and re-draft with human instruction
+        await db.updateProposal(draft.proposalId, { status: "DISMISSED" });
+        const instruction = humanDecision.instruction || "";
 
-        const adjustTokenId = crypto.randomUUID();
-        await db.updateProposal(draft.proposalId, { waitpoint_token: adjustTokenId });
-
-        const adjustResult = await waitForHumanDecision(adjustTokenId, draft.proposalId);
-
-        if (!adjustResult.ok || adjustResult.output.action !== "APPROVE") {
-          await db.updateProposal(draft.proposalId, {
-            status: !adjustResult.ok ? "EXPIRED" : "DISMISSED",
-          });
-          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
-          return {
-            status: !adjustResult.ok ? "timed_out" : "dismissed",
-            proposalId: draft.proposalId,
-          };
+        let adjustResearch: ResearchContext = emptyResearchContext();
+        if (RESEARCH_INSTRUCTION_RE.test(instruction)) {
+          adjustResearch = await researchContext(caseId, draft.actionType, "UNKNOWN" as any, null, "medium");
         }
-        // Fall through to execute
+
+        const adjustContext = await loadContext(caseId, null);
+        const adjustedDraft = await draftResponse(
+          caseId, draft.actionType, adjustContext.constraints, adjustContext.scopeItems,
+          null, instruction, null, adjustResearch
+        );
+
+        const adjustedSafety = await safetyCheck(
+          adjustedDraft.bodyText, adjustedDraft.subject,
+          draft.actionType, adjustContext.constraints, adjustContext.scopeItems
+        );
+
+        const adjustedGate = await createProposalAndGate(
+          caseId, runId, draft.actionType,
+          null, adjustedDraft, adjustedSafety,
+          false, true, null,
+          [...draft.reasoning, `Adjusted per human: ${instruction}`],
+          0.9, 1, null, adjustedDraft.lessonsApplied
+        );
+
+        if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
+          const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
+
+          if (!adjustResult.ok) {
+            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "timed_out", proposalId: adjustedGate.proposalId };
+          }
+
+          const adjustDecision = adjustResult.output;
+
+          if (adjustDecision.action === "DISMISS") {
+            await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "dismissed", proposalId: adjustedGate.proposalId };
+          }
+
+          if (adjustDecision.action === "ADJUST") {
+            await db.updateProposal(adjustedGate.proposalId, {
+              status: "DISMISSED",
+              human_decision: { action: "ADJUST", instruction: adjustDecision.instruction, decidedAt: new Date().toISOString() },
+            });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
+          }
+
+          if (adjustDecision.action === "WITHDRAW") {
+            await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
+            await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "withdrawn", proposalId: adjustedGate.proposalId };
+          }
+
+          // APPROVE: update draft variables for execution below
+          await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          draft.proposalId = adjustedGate.proposalId;
+          draft.subject = adjustedDraft.subject || draft.subject;
+          draft.bodyText = adjustedDraft.bodyText || draft.bodyText;
+          draft.bodyHtml = adjustedDraft.bodyHtml || draft.bodyHtml;
+        }
+        // Fall through to execute with new draft
       }
 
       // APPROVE: update proposal status

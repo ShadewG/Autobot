@@ -334,6 +334,22 @@ export async function draftResponse(
       };
     }
 
+    case "SEND_INITIAL_REQUEST":
+    case "SUBMIT_PORTAL": {
+      const enrichedCaseData = adjustmentInstruction
+        ? { ...caseData, additional_details: `${caseData.additional_details || ''}\n\nHUMAN INSTRUCTION FOR ADJUSTMENT: ${adjustmentInstruction}`.trim() }
+        : caseData;
+      const foiaResult = await aiService.generateFOIARequest(enrichedCaseData);
+      const foiaText = foiaResult?.request_text || foiaResult?.body || foiaResult?.requestText;
+      if (!foiaText) throw new Error(`AI returned empty FOIA request for case ${caseId}`);
+      draft = {
+        subject: `Public Records Request - ${caseData.subject_name || 'Records Request'}`,
+        body_text: foiaText,
+        body_html: null,
+      };
+      break;
+    }
+
     case "ESCALATE":
     case "CLOSE_CASE":
     case "NONE":

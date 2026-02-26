@@ -87,6 +87,12 @@ export interface InitialRequestPayload {
   runId: number;
   caseId: number;
   autopilotMode: AutopilotMode;
+  // Adjustment context (when human clicks ADJUST on a proposal)
+  triggerType?: string;
+  reviewAction?: string;
+  reviewInstruction?: string;
+  originalActionType?: string;
+  originalProposalId?: number;
 }
 
 export interface FollowupPayload {
