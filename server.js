@@ -64,6 +64,7 @@ const phoneCallRoutes = require('./routes/phone-calls');
 const userRoutes = require('./routes/users');
 const authRoutes = require('./routes/auth');
 const caseAgenciesRoutes = require('./routes/case-agencies');
+const evalRoutes = require('./routes/eval');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
@@ -79,6 +80,7 @@ app.use('/api/phone-calls', phoneCallRoutes);  // Phone Call Queue: escalation f
 app.use('/api/users', userRoutes);  // Users: multi-user email routing
 app.use('/api/auth', authRoutes);  // Auth: login/logout/me
 app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency support per case
+app.use('/api/eval', evalRoutes);  // Eval: AI decision quality tracking
 
 // Import cron service and email queue workers
 const cronService = require('./services/cron-service');

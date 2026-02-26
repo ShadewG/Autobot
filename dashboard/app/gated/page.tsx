@@ -501,6 +501,7 @@ function MonitorPageContent() {
   const [expandedPhoneCallId, setExpandedPhoneCallId] = useState<number | null>(null);
   const [phoneCallSubmitting, setPhoneCallSubmitting] = useState<number | null>(null);
   const [addingToPhoneQueue, setAddingToPhoneQueue] = useState(false);
+  const [markingAsEval, setMarkingAsEval] = useState(false);
   const [checkedPoints, setCheckedPoints] = useState<Set<number>>(new Set());
   const [callNotes, setCallNotes] = useState("");
   const [callOutcome, setCallOutcome] = useState<string | null>(null);
@@ -920,6 +921,29 @@ function MonitorPageContent() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   }, []);
+
+  // ── Eval Case Helpers ────────────────────
+
+  const handleMarkAsEval = useCallback(async (proposalId: number, actionType: string) => {
+    setMarkingAsEval(true);
+    try {
+      const res = await fetch(`/api/eval/cases`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proposalId, expectedAction: actionType }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast("Added to eval dataset");
+      } else {
+        showToast(data.error || "Failed to add eval case", "error");
+      }
+    } catch (e) {
+      showToast("Failed to add eval case", "error");
+    } finally {
+      setMarkingAsEval(false);
+    }
+  }, [showToast]);
 
   // Cancel pending undoable action and restore item to queue
   const cancelPendingAction = useCallback(() => {
@@ -1731,6 +1755,23 @@ function MonitorPageContent() {
                 <Phone className="h-3 w-3 mr-1.5" />
               )}
               ADD TO PHONE QUEUE
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full text-xs text-muted-foreground border-dashed"
+              onClick={() => handleMarkAsEval(
+                selectedItem.data.id,
+                selectedItem.data.action_type
+              )}
+              disabled={markingAsEval}
+            >
+              {markingAsEval ? (
+                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+              ) : (
+                <span className="mr-1.5">⚗</span>
+              )}
+              MARK AS EVAL CASE
             </Button>
           </div>
         </div>

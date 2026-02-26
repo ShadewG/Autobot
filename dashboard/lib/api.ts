@@ -9,7 +9,7 @@ import type {
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 // Generic fetch wrapper with error handling
-async function fetchAPI<T>(
+export async function fetchAPI<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
