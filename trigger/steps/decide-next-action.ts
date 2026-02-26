@@ -26,6 +26,12 @@ const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS || "2", 10);
 async function assessDenialStrength(caseId: number, denialSubtype?: string | null): Promise<"strong" | "medium" | "weak"> {
   const analysis = await db.getLatestResponseAnalysis(caseId);
   const keyPoints: string[] = analysis?.key_points || [];
+  const fullText = keyPoints.join(" ").toLowerCase();
+
+  // Legally unappealable: citizen/residency restrictions (McBurney v. Young)
+  const citizenRestriction = /\bavailable only to [\w ]*(citizen|resident)\b|\bcitizen[- ]only\b|\bresidency restriction\b|\bmcburney v\.?\s*young\b|\bonly [\w ]*citizens\b may/i.test(fullText);
+  if (citizenRestriction) return "strong";
+
   const strongIndicators = [
     "exemption", "statute", "law enforcement", "ongoing investigation",
     "ongoing", "in court", "cannot be provided", "nothing can be provided",
@@ -948,11 +954,24 @@ export async function decideNextAction(
       reasoning.push(`Human review resolution: action=${reviewAction}`);
       const ri = reviewInstruction || null;
 
+      // Block send_via_email if case is flagged as wrong agency
+      const caseDataForReview = await db.getCaseById(caseId);
+      const caseConstraints = caseDataForReview?.constraints_jsonb || caseDataForReview?.constraints || [];
+      const isWrongAgency = caseConstraints.includes("WRONG_AGENCY") || classification === "WRONG_AGENCY";
+
       const reviewMap: Record<string, () => Promise<DecisionResult>> = {
-        send_via_email: async () => decision("SEND_FOLLOWUP", {
-          adjustmentInstruction: ri || "Send the original FOIA request via email instead of portal",
-          reasoning,
-        }),
+        send_via_email: async () => {
+          if (isWrongAgency) {
+            return decision("RESEARCH_AGENCY", {
+              reasoning: [...reasoning, "Redirected: cannot send to wrong agency — researching correct one"],
+              researchLevel: "deep",
+            });
+          }
+          return decision("SEND_FOLLOWUP", {
+            adjustmentInstruction: ri || "Send the original FOIA request via email instead of portal",
+            reasoning,
+          });
+        },
         appeal: async () => decision("SEND_REBUTTAL", {
           adjustmentInstruction: ri || "Draft an appeal citing legal grounds",
           reasoning,

@@ -106,11 +106,11 @@ export const processInbound = task({
         const context = await loadContext(caseId, messageId);
         const currentConstraints = context.constraints || [];
         const currentScopeItems = context.scopeItems || [];
-        const adjustmentReasoning = [{ step: "Adjustment", detail: `Re-drafted per human instruction: ${reviewInstruction}` }];
+        const adjustmentReasoning = [`Re-drafted per human instruction: ${reviewInstruction}`];
 
         // Re-draft with the user's adjustment instruction
         const adjustedDraft = await draftResponse(
-          caseId, originalActionType, currentConstraints, currentScopeItems,
+          caseId, originalActionType as any, currentConstraints, currentScopeItems,
           context.caseData.fee_amount ?? null,
           reviewInstruction,
           messageId,
@@ -126,7 +126,7 @@ export const processInbound = task({
 
         // Create new proposal for human review (always requires human approval)
         const adjustedGate = await createProposalAndGate(
-          caseId, runId, originalActionType,
+          caseId, runId, originalActionType as any,
           messageId, adjustedDraft, adjustedSafety,
           false, true, null,
           adjustmentReasoning,
@@ -169,7 +169,7 @@ export const processInbound = task({
           await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
           const execution = await executeAction(
             caseId, adjustedGate.proposalId, originalActionType as any, runId,
-            adjustedDraft, null, adjustmentReasoning.map(r => r.detail)
+            adjustedDraft, null, adjustmentReasoning
           );
 
           // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
@@ -222,16 +222,57 @@ export const processInbound = task({
     // Step 2: Classify inbound (Vercel AI SDK + Zod)
     const classification = await classifyInbound(context, messageId, "INBOUND_MESSAGE");
 
-    // Step 3: Update constraints
+    // Step 2b: Classification safety gates (before constraint mutation)
+    let effectiveClassification = classification.classification;
+
+    // Gate 1: Low confidence → force human review (before constraints get mutated)
+    const LOW_CONFIDENCE_THRESHOLD = 0.7;
+    if (
+      classification.confidence < LOW_CONFIDENCE_THRESHOLD &&
+      effectiveClassification !== "NO_RESPONSE" &&
+      effectiveClassification !== "HUMAN_REVIEW_RESOLUTION"
+    ) {
+      logger.warn("Low classification confidence — escalating to human review", {
+        caseId, confidence: classification.confidence,
+        originalClassification: effectiveClassification,
+      });
+      effectiveClassification = "UNKNOWN" as any;
+    }
+
+    // Gate 2: Cross-check — catch obvious misclassifications
+    // Only check direct message body (not subject/quoted thread) to avoid false positives
+    const clf = effectiveClassification as string;
+    if (clf === "PARTIAL_DELIVERY" || clf === "ACKNOWLEDGMENT") {
+      const msg = await db.getMessageById(messageId);
+      const bodyText = (msg?.body_text || "").substring(0, 1000);
+      // Only match strong denial phrases, not generic words
+      const hasDenialLanguage = /\bexempt from disclosure\b|\bdenied your request\b|\bunable to release\b|\bwithheld pursuant to\b|\bnot subject to disclosure\b/i.test(bodyText);
+      const hasFeeLanguage = /\bprocessing fee\b|\bestimated cost\b|\bfee of \$\d|\binvoice attached\b|\bpayment of \$\d/i.test(bodyText);
+      if (hasDenialLanguage) {
+        logger.warn("Classification cross-check: denial language in non-denial classification", {
+          caseId, original: clf,
+        });
+        effectiveClassification = "DENIAL" as any;
+        classification.requiresResponse = true;
+      } else if (hasFeeLanguage) {
+        logger.warn("Classification cross-check: fee language in non-fee classification", {
+          caseId, original: clf,
+        });
+        effectiveClassification = "FEE_QUOTE" as any;
+        classification.requiresResponse = true;
+      }
+    }
+
+    // Step 3: Update constraints (uses effective classification, not raw)
     const { constraints, scopeItems } = await updateConstraints(
-      caseId, classification.classification, classification.extractedFeeAmount,
+      caseId, effectiveClassification, classification.extractedFeeAmount,
       messageId, context.constraints, context.scopeItems
     );
 
     // Step 4: Decide next action
     const effectiveTriggerType = triggerType || "INBOUND_MESSAGE";
     const decision = await decideNextAction(
-      caseId, classification.classification, constraints,
+      caseId, effectiveClassification, constraints,
       classification.extractedFeeAmount, classification.sentiment,
       autopilotMode, effectiveTriggerType,
       classification.requiresResponse, classification.portalUrl,
