@@ -13,20 +13,13 @@ CREATE INDEX IF NOT EXISTS idx_messages_case_id
 
 -- =============================================================================
 -- CRITICAL: Fix planner settings for SSD storage (Railway uses NVMe SSD)
--- random_page_cost=4 is the spinning-disk default and tells the planner that
--- random I/O is 4x more expensive than sequential — NOT true on SSD (should be ~1.1-1.2).
--- This single setting explains why the planner chooses sequential scans over indexes
--- even when an index exists and covers the query.
--- effective_io_concurrency should be 100-200 for NVMe (1 is single-disk HDD default).
+-- These must be run manually outside a transaction (ALTER SYSTEM can't run in txn):
+--   ALTER SYSTEM SET random_page_cost = 1.2;
+--   ALTER SYSTEM SET effective_io_concurrency = 200;
+--   ALTER SYSTEM SET log_min_duration_statement = 250;
+--   ALTER SYSTEM SET track_io_timing = on;
+--   SELECT pg_reload_conf();
 -- =============================================================================
-ALTER SYSTEM SET random_page_cost = 1.2;
-ALTER SYSTEM SET effective_io_concurrency = 200;
-
--- Enable slow query logging so regressions become visible
-ALTER SYSTEM SET log_min_duration_statement = 250;  -- ms: log queries > 250ms
-ALTER SYSTEM SET track_io_timing = on;               -- enables pg_stat_statements I/O data
-
-SELECT pg_reload_conf();
 
 -- =============================================================================
 -- HIGH: Missing indexes on response_analysis.case_id
