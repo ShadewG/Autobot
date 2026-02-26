@@ -158,6 +158,14 @@ export const processInbound = task({
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }
 
+          if (humanDecision.action === "WITHDRAW") {
+            await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
+            await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+            await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
+            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            return { status: "withdrawn", proposalId: adjustedGate.proposalId };
+          }
+
           if (humanDecision.action === "ADJUST") {
             // Recursive adjustment — dismiss this proposal, complete this run.
             // The waitpoint completion from the dashboard already records the instruction.
