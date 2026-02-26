@@ -41,6 +41,7 @@ router.get('/cases', async (req, res) => {
                 ec.expected_action,
                 ec.notes,
                 ec.created_at,
+                ec.simulated_subject,
                 p.action_type AS proposal_action,
                 c.case_name,
                 c.agency_name,

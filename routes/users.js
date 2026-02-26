@@ -162,6 +162,13 @@ router.patch('/:id', express.json(), async (req, res) => {
         if (req.body.address_zip !== undefined) {
             updates.address_zip = req.body.address_zip.trim() || null;
         }
+        if (req.body.default_autopilot_mode !== undefined) {
+            const mode = req.body.default_autopilot_mode;
+            if (!['SUPERVISED', 'AUTOPILOT'].includes(mode)) {
+                return res.status(400).json({ success: false, error: 'default_autopilot_mode must be SUPERVISED or AUTOPILOT' });
+            }
+            updates.default_autopilot_mode = mode;
+        }
 
         const updated = await db.updateUser(id, updates);
         res.json({ success: true, user: updated });

@@ -317,7 +317,7 @@ export type EventType =
 export interface AgencyListItem {
   id: string;
   name: string;
-  state: string;
+  state: string | null;
   submission_method: 'EMAIL' | 'PORTAL' | 'MAIL';
   portal_url: string | null;
   portal_provider: string | null;

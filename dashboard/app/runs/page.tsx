@@ -80,6 +80,7 @@ interface RunsResponse {
 
 export default function RunsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [recentOnly, setRecentOnly] = useState(true);
   const [selectedRun, setSelectedRun] = useState<(AgentRun & { case_name?: string }) | null>(null);
   const [runDiff, setRunDiff] = useState<AgentRunDiff | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
@@ -117,6 +118,10 @@ export default function RunsPage() {
 
   // Get runs from response
   const allRunsList = data?.runs || [];
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const statsRunsList = recentOnly
+    ? allRunsList.filter((r) => new Date(r.started_at) >= sevenDaysAgo)
+    : allRunsList;
 
   // Filter runs
   const filteredRuns = allRunsList.filter((run) => {
@@ -176,9 +181,21 @@ export default function RunsPage() {
       </div>
 
       {/* Stats Cards */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">
+            {recentOnly ? "Last 7 days" : "All time"}
+          </p>
+          <button
+            className="text-xs text-primary underline underline-offset-2"
+            onClick={() => setRecentOnly((v) => !v)}
+          >
+            {recentOnly ? "Show all time" : "Show last 7 days"}
+          </button>
+        </div>
       <div className="grid grid-cols-4 gap-4">
         {(['running', 'completed', 'failed', 'gated'] as const).map((status) => {
-          const count = allRunsList.filter((r) => r.status === status).length;
+          const count = statsRunsList.filter((r) => r.status === status).length;
           const config = STATUS_CONFIG[status];
           const Icon = config.icon;
           return (
@@ -197,6 +214,7 @@ export default function RunsPage() {
             </Card>
           );
         })}
+      </div>
       </div>
 
       {/* Runs Table */}

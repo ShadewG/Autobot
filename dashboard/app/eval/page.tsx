@@ -40,12 +40,13 @@ import {
 interface EvalCase {
   id: number;
   proposal_id: number;
-  case_id: number;
+  case_id: number | null;
   expected_action: string;
   notes: string | null;
   created_at: string;
-  case_name: string;
-  agency_name: string;
+  case_name: string | null;
+  agency_name: string | null;
+  simulated_subject: string | null;
   proposal_action: string;
   last_run_id: number | null;
   last_predicted_action: string | null;
@@ -329,12 +330,18 @@ export default function EvalPage() {
                     {evalCases.map((ec) => (
                       <TableRow key={ec.id} className="cursor-pointer hover:bg-muted/50">
                         <TableCell>
-                          <Link
-                            href={`/requests/detail?id=${ec.case_id}`}
-                            className="hover:underline text-primary text-sm"
-                          >
-                            {ec.case_name || ec.agency_name || `Case ${ec.case_id}`}
-                          </Link>
+                          {ec.case_id ? (
+                            <Link
+                              href={`/requests/detail?id=${ec.case_id}`}
+                              className="hover:underline text-primary text-sm"
+                            >
+                              {ec.case_name || ec.agency_name || `Case #${ec.case_id}`}
+                            </Link>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              {ec.simulated_subject || `Sim #${ec.id}`}
+                            </span>
+                          )}
                           {ec.notes && (
                             <p className="text-xs text-muted-foreground truncate max-w-[160px]">
                               {ec.notes}
@@ -467,7 +474,7 @@ export default function EvalPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FlaskConical className="h-4 w-4" />
-              Eval History — {selectedCase?.case_name || `Case ${selectedCase?.case_id}`}
+              Eval History — {selectedCase?.case_name || selectedCase?.simulated_subject || (selectedCase?.case_id ? `Case #${selectedCase.case_id}` : `Sim #${selectedCase?.id}`)}
             </DialogTitle>
           </DialogHeader>
           {loadingHistory ? (

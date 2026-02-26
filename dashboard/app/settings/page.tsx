@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Check, Pencil } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Loader2, Check, Pencil, Bot } from "lucide-react";
 import { fetcher } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
 
@@ -15,6 +16,7 @@ interface User {
   id: number;
   name: string;
   email_handle: string;
+  default_autopilot_mode: string | null;
   signature_name: string | null;
   signature_title: string | null;
   signature_organization: string | null;
@@ -28,6 +30,7 @@ interface User {
 
 function UserSettings({ user }: { user: User }) {
   const [form, setForm] = useState({
+    default_autopilot_mode: user.default_autopilot_mode || "SUPERVISED",
     signature_name: user.signature_name || user.name || "",
     signature_title: user.signature_title || "",
     signature_organization: user.signature_organization || "",
@@ -45,6 +48,7 @@ function UserSettings({ user }: { user: User }) {
   // Reset form when user changes
   useEffect(() => {
     setForm({
+      default_autopilot_mode: user.default_autopilot_mode || "SUPERVISED",
       signature_name: user.signature_name || user.name || "",
       signature_title: user.signature_title || "",
       signature_organization: user.signature_organization || "",
@@ -110,6 +114,37 @@ function UserSettings({ user }: { user: User }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
+        {/* Autopilot mode */}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3 flex items-center gap-1.5">
+            <Bot className="h-3.5 w-3.5" />
+            Autopilot Mode
+          </p>
+          <div className="flex items-center justify-between rounded-md border px-4 py-3">
+            <div>
+              <p className="text-sm font-medium">
+                {form.default_autopilot_mode === "AUTOPILOT" ? "Autopilot" : "Supervised"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {form.default_autopilot_mode === "AUTOPILOT"
+                  ? "AI sends responses automatically without waiting for approval."
+                  : "AI proposes actions and waits for your approval before sending."}
+              </p>
+            </div>
+            <Switch
+              checked={form.default_autopilot_mode === "AUTOPILOT"}
+              onCheckedChange={(checked) => {
+                set("default_autopilot_mode", checked ? "AUTOPILOT" : "SUPERVISED");
+              }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1.5">
+            This is your default. Individual agencies can override it.
+          </p>
+        </div>
+
+        <Separator />
+
         {/* Signature fields */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
@@ -130,7 +165,7 @@ function UserSettings({ user }: { user: User }) {
               <Input
                 value={form.signature_title}
                 onChange={(e) => set("signature_title", e.target.value)}
-                placeholder="Documentary Researcher, Dr Insanity"
+                placeholder="e.g. Journalist, Researcher"
                 className="h-8 text-xs"
               />
             </div>
@@ -139,7 +174,7 @@ function UserSettings({ user }: { user: User }) {
               <Input
                 value={form.signature_organization}
                 onChange={(e) => set("signature_organization", e.target.value)}
-                placeholder="Dr Insanity"
+                placeholder="e.g. Independent Researcher"
                 className="h-8 text-xs"
               />
             </div>

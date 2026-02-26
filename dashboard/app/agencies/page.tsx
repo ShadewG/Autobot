@@ -149,7 +149,7 @@ export default function AgenciesPage() {
                           <span className="font-medium">{agency.name}</span>
                         </div>
                       </TableCell>
-                      <TableCell>{agency.state}</TableCell>
+                      <TableCell>{agency.state || '—'}</TableCell>
                       <TableCell>
                         <Badge
                           variant="outline"

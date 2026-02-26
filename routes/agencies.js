@@ -63,7 +63,7 @@ router.get('/', async (req, res) => {
         const agencies = result.rows.map(row => ({
             id: String(row.id),
             name: row.name,
-            state: row.state || null,
+            state: (row.state && row.state !== '{}') ? row.state : null,
             county: row.county || null,
             submission_method: row.portal_url ? 'PORTAL' : (row.email_main ? 'EMAIL' : 'UNKNOWN'),
             portal_url: row.portal_url || null,
@@ -158,7 +158,7 @@ router.get('/:id', async (req, res) => {
         const agency = {
             id: String(row.id),
             name: row.name,
-            state: row.state || null,
+            state: (row.state && row.state !== '{}') ? row.state : null,
             county: row.county || null,
             address: row.address || null,
             mailing_address: row.mailing_address || null,
