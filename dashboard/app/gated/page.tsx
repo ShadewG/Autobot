@@ -988,9 +988,14 @@ function MonitorPageContent() {
     const key = pendingAction.item.type === "proposal"
       ? `p:${pendingAction.item.data.id}`
       : `r:${pendingAction.item.data.id}`;
+    const caseId = pendingAction.item.type === "proposal"
+      ? (pendingAction.item.data as PendingProposal).case_id
+      : pendingAction.item.data.id;
+    const caseKey = `r:${caseId}`;
     setRemovedIds((prev) => {
       const next = new Set(prev);
       next.delete(key);
+      next.delete(caseKey);
       return next;
     });
     setPendingAction(null);

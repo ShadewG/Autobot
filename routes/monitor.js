@@ -118,23 +118,30 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     const caseId = proposal.case_id;
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
-        // Paused/queued runs are safe to complete — they're waiting or haven't started.
-        // Running runs are actively processing — don't force-complete them.
-        if (['paused', 'queued', 'waiting', 'created'].includes(existingRun.status)) {
+        // Paused/waiting runs are safe to complete — they're waiting on human decision.
+        if (['paused', 'waiting'].includes(existingRun.status)) {
             await db.updateAgentRun(existingRun.id, {
                 status: 'completed',
                 ended_at: new Date()
             });
+        } else if (['queued', 'created'].includes(existingRun.status)) {
+            // Queued/created runs may still execute in Trigger.dev — only complete if stale (>2min)
+            const runAge = Date.now() - new Date(existingRun.started_at || existingRun.created_at).getTime();
+            if (runAge > 120000) {
+                await db.updateAgentRun(existingRun.id, {
+                    status: 'completed',
+                    ended_at: new Date()
+                });
+            } else {
+                const err = new Error('Case has a recently queued agent run — wait for it to complete or try again shortly');
+                err.status = 409;
+                err.payload = { activeRun: { id: existingRun.id, status: existingRun.status, trigger_type: existingRun.trigger_type } };
+                throw err;
+            }
         } else if (existingRun.status === 'running') {
             const err = new Error('Case already has an active agent run');
             err.status = 409;
-            err.payload = {
-                activeRun: {
-                    id: existingRun.id,
-                    status: existingRun.status,
-                    trigger_type: existingRun.trigger_type
-                }
-            };
+            err.payload = { activeRun: { id: existingRun.id, status: existingRun.status, trigger_type: existingRun.trigger_type } };
             throw err;
         }
     }
