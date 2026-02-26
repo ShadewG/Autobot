@@ -336,14 +336,42 @@ export async function draftResponse(
 
     case "SEND_INITIAL_REQUEST":
     case "SUBMIT_PORTAL": {
-      const enrichedCaseData = adjustmentInstruction
-        ? { ...caseData, additional_details: `${caseData.additional_details || ''}\n\nHUMAN INSTRUCTION FOR ADJUSTMENT: ${adjustmentInstruction}`.trim() }
-        : caseData;
+      let enrichedCaseData = { ...caseData };
+
+      // If research found a referral agency (e.g. from WRONG_AGENCY redirect),
+      // override the case agency so the FOIA request addresses the correct recipient
+      if (researchCtx && researchCtx.likely_record_custodians?.length > 0) {
+        try {
+          const contactNotes = caseData.contact_research_notes
+            ? (typeof caseData.contact_research_notes === "string"
+              ? JSON.parse(caseData.contact_research_notes)
+              : caseData.contact_research_notes)
+            : null;
+          if (contactNotes?.contactResult?.contact_email) {
+            const referralName = contactNotes.brief?.suggested_agencies?.[0]?.name
+              || researchCtx.likely_record_custodians[0]?.split(" (")[0]
+              || enrichedCaseData.agency_name;
+            logger.info("Overriding agency for FOIA re-draft", {
+              caseId, from: enrichedCaseData.agency_name, to: referralName,
+            });
+            enrichedCaseData.agency_name = referralName;
+            enrichedCaseData.agency_email = contactNotes.contactResult.contact_email;
+            enrichedCaseData.portal_url = contactNotes.contactResult.portal_url || null;
+          }
+        } catch (e: any) {
+          logger.warn("Failed to parse contact_research_notes for agency override", { caseId, error: e.message });
+        }
+      }
+
+      if (adjustmentInstruction) {
+        enrichedCaseData.additional_details = `${enrichedCaseData.additional_details || ''}\n\nCRITICAL ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}`.trim();
+      }
+
       const foiaResult = await aiService.generateFOIARequest(enrichedCaseData);
       const foiaText = foiaResult?.request_text || foiaResult?.body || foiaResult?.requestText;
       if (!foiaText) throw new Error(`AI returned empty FOIA request for case ${caseId}`);
       draft = {
-        subject: `Public Records Request - ${caseData.subject_name || 'Records Request'}`,
+        subject: `Public Records Request - ${enrichedCaseData.subject_name || 'Records Request'}`,
         body_text: foiaText,
         body_html: null,
       };
