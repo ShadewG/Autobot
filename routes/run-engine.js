@@ -382,6 +382,17 @@ router.post('/proposals/:id/decision', async (req, res) => {
       decidedBy: req.body.decidedBy || 'human'
     };
 
+    // Auto-capture eval case on DISMISS: human told us the AI was wrong — save as ground truth.
+    // Fire-and-forget (best-effort, non-blocking).
+    if (action === 'DISMISS') {
+      db.query(
+        `INSERT INTO eval_cases (proposal_id, case_id, trigger_message_id, expected_action, notes)
+         VALUES ($1, $2, $3, 'DISMISSED', $4)
+         ON CONFLICT (proposal_id) DO NOTHING`,
+        [proposalId, proposal.case_id, proposal.trigger_message_id || null, reason || null]
+      ).catch(err => logger.warn('Auto eval-case insert failed (non-fatal)', { proposalId, error: err.message }));
+    }
+
     // === Trigger.dev path: complete waitpoint token ===
     if (proposal.waitpoint_token) {
       // Resolve token ID: gate-or-execute stores a UUID idempotencyKey initially,

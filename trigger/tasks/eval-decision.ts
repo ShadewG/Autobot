@@ -9,7 +9,7 @@
  * This is safe (mostly read-only), fast, and reflects real production behavior.
  */
 
-import { task } from "@trigger.dev/sdk";
+import { task } from "@trigger.dev/sdk/v3";
 import { generateObject } from "ai";
 import { z } from "zod";
 import db, { logger } from "../lib/db";
@@ -182,7 +182,10 @@ export const evalDecision = task({
           failureCategory = actionCorrect ? null : (judgment.failure_category || "WRONG_ROUTING");
         } catch (judgeErr: any) {
           logger.warn("LLM judge failed", { evalCaseId: evalCase.id, error: judgeErr.message });
-          // Still record the result without a judge score
+          // Still record the result — but flag wrong decisions so they're visible in dashboard
+          if (!actionCorrect) {
+            failureCategory = "UNKNOWN";
+          }
         }
 
         // Save eval run result

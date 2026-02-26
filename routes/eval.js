@@ -12,6 +12,20 @@ const router = express.Router();
 const db = require('../services/database');
 const { tasks } = require('@trigger.dev/sdk/v3');
 
+const KNOWN_ACTION_TYPES = new Set([
+    'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_CLARIFICATION', 'SEND_APPEAL',
+    'SEND_FEE_WAIVER_REQUEST', 'SEND_STATUS_UPDATE', 'SEND_INITIAL_REQUEST',
+    'NEGOTIATE_FEE', 'ACCEPT_FEE', 'DECLINE_FEE', 'RESPOND_PARTIAL_APPROVAL',
+    'SUBMIT_PORTAL', 'SEND_PDF_EMAIL', 'RESEARCH_AGENCY', 'REFORMULATE_REQUEST',
+    'CLOSE_CASE', 'ESCALATE', 'NONE',
+    'DISMISSED', // Special value meaning "AI should not have proposed anything"
+]);
+
+function parseId(val) {
+    const id = parseInt(val, 10);
+    return Number.isFinite(id) ? id : null;
+}
+
 /**
  * GET /api/eval/cases
  * List all eval cases with their latest eval run result.
@@ -69,6 +83,10 @@ router.post('/cases', async (req, res) => {
             return res.status(400).json({ success: false, error: 'proposalId is required' });
         }
 
+        if (expectedAction && !KNOWN_ACTION_TYPES.has(expectedAction)) {
+            return res.status(400).json({ success: false, error: `Unknown expectedAction: ${expectedAction}` });
+        }
+
         const proposalResult = await db.query('SELECT * FROM proposals WHERE id = $1', [proposalId]);
         const proposal = proposalResult.rows[0];
         if (!proposal) {
@@ -105,7 +123,8 @@ router.post('/cases', async (req, res) => {
  */
 router.delete('/cases/:id', async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
+        const id = parseId(req.params.id);
+        if (!id) return res.status(400).json({ success: false, error: 'Invalid ID' });
         await db.query('UPDATE eval_cases SET is_active = false WHERE id = $1', [id]);
         res.json({ success: true });
     } catch (error) {
@@ -122,7 +141,11 @@ router.delete('/cases/:id', async (req, res) => {
 router.post('/run', async (req, res) => {
     try {
         const { evalCaseId } = req.body;
-        const payload = evalCaseId ? { evalCaseId: parseInt(evalCaseId) } : { runAll: true };
+        const parsedId = evalCaseId ? parseId(evalCaseId) : null;
+        if (evalCaseId && !parsedId) {
+            return res.status(400).json({ success: false, error: 'Invalid evalCaseId' });
+        }
+        const payload = parsedId ? { evalCaseId: parsedId } : { runAll: true };
 
         const handle = await tasks.trigger('eval-decision', payload);
 
@@ -144,7 +167,7 @@ router.get('/summary', async (req, res) => {
                 COUNT(DISTINCT ec.id)::int                                                      AS total_cases,
                 COUNT(er.id) FILTER (WHERE er.ran_at > NOW() - INTERVAL '7 days')::int          AS runs_last_7d,
                 ROUND(AVG(er.judge_score)
-                    FILTER (WHERE er.ran_at > NOW() - INTERVAL '7 days')::numeric, 2)            AS avg_score_7d,
+                    FILTER (WHERE er.ran_at > NOW() - INTERVAL '7 days'), 2)                    AS avg_score_7d,
                 COUNT(*) FILTER (
                     WHERE er.action_correct = true
                     AND er.ran_at > NOW() - INTERVAL '7 days'
@@ -193,7 +216,8 @@ router.get('/summary', async (req, res) => {
  */
 router.get('/cases/:id/history', async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
+        const id = parseId(req.params.id);
+        if (!id) return res.status(400).json({ success: false, error: 'Invalid ID' });
         const result = await db.query(
             `SELECT * FROM eval_runs WHERE eval_case_id = $1 ORDER BY ran_at DESC LIMIT 50`,
             [id]
