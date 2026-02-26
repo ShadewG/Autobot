@@ -13,7 +13,7 @@ import { classificationSchema, type ClassificationOutput } from "../lib/schemas"
 import db, { aiService, logger } from "../lib/db";
 import type { ClassificationResult, CaseContext, Classification } from "../lib/types";
 
-const CLASSIFICATION_MAP: Record<string, Classification> = {
+export const CLASSIFICATION_MAP: Record<string, Classification> = {
   fee_request: "FEE_QUOTE",
   question: "CLARIFICATION_REQUEST",
   more_info_needed: "CLARIFICATION_REQUEST",
@@ -31,7 +31,7 @@ const CLASSIFICATION_MAP: Record<string, Classification> = {
   other: "UNKNOWN",
 };
 
-function buildClassificationPrompt(
+export function buildClassificationPrompt(
   message: any,
   caseData: any,
   threadMessages: any[],
@@ -370,6 +370,80 @@ export async function classifyInbound(
     requiresResponse,
     portalUrl: aiResult.portal_url,
     suggestedAction,
+    reasonNoResponse: aiResult.reason_no_response,
+    unansweredAgencyQuestion: aiResult.unanswered_agency_question,
+    jurisdiction_level: (aiResult as any).jurisdiction_level || null,
+    response_nature: (aiResult as any).response_nature || null,
+    detected_exemption_citations: (aiResult as any).detected_exemption_citations || [],
+    decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
+    referralContact: (aiResult as any).referral_contact || null,
+  };
+}
+
+/**
+ * Classify message content directly without saving to DB.
+ * Used by the simulate-decision task for dry-run simulation.
+ */
+export async function classifyMessageContent(
+  message: { from_email?: string; subject?: string; body_text?: string },
+  caseData: any,
+  priorMessages: any[],
+  attachments: any[] = []
+): Promise<ClassificationResult> {
+  let aiResult: ClassificationOutput;
+  try {
+    const { object } = await generateObject({
+      model: classifyModel,
+      schema: classificationSchema,
+      prompt: buildClassificationPrompt(message, caseData, priorMessages, attachments),
+      providerOptions: classifyOptions,
+    });
+    aiResult = object;
+  } catch (aiError: any) {
+    logger.warn("classifyMessageContent: Vercel AI SDK failed, falling back to aiService", {
+      error: aiError.message,
+    });
+    const legacyAnalysis = await aiService.analyzeResponse(message, caseData, {
+      threadMessages: priorMessages,
+    });
+    aiResult = {
+      intent: legacyAnalysis.intent || "other",
+      confidence_score: legacyAnalysis.confidence_score || legacyAnalysis.confidence || 0.8,
+      sentiment: legacyAnalysis.sentiment || "neutral",
+      key_points: legacyAnalysis.key_points || [],
+      extracted_deadline: legacyAnalysis.extracted_deadline || null,
+      fee_amount: legacyAnalysis.fee_amount != null ? Number(legacyAnalysis.fee_amount) : null,
+      requires_response: legacyAnalysis.requires_response !== undefined
+        ? legacyAnalysis.requires_response
+        : legacyAnalysis.requires_action !== false,
+      portal_url: legacyAnalysis.portal_url || null,
+      suggested_action: legacyAnalysis.suggested_action || null,
+      reason_no_response: legacyAnalysis.reason_no_response || null,
+      unanswered_agency_question: legacyAnalysis.unanswered_agency_question || null,
+      denial_subtype: legacyAnalysis.denial_subtype || null,
+      constraints_to_add: legacyAnalysis.constraints_to_add || [],
+      scope_updates: legacyAnalysis.scope_updates || [],
+      fee_breakdown: legacyAnalysis.fee_breakdown || null,
+    } as ClassificationOutput;
+  }
+
+  const classification: Classification = CLASSIFICATION_MAP[aiResult.intent] || "UNKNOWN";
+  let feeAmount = aiResult.fee_amount != null ? Number(aiResult.fee_amount) : null;
+  if (feeAmount !== null && (isNaN(feeAmount) || feeAmount < 1)) feeAmount = null;
+
+  let requiresResponse = aiResult.requires_response;
+  if (aiResult.unanswered_agency_question && !requiresResponse) requiresResponse = true;
+
+  return {
+    classification,
+    confidence: aiResult.confidence_score,
+    sentiment: aiResult.sentiment,
+    extractedFeeAmount: feeAmount,
+    extractedDeadline: aiResult.extracted_deadline,
+    denialSubtype: aiResult.denial_subtype || null,
+    requiresResponse,
+    portalUrl: aiResult.portal_url,
+    suggestedAction: aiResult.suggested_action,
     reasonNoResponse: aiResult.reason_no_response,
     unansweredAgencyQuestion: aiResult.unanswered_agency_question,
     jurisdiction_level: (aiResult as any).jurisdiction_level || null,

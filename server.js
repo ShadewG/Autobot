@@ -65,6 +65,7 @@ const userRoutes = require('./routes/users');
 const authRoutes = require('./routes/auth');
 const caseAgenciesRoutes = require('./routes/case-agencies');
 const evalRoutes = require('./routes/eval');
+const simulateRoutes = require('./routes/simulate');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
@@ -81,6 +82,7 @@ app.use('/api/users', userRoutes);  // Users: multi-user email routing
 app.use('/api/auth', authRoutes);  // Auth: login/logout/me
 app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency support per case
 app.use('/api/eval', evalRoutes);  // Eval: AI decision quality tracking
+app.use('/api/simulate', simulateRoutes);  // Simulator: dry-run decision pipeline
 
 // SSE endpoint for real-time dashboard updates
 const { eventBus } = require('./services/event-bus');
