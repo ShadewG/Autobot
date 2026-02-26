@@ -28,6 +28,7 @@ export default defineConfig({
         // Sync env vars from the CLI process into the Trigger.dev deploy
         const vars = [
           "OPENAI_API_KEY",
+          "ANTHROPIC_API_KEY",
           "DATABASE_URL",
           "SENDGRID_API_KEY",
           "SENDGRID_FROM_EMAIL",
