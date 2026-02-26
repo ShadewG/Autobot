@@ -44,7 +44,10 @@ export function buildClassificationPrompt(
       const label = m.portal_notification
         ? `PORTAL_NOTIFICATION:${(m.portal_notification_provider || "unknown").toUpperCase()}`
         : m.direction?.toUpperCase();
-      return `[${label}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`;
+      const date = m.sent_at || m.received_at || m.created_at;
+      const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
+      const sender = m.direction === "inbound" ? (m.from_email || "unknown") : (m.to_email || "unknown");
+      return `[${label} | ${dateStr} | ${sender}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 800)}`;
     })
     .join("\n---\n");
 

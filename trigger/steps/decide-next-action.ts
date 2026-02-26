@@ -11,6 +11,7 @@ import { decisionSchema, type DecisionOutput } from "../lib/schemas";
 import db, { logger } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
+import { submitPortal } from "../tasks/submit-portal";
 import type {
   DecisionResult,
   Classification,
@@ -199,16 +200,19 @@ function buildDecisionPrompt(params: {
     : caseData?.requested_records || "Various records";
 
   const threadSummary = threadMessages
-    .slice(0, 8)
+    .slice(0, 10)
     .reverse()
     .map((m: any) => {
-      const body = (m.body_text || m.body_html || "").replace(/\s+/g, " ").trim().substring(0, 240);
+      const body = (m.body_text || m.body_html || "").replace(/\s+/g, " ").trim().substring(0, 600);
       const label = m.portal_notification
         ? `PORTAL_NOTIFICATION:${(m.portal_notification_provider || "unknown").toUpperCase()}`
         : String(m.direction || "unknown").toUpperCase();
-      return `[${label}] ${m.subject || "(no subject)"} | ${body}`;
+      const date = m.sent_at || m.received_at || m.created_at;
+      const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
+      const sender = m.direction === "inbound" ? (m.from_email || "unknown") : (m.to_email || "unknown");
+      return `[${label} | ${dateStr} | ${sender}] ${m.subject || "(no subject)"}\n${body}`;
     })
-    .join("\n");
+    .join("\n---\n");
 
   const denialSubtype = params.denialSubtype || null;
   const jurisdictionLevel = params.jurisdictionLevel || null;
@@ -830,22 +834,34 @@ async function deterministicRouting(
   // PORTAL_REDIRECT
   if (classification === "PORTAL_REDIRECT") {
     await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-    await db.updateCaseStatus(caseId, "pending", { substatus: "portal_required" });
+    await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "portal_redirect" });
     try {
       const caseData = await db.getCaseById(caseId);
-      await createPortalTask({
+      const effectiveUrl = portalUrl || caseData?.portal_url;
+      const task = await createPortalTask({
         caseId,
-        portalUrl: portalUrl || caseData?.portal_url,
+        portalUrl: effectiveUrl,
         actionType: "SUBMIT_VIA_PORTAL",
         subject: caseData?.request_summary || "FOIA Request",
         bodyText: "Agency requires portal submission.",
         status: "PENDING",
-        instructions: `Submit through portal at: ${portalUrl || "their website"}`,
+        instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
+      });
+      await submitPortal.trigger({
+        caseId,
+        portalUrl: effectiveUrl!,
+        provider: caseData?.portal_provider || null,
+        instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
+        portalTaskId: task?.id || null,
+      }, {
+        queue: `case-${caseId}`,
+        idempotencyKey: `portal-redirect:${caseId}:${Date.now()}`,
+        idempotencyKeyTTL: "1h",
       });
     } catch (e: any) {
-      logger.error("Failed to create portal task", { caseId, error: e.message });
+      logger.error("Failed to create/trigger portal task", { caseId, error: e.message });
     }
-    return noAction(["Portal redirect - task created"]);
+    return noAction(["Portal redirect - task created and triggered"]);
   }
 
   // WRONG_AGENCY — cancel in-flight work, add constraint, then research
@@ -971,22 +987,34 @@ export async function decideNextAction(
       // Handle suggested actions for no-response cases
       if (suggestedAction === "use_portal") {
         await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-        await db.updateCaseStatus(caseId, "pending", { substatus: "portal_required" });
+        await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "portal_required" });
         try {
           const caseData = await db.getCaseById(caseId);
-          await createPortalTask({
+          const effectiveUrl = portalUrl || caseData?.portal_url;
+          const task = await createPortalTask({
             caseId,
-            portalUrl: portalUrl || caseData?.portal_url,
+            portalUrl: effectiveUrl,
             actionType: "SUBMIT_VIA_PORTAL",
             subject: caseData?.request_summary || "FOIA Request",
             bodyText: "Agency requires portal submission.",
             status: "PENDING",
-            instructions: `Submit through agency portal at: ${portalUrl || "their website"}`,
+            instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
+          });
+          await submitPortal.trigger({
+            caseId,
+            portalUrl: effectiveUrl!,
+            provider: caseData?.portal_provider || null,
+            instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
+            portalTaskId: task?.id || null,
+          }, {
+            queue: `case-${caseId}`,
+            idempotencyKey: `use-portal:${caseId}:${messageId || "sched"}`,
+            idempotencyKeyTTL: "1h",
           });
         } catch (e: any) {
-          logger.error("Failed to create portal task", { caseId, error: e.message });
+          logger.error("Failed to create/trigger portal task", { caseId, error: e.message });
         }
-        return noAction([...reasoning, "Portal redirect - task created"]);
+        return noAction([...reasoning, "Portal redirect - task created and triggered"]);
       }
       if (suggestedAction === "download") {
         await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
@@ -1089,15 +1117,31 @@ export async function decideNextAction(
           if (caseData?.portal_url) {
             await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "Portal retry", requires_human: false });
             try {
-              await createPortalTask({
+              const task = await createPortalTask({
                 caseId,
                 portalUrl: caseData.portal_url,
                 actionType: "SUBMIT_VIA_PORTAL",
                 subject: caseData?.request_summary || "FOIA Request",
                 bodyText: ri || "Retry portal submission",
                 status: "PENDING",
+                instructions: `Retry portal submission to ${caseData.agency_name || "agency"} at: ${caseData.portal_url}`,
               });
-            } catch (e: any) { /* non-fatal */ }
+              // Trigger the actual portal submission task
+              await submitPortal.trigger({
+                caseId,
+                portalUrl: caseData.portal_url,
+                provider: caseData.portal_provider || null,
+                instructions: ri || "Retry portal submission",
+                portalTaskId: task?.id || null,
+              }, {
+                queue: `case-${caseId}`,
+                idempotencyKey: `retry-portal:${caseId}:${Date.now()}`,
+                idempotencyKeyTTL: "1h",
+              });
+              logger.info("Portal retry triggered", { caseId, portalTaskId: task?.id });
+            } catch (e: any) {
+              logger.error("Failed to create/trigger portal retry", { caseId, error: e.message });
+            }
           }
           return noAction([...reasoning, "Portal retry initiated"]);
         },

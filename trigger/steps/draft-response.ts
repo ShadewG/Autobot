@@ -56,7 +56,8 @@ export async function draftResponse(
         }
         const date = m.sent_at || m.received_at || m.created_at;
         const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
-        return `[${dir} ${dateStr}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`;
+        const sender = m.direction === "inbound" ? (m.from_email || "") : (m.to_email || "");
+        return `[${dir} | ${dateStr} | ${sender}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 800)}`;
       })
       .join("\n---\n");
     logger.info("Draft correspondence context prepared", {
