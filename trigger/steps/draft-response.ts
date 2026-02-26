@@ -48,7 +48,12 @@ export async function draftResponse(
 
     correspondenceContext = recentMessages
       .map((m: any) => {
-        const dir = m.direction === "inbound" ? "AGENCY REPLY" : "OUR MESSAGE";
+        let dir: string;
+        if (m.portal_notification) {
+          dir = `PORTAL NOTIFICATION (${m.portal_notification_provider || "unknown"})`;
+        } else {
+          dir = m.direction === "inbound" ? "AGENCY REPLY" : "OUR MESSAGE";
+        }
         const date = m.sent_at || m.received_at || m.created_at;
         const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
         return `[${dir} ${dateStr}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`;

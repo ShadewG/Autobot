@@ -1480,49 +1480,59 @@ class SendGridService {
 
     detectPortalNotification({ fromEmail, subject = '', text = '' }) {
         const emailDomain = (fromEmail || '').split('@')[1]?.toLowerCase() || '';
-        const haystack = `${subject} ${text}`.toLowerCase();
+        // Only use subject for keyword matching — body text contains quoted reply
+        // chains that trigger false positives on agency replies to portal-submitted requests
+        const subjectLower = (subject || '').toLowerCase();
 
         let pendingPortalNotification = null;
 
         for (const provider of PORTAL_PROVIDERS) {
             const domainMatch = provider.domains.some((domain) => emailDomain.includes(domain));
-            const keywordMatch = provider.keywords.some((keyword) => haystack.includes(keyword.toLowerCase()));
 
-            if (domainMatch || keywordMatch) {
-                const inferredDomain = domainMatch ? emailDomain.split('>').shift() : null;
+            // Only trust domain match — keyword-in-body is unreliable (quoted threads)
+            if (domainMatch) {
+                const inferredDomain = emailDomain.split('>').shift() || null;
                 const portalUrl = inferredDomain
                     ? `https://${inferredDomain}${provider.defaultPath}`
                     : null;
 
                 const instructionHints = ['submit', 'portal', 'request center', 'use the portal', 'request can be found'];
-                const textHasInstructions = instructionHints.some((hint) => haystack.includes(hint));
-                const requiresSubmission = keywordMatch || textHasInstructions;
+                const textHasInstructions = instructionHints.some((hint) => subjectLower.includes(hint));
 
                 pendingPortalNotification = {
                     provider: provider.name,
-                    type: requiresSubmission ? 'submission_required' : 'status_update',
+                    type: textHasInstructions ? 'submission_required' : 'status_update',
                     portal_url: portalUrl
                 };
                 break;
             }
         }
 
-        // Fallback: scan body for explicit portal URLs/instructions
-        const combinedText = `${subject}\n${text}`;
-        const urls = extractUrls(combinedText) || [];
-        const portalKeywordHints = ['portal', 'public records', 'request center', 'submit', 'nextrequest', 'govqa', 'justfoia'];
+        // Fallback: scan SUBJECT for portal keywords (not body — too many false positives from quoted threads)
+        if (!pendingPortalNotification) {
+            for (const provider of PORTAL_PROVIDERS) {
+                const subjectKeywordMatch = provider.keywords.some((keyword) => subjectLower.includes(keyword.toLowerCase()));
+                if (subjectKeywordMatch) {
+                    pendingPortalNotification = {
+                        provider: provider.name,
+                        type: 'submission_required',
+                        portal_url: null
+                    };
+                    break;
+                }
+            }
+        }
 
-        for (const rawUrl of urls) {
+        // Fallback: scan for explicit portal URLs in subject only (not body)
+        const subjectUrls = extractUrls(subject) || [];
+        for (const rawUrl of subjectUrls) {
             const normalized = normalizePortalUrl(rawUrl);
             if (!normalized || !isSupportedPortalUrl(normalized)) {
                 continue;
             }
 
-            const lowerUrl = normalized.toLowerCase();
             const provider = detectPortalProviderByUrl(normalized);
-            const hasKeyword = portalKeywordHints.some(keyword => lowerUrl.includes(keyword));
-
-            if (!provider && !hasKeyword) {
+            if (!provider) {
                 continue;
             }
 
@@ -1530,7 +1540,7 @@ class SendGridService {
                 provider: provider?.name || 'manual_portal',
                 type: 'submission_required',
                 portal_url: normalized,
-                instructions_excerpt: this.extractPortalInstructionSnippet(combinedText, rawUrl)
+                instructions_excerpt: this.extractPortalInstructionSnippet(subject, rawUrl)
             };
         }
 

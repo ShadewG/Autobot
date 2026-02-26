@@ -203,7 +203,10 @@ function buildDecisionPrompt(params: {
     .reverse()
     .map((m: any) => {
       const body = (m.body_text || m.body_html || "").replace(/\s+/g, " ").trim().substring(0, 240);
-      return `[${String(m.direction || "unknown").toUpperCase()}] ${m.subject || "(no subject)"} | ${body}`;
+      const label = m.portal_notification
+        ? `PORTAL_NOTIFICATION:${(m.portal_notification_provider || "unknown").toUpperCase()}`
+        : String(m.direction || "unknown").toUpperCase();
+      return `[${label}] ${m.subject || "(no subject)"} | ${body}`;
     })
     .join("\n");
 
@@ -241,6 +244,7 @@ ${JSON.stringify(scopeItems || [], null, 2)}
 ## Autopilot Mode: ${autopilotMode}
 
 ## Thread Summary
+IMPORTANT: Messages labeled [PORTAL_NOTIFICATION:*] are automated emails from records portals (NextRequest, GovQA, etc.) and reflect ONLY the portal track status. A portal marked "closed" or "completed" does NOT mean the case is resolved — there may be active direct email correspondence with the agency that still needs a response. Base your decision on the classifier result and direct agency correspondence.
 ${threadSummary || "No thread messages available."}
 
 ## Policy Rulebook (follow these rules strictly)

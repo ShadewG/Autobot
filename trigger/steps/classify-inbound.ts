@@ -40,10 +40,12 @@ export function buildClassificationPrompt(
   const threadContext = threadMessages
     .slice(0, 10)
     .reverse()
-    .map(
-      (m: any) =>
-        `[${m.direction?.toUpperCase()}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`
-    )
+    .map((m: any) => {
+      const label = m.portal_notification
+        ? `PORTAL_NOTIFICATION:${(m.portal_notification_provider || "unknown").toUpperCase()}`
+        : m.direction?.toUpperCase();
+      return `[${label}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 500)}`;
+    })
     .join("\n---\n");
 
   const requestedRecords = Array.isArray(caseData.requested_records)
@@ -60,6 +62,7 @@ export function buildClassificationPrompt(
 - **Current Status**: ${caseData.status || "Unknown"}
 
 ## Thread History (most recent last)
+NOTE: Messages labeled [PORTAL_NOTIFICATION:*] are automated system emails from records portals (NextRequest, GovQA, etc.). These reflect the STATUS OF THE PORTAL TRACK ONLY, not the overall case status. A portal showing "closed" or "completed" does NOT mean the direct email correspondence with the agency is resolved. Classify based on the TRIGGER MESSAGE below, not portal status notifications.
 ${threadContext || "No prior messages."}
 
 ## Message to Classify
