@@ -28,30 +28,47 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
   const analysis = await db.getLatestResponseAnalysis(caseId);
   // Use DB key_points when available; fall back to inline key_points from classification (e.g. mock/simulator context)
   const keyPoints: string[] = analysis?.key_points?.length ? analysis.key_points : (inlineKeyPoints || []);
-  const fullText = keyPoints.join(" ").toLowerCase();
+
+  // Also check the original message body — key_points may paraphrase and lose indicator phrases
+  const latestMessage = await db.query(
+    `SELECT body_text FROM messages WHERE case_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`,
+    [caseId]
+  );
+  const messageBody = latestMessage?.rows?.[0]?.body_text || "";
+
+  // Combine key_points + message body for indicator scanning
+  const allTextSources = [...keyPoints, messageBody];
+  const fullText = allTextSources.join(" ").toLowerCase();
 
   // Legally unappealable: citizen/residency restrictions (McBurney v. Young)
   const citizenRestriction = /\bavailable only to [\w ]*(citizen|resident)\b|\bcitizen[- ]only\b|\bresidency restriction\b|\bmcburney v\.?\s*young\b|\bonly [\w ]*citizens\b may/i.test(fullText);
   if (citizenRestriction) return "strong";
 
   const strongIndicators = [
-    // Note: "exemption", "statute", "ongoing" (standalone), and "pending litigation" removed — too broad.
-    // Standalone "ongoing" matches "ongoing civil proceedings" (challengeable); "pending litigation" matches
-    // civil holds that are NOT unwinnable. Require explicit criminal/investigation language instead.
-    "law enforcement", "ongoing investigation",
-    "in court", "cannot be provided", "nothing can be provided",
-    "confidential", "sealed", "court",
-    "active case", "pending case", "active prosecution",
-  ]; // Note: "privacy", "exemption", "statute" also excluded — too generic
-  let strongCount = keyPoints.filter((p: string) =>
-    strongIndicators.some((ind) => p.toLowerCase().includes(ind))
+    // Criminal/investigation language — requires explicit enforcement context
+    "law enforcement", "ongoing investigation", "federal investigation",
+    "enforcement proceedings", "active prosecution", "active case", "pending case",
+    // Court/legal
+    "in court", "sealed", "court order",
+    // Withholding language
+    "cannot be provided", "nothing can be provided", "prohibited from disclosing",
+    "confidential",
+    // Statutory exemptions (specific enough to indicate strong denial)
+    "552(b)(7)", "exemption 7(a)", "exemption 7a",
+  ];
+
+  // Count unique strong indicators found across all text sources (not per-source)
+  let strongCount = strongIndicators.filter((ind) =>
+    fullText.includes(ind)
   ).length;
+  // Cap at a reasonable max to avoid over-counting from message body repeating phrases
+  strongCount = Math.min(strongCount, 4);
 
   // The classifier's denial_subtype is itself strong evidence — it already analyzed the message
   if (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order") {
-    strongCount += 1; // Subtype adds weight but requires a corroborating key_point to reach "strong"
+    strongCount += 1; // Subtype adds weight but requires a corroborating indicator to reach "strong"
   } else if (denialSubtype === "privacy_exemption") {
-    strongCount += 1; // Privacy exemption requires concrete language (confidential/sealed/cannot be provided) to reach "strong"
+    strongCount += 1; // Privacy exemption requires concrete language to reach "strong"
   }
 
   if (strongCount >= 2) return "strong";
