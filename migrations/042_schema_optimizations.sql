@@ -1,14 +1,14 @@
 -- 042_schema_optimizations.sql
 -- Schema performance optimizations based on production stat analysis.
 -- Fixes: missing indexes, duplicate indexes, wrong FK, autovacuum, planner settings.
--- All index operations use CONCURRENTLY to avoid locking production tables.
+-- Index operations use regular CREATE/DROP (CONCURRENTLY can't run in transactions).
 
 -- =============================================================================
 -- CRITICAL: Missing FK index on messages.case_id
 -- Root cause of 2.4M sequential scans / 371M tuple reads on messages table.
 -- Every AI pipeline run that loads case history does WHERE case_id = $1 with no index.
 -- =============================================================================
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_messages_case_id
+CREATE INDEX IF NOT EXISTS idx_messages_case_id
     ON public.messages (case_id);
 
 -- =============================================================================
@@ -32,7 +32,7 @@ SELECT pg_reload_conf();
 -- HIGH: Missing indexes on response_analysis.case_id
 -- Queried frequently in AI pipeline context loading: WHERE case_id = $1 ORDER BY created_at
 -- =============================================================================
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_response_analysis_case_id
+CREATE INDEX IF NOT EXISTS idx_response_analysis_case_id
     ON public.response_analysis (case_id);
 
 -- =============================================================================
@@ -40,15 +40,15 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_response_analysis_case_id
 -- =============================================================================
 
 -- Dashboard queue: WHERE user_id = $1 AND status = $2 (very common)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_cases_user_status
+CREATE INDEX IF NOT EXISTS idx_cases_user_status
     ON public.cases (user_id, status);
 
 -- Proposal lookup: WHERE case_id = $1 AND status IN (...) (every pipeline run)
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_proposals_case_status
+CREATE INDEX IF NOT EXISTS idx_proposals_case_status
     ON public.proposals (case_id, status);
 
 -- Latest agent run per case: WHERE case_id = $1 ORDER BY started_at DESC LIMIT 1
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_runs_case_started_desc
+CREATE INDEX IF NOT EXISTS idx_agent_runs_case_started_desc
     ON public.agent_runs (case_id, started_at DESC);
 
 -- =============================================================================
@@ -59,12 +59,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_agent_runs_case_started_desc
 -- =============================================================================
 
 -- Keep proposals_execution_key_key (the constraint), drop the others
-DROP INDEX CONCURRENTLY IF EXISTS proposals_execution_key_unique;
-DROP INDEX CONCURRENTLY IF EXISTS idx_proposals_execution_key;
+DROP INDEX IF EXISTS proposals_execution_key_unique;
+DROP INDEX IF EXISTS idx_proposals_execution_key;
 
 -- Keep proposals_proposal_key_key (the constraint), drop the others
-DROP INDEX CONCURRENTLY IF EXISTS proposals_proposal_key_unique;
-DROP INDEX CONCURRENTLY IF EXISTS idx_proposals_key;
+DROP INDEX IF EXISTS proposals_proposal_key_unique;
+DROP INDEX IF EXISTS idx_proposals_key;
 
 -- =============================================================================
 -- HIGH: Drop large unused indexes (zero scans since last reset)
@@ -72,33 +72,33 @@ DROP INDEX CONCURRENTLY IF EXISTS idx_proposals_key;
 -- =============================================================================
 
 -- Trigram index on agencies.name — 1048 kB for 1 row, never used
-DROP INDEX CONCURRENTLY IF EXISTS idx_agencies_name_trgm;
+DROP INDEX IF EXISTS idx_agencies_name_trgm;
 
 -- Duplicate of idx_agencies_notion_page_id (which has 835K scans)
-DROP INDEX CONCURRENTLY IF EXISTS agencies_notion_page_id_key;
+DROP INDEX IF EXISTS agencies_notion_page_id_key;
 
 -- GIN indexes never queried
-DROP INDEX CONCURRENTLY IF EXISTS idx_cases_constraints;
-DROP INDEX CONCURRENTLY IF EXISTS idx_cases_scope_items;
-DROP INDEX CONCURRENTLY IF EXISTS idx_activity_log_meta;
+DROP INDEX IF EXISTS idx_cases_constraints;
+DROP INDEX IF EXISTS idx_cases_scope_items;
+DROP INDEX IF EXISTS idx_activity_log_meta;
 
 -- Stale/unused column indexes
-DROP INDEX CONCURRENTLY IF EXISTS idx_agencies_portal_url;
-DROP INDEX CONCURRENTLY IF EXISTS idx_agencies_sync_status;
-DROP INDEX CONCURRENTLY IF EXISTS idx_agent_runs_thread_id;
-DROP INDEX CONCURRENTLY IF EXISTS idx_agent_runs_trigger_type;
-DROP INDEX CONCURRENTLY IF EXISTS idx_cases_langgraph_thread_id;
-DROP INDEX CONCURRENTLY IF EXISTS idx_cases_next_due_at;
-DROP INDEX CONCURRENTLY IF EXISTS idx_cases_pause_reason;
-DROP INDEX CONCURRENTLY IF EXISTS idx_cases_autopilot_mode;
-DROP INDEX CONCURRENTLY IF EXISTS idx_proposals_thread_id;
+DROP INDEX IF EXISTS idx_agencies_portal_url;
+DROP INDEX IF EXISTS idx_agencies_sync_status;
+DROP INDEX IF EXISTS idx_agent_runs_thread_id;
+DROP INDEX IF EXISTS idx_agent_runs_trigger_type;
+DROP INDEX IF EXISTS idx_cases_langgraph_thread_id;
+DROP INDEX IF EXISTS idx_cases_next_due_at;
+DROP INDEX IF EXISTS idx_cases_pause_reason;
+DROP INDEX IF EXISTS idx_cases_autopilot_mode;
+DROP INDEX IF EXISTS idx_proposals_thread_id;
 
 -- Duplicate on cases.notion_page_id (idx_cases_notion_id with 1186 scans is kept)
-DROP INDEX CONCURRENTLY IF EXISTS cases_notion_page_id_key;
+DROP INDEX IF EXISTS cases_notion_page_id_key;
 
 -- Zero-scan indexes on tiny tables
-DROP INDEX CONCURRENTLY IF EXISTS idx_messages_provider_message_id;
-DROP INDEX CONCURRENTLY IF EXISTS idx_messages_sendgrid_id;
+DROP INDEX IF EXISTS idx_messages_provider_message_id;
+DROP INDEX IF EXISTS idx_messages_sendgrid_id;
 
 -- =============================================================================
 -- HIGH: Tune autovacuum for small, high-update-rate tables
@@ -171,27 +171,8 @@ ALTER TABLE public.email_threads SET (
     autovacuum_analyze_threshold = 5
 );
 
--- =============================================================================
--- MEDIUM: Immediate VACUUM ANALYZE on tables with severe bloat
--- Tables with >40% dead tuples and "never vacuumed" status
--- =============================================================================
-VACUUM ANALYZE public.agencies;
-VACUUM ANALYZE public.dead_letter_queue;
-VACUUM ANALYZE public.foia_strategy_outcomes;
-VACUUM ANALYZE public.case_agencies;
-VACUUM ANALYZE public.portal_tasks;
-VACUUM ANALYZE public.executions;
-VACUUM ANALYZE public.follow_up_schedule;
-VACUUM ANALYZE public.generated_requests;
-VACUUM ANALYZE public.attachments;
-VACUUM ANALYZE public.fee_history;
-VACUUM ANALYZE public.email_threads;
-VACUUM ANALYZE public.response_analysis;
-VACUUM ANALYZE public.messages;
-VACUUM ANALYZE public.proposals;
-VACUUM ANALYZE public.cases;
-VACUUM ANALYZE public.agent_runs;
-VACUUM ANALYZE public.activity_log;
+-- VACUUM ANALYZE skipped here — must be run outside a transaction.
+-- Run manually: VACUUM ANALYZE agencies, cases, proposals, messages, agent_runs, activity_log;
 
 -- =============================================================================
 -- MEDIUM: Remove duplicate columns (schema cleanup for cases table)
