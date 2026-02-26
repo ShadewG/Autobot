@@ -1005,7 +1005,16 @@ function MonitorPageContent() {
   ) => {
     if (pendingAction) clearTimeout(pendingAction.timerId);
     const key = item.type === "proposal" ? `p:${item.data.id}` : `r:${item.data.id}`;
-    setRemovedIds((prev) => new Set(prev).add(key));
+    const caseId = item.type === "proposal"
+      ? (item.data as PendingProposal).case_id
+      : item.data.id;
+    const caseKey = `r:${caseId}`;
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      next.add(caseKey);
+      return next;
+    });
     if (currentIndex >= queue.length - 1 && currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
     }
@@ -1018,6 +1027,7 @@ function MonitorPageContent() {
         setRemovedIds((prev) => {
           const next = new Set(prev);
           next.delete(key);
+          next.delete(caseKey);
           return next;
         });
       }

@@ -118,17 +118,14 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     const caseId = proposal.case_id;
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
-        // If the run is paused/running — it's likely the run that created this proposal
-        // and is waiting on the human decision. Mark it completed so we can proceed.
-        // Only block if the run is truly new and unrelated (queued in last 30s).
-        const runAge = Date.now() - new Date(existingRun.started_at).getTime();
-        const isStale = runAge > 30000; // >30s old = likely the gating run
-        if (existingRun.status === 'paused' || isStale) {
+        // Paused/queued runs are safe to complete — they're waiting or haven't started.
+        // Running runs are actively processing — don't force-complete them.
+        if (['paused', 'queued', 'waiting', 'created'].includes(existingRun.status)) {
             await db.updateAgentRun(existingRun.id, {
                 status: 'completed',
                 ended_at: new Date()
             });
-        } else if (existingRun.status === 'queued' || existingRun.status === 'running') {
+        } else if (existingRun.status === 'running') {
             const err = new Error('Case already has an active agent run');
             err.status = 409;
             err.payload = {
