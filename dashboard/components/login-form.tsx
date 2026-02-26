@@ -8,14 +8,33 @@ export function LoginForm() {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [touched, setTouched] = useState({ name: false, password: false });
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!name.trim() || !password) return;
+    setTouched({ name: true, password: true });
+    if (!name.trim() && !password) {
+      setValidationError("Name and password are required");
+      return;
+    }
+    if (!name.trim()) {
+      setValidationError("Name is required");
+      return;
+    }
+    if (!password) {
+      setValidationError("Password is required");
+      return;
+    }
+    setValidationError(null);
     setSubmitting(true);
     await login(name.trim(), password);
     setSubmitting(false);
   };
+
+  const displayError = validationError || error;
+  const showNameError = touched.name && !name.trim();
+  const showPasswordError = touched.password && !password;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
@@ -33,10 +52,10 @@ export function LoginForm() {
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => { setName(e.target.value); setValidationError(null); }}
             autoFocus
             autoComplete="username"
-            className="w-full h-9 px-3 text-sm bg-card border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            className={`w-full h-9 px-3 text-sm bg-card border text-foreground focus:outline-none focus:ring-1 focus:ring-ring ${showNameError ? "border-destructive" : "border-border"}`}
           />
         </div>
 
@@ -47,19 +66,19 @@ export function LoginForm() {
           <input
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e) => { setPassword(e.target.value); setValidationError(null); }}
             autoComplete="current-password"
-            className="w-full h-9 px-3 text-sm bg-card border border-border text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            className={`w-full h-9 px-3 text-sm bg-card border text-foreground focus:outline-none focus:ring-1 focus:ring-ring ${showPasswordError ? "border-destructive" : "border-border"}`}
           />
         </div>
 
-        {error && (
-          <p className="text-xs text-destructive">{error}</p>
+        {displayError && (
+          <p className="text-xs text-destructive">{displayError}</p>
         )}
 
         <button
           type="submit"
-          disabled={submitting || !name.trim() || !password}
+          disabled={submitting}
           className="w-full h-9 text-xs font-medium uppercase tracking-wider bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {submitting ? "..." : "Sign in"}

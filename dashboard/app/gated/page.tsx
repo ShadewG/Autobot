@@ -32,6 +32,7 @@ import {
   AlertTriangle,
   ChevronRight,
   ChevronLeft,
+  ChevronUp,
   RefreshCw,
   Edit,
   Trash2,
@@ -48,7 +49,15 @@ import {
   Mail,
   ArrowUpRight,
   MessageSquare,
+  RotateCcw,
+  Undo2,
+  Clock,
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 /* ─────────────────────────────────────────────
    Types — Monitor API shapes
@@ -499,6 +508,21 @@ function MonitorPageContent() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [editedBody, setEditedBody] = useState<string>("");
   const [editedSubject, setEditedSubject] = useState<string>("");
+  const [queueFilter, setQueueFilter] = useState<"all" | "proposals" | "reviews">("all");
+  const [caseNotFoundId, setCaseNotFoundId] = useState<number | null>(null);
+  const [pendingAction, setPendingAction] = useState<{
+    label: string;
+    item: QueueItem;
+    execute: () => Promise<void>;
+    timerId: ReturnType<typeof setTimeout>;
+    startedAt: number;
+  } | null>(null);
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [showDestructiveConfirm, setShowDestructiveConfirm] = useState<{
+    title: string;
+    description: string;
+    onConfirm: () => void;
+  } | null>(null);
   const initialCaseApplied = useRef(false);
 
   // ── Deep linking & user filter ─────────────
@@ -535,11 +559,15 @@ function MonitorPageContent() {
       type: "review" as const,
       data: r,
     }));
-    return [...proposals, ...reviews].filter((item) => {
+    let items = [...proposals, ...reviews].filter((item) => {
       const key = item.type === "proposal" ? `p:${item.data.id}` : `r:${item.data.id}`;
       return !removedIds.has(key);
     });
-  }, [overview, removedIds]);
+    // Apply stat card filter
+    if (queueFilter === "proposals") items = items.filter(i => i.type === "proposal");
+    if (queueFilter === "reviews") items = items.filter(i => i.type === "review");
+    return items;
+  }, [overview, removedIds, queueFilter]);
 
   // Clamp index when queue shrinks
   const safeIndex = queue.length === 0 ? 0 : Math.min(currentIndex, queue.length - 1);
@@ -559,7 +587,12 @@ function MonitorPageContent() {
       const id = item.type === "proposal" ? item.data.case_id : item.data.id;
       return id === targetId;
     });
-    if (idx >= 0) setCurrentIndex(idx);
+    if (idx >= 0) {
+      setCurrentIndex(idx);
+      setCaseNotFoundId(null);
+    } else {
+      setCaseNotFoundId(targetId);
+    }
     initialCaseApplied.current = true;
   }, [queue, searchParams]);
 
@@ -581,6 +614,14 @@ function MonitorPageContent() {
     selectedProposalId ? `/api/proposals/${selectedProposalId}` : null
   );
 
+  // Fetch audit trail for the selected case
+  const selectedCaseId = selectedItem
+    ? selectedItem.type === "proposal" ? selectedItem.data.case_id : selectedItem.data.id
+    : null;
+  const { data: auditData } = useSWR<{ success: boolean; actions: { id: number; event_type: string; description: string; created_at: string; user_id: number | null }[] }>(
+    selectedCaseId ? `/api/monitor/cases/${selectedCaseId}/audit?limit=5` : null
+  );
+
   // ── Inbound / Phone data (lazy: only fetch when tab is active) ──
 
   const { data: inboundData, mutate: mutateInbound } = useSWR<InboundResponse>(
@@ -595,12 +636,37 @@ function MonitorPageContent() {
 
   // ── SSE ────────────────────────────────────
 
+  const prevQueueLenRef = useRef(0);
   const sseUrl = appendUser("/api/monitor/events");
   const sseConnected = useSSE(sseUrl, () => {
     mutate();
     if (activeTab === "inbound") mutateInbound();
     if (activeTab === "calls") mutatePhone();
+    // Browser notification when tab is not focused
+    if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+      new Notification("AUTOBOT", { body: "New items need your attention" });
+    }
   });
+
+  // Request notification permission on first click
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "default") return;
+    const handler = () => {
+      Notification.requestPermission();
+      document.removeEventListener("click", handler);
+    };
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, []);
+
+  // Show toast when new items arrive while viewing the page
+  useEffect(() => {
+    if (prevQueueLenRef.current > 0 && queue.length > prevQueueLenRef.current) {
+      const diff = queue.length - prevQueueLenRef.current;
+      showToast(`${diff} new item${diff > 1 ? "s" : ""} added to queue`);
+    }
+    prevQueueLenRef.current = queue.length;
+  }, [queue.length]);
 
   // ── Navigation ─────────────────────────────
 
@@ -621,10 +687,16 @@ function MonitorPageContent() {
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
       if (
         showAdjustModal ||
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
+        showDestructiveConfirm ||
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target.isContentEditable ||
+        target.closest('[role="menu"]') ||
+        target.closest('[role="dialog"]')
       )
         return;
       if (e.key === "ArrowLeft") {
@@ -643,7 +715,7 @@ function MonitorPageContent() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigate, showAdjustModal, selectedItem, isSubmitting]);
+  }, [navigate, showAdjustModal, showDestructiveConfirm, selectedItem, isSubmitting]);
 
   // ── Actions ────────────────────────────────
 
@@ -693,29 +765,27 @@ function MonitorPageContent() {
     }
   };
 
-  const handleDismiss = async (reason: string) => {
+  const handleDismiss = (reason: string) => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
-    setIsSubmitting(true);
-    try {
-      const res = await fetch(
-        `/api/monitor/proposals/${selectedItem.data.id}/decision`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "DISMISS", dismiss_reason: reason }),
+    const item = selectedItem;
+    scheduleUndoableAction(
+      `Dismissed: ${reason}`,
+      item,
+      async () => {
+        const res = await fetch(
+          `/api/monitor/proposals/${item.data.id}/decision`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "DISMISS", dismiss_reason: reason }),
+          }
+        );
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || `Failed (${res.status})`);
         }
-      );
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-      removeCurrentItem();
-      revalidateQueue();
-    } catch (err) {
-      alert(`Dismiss failed: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      setIsSubmitting(false);
-    }
+      },
+    );
   };
 
   const handleAdjust = async () => {
@@ -749,31 +819,35 @@ function MonitorPageContent() {
     }
   };
 
-  const handleWithdraw = async () => {
+  const handleWithdraw = () => {
     if (!selectedItem) return;
     const caseId =
       selectedItem.type === "proposal"
         ? selectedItem.data.case_id
         : selectedItem.data.id;
-    if (!confirm(`Withdraw case #${caseId}? This closes the request.`)) return;
-    setIsSubmitting(true);
-    try {
-      const res = await fetch(`/api/requests/${caseId}/withdraw`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason: "Withdrawn from monitor queue" }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || `Failed (${res.status})`);
-      }
-      removeCurrentItem();
-      revalidateQueue();
-    } catch (err) {
-      alert(`Withdraw failed: ${err instanceof Error ? err.message : err}`);
-    } finally {
-      setIsSubmitting(false);
-    }
+    const item = selectedItem;
+    setShowDestructiveConfirm({
+      title: `Withdraw case #${caseId}?`,
+      description: "This permanently closes the FOIA request. You have 5 seconds to undo after confirming.",
+      onConfirm: () => {
+        setShowDestructiveConfirm(null);
+        scheduleUndoableAction(
+          `Withdrawn: case #${caseId}`,
+          item,
+          async () => {
+            const res = await fetch(`/api/requests/${caseId}/withdraw`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reason: "Withdrawn from monitor queue" }),
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) {
+              throw new Error(data.error || `Failed (${res.status})`);
+            }
+          },
+        );
+      },
+    });
   };
 
   const handleMatchToCase = async (messageId: number, caseId: number) => {
@@ -846,6 +920,51 @@ function MonitorPageContent() {
     setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   }, []);
+
+  // Cancel pending undoable action and restore item to queue
+  const cancelPendingAction = useCallback(() => {
+    if (!pendingAction) return;
+    clearTimeout(pendingAction.timerId);
+    const key = pendingAction.item.type === "proposal"
+      ? `p:${pendingAction.item.data.id}`
+      : `r:${pendingAction.item.data.id}`;
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    setPendingAction(null);
+    showToast("Action undone");
+  }, [pendingAction, showToast]);
+
+  // Schedule a destructive action with 5-second undo window
+  const scheduleUndoableAction = useCallback((
+    label: string,
+    item: QueueItem,
+    apiCall: () => Promise<void>,
+  ) => {
+    if (pendingAction) clearTimeout(pendingAction.timerId);
+    const key = item.type === "proposal" ? `p:${item.data.id}` : `r:${item.data.id}`;
+    setRemovedIds((prev) => new Set(prev).add(key));
+    if (currentIndex >= queue.length - 1 && currentIndex > 0) {
+      setCurrentIndex(currentIndex - 1);
+    }
+    const timerId = setTimeout(async () => {
+      try {
+        await apiCall();
+        revalidateQueue();
+      } catch (err) {
+        showToast(`Failed: ${err instanceof Error ? err.message : err}`, "error");
+        setRemovedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      }
+      setPendingAction(null);
+    }, 5000);
+    setPendingAction({ label, item, execute: apiCall, timerId, startedAt: Date.now() });
+  }, [pendingAction, currentIndex, queue.length, revalidateQueue, showToast]);
 
   const handleAddToPhoneQueue = async (caseId: number, reason?: string) => {
     setAddingToPhoneQueue(true);
@@ -966,6 +1085,11 @@ function MonitorPageContent() {
   const summary = overview?.summary;
   const totalAttention = (summary?.pending_approvals_total || 0) + (summary?.human_review_total || 0);
 
+  // Tab title badge — show count when items need attention
+  useEffect(() => {
+    document.title = totalAttention > 0 ? `(${totalAttention}) AUTOBOT` : "AUTOBOT";
+  }, [totalAttention]);
+
   // For the selected proposal: use detail data if available, fallback to overview data
   const draftBody = (() => {
     if (selectedItem?.type !== "proposal") return null;
@@ -985,6 +1109,7 @@ function MonitorPageContent() {
   useEffect(() => {
     setEditedBody(draftBody || "");
     setEditedSubject(draftSubject || "");
+    setReasoningExpanded(false);
   }, [draftBody, draftSubject]);
 
   const reasoning = (() => {
@@ -1041,24 +1166,24 @@ function MonitorPageContent() {
           value={totalAttention}
           icon={AlertCircle}
           color={totalAttention > 0 ? "text-amber-400" : "text-green-400"}
-          onClick={() => setActiveTab("queue")}
-          active={activeTab === "queue"}
+          onClick={() => { setActiveTab("queue"); setQueueFilter("all"); setCurrentIndex(0); }}
+          active={activeTab === "queue" && queueFilter === "all"}
         />
         <StatBox
           label="Proposals"
           value={summary?.pending_approvals_total ?? 0}
           icon={FileText}
           color="text-blue-400"
-          onClick={() => setActiveTab("queue")}
-          active={activeTab === "queue"}
+          onClick={() => { setActiveTab("queue"); setQueueFilter("proposals"); setCurrentIndex(0); }}
+          active={activeTab === "queue" && queueFilter === "proposals"}
         />
         <StatBox
           label="Review"
           value={summary?.human_review_total ?? 0}
           icon={Shield}
           color="text-purple-400"
-          onClick={() => setActiveTab("queue")}
-          active={activeTab === "queue"}
+          onClick={() => { setActiveTab("queue"); setQueueFilter("reviews"); setCurrentIndex(0); }}
+          active={activeTab === "queue" && queueFilter === "reviews"}
         />
         <StatBox
           label="Inbound 24h"
@@ -1118,6 +1243,18 @@ function MonitorPageContent() {
           );
         })}
       </div>
+
+      {/* ── Case not found banner ──────────── */}
+      {caseNotFoundId && (
+        <div className="border border-amber-700/50 bg-amber-950/20 px-3 py-2 mb-4 flex items-center justify-between">
+          <p className="text-xs text-amber-400">
+            Case #{caseNotFoundId} is not in the current queue. Showing first available item.
+          </p>
+          <button onClick={() => setCaseNotFoundId(null)} className="text-xs text-muted-foreground hover:text-foreground ml-4">
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* ── Queue Tab ────────────────────────── */}
       {activeTab === "queue" && (<>
@@ -1362,17 +1499,40 @@ function MonitorPageContent() {
 
           {/* Reasoning */}
           {reasoning.length > 0 && (
-            <div className="border p-3">
-              <SectionLabel>Reasoning</SectionLabel>
-              {reasoning.map((r, i) => (
-                <p key={i} className="text-xs text-foreground/80 mb-1">
-                  <span className="text-muted-foreground mr-1.5 tabular-nums">
-                    {i + 1}.
-                  </span>
-                  {typeof r === "string" ? r : JSON.stringify(r)}
-                </p>
-              ))}
-            </div>
+            <Collapsible open={reasoningExpanded} onOpenChange={setReasoningExpanded}>
+              <div className="border p-3">
+                <SectionLabel>Reasoning</SectionLabel>
+                {reasoning.slice(0, 3).map((r, i) => (
+                  <p key={i} className="text-xs text-foreground/80 mb-1">
+                    <span className="text-muted-foreground mr-1.5 tabular-nums">
+                      {i + 1}.
+                    </span>
+                    {typeof r === "string" ? r : JSON.stringify(r)}
+                  </p>
+                ))}
+                <CollapsibleContent>
+                  {reasoning.slice(3).map((r, i) => (
+                    <p key={i + 3} className="text-xs text-foreground/80 mb-1">
+                      <span className="text-muted-foreground mr-1.5 tabular-nums">
+                        {i + 4}.
+                      </span>
+                      {typeof r === "string" ? r : JSON.stringify(r)}
+                    </p>
+                  ))}
+                </CollapsibleContent>
+                {reasoning.length > 3 && (
+                  <CollapsibleTrigger asChild>
+                    <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
+                      {reasoningExpanded ? (
+                        <><ChevronUp className="h-3 w-3" /> Show less</>
+                      ) : (
+                        <><ChevronDown className="h-3 w-3" /> Show {reasoning.length - 3} more...</>
+                      )}
+                    </button>
+                  </CollapsibleTrigger>
+                )}
+              </div>
+            </Collapsible>
           )}
 
           {/* Inbound message — full text */}
@@ -1427,10 +1587,23 @@ function MonitorPageContent() {
           {/* Draft content — editable */}
           {(draftBody || draftSubject || (selectedProposalId && !proposalDetail)) && (
             <div className="border p-3 space-y-2">
-              <SectionLabel>
-                {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
-                <span className="ml-2 text-[10px] text-muted-foreground font-normal normal-case">edit inline before approving</span>
-              </SectionLabel>
+              <div className="flex items-center justify-between">
+                <SectionLabel>
+                  {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
+                  <span className="ml-2 text-[10px] text-muted-foreground font-normal normal-case">edit inline before approving</span>
+                </SectionLabel>
+                {(editedBody !== (draftBody || "") || editedSubject !== (draftSubject || "")) && (
+                  <button
+                    className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                    onClick={() => {
+                      setEditedBody(draftBody || "");
+                      setEditedSubject(draftSubject || "");
+                    }}
+                  >
+                    <RotateCcw className="h-3 w-3" /> Reset to AI Draft
+                  </button>
+                )}
+              </div>
               {(draftSubject || editedSubject) && (
                 <input
                   className="w-full bg-background border rounded px-2 py-1 text-xs font-[inherit]"
@@ -1447,6 +1620,39 @@ function MonitorPageContent() {
                 placeholder={draftBody === null ? "(loading draft...)" : ""}
               />
             </div>
+          )}
+
+          {/* Audit trail */}
+          {auditData?.actions && auditData.actions.length > 0 && (
+            <Collapsible>
+              <div className="border p-3">
+                <div className="flex items-center justify-between">
+                  <SectionLabel>Recent Actions</SectionLabel>
+                  <CollapsibleTrigger asChild>
+                    <button className="text-[10px] text-primary hover:underline">
+                      Show
+                    </button>
+                  </CollapsibleTrigger>
+                </div>
+                <CollapsibleContent>
+                  <div className="mt-2 space-y-1.5">
+                    {auditData.actions.map((a) => (
+                      <div key={a.id} className="flex items-start gap-2 text-[10px]">
+                        <span className="text-muted-foreground whitespace-nowrap tabular-nums">
+                          {formatRelativeTime(a.created_at)}
+                        </span>
+                        <span className="text-foreground/80 break-words min-w-0">
+                          <span className="text-muted-foreground font-mono">{a.event_type.replace(/_/g, " ")}</span>
+                          {" — "}
+                          {(a.description || "").substring(0, 120)}
+                          {a.user_id ? ` (${userNameMap[a.user_id] || `user #${a.user_id}`})` : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </div>
+            </Collapsible>
           )}
 
           {/* Action buttons */}
@@ -1819,7 +2025,27 @@ function MonitorPageContent() {
                     variant="outline"
                     className="flex-1"
                     onClick={() => {
-                      if (confirm(`Close case #${selectedItem.data.id}?`)) handleResolveReview("close");
+                      const item = selectedItem;
+                      setShowDestructiveConfirm({
+                        title: `Close case #${item.data.id}?`,
+                        description: "This marks the case as completed/closed. You have 5 seconds to undo after confirming.",
+                        onConfirm: () => {
+                          setShowDestructiveConfirm(null);
+                          scheduleUndoableAction(
+                            `Closed: case #${item.data.id}`,
+                            item,
+                            async () => {
+                              const res = await fetch(`/api/requests/${item.data.id}/resolve-review`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ action: "close" }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+                            },
+                          );
+                        },
+                      });
                     }}
                     disabled={isSubmitting}
                   >
@@ -2537,6 +2763,26 @@ function MonitorPageContent() {
         </div>
       )}
 
+      {/* ── Destructive Confirmation Dialog ── */}
+      <Dialog open={!!showDestructiveConfirm} onOpenChange={(open) => !open && setShowDestructiveConfirm(null)}>
+        <DialogContent className="bg-card border max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">{showDestructiveConfirm?.title}</DialogTitle>
+            <DialogDescription className="text-xs">
+              {showDestructiveConfirm?.description}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setShowDestructiveConfirm(null)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => showDestructiveConfirm?.onConfirm()}>
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Adjust Modal ───────────────────── */}
       <Dialog open={showAdjustModal} onOpenChange={setShowAdjustModal}>
         <DialogContent className="bg-card border">
@@ -2578,8 +2824,26 @@ function MonitorPageContent() {
 
       {/* Correspondence is now shown inline, no dialog needed */}
 
+      {/* ── Undo Toast ────────────────────── */}
+      {pendingAction && (
+        <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 z-50 px-4 py-3 rounded-md shadow-lg border bg-zinc-900/95 border-zinc-700/50 text-sm flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center gap-2 min-w-0">
+            <Clock className="h-4 w-4 text-amber-400 flex-shrink-0" />
+            <span className="text-zinc-300 truncate">{pendingAction.label}</span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-shrink-0 text-xs border-amber-700/50 text-amber-400 hover:bg-amber-950/30"
+            onClick={cancelPendingAction}
+          >
+            <Undo2 className="h-3 w-3 mr-1" /> UNDO
+          </Button>
+        </div>
+      )}
+
       {/* ── Toast notification ────────────── */}
-      {toast && (
+      {toast && !pendingAction && (
         <div
           className={cn(
             "fixed bottom-4 left-4 z-50 px-4 py-2.5 rounded-md shadow-lg border text-xs font-medium flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-200",

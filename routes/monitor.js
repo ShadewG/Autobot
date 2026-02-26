@@ -166,6 +166,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             });
         } catch (_) {}
 
+        await db.logActivity('proposal_dismissed', `Proposal #${proposalId} (${proposal.action_type}) dismissed${reason ? ': ' + reason : ''}`, { case_id: caseId, user_id: userId || undefined });
         notify('info', `Proposal dismissed for case ${caseId}`, { case_id: caseId });
         return {
             success: true,
@@ -335,6 +336,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             status: 'DECISION_RECEIVED'
         });
 
+        await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
         notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
         return {
             success: true,
@@ -1681,6 +1683,34 @@ router.post('/proposals/:id/decision', express.json(), async (req, res) => {
     } catch (error) {
         const status = error.status || 500;
         res.status(status).json({ success: false, error: error.message, ...(error.payload || {}) });
+    }
+});
+
+/**
+ * GET /api/monitor/cases/:id/audit
+ * Return recent human actions for a case (audit trail)
+ */
+router.get('/cases/:id/audit', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const limit = parseInt(req.query.limit) || 10;
+        const result = await db.query(`
+            SELECT id, event_type, description, meta_jsonb, created_at, user_id
+            FROM activity_log
+            WHERE case_id = $1
+            AND event_type IN (
+                'proposal_approved', 'proposal_dismissed', 'proposal_adjusted',
+                'human_decision', 'request_withdrawn', 'scope_item_updated',
+                'email_sent', 'outbound_sent', 'portal_workflow_triggered',
+                'human_review_proposal_created', 'agent_decision',
+                'case_status_fix', 'manual_ai_trigger'
+            )
+            ORDER BY created_at DESC
+            LIMIT $2
+        `, [caseId, limit]);
+        res.json({ success: true, actions: result.rows });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 

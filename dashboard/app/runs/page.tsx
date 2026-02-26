@@ -364,9 +364,15 @@ export default function RunsPage() {
             <Tabs defaultValue="overview" className="mt-4">
               <TabsList>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="logs">Logs</TabsTrigger>
-                <TabsTrigger value="state">State Diff</TabsTrigger>
-                <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
+                {runDiff?.logs && runDiff.logs.length > 0 && (
+                  <TabsTrigger value="logs">Logs</TabsTrigger>
+                )}
+                {(runDiff?.state_before || runDiff?.state_after) && (
+                  <TabsTrigger value="state">State Diff</TabsTrigger>
+                )}
+                {runDiff?.snapshots && runDiff.snapshots.length > 0 && (
+                  <TabsTrigger value="snapshots">Snapshots</TabsTrigger>
+                )}
               </TabsList>
 
               <TabsContent value="overview" className="mt-4 space-y-4">
@@ -457,6 +463,14 @@ export default function RunsPage() {
                           {log}
                         </div>
                       ))
+                    ) : selectedRun?.trigger_run_id ? (
+                      <div className="text-center py-8 space-y-2">
+                        <p className="text-muted-foreground">Logs are available in the Trigger.dev console</p>
+                        <a href={triggerRunUrl(selectedRun.trigger_run_id)} target="_blank" rel="noopener noreferrer"
+                          className="text-primary hover:underline flex items-center justify-center gap-1 text-sm">
+                          View Logs <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
                     ) : (
                       <p className="text-muted-foreground">No logs available</p>
                     )}

@@ -254,10 +254,13 @@ function UserSettings({ user }: { user: User }) {
 
 export default function SettingsPage() {
   const { user: authUser } = useAuth();
-  const { data, error, isLoading } = useSWR<{ success: boolean; user: User }>(
+  const { data, error, isLoading, mutate } = useSWR<{ success: boolean; user: User }>(
     authUser ? `/users/${authUser.id}` : null,
     fetcher
   );
+
+  // Show loading when auth is resolving OR when SWR is fetching
+  const showLoading = !authUser || isLoading;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6 py-4">
@@ -270,13 +273,18 @@ export default function SettingsPage() {
 
       <Separator />
 
-      {isLoading && (
+      {showLoading && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" /> Loading...
         </div>
       )}
-      {error && (
-        <p className="text-sm text-destructive">Failed to load settings.</p>
+      {!showLoading && error && !data && (
+        <div className="space-y-2">
+          <p className="text-sm text-destructive">Failed to load settings.</p>
+          <Button variant="outline" size="sm" onClick={() => mutate()}>
+            Retry
+          </Button>
+        </div>
       )}
       {data?.user && <UserSettings user={data.user} />}
     </div>
