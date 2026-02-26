@@ -9,6 +9,7 @@ const statusVariants: Record<RequestStatus, "default" | "secondary" | "destructi
   RECEIVED_RESPONSE: "success",
   CLOSED: "outline",
   NEEDS_HUMAN_REVIEW: "destructive",
+  ID_STATE: "warning",
 };
 
 interface StatusBadgeProps {

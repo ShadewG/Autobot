@@ -241,7 +241,8 @@ export type RequestStatus =
   | 'AWAITING_RESPONSE'
   | 'RECEIVED_RESPONSE'
   | 'CLOSED'
-  | 'NEEDS_HUMAN_REVIEW';
+  | 'NEEDS_HUMAN_REVIEW'
+  | 'ID_STATE';
 
 export type PauseReason =
   | 'FEE_QUOTE'

@@ -50,6 +50,7 @@ const NOTION_STATUS_MAP = {
     'needs_phone_call': 'Needs Phone Call',
     'pending': 'Ready to Send',
     'pending_fee_decision': 'Needs Human Approval',
+    'id_state': 'ID State',
 };
 
 const POLICE_DEPARTMENT_FIELD_SPECS = [
@@ -1684,6 +1685,7 @@ Look for a records division email, FOIA email, or general agency email that acce
             'needs_phone_call': 'Needs Phone Call',
             'pending': 'Ready to Send',
             'pending_fee_decision': 'Needs Human Approval',
+            'id_state': 'ID State',
         };
 
         return statusMap[internalStatus] || internalStatus;

@@ -94,6 +94,7 @@ const STATUS_LABELS: Record<string, string> = {
   RECEIVED_RESPONSE: "Response Received",
   CLOSED: "Closed",
   NEEDS_HUMAN_REVIEW: "Paused",
+  ID_STATE: "ID State",
 };
 
 const PAUSE_REASON_LABELS: Record<string, string> = {

@@ -307,13 +307,13 @@ async function validateDecision(
     return { valid: false, reason: `AI decision confidence too low (${aiDecisionResult.confidence})` };
   }
 
-  // Citizenship/residency restrictions: only CLOSE_CASE or ESCALATE allowed
+  // Citizenship/residency restrictions: reject ALL AI decisions, force deterministic id_state handling
   const CITIZENSHIP_CONSTRAINTS = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
   const hasCitizenshipRestriction = (constraints || []).some(c => CITIZENSHIP_CONSTRAINTS.includes(c));
-  if (hasCitizenshipRestriction && aiDecisionResult.action !== "CLOSE_CASE" && aiDecisionResult.action !== "ESCALATE") {
+  if (hasCitizenshipRestriction) {
     return {
       valid: false,
-      reason: `Citizenship/residency restriction detected — cannot ${aiDecisionResult.action}, must CLOSE_CASE or ESCALATE`,
+      reason: `Citizenship/residency restriction detected — marking as ID State for human handling`,
     };
   }
 
@@ -535,6 +535,19 @@ async function deterministicRouting(
   const reasoning: string[] = [];
   const isFollowupTrigger = ["SCHEDULED_FOLLOWUP", "time_based_followup", "followup_trigger"].includes(triggerType);
 
+  // Citizenship/residency restriction: mark as ID State regardless of classification
+  const caseDataForConstraints = await db.getCaseById(caseId);
+  const topConstraints = caseDataForConstraints?.constraints_jsonb || caseDataForConstraints?.constraints || [];
+  const CITIZEN_CONSTRAINTS_TOP = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
+  if (CITIZEN_CONSTRAINTS_TOP.some((c: string) => topConstraints.includes(c))) {
+    await db.updateCaseStatus(caseId, "id_state", {
+      substatus: "Citizenship/residency restriction — requires in-state identity",
+      requires_human: true,
+    });
+    logger.info("Marked case as ID State due to citizenship restriction", { caseId, classification });
+    return noAction(["Citizenship/residency restriction — marked as ID State for human handling"]);
+  }
+
   // FEE QUOTE
   if (classification === "FEE_QUOTE") {
     const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
@@ -600,17 +613,6 @@ async function deterministicRouting(
   if (classification === "DENIAL") {
     reasoning.push("Denial received from agency");
     const caseData = await db.getCaseById(caseId);
-
-    // Citizenship/residency restriction: force CLOSE_CASE immediately
-    const caseConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
-    const CITIZEN_CONSTRAINTS = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
-    if (CITIZEN_CONSTRAINTS.some(c => caseConstraints.includes(c))) {
-      return decision("CLOSE_CASE", {
-        pauseReason: "DENIAL",
-        gateOptions: ["APPROVE", "ADJUST", "DISMISS"],
-        reasoning: [...reasoning, "Citizenship/residency restriction — cannot satisfy, recommending closure"],
-      });
-    }
 
     // Check for unanswered clarification
     const unansweredMsgId = await checkUnansweredClarification(caseId);

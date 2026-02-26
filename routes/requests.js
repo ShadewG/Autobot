@@ -20,7 +20,8 @@ const STATUS_MAP = {
     'needs_human_review': 'NEEDS_HUMAN_REVIEW',
     'needs_contact_info': 'NEEDS_HUMAN_REVIEW',
     'needs_human_fee_approval': 'NEEDS_HUMAN_REVIEW',
-    'portal_in_progress': 'AWAITING_RESPONSE'
+    'portal_in_progress': 'AWAITING_RESPONSE',
+    'id_state': 'ID_STATE'
 };
 
 /**
