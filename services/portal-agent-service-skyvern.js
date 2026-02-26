@@ -774,9 +774,14 @@ class PortalAgentServiceSkyvern {
     }
 
     _buildWorkflowCaseInfo(caseData, portalUrl, dryRun) {
+        // Truncate additional_details to avoid bloating the payload
+        let additionalDetails = caseData.additional_details || '';
+        if (additionalDetails.length > 3000) {
+            additionalDetails = additionalDetails.substring(0, 3000) + '\n[truncated]';
+        }
+
         return {
             case_id: caseData.id,
-            notion_page_id: caseData.notion_page_id,
             case_name: caseData.case_name,
             subject_name: caseData.subject_name,
             agency_name: caseData.agency_name,
@@ -786,11 +791,8 @@ class PortalAgentServiceSkyvern {
             incident_date: this._formatWorkflowDate(caseData.incident_date),
             incident_location: caseData.incident_location,
             requested_records: this._normalizeRecordsField(caseData.requested_records),
-            additional_details: caseData.additional_details,
-            status: caseData.status,
+            additional_details: additionalDetails,
             deadline_date: this._formatWorkflowDate(caseData.deadline_date),
-            last_portal_status: caseData.last_portal_status,
-            last_portal_details: caseData.last_portal_details,
             dry_run: !!dryRun
         };
     }
