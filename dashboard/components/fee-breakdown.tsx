@@ -67,11 +67,17 @@ export function FeeBreakdown({ feeQuote, scopeItems, className }: FeeBreakdownPr
             <div className="space-y-0.5">
               {feeQuote.breakdown.map((item, i) => (
                 <div key={i} className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">
-                    {item.category ? `${CATEGORY_LABELS[item.category] || item.category}: ` : ''}
-                    {formatLineItem(item)}
-                  </span>
-                  <span className="font-medium">{formatCurrency(item.subtotal)}</span>
+                  {typeof item === "string" ? (
+                    <span className="text-muted-foreground">{item}</span>
+                  ) : (
+                    <>
+                      <span className="text-muted-foreground">
+                        {item.category ? `${CATEGORY_LABELS[item.category] || item.category}: ` : ''}
+                        {formatLineItem(item)}
+                      </span>
+                      <span className="font-medium">{formatCurrency(item.subtotal)}</span>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
