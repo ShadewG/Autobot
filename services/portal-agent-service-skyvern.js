@@ -782,9 +782,14 @@ class PortalAgentServiceSkyvern {
             additionalDetails = additionalDetails.substring(0, cutPoint > 2000 ? cutPoint : 3000) + '\n[truncated]';
         }
 
+        // Keep case_name concise for portal AI context. Prefer suspect/subject name.
+        const normalizedSubjectName = String(caseData.subject_name || '').trim();
+        const normalizedCaseName = String(caseData.case_name || '').trim();
+        const conciseCaseName = normalizedSubjectName || normalizedCaseName || `Case ${caseData.id}`;
+
         return {
             case_id: caseData.id,
-            case_name: caseData.case_name,
+            case_name: conciseCaseName,
             subject_name: caseData.subject_name,
             agency_name: caseData.agency_name,
             agency_email: caseData.agency_email,
@@ -799,10 +804,12 @@ class PortalAgentServiceSkyvern {
         };
     }
 
-    _buildWorkflowPersonalInfo(caseData, preferredEmail, caseOwner = null) {
+    _buildWorkflowPersonalInfo(caseData, caseOwner = null) {
         // Use case owner's info if available, fall back to env vars / defaults
         const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const ownerEmail = preferredEmail || caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        // Important: requestor contact email should be the case owner's identity,
+        // not the shared portal login inbox.
+        const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
         const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
         const ownerOrg = caseOwner?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team';
         const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
@@ -830,7 +837,7 @@ class PortalAgentServiceSkyvern {
 
     async _buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions = null, caseOwner = null }) {
         const caseInfo = this._buildWorkflowCaseInfo(caseData, portalUrl, dryRun);
-        const personalInfo = this._buildWorkflowPersonalInfo(caseData, portalAccount?.email, caseOwner);
+        const personalInfo = this._buildWorkflowPersonalInfo(caseData, caseOwner);
 
         // Include the drafted FOIA request text so Skyvern uses it instead of raw case_name
         if (instructions) {

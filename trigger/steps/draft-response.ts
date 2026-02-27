@@ -8,6 +8,7 @@
 
 import db, { aiService, decisionMemory, logger } from "../lib/db";
 import type { DraftResult, ActionType, ResearchContext } from "../lib/types";
+import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
 export async function draftResponse(
   caseId: number,
@@ -452,6 +453,14 @@ export async function draftResponse(
 
     default:
       throw new Error(`Unknown action type for drafting: ${actionType}`);
+  }
+
+  // Drafts are often reviewed before execution; sanitize attachment claims here
+  // as well (execution-time sanitization is too late for gated proposals).
+  if (textClaimsAttachment(draft.body_text) || textClaimsAttachment(draft.body_html)) {
+    draft.body_text = draft.body_text ? stripAttachmentClaimLines(draft.body_text) : draft.body_text;
+    draft.body_html = null; // Rebuild from sanitized text.
+    logger.warn("Removed attachment claim from generated draft", { caseId, actionType });
   }
 
   // Convert text to HTML if missing, handling any markdown formatting

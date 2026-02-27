@@ -8,8 +8,14 @@ const adaptiveLearning = require('./adaptive-learning-service');
 
 class AIService {
     constructor() {
-        this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60_000 });
-        this.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        // Do not crash module import when a provider key is missing.
+        // Tasks can still run with whichever provider is configured.
+        this.openai = process.env.OPENAI_API_KEY
+            ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 60_000 })
+            : null;
+        this.anthropic = process.env.ANTHROPIC_API_KEY
+            ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+            : null;
     }
 
     /**
@@ -18,6 +24,7 @@ class AIService {
      */
     async callAI(input, { effort = 'medium', maxTokens = 4000 } = {}) {
         try {
+            if (!this.openai) throw new Error('OPENAI_API_KEY not configured');
             const response = await this.openai.responses.create({
                 model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 reasoning: { effort },
@@ -27,6 +34,7 @@ class AIService {
             return response.output_text?.trim() || '';
         } catch (openaiError) {
             console.error('OpenAI failed, falling back to Anthropic:', openaiError.message);
+            if (!this.anthropic) throw openaiError;
             const response = await this.anthropic.messages.create({
                 model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
                 max_tokens: maxTokens,
@@ -175,6 +183,9 @@ class AIService {
      * Generate FOIA request using Claude (fallback)
      */
     async generateWithClaude(caseData, userSignature = null) {
+        if (!this.anthropic) {
+            throw new Error('ANTHROPIC_API_KEY not configured for Claude fallback');
+        }
         const systemPrompt = this.buildFOIASystemPrompt(caseData.state);
         const userPrompt = this.buildFOIAUserPrompt(caseData, null, userSignature);
 
@@ -699,6 +710,10 @@ Return concise legal citations and key statutory language with sources.`;
 
             // Fallback to Anthropic (reliable, no web search but has strong legal knowledge)
             try {
+                if (!this.anthropic) {
+                    console.warn('Anthropic fallback unavailable: ANTHROPIC_API_KEY not configured');
+                    return null;
+                }
                 const response = await this.anthropic.messages.create({
                     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
                     max_tokens: 1500,
@@ -890,6 +905,10 @@ Respond with JSON ONLY.`;
             } catch (openaiError) {
                 clearTimeout(timeout);
                 console.warn('OpenAI alternate contacts failed, falling back to Anthropic:', openaiError.message);
+                if (!this.anthropic) {
+                    console.warn('Anthropic fallback unavailable for alternate contacts');
+                    return null;
+                }
                 const response = await this.anthropic.messages.create({
                     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
                     max_tokens: 800,
@@ -1512,6 +1531,7 @@ Generate a professional, helpful response that:
 3. Offers to narrow the scope if it would be helpful
 4. Maintains a cooperative, professional tone
 5. Keeps under 200 words
+6. Do NOT claim any attachment is included unless attachments are explicitly being sent with this reply (avoid phrases like "attached", "enclosed", "included with this email").
 
 Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
 
@@ -1690,6 +1710,9 @@ Return ONLY valid JSON.`;
             } catch (openaiError) {
                 clearTimeout(timeout);
                 console.warn('OpenAI agency research failed, falling back to Anthropic:', openaiError.message);
+                if (!this.anthropic) {
+                    throw openaiError;
+                }
                 const response = await this.anthropic.messages.create({
                     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
                     max_tokens: 1000,

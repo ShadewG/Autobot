@@ -6,6 +6,13 @@ const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
 
+const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
+const HUMAN_REVIEW_CASE_STATUSES = ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call'];
+const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled', 'needs_phone_call'];
+// CLEAR is used when a case transitions INTO one of these statuses — dismiss stale proposals.
+// Excludes needs_phone_call because that is still a human review state where proposals may be relevant.
+const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled'];
+
 class DatabaseService {
     constructor() {
         this.pool = new Pool({
@@ -210,7 +217,34 @@ class DatabaseService {
 
         const query = `UPDATE cases SET ${setClause} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
-        const updatedCase = result.rows[0];
+        let updatedCase = result.rows[0];
+
+        // Keep case/proposal state aligned: once a case is advanced out of review,
+        // any active proposal should no longer remain in queue-facing states.
+        if (updatedCase && CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS.includes(status)) {
+            await this.query(
+                `UPDATE proposals
+                 SET status = 'DISMISSED',
+                     updated_at = NOW(),
+                     human_decision = COALESCE(human_decision, '{}'::jsonb)
+                       || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+                 WHERE case_id = $1
+                   AND status = ANY($3::text[])`,
+                [caseId, `case_status:${status}`, ACTIVE_PROPOSAL_STATUSES]
+            );
+        }
+
+        // Safety net: needs_human_review must always carry a pause reason.
+        if (updatedCase && status === 'needs_human_review' && !updatedCase.pause_reason) {
+            const pauseFixed = await this.query(
+                `UPDATE cases
+                 SET pause_reason = 'UNSPECIFIED', updated_at = NOW()
+                 WHERE id = $1
+                 RETURNING *`,
+                [caseId]
+            );
+            updatedCase = pauseFixed.rows[0] || updatedCase;
+        }
 
         // Push real-time update to dashboard SSE clients
         if (updatedCase) {
@@ -1065,7 +1099,7 @@ class DatabaseService {
                     updated_at = NOW()
                 WHERE case_id = $1
                   AND status IN ('PENDING_APPROVAL', 'DRAFT')
-                  AND action_type = ANY($2)
+                  AND action_type = ANY($2::text[])
                 RETURNING id, action_type
             `;
             params = [caseId, actionTypes];
@@ -1456,7 +1490,7 @@ class DatabaseService {
         }
 
         // DRAFT VALIDATION: Block proposals for email actions that have no draft
-        const incomingStatus = proposalData.status || 'PENDING_APPROVAL';
+        let incomingStatus = proposalData.status || 'PENDING_APPROVAL';
         const draftBody = typeof proposalData.draftBodyText === 'string' ? proposalData.draftBodyText.trim() : '';
         if (DRAFT_REQUIRED_ACTIONS.includes(proposalData.actionType)
             && incomingStatus === 'PENDING_APPROVAL'
@@ -1470,11 +1504,31 @@ class DatabaseService {
             proposalData.draftBodyText = `Original action ${originalAction} blocked — no draft body generated. Needs manual review.`;
         }
 
+        // Guardrail: do not create queue-active proposals for cases that are already advanced/closed.
+        if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
+            const caseRow = await this.getCaseById(proposalData.caseId);
+            const allowInboundProposal =
+                !!proposalData.triggerMessageId
+                && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
+            if (caseRow && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status) && !allowInboundProposal) {
+                console.warn(
+                    `[DB] Auto-dismissing proposal for case ${proposalData.caseId} in status ${caseRow.status}`
+                );
+                proposalData.status = 'DISMISSED';
+                proposalData.requiresHuman = false;
+                proposalData.canAutoExecute = false;
+                proposalData.warnings = [
+                    ...(proposalData.warnings || []),
+                    `auto_dismissed_case_status_${caseRow.status}`
+                ];
+                incomingStatus = 'DISMISSED';
+            }
+        }
+
         // DEDUP GUARD: Enforce one active proposal per case.
         // Checks ALL active statuses. Same key = true dedup (return existing).
         // Different key = new analysis supersedes — dismiss ALL stale active proposals.
         // All active (non-terminal) proposal statuses — used for dedup and the DB unique constraint
-        const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
         // Guard only fires for PENDING_APPROVAL because all new proposals enter as PENDING_APPROVAL.
         // Other active statuses (BLOCKED, DECISION_RECEIVED, PENDING_PORTAL) are transitions from PENDING_APPROVAL.
         // The DB unique index (idx_proposals_one_active_per_case) is the ultimate safety net.
@@ -1672,6 +1726,18 @@ class DatabaseService {
             }
 
             if (proposal) {
+                if (proposal.case_id && ACTIVE_PROPOSAL_STATUSES.includes(proposal.status)) {
+                    const caseRow = await this.getCaseById(proposal.case_id);
+                    if (caseRow
+                        && !HUMAN_REVIEW_CASE_STATUSES.includes(caseRow.status)
+                        && !CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status)) {
+                        await this.updateCaseStatus(proposal.case_id, 'needs_human_review', {
+                            requires_human: true,
+                            pause_reason: proposal.pause_reason || 'PENDING_APPROVAL',
+                            substatus: `Proposal #${proposal.id} pending review`
+                        });
+                    }
+                }
                 emitDataUpdate('proposal_update', {
                     id: proposal.id,
                     case_id: proposal.case_id,
@@ -1772,7 +1838,34 @@ class DatabaseService {
         const values = [proposalId, ...entries.map(([, value]) => value)];
         const query = `UPDATE proposals SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
-        const proposal = result.rows[0];
+        let proposal = result.rows[0];
+        if (proposal && ACTIVE_PROPOSAL_STATUSES.includes(proposal.status)) {
+            const caseRow = await this.getCaseById(proposal.case_id);
+            const allowInboundProposal =
+                !!proposal.trigger_message_id
+                && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
+            if (caseRow && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status) && !allowInboundProposal) {
+                const dismissed = await this.query(
+                    `UPDATE proposals
+                     SET status = 'DISMISSED',
+                         updated_at = NOW(),
+                         human_decision = COALESCE(human_decision, '{}'::jsonb)
+                           || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+                     WHERE id = $1
+                     RETURNING *`,
+                    [proposal.id, `case_status:${caseRow.status}`]
+                );
+                proposal = dismissed.rows[0] || proposal;
+            } else if (caseRow
+                && !HUMAN_REVIEW_CASE_STATUSES.includes(caseRow.status)
+                && !CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status)) {
+                await this.updateCaseStatus(proposal.case_id, 'needs_human_review', {
+                    requires_human: true,
+                    pause_reason: proposal.pause_reason || 'PENDING_APPROVAL',
+                    substatus: `Proposal #${proposal.id} pending review`
+                });
+            }
+        }
         if (proposal) {
             emitDataUpdate('proposal_update', {
                 id: proposal.id,
