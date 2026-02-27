@@ -153,7 +153,7 @@ function getStateMismatch(request: RequestListItem): string | null {
   const runActive = isRunActive(request.active_run_status);
   const runStatus = String(request.active_run_status || "").toLowerCase();
   const executionRunActive = runActive && runStatus !== "waiting";
-  if ((request.review_state === "PROCESSING" || request.review_state === "DECISION_APPLYING") && request.requires_human) {
+  if ((request.review_state === "PROCESSING" || request.review_state === "DECISION_APPLYING") && request.requires_human && !executionRunActive) {
     return "Marked as needs decision while actively processing";
   }
   if (request.review_state === "DECISION_REQUIRED" && executionRunActive) {
