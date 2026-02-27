@@ -1225,11 +1225,53 @@ router.get('/runs/:id', async (req, res) => {
     // Get decision trace if available
     const decisionTrace = await db.getDecisionTraceByRunId(runId);
 
+    // Pull run-scoped activity so the dashboard can show live "what is it doing?" context.
+    const activityResult = await db.query(`
+      SELECT id, event_type, description, metadata, created_at
+      FROM activity_log
+      WHERE case_id = $1
+        AND (
+          (
+            (metadata->>'run_id') ~ '^[0-9]+$'
+            AND (metadata->>'run_id')::int = $2
+          )
+          OR (
+            (metadata->>'replay_run_id') ~ '^[0-9]+$'
+            AND (metadata->>'replay_run_id')::int = $2
+          )
+          OR (
+            (metadata->>'original_run_id') ~ '^[0-9]+$'
+            AND (metadata->>'original_run_id')::int = $2
+          )
+          OR (
+            (metadata->>'runId') ~ '^[0-9]+$'
+            AND (metadata->>'runId')::int = $2
+          )
+          OR (
+            (metadata->>'agent_run_id') ~ '^[0-9]+$'
+            AND (metadata->>'agent_run_id')::int = $2
+          )
+          OR created_at BETWEEN ($3::timestamptz - interval '2 minutes')
+                            AND (COALESCE($4::timestamptz, NOW()) + interval '2 minutes')
+        )
+      ORDER BY created_at DESC
+      LIMIT 200
+    `, [run.case_id, runId, run.started_at, run.ended_at || null]);
+
+    const activity = activityResult.rows.map((row) => ({
+      id: String(row.id),
+      event_type: row.event_type,
+      description: row.description,
+      metadata: row.metadata || {},
+      created_at: row.created_at
+    }));
+
     res.json({
       success: true,
       run,
       proposals,
-      decision_trace: decisionTrace
+      decision_trace: decisionTrace,
+      activity
     });
 
   } catch (error) {

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { fetcher, requestsAPI, type AgentRun, type AgentRunDiff } from "@/lib/api";
+import { fetcher, requestsAPI, type AgentRun, type AgentRunDiff, type RunActivityEntry } from "@/lib/api";
 import { formatDate, cn } from "@/lib/utils";
 import {
   Search,
@@ -78,6 +78,14 @@ interface RunsResponse {
   runs: Array<AgentRun & { case_name?: string }>;
 }
 
+interface RunDetailsResponse {
+  success: boolean;
+  run: AgentRun;
+  proposals?: unknown[];
+  decision_trace?: unknown;
+  activity?: RunActivityEntry[];
+}
+
 export default function RunsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [recentOnly, setRecentOnly] = useState(true);
@@ -90,6 +98,11 @@ export default function RunsPage() {
     "/runs",
     fetcher,
     { refreshInterval: 10000 }
+  );
+  const { data: runDetails } = useSWR<RunDetailsResponse>(
+    selectedRun ? `/runs/${selectedRun.id}` : null,
+    fetcher,
+    { refreshInterval: selectedRun ? 3000 : 0 }
   );
 
   const handleViewRun = async (run: AgentRun & { case_name?: string }) => {
@@ -140,6 +153,13 @@ export default function RunsPage() {
   const sortedRuns = [...filteredRuns].sort((a, b) =>
     new Date(b.started_at).getTime() - new Date(a.started_at).getTime()
   );
+  const activityItems = runDetails?.activity || [];
+  const currentNodeFromMetadata = runDetails?.run?.metadata && typeof runDetails.run.metadata === "object"
+    ? (runDetails.run.metadata as Record<string, unknown>).current_node
+    : null;
+  const currentNode = typeof currentNodeFromMetadata === "string"
+    ? currentNodeFromMetadata
+    : selectedRun?.node_trace?.[selectedRun.node_trace.length - 1] || null;
 
   if (error) {
     return (
@@ -382,6 +402,7 @@ export default function RunsPage() {
             <Tabs defaultValue="overview" className="mt-4">
               <TabsList>
                 <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="activity">Activity</TabsTrigger>
                 {runDiff?.logs && runDiff.logs.length > 0 && (
                   <TabsTrigger value="logs">Logs</TabsTrigger>
                 )}
@@ -412,6 +433,12 @@ export default function RunsPage() {
                     <p className="text-sm text-muted-foreground">Trigger</p>
                     <p>{selectedRun.trigger_type}</p>
                   </div>
+                  {currentNode && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Current Step</p>
+                      <Badge variant="outline" className="font-mono text-xs">{currentNode}</Badge>
+                    </div>
+                  )}
                   {selectedRun.trigger_run_id && (
                     <div>
                       <p className="text-sm text-muted-foreground">Trigger.dev Run</p>
@@ -444,6 +471,23 @@ export default function RunsPage() {
                   )}
                 </div>
 
+                {selectedRun.trigger_message && (
+                  <div className="border rounded-md p-3 space-y-2">
+                    <p className="text-sm font-medium">Run Context (What this run is for)</p>
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">From:</span> {selectedRun.trigger_message.from_email}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">Subject:</span> {selectedRun.trigger_message.subject || "(no subject)"}
+                    </p>
+                    {selectedRun.trigger_message.classification && (
+                      <p className="text-sm text-muted-foreground">
+                        <span className="font-medium text-foreground">Classification:</span> {selectedRun.trigger_message.classification}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {selectedRun.error_message && (
                   <div className="bg-red-950/30 border border-red-800 p-4">
                     <p className="text-sm font-medium text-red-400 mb-1">Error</p>
@@ -470,6 +514,32 @@ export default function RunsPage() {
                     </div>
                   </div>
                 )}
+              </TabsContent>
+
+              <TabsContent value="activity" className="mt-4">
+                <ScrollArea className="h-[400px] border rounded-md">
+                  <div className="p-3 space-y-2">
+                    {activityItems.length > 0 ? (
+                      activityItems.map((item) => (
+                        <div key={item.id} className="border rounded-sm p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge variant="outline" className="font-mono text-[10px]">
+                              {item.event_type}
+                            </Badge>
+                            <span className="text-[11px] text-muted-foreground">
+                              {formatDate(item.created_at)}
+                            </span>
+                          </div>
+                          <p className="text-sm mt-2">{item.description}</p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-sm text-muted-foreground p-2">
+                        No run activity recorded yet.
+                      </p>
+                    )}
+                  </div>
+                </ScrollArea>
               </TabsContent>
 
               <TabsContent value="logs" className="mt-4">

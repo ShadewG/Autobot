@@ -300,6 +300,15 @@ export interface AgentRun {
     classification?: string;
     sentiment?: string;
   };
+  metadata?: Record<string, unknown>;
+}
+
+export interface RunActivityEntry {
+  id: string;
+  event_type: string;
+  description: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
 }
 
 // Runs API
@@ -330,6 +339,7 @@ export const runsAPI = {
     run: AgentRun;
     proposals: ProposalListItem[];
     decision_trace?: unknown;
+    activity?: RunActivityEntry[];
   }> => {
     return fetchAPI(`/runs/${runId}`);
   },
