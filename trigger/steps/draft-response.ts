@@ -213,7 +213,7 @@ export async function draftResponse(
 
     case "ACCEPT_FEE":
     case "APPROVE_FEE" as any: {
-      const acceptFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || 0;
+      const acceptFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || null;
       draft = await aiService.generateFeeResponse(caseData, {
         feeAmount: acceptFeeAmt,
         recommendedAction: "accept",
@@ -227,7 +227,7 @@ export async function draftResponse(
     }
 
     case "NEGOTIATE_FEE": {
-      const negotiateFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || 0;
+      const negotiateFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || null;
       draft = await aiService.generateFeeResponse(caseData, {
         feeAmount: negotiateFeeAmt,
         recommendedAction: "negotiate",
@@ -241,7 +241,7 @@ export async function draftResponse(
     }
 
     case "DECLINE_FEE": {
-      const declineFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || 0;
+      const declineFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || null;
       draft = await aiService.generateFeeResponse(caseData, {
         feeAmount: declineFeeAmt,
         recommendedAction: "decline",

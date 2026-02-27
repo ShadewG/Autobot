@@ -1041,10 +1041,8 @@ Return ONLY the email body text.`;
             ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
             : '';
 
-        // feeAmount is optional for waiver mode
-        if (!feeAmount && recommendedAction !== 'waiver') {
-            throw new Error('feeAmount is required to generate a fee response (except for waiver mode)');
-        }
+        // feeAmount may be unknown when agency asks "do you want to proceed?"
+        // without quoting a specific dollar figure. Allow all actions to proceed.
 
         // Get short reference for correspondence
         const shortReference = this.getShortCaseReference(caseData);
@@ -1069,7 +1067,7 @@ Full case context: ${caseData.case_name}
 Agency: ${caseData.agency_name}
 Jurisdiction: ${caseData.state}
 Requested records: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
-Quoted fee: ${feeAmount ? `${currency} ${feeAmount.toFixed(2)}` : 'Not specified (requesting proactive waiver)'}
+Quoted fee: ${feeAmount ? `${currency} ${typeof feeAmount === 'number' ? feeAmount.toFixed(2) : feeAmount}` : 'No specific amount quoted by agency'}
 Recommended action: ${recommendedAction.toUpperCase()}
 ${agencyMessage ? `\nAgency's full response:\n${this.stripQuotedText(agencyMessage.body_text || '').substring(0, 500)}` : ''}
 ${agencyAnalysis?.full_analysis_json?.key_points ? `\nKey points from agency response: ${agencyAnalysis.full_analysis_json.key_points.join('; ')}` : ''}
@@ -1086,7 +1084,7 @@ ${customInstruction}
 ${lessonsContext}${correspondenceSection}
 Email requirements:
 1. Reference the request using the SHORT case reference ("${shortReference}") - NOT the full case name
-2. Mention the quoted fee amount explicitly
+2. If a fee amount was quoted, mention it explicitly. If no specific amount was quoted, acknowledge the agency's fee terms without inventing a number
 3. Do NOT re-ask for an itemized breakdown if the agency already provided one — acknowledge it and use it
 4. Do NOT suggest in-person viewing or in-office inspection — we are a remote team
 5. Keep tone professional, collaborative, and human-sounding
