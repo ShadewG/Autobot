@@ -151,10 +151,12 @@ function deriveNowLine(request: RequestListItem): {
 
 function getStateMismatch(request: RequestListItem): string | null {
   const runActive = isRunActive(request.active_run_status);
+  const runStatus = String(request.active_run_status || "").toLowerCase();
+  const executionRunActive = runActive && runStatus !== "waiting";
   if ((request.review_state === "PROCESSING" || request.review_state === "DECISION_APPLYING") && request.requires_human) {
     return "Marked as needs decision while actively processing";
   }
-  if (request.review_state === "DECISION_REQUIRED" && runActive) {
+  if (request.review_state === "DECISION_REQUIRED" && executionRunActive) {
     return "Decision-required case also has an active run";
   }
   if (request.requires_human && !request.pause_reason && request.review_state === "DECISION_REQUIRED") {

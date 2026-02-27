@@ -56,7 +56,7 @@ export const submitPortal = task({
       if (portalTaskId) {
         await db.query(
           `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW(),
-           completion_notes = $2 WHERE id = $1 AND status = 'PENDING'`,
+           completion_notes = $2 WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
           [portalTaskId, `Timed out or crashed: ${String(error).substring(0, 200)}`]
         );
       }
@@ -79,6 +79,19 @@ export const submitPortal = task({
   }) => {
     const { caseId, portalUrl, provider, instructions, portalTaskId } = payload;
     const db = getDb();
+    const cancelPortalTask = async (note: string) => {
+      if (!portalTaskId) return;
+      await db.query(
+        `UPDATE portal_tasks
+         SET status = 'CANCELLED',
+             completed_at = COALESCE(completed_at, NOW()),
+             completion_notes = $2,
+             updated_at = NOW()
+         WHERE id = $1
+           AND status IN ('PENDING', 'IN_PROGRESS')`,
+        [portalTaskId, note]
+      );
+    };
 
     logger.info("submit-portal started", { caseId, portalUrl, portalTaskId });
 
@@ -148,6 +161,7 @@ export const submitPortal = task({
     const skipStatuses = ["sent", "awaiting_response", "responded", "completed", "needs_phone_call"];
     if (skipStatuses.includes(caseData.status)) {
       logger.info("Portal submission skipped — case already advanced", { caseId, status: caseData.status });
+      await cancelPortalTask(`Case already advanced (${caseData.status})`);
       return { success: true, skipped: true, reason: caseData.status };
     }
 
@@ -181,6 +195,7 @@ export const submitPortal = task({
     const constraints = Array.isArray(rawConstraints) ? rawConstraints : [];
     if (constraints.includes("WRONG_AGENCY")) {
       logger.warn("Portal submission skipped — wrong agency", { caseId });
+      await cancelPortalTask("Case marked WRONG_AGENCY");
       return { success: false, skipped: true, reason: "wrong_agency" };
     }
 
@@ -205,6 +220,7 @@ export const submitPortal = task({
     );
     if (recentSuccess.rows.length > 0) {
       logger.warn("Portal submission skipped — successful submission within last hour", { caseId });
+      await cancelPortalTask("Recent successful portal submission detected");
       return { success: true, skipped: true, reason: "recent_success" };
     }
 
@@ -302,7 +318,7 @@ export const submitPortal = task({
           // Status already set to needs_human_review by the service; ensure portal_task is updated
           if (portalTaskId) {
             await db.query(
-              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Waiting for approval' WHERE id = $1 AND status = 'PENDING'`,
+              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Waiting for approval' WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
               [portalTaskId]
             );
           }
@@ -331,7 +347,7 @@ export const submitPortal = task({
           });
           if (portalTaskId) {
             await db.query(
-              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = $2 WHERE id = $1 AND status = 'PENDING'`,
+              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = $2 WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
               [portalTaskId, `Alternative path: ${result.status}`]
             );
           }
@@ -349,6 +365,7 @@ export const submitPortal = task({
             substatus: `Portal skipped: ${result.reason}`,
           });
         }
+        await cancelPortalTask(`Skyvern dedup skip: ${result.reason || "already handled"}`);
         return result;
       }
 

@@ -1283,13 +1283,14 @@ class CronService {
     async dispatchPendingPortalTasks() {
         let dispatched = 0;
 
-        // Find portal_tasks that are PENDING and have no active submit-portal Trigger.dev run
+        // Find actionable portal_tasks that are PENDING and have no active submit-portal Trigger.dev run
         const pending = await db.query(`
-            SELECT pt.id, pt.case_id, pt.instructions,
+            SELECT pt.id, pt.case_id, pt.instructions, pt.action_type,
                    c.portal_url, c.portal_provider
             FROM portal_tasks pt
             JOIN cases c ON c.id = pt.case_id
             WHERE pt.status = 'PENDING'
+              AND c.status NOT IN ('sent', 'awaiting_response', 'responded', 'completed', 'cancelled')
               AND pt.created_at > NOW() - INTERVAL '24 hours'
               AND NOT EXISTS (
                   SELECT 1 FROM agent_runs ar
@@ -1303,6 +1304,21 @@ class CronService {
 
         for (const pt of pending.rows) {
             try {
+                // Claim task atomically to prevent duplicate dispatches across concurrent cron workers.
+                const claimed = await db.query(
+                    `UPDATE portal_tasks
+                     SET status = 'IN_PROGRESS',
+                         updated_at = NOW(),
+                         completion_notes = NULL
+                     WHERE id = $1
+                       AND status = 'PENDING'
+                     RETURNING id`,
+                    [pt.id]
+                );
+                if (claimed.rowCount === 0) {
+                    continue;
+                }
+
                 // Create an agent run to track this dispatch
                 const run = await db.createAgentRunFull({
                     case_id: pt.case_id,
@@ -1335,6 +1351,19 @@ class CronService {
                 dispatched++;
             } catch (err) {
                 console.error(`Failed to dispatch submit-portal for case ${pt.case_id}:`, err.message);
+                try {
+                    await db.query(
+                        `UPDATE portal_tasks
+                         SET status = 'PENDING',
+                             updated_at = NOW(),
+                             completion_notes = $2
+                         WHERE id = $1
+                           AND status = 'IN_PROGRESS'`,
+                        [pt.id, `Dispatch failed: ${String(err.message || err).substring(0, 400)}`]
+                    );
+                } catch (rollbackErr) {
+                    console.error(`Failed to rollback portal task claim ${pt.id}:`, rollbackErr.message);
+                }
             }
         }
 

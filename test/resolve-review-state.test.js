@@ -39,13 +39,13 @@ test('BLOCKED proposal → DECISION_REQUIRED', () => {
     assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
 });
 
-test('PENDING_APPROVAL takes precedence over requires_human=false', () => {
+test('PENDING_APPROVAL + active execution run → PROCESSING', () => {
     const result = resolveReviewState({
         caseData: { id: 3, status: 'awaiting_response', requires_human: false },
         activeProposal: { status: 'PENDING_APPROVAL' },
         activeRun: { status: 'running' },
     });
-    assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
+    assert(result === REVIEW_STATES.PROCESSING, `Expected PROCESSING, got ${result}`);
 });
 
 // Rule 2: DECISION_RECEIVED + active run → DECISION_APPLYING
@@ -106,13 +106,13 @@ test('Active waiting run without requires_human → PROCESSING', () => {
     assert(result === REVIEW_STATES.PROCESSING, `Expected PROCESSING, got ${result}`);
 });
 
-test('Active run with requires_human → falls to DECISION_REQUIRED', () => {
+test('Active execution run with requires_human → PROCESSING', () => {
     const result = resolveReviewState({
         caseData: { id: 10, status: 'needs_human_review', requires_human: true },
         activeProposal: null,
         activeRun: { status: 'running' },
     });
-    assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
+    assert(result === REVIEW_STATES.PROCESSING, `Expected PROCESSING, got ${result}`);
 });
 
 // Rule 4: requires_human or needs_ status → DECISION_REQUIRED
@@ -200,13 +200,13 @@ test('null/empty everything → IDLE', () => {
 });
 
 // Precedence tests
-test('PENDING_APPROVAL proposal beats active run (rule 1 > rule 3)', () => {
+test('PENDING_APPROVAL + active run resolves to PROCESSING', () => {
     const result = resolveReviewState({
         caseData: { id: 20, status: 'sent', requires_human: false },
         activeProposal: { status: 'PENDING_APPROVAL' },
         activeRun: { status: 'running' },
     });
-    assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
+    assert(result === REVIEW_STATES.PROCESSING, `Expected PROCESSING, got ${result}`);
 });
 
 test('DECISION_RECEIVED + active run beats requires_human (rule 2 > rule 4)', () => {
