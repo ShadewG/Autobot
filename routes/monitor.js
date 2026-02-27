@@ -32,6 +32,38 @@ function triggerOptsDebounced(caseId, taskType, uniqueId) {
   };
 }
 
+async function autoCaptureEvalCase(proposal, { action, instruction = null, reason = null, decidedBy = null } = {}) {
+    try {
+        if (!proposal?.id) return;
+        const expectedAction = action === 'DISMISS' ? 'DISMISSED' : proposal.action_type;
+        const notesParts = [
+            `Auto-captured from monitor decision: ${action}`,
+            instruction ? `Instruction: ${instruction}` : null,
+            reason ? `Reason: ${reason}` : null,
+            decidedBy ? `Decided by: ${decidedBy}` : null,
+        ].filter(Boolean);
+
+        await db.query(
+            `INSERT INTO eval_cases (proposal_id, case_id, trigger_message_id, expected_action, notes)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (proposal_id) DO UPDATE
+               SET expected_action = EXCLUDED.expected_action,
+                   notes = EXCLUDED.notes,
+                   is_active = true`,
+            [
+                proposal.id,
+                proposal.case_id || null,
+                proposal.trigger_message_id || null,
+                expectedAction,
+                notesParts.join(' | ') || null,
+            ]
+        );
+    } catch (err) {
+        // Non-blocking: never fail the human decision flow due to eval capture.
+        console.warn(`Auto eval-case capture failed for proposal ${proposal?.id}: ${err.message}`);
+    }
+}
+
 function deriveMessageSource(message) {
     if (!message) return 'unknown';
     if (message.message_type === 'manual_trigger') return 'manual trigger clone';
@@ -215,6 +247,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             human_decision: humanDecision,
             status: 'DISMISSED'
         });
+        await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
         // Auto-learn from dismissal so AI doesn't repeat the same mistake
         try {
@@ -253,6 +286,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             human_decision: humanDecision,
             status: 'DISMISSED'
         });
+        await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
         let handle;
         try {
@@ -357,6 +391,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             executedAt: new Date(),
             emailJobId: sendResult.messageId
         });
+        await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
         // Update case status
         await db.updateCaseStatus(caseId, 'sent', {
@@ -450,6 +485,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 
         // Update proposal to PENDING_PORTAL
         await db.updateProposal(proposalId, { status: 'PENDING_PORTAL', run_id: dispatchRun.id });
+        await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
         notify('info', `Portal submission approved — Trigger.dev task started for case ${caseId}`, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
@@ -475,6 +511,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
                 human_decision: humanDecision,
                 status: 'DECISION_RECEIVED'
             });
+            await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
             await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
             notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
@@ -498,6 +535,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
     });
+    await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
     let handle;
     const triggerContext = {
