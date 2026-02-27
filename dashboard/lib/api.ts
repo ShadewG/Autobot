@@ -13,13 +13,27 @@ export async function fetchAPI<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutMs = 15000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options?.headers,
+      },
+      signal: options?.signal || controller.signal,
+    });
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: 'Unknown error' }));
@@ -574,6 +588,22 @@ export const portalTasksAPI = {
     });
   },
 };
+
+// Portal screenshot history
+export interface PortalScreenshot {
+  id: number;
+  url: string;
+  run_id: string;
+  sequence_index: number;
+  skyvern_status: string;
+  captured_at: string;
+}
+
+export interface PortalScreenshotsResponse {
+  success: boolean;
+  count: number;
+  screenshots: PortalScreenshot[];
+}
 
 // SWR fetcher
 export const fetcher = <T>(url: string): Promise<T> => fetchAPI(url);

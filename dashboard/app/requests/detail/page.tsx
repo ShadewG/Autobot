@@ -710,6 +710,9 @@ function RequestDetailContent() {
     const status = String(data?.request?.active_portal_task_status || "").toUpperCase();
     return status === "PENDING" || status === "IN_PROGRESS";
   }, [data?.request?.active_portal_task_status]);
+  const hasPortalHistory = useMemo(() => {
+    return !!data?.request?.last_portal_status && !portalTaskActive;
+  }, [data?.request?.last_portal_status, portalTaskActive]);
   const waitingRun = useMemo(() => {
     const list = runsData?.runs || [];
     return list.find((r) => String(r.status).toLowerCase() === "waiting") || null;
@@ -1257,6 +1260,13 @@ function RequestDetailContent() {
                       portalTaskUrl={request.last_portal_task_url}
                     />
                   )}
+                  {hasPortalHistory && (
+                    <PortalLiveView
+                      caseId={id!}
+                      portalTaskUrl={request.last_portal_task_url}
+                      isLive={false}
+                    />
+                  )}
                   {pending_proposal ? (
                     <Card className="border-2 border-blue-700/50 bg-blue-500/5">
                       <CardHeader className="pb-2">
@@ -1569,20 +1579,29 @@ function RequestDetailContent() {
                 </CardContent>
               </Card>
 
-              <Card className="h-full min-w-0">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Copilot</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CopilotPanel
-                    request={request}
-                    nextAction={nextAction}
-                    agency={agency_summary}
-                    onChallenge={handleChallenge}
-                    onRefresh={mutate}
+              <div className="space-y-4 min-w-0">
+                {hasPortalHistory && (
+                  <PortalLiveView
+                    caseId={id!}
+                    portalTaskUrl={request.last_portal_task_url}
+                    isLive={false}
                   />
-                </CardContent>
-              </Card>
+                )}
+                <Card className="h-full">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Copilot</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <CopilotPanel
+                      request={request}
+                      nextAction={nextAction}
+                      agency={agency_summary}
+                      onChallenge={handleChallenge}
+                      onRefresh={mutate}
+                    />
+                  </CardContent>
+                </Card>
+              </div>
             </div>
           )}
         </TabsContent>

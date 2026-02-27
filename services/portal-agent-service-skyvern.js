@@ -1897,6 +1897,7 @@ class PortalAgentServiceSkyvern {
 
         console.log(`⏳ Polling workflow run ${workflowRunId} for completion...`);
         let lastScreenshotUrl = null;
+        let screenshotIndex = 0; // tracks how many screenshots we've already logged
 
         for (let poll = 0; poll < maxPolls; poll++) {
             await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -1926,6 +1927,27 @@ class PortalAgentServiceSkyvern {
                             console.warn(`   Screenshot DB update failed: ${ssErr.message}`);
                         }
                     }
+
+                    // Log NEW screenshots to activity_log for history
+                    const newScreenshots = data.screenshot_urls.slice(screenshotIndex);
+                    for (let i = 0; i < newScreenshots.length; i++) {
+                        try {
+                            await database.logActivity(
+                                'portal_screenshot',
+                                `Portal screenshot #${screenshotIndex + i + 1}`,
+                                {
+                                    case_id: caseId,
+                                    url: newScreenshots[i],
+                                    run_id: workflowRunId,
+                                    sequence_index: screenshotIndex + i,
+                                    skyvern_status: status
+                                }
+                            );
+                        } catch (logErr) {
+                            console.warn(`   Screenshot log failed: ${logErr.message}`);
+                        }
+                    }
+                    screenshotIndex = data.screenshot_urls.length;
                 }
 
                 if (['completed', 'succeeded', 'success', 'failed', 'terminated', 'error'].includes(status)) {
