@@ -338,16 +338,21 @@ router.post('/proposals/:id/decision', async (req, res) => {
     // Check for existing active run
     const existingRun = await db.getActiveRunForCase(caseId);
     if (existingRun) {
-      // If the run is paused (waiting for this decision), complete it before resuming
-      if (existingRun.status === 'paused') {
-        logger.info('Completing paused run before processing decision', {
+      // 'waiting' = Trigger.dev task waiting on the waitpoint token for this decision.
+      // 'paused' = legacy state, same idea. Both should be allowed through.
+      if (existingRun.status === 'waiting' || existingRun.status === 'paused') {
+        logger.info('Run is waiting for this decision, proceeding', {
           runId: existingRun.id,
+          status: existingRun.status,
           proposalId
         });
-        await db.updateAgentRun(existingRun.id, {
-          status: 'completed',
-          ended_at: new Date()
-        });
+        // For legacy 'paused' runs (no waitpoint), mark completed so we can proceed.
+        if (existingRun.status === 'paused') {
+          await db.updateAgentRun(existingRun.id, {
+            status: 'completed',
+            ended_at: new Date()
+          });
+        }
       } else {
         // Run is actually active (queued/running), block the decision
         return res.status(409).json({
