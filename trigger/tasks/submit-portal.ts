@@ -140,6 +140,31 @@ export const submitPortal = task({
       return { success: true, skipped: true, reason: caseData.status };
     }
 
+    // ── Provider guard: do not attempt portal automation when provider indicates paper-only flow ──
+    const providerLabel = String(provider || caseData.portal_provider || "").toLowerCase();
+    const paperOnlyProvider =
+      providerLabel.includes("no online portal") ||
+      providerLabel.includes("paper form required") ||
+      providerLabel.includes("paper-only") ||
+      providerLabel.includes("paper only");
+    if (paperOnlyProvider) {
+      logger.warn("Portal submission skipped — provider marked as paper-only", {
+        caseId,
+        provider: provider || caseData.portal_provider || null,
+      });
+      await db.updateCaseStatus(caseId, "needs_human_review", {
+        requires_human: true,
+        substatus: "No online portal available (paper form required)",
+      });
+      if (portalTaskId) {
+        await db.query(
+          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Provider marked paper-only (no online portal)' WHERE id = $1`,
+          [portalTaskId]
+        );
+      }
+      return { success: false, skipped: true, reason: "provider_paper_only" };
+    }
+
     // ── WRONG_AGENCY guard: skip if case has WRONG_AGENCY constraint ──
     const rawConstraints = caseData.constraints_jsonb || caseData.constraints || [];
     const constraints = Array.isArray(rawConstraints) ? rawConstraints : [];
