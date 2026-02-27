@@ -392,6 +392,20 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Portal submission dispatch (every 2 minutes)
+        // submit-portal is dispatched from Railway (top-level) instead of from within
+        // Trigger.dev tasks to avoid child-task PENDING_VERSION during deploys.
+        this.jobs.portalDispatch = new CronJob('*/2 * * * *', async () => {
+            try {
+                const dispatched = await this.dispatchPendingPortalTasks();
+                if (dispatched > 0) {
+                    console.log(`Portal dispatch: triggered ${dispatched} submit-portal task(s)`);
+                }
+            } catch (error) {
+                console.error('Error in portal dispatch cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
@@ -404,6 +418,7 @@ class CronService {
         console.log('✓ Proposal dispatch recovery: Every 5 minutes');
         console.log('✓ Trigger dispatch recovery: Every 5 minutes');
         console.log('✓ Orphan review recovery: Every 5 minutes');
+        console.log('✓ Portal submission dispatch: Every 2 minutes');
     }
 
     /**
@@ -1259,6 +1274,71 @@ class CronService {
         }
 
         return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried, staleHumanFlagsCleared };
+    }
+
+    /**
+     * Dispatch pending portal submissions as top-level Trigger.dev tasks.
+     * Replaces in-task child triggers that got stuck in PENDING_VERSION during deploys.
+     */
+    async dispatchPendingPortalTasks() {
+        let dispatched = 0;
+
+        // Find portal_tasks that are PENDING and have no active submit-portal Trigger.dev run
+        const pending = await db.query(`
+            SELECT pt.id, pt.case_id, pt.instructions,
+                   c.portal_url, c.portal_provider
+            FROM portal_tasks pt
+            JOIN cases c ON c.id = pt.case_id
+            WHERE pt.status = 'PENDING'
+              AND pt.created_at > NOW() - INTERVAL '24 hours'
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent_runs ar
+                  WHERE ar.case_id = pt.case_id
+                    AND ar.trigger_type = 'submit_portal'
+                    AND ar.status IN ('created', 'queued', 'running', 'processing', 'waiting')
+              )
+            ORDER BY pt.created_at ASC
+            LIMIT 10
+        `);
+
+        for (const pt of pending.rows) {
+            try {
+                // Create an agent run to track this dispatch
+                const run = await db.createAgentRunFull({
+                    case_id: pt.case_id,
+                    trigger_type: 'submit_portal',
+                    status: 'queued',
+                    autopilot_mode: 'SUPERVISED',
+                    langgraph_thread_id: `submit-portal:${pt.case_id}:${pt.id}:${Date.now()}`,
+                    metadata: {
+                        source: 'portal_dispatch_cron',
+                        portal_task_id: pt.id,
+                    }
+                });
+
+                await triggerDispatch.triggerTask('submit-portal', {
+                    caseId: pt.case_id,
+                    portalUrl: pt.portal_url,
+                    provider: pt.portal_provider || null,
+                    instructions: pt.instructions || 'Submit through agency portal',
+                    portalTaskId: pt.id,
+                }, {
+                    idempotencyKey: `portal-cron:${pt.case_id}:${pt.id}`,
+                    idempotencyKeyTTL: '1h',
+                }, {
+                    runId: run.id,
+                    caseId: pt.case_id,
+                    triggerType: 'submit_portal',
+                    source: 'portal_dispatch_cron',
+                });
+
+                dispatched++;
+            } catch (err) {
+                console.error(`Failed to dispatch submit-portal for case ${pt.case_id}:`, err.message);
+            }
+        }
+
+        return dispatched;
     }
 
     /**

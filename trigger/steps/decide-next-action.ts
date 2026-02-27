@@ -11,7 +11,6 @@ import { decisionSchema, type DecisionOutput } from "../lib/schemas";
 import db, { logger } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
-import { tasks } from "@trigger.dev/sdk";
 import { hasAutomatablePortal } from "../lib/portal-utils";
 import type {
   DecisionResult,
@@ -1580,20 +1579,11 @@ async function deterministicRouting(
         status: "PENDING",
         instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
       });
-      await tasks.trigger("submit-portal", {
-        caseId,
-        portalUrl: effectiveUrl!,
-        provider: caseData?.portal_provider || null,
-        instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
-        portalTaskId: task?.id || null,
-      }, {
-        idempotencyKey: `portal-redirect:${caseId}:${Date.now()}`,
-        idempotencyKeyTTL: "1h",
-      });
+      // submit-portal dispatched by Railway cron (avoids child task PENDING_VERSION)
     } catch (e: any) {
-      logger.error("Failed to create/trigger portal task", { caseId, error: e.message });
+      logger.error("Failed to create portal task", { caseId, error: e.message });
     }
-    return noAction(["Portal redirect - task created and triggered"]);
+    return noAction(["Portal redirect - task created, cron will dispatch"]);
   }
 
   // WRONG_AGENCY — cancel in-flight work, add constraint, then research
@@ -1733,20 +1723,11 @@ export async function decideNextAction(
             status: "PENDING",
             instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
           });
-          await tasks.trigger("submit-portal", {
-            caseId,
-            portalUrl: effectiveUrl!,
-            provider: caseData?.portal_provider || null,
-            instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
-            portalTaskId: task?.id || null,
-          }, {
-            idempotencyKey: `use-portal:${caseId}:${Date.now()}`,
-            idempotencyKeyTTL: "1h",
-          });
+          // submit-portal dispatched by Railway cron (avoids child task PENDING_VERSION)
         } catch (e: any) {
-          logger.error("Failed to create/trigger portal task", { caseId, error: e.message });
+          logger.error("Failed to create portal task", { caseId, error: e.message });
         }
-        return noAction([...reasoning, "Portal redirect - task created and triggered"]);
+        return noAction([...reasoning, "Portal redirect - task created, cron will dispatch"]);
       }
       if (suggestedAction === "download") {
         await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
@@ -2040,22 +2021,12 @@ export async function decideNextAction(
                 status: "PENDING",
                 instructions: `Retry portal submission to ${caseData.agency_name || "agency"} at: ${caseData.portal_url}`,
               });
-              // Trigger the actual portal submission task
-              await tasks.trigger("submit-portal", {
-                caseId,
-                portalUrl: caseData.portal_url,
-                provider: caseData.portal_provider || null,
-                instructions: ri || "Retry portal submission",
-                portalTaskId: task?.id || null,
-              }, {
-                idempotencyKey: `retry-portal:${caseId}:${Date.now()}`,
-                idempotencyKeyTTL: "1h",
-              });
-              logger.info("Portal retry triggered", { caseId, portalTaskId: task?.id });
+              // submit-portal dispatched by Railway cron (avoids child task PENDING_VERSION)
+              logger.info("Portal retry task created, cron will dispatch", { caseId, portalTaskId: task?.id });
             } catch (e: any) {
-              logger.error("Failed to create/trigger portal retry", { caseId, error: e.message });
+              logger.error("Failed to create portal retry task", { caseId, error: e.message });
             }
-            return noAction([...reasoning, "Portal retry initiated"]);
+            return noAction([...reasoning, "Portal retry task created, cron will dispatch"]);
           } else {
             logger.info("Skipped retry_portal: provider/url not automatable", {
               caseId,
@@ -2194,20 +2165,11 @@ export async function decideNextAction(
             status: "PENDING",
             instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
           });
-          await tasks.trigger("submit-portal", {
-            caseId,
-            portalUrl: effectiveUrl!,
-            provider: preComputed.caseData?.portal_provider || null,
-            instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
-            portalTaskId: task?.id || null,
-          }, {
-            idempotencyKey: `portal-redirect:${caseId}:${Date.now()}`,
-            idempotencyKeyTTL: "1h",
-          });
+          // submit-portal dispatched by Railway cron (avoids child task PENDING_VERSION)
         } catch (e: any) {
-          logger.error("Failed to create/trigger portal task (v2)", { caseId, error: e.message });
+          logger.error("Failed to create portal task (v2)", { caseId, error: e.message });
         }
-        return noAction(["Portal redirect - task created and triggered (v2)"]);
+        return noAction(["Portal redirect - task created, cron will dispatch (v2)"]);
       }
 
       // Citizenship/residency restriction: mark as ID State

@@ -18,8 +18,6 @@ import type { ActionType, ExecutionResult } from "../lib/types";
 import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/portal-utils";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
-import { tasks } from "@trigger.dev/sdk";
-
 const AI_ROUTER_V2_EXEC = process.env.AI_ROUTER_V2 || "false";
 
 function isAIRouterV2Active(caseId: number): boolean {
@@ -276,20 +274,9 @@ export async function executeAction(
     });
     await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
 
-    // Trigger portal submission as a top-level Trigger.dev task (not a child task).
-    // Using tasks.trigger() avoids parent-child version coupling that causes
-    // PENDING_VERSION issues during deploys. No queue override — use task defaults.
-    await tasks.trigger("submit-portal", {
-      caseId,
-      portalUrl: targetPortalUrl!,
-      provider: caseData.portal_provider || null,
-      instructions: portalInstructions,
-      portalTaskId: portalResult.taskId || null,
-    }, {
-      idempotencyKey: `exec-portal:${caseId}:${proposalId}`,
-      idempotencyKeyTTL: "1h",
-    });
-
+    // Don't trigger submit-portal from within this task — child tasks get stuck
+    // in PENDING_VERSION during deploys. Instead, the Railway cron sweep picks up
+    // PENDING_PORTAL proposals and dispatches submit-portal as a top-level task.
     return {
       actionExecuted: false,
       executionResult: { action: "portal_task_created", ...portalResult },
