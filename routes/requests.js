@@ -2525,10 +2525,10 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             // non-fatal
         }
 
-        await db.query('BEGIN');
-        try {
+        // All reset mutations must be atomic on a single connection.
+        const txResult = await db.withTransaction(async (txQuery) => {
             // Remove active proposals from queue.
-            const dismissedProposals = await db.query(
+            const dismissedProposals = await txQuery(
                 `UPDATE proposals
                  SET status = 'DISMISSED',
                      updated_at = NOW(),
@@ -2544,7 +2544,7 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             );
 
             // Mark in-flight/queued runs as failed (superseded by reset).
-            const failedRuns = await db.query(
+            const failedRuns = await txQuery(
                 `UPDATE agent_runs
                  SET status = 'failed',
                      ended_at = NOW(),
@@ -2555,7 +2555,7 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             );
 
             // Clear processed marker on anchor inbound so it can be re-run through run-engine path.
-            await db.query(
+            await txQuery(
                 `UPDATE messages
                  SET processed_at = NULL,
                      processed_run_id = NULL,
@@ -2565,43 +2565,51 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             );
 
             // Clear decision artifacts at/after this inbound timestamp.
-            const prunedAnalyses = await db.query(
+            const prunedAnalyses = await txQuery(
                 `DELETE FROM response_analysis
                  WHERE case_id = $1
                    AND created_at >= $2`,
                 [requestId, latestInbound.inbound_at]
             );
-            const prunedDecisions = await db.query(
+            const prunedDecisions = await txQuery(
                 `DELETE FROM agent_decisions
                  WHERE case_id = $1
                    AND created_at >= $2`,
                 [requestId, latestInbound.inbound_at]
             );
 
-            await db.updateCase(requestId, {
-                requires_human: false,
-                pause_reason: null,
-                substatus: `Reset to inbound #${latestInbound.id}; reprocessing`,
-            });
-
-            await db.logActivity(
-                'case_reset_to_last_inbound',
-                `Reset to latest inbound #${latestInbound.id} and queued fresh processing`,
-                {
-                    case_id: requestId,
-                    message_id: latestInbound.id,
-                    dismissed_proposals: dismissedProposals.rowCount || 0,
-                    failed_runs: failedRuns.rowCount || 0,
-                    analyses_pruned: prunedAnalyses.rowCount || 0,
-                    decisions_pruned: prunedDecisions.rowCount || 0,
-                }
+            // Clear case pause state within the transaction.
+            await txQuery(
+                `UPDATE cases
+                 SET requires_human = false,
+                     pause_reason = NULL,
+                     substatus = $2,
+                     updated_at = NOW()
+                 WHERE id = $1`,
+                [requestId, `Reset to inbound #${latestInbound.id}; reprocessing`]
             );
 
-            await db.query('COMMIT');
-        } catch (txErr) {
-            await db.query('ROLLBACK');
-            throw txErr;
-        }
+            return {
+                dismissed: dismissedProposals.rowCount || 0,
+                failed: failedRuns.rowCount || 0,
+                analysesPruned: prunedAnalyses.rowCount || 0,
+                decisionsPruned: prunedDecisions.rowCount || 0,
+            };
+        });
+
+        // Log activity outside the transaction (non-critical, has SSE side effects).
+        await db.logActivity(
+            'case_reset_to_last_inbound',
+            `Reset to latest inbound #${latestInbound.id} and queued fresh processing`,
+            {
+                case_id: requestId,
+                message_id: latestInbound.id,
+                dismissed_proposals: txResult.dismissed,
+                failed_runs: txResult.failed,
+                analyses_pruned: txResult.analysesPruned,
+                decisions_pruned: txResult.decisionsPruned,
+            }
+        );
 
         // Re-run from the anchor inbound via Trigger.dev.
         const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');

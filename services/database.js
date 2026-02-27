@@ -43,6 +43,27 @@ class DatabaseService {
         }
     }
 
+    /**
+     * Run a callback inside a single-connection transaction.
+     * The callback receives a `query(text, params)` function bound to the transaction client.
+     * Automatically COMMITs on success or ROLLBACKs on error.
+     */
+    async withTransaction(fn) {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            const txQuery = (text, params) => client.query(text, params);
+            const result = await fn(txQuery);
+            await client.query('COMMIT');
+            return result;
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
     async initialize() {
         try {
             const schemaPath = path.join(__dirname, '..', 'database', 'schema.sql');
