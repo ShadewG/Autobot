@@ -1,7 +1,10 @@
 const { tasks, runs } = require('@trigger.dev/sdk');
 const db = require('./database');
 
-const PENDING_STATUSES = new Set(['PENDING', 'QUEUED', 'PENDING_VERSION', 'PENDING_DEPLOYMENT', 'PENDING_EXECUTION']);
+const PENDING_STATUSES = new Set(['PENDING', 'PENDING_DEPLOYMENT', 'PENDING_EXECUTION']);
+// QUEUED and PENDING_VERSION mean Trigger.dev accepted the run — it will execute
+// when the worker is ready.  Creating a duplicate run is worse than waiting.
+const ACCEPTED_STATUSES = new Set(['QUEUED', 'PENDING_VERSION']);
 const STARTED_STATUSES = new Set(['EXECUTING', 'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'CRASHED', 'CANCELED', 'CANCELLED']);
 const TERMINAL_FAILED_STATUSES = new Set(['FAILED', 'CRASHED', 'CANCELED', 'CANCELLED']);
 
@@ -31,7 +34,7 @@ async function verifyTriggerRunStarted(triggerRunId, { verifyMs = 10000, pollMs 
       const run = await runs.retrieve(triggerRunId);
       const status = normalizeStatus(run?.status);
       if (status) lastStatus = status;
-      if (STARTED_STATUSES.has(status)) {
+      if (STARTED_STATUSES.has(status) || ACCEPTED_STATUSES.has(status)) {
         return { started: true, status };
       }
       if (!PENDING_STATUSES.has(status)) {
@@ -88,38 +91,6 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
 
   let verify = await verifyTriggerRunStarted(handle.id, context);
 
-  // Trigger can briefly return PENDING_VERSION during worker promotion windows.
-  // Retry once with a new idempotency key to avoid leaving local runs parked in queued.
-  if (!verify.started && verify.status === 'PENDING_VERSION') {
-    const originalPendingVersionRunId = handle.id;
-    await sleep(3500);
-    const retryOptions = {
-      ...triggerOptions,
-      idempotencyKey: `${triggerOptions.idempotencyKey}:pv-retry`,
-      idempotencyKeyTTL: triggerOptions.idempotencyKeyTTL || '1h'
-    };
-    const retryHandle = await tasks.trigger(taskId, payload, retryOptions);
-    verify = await verifyTriggerRunStarted(retryHandle.id, context);
-
-    if (runId) {
-      await mergeRunMetadata(runId, {
-        pending_version_retry: true,
-        pending_version_original_run_id: originalPendingVersionRunId,
-        pending_version_retry_trigger_run_id: retryHandle.id,
-        pending_version_retry_status: verify.status,
-        pending_version_retry_started: verify.started,
-        pending_version_retry_at: new Date().toISOString(),
-        // Keep canonical tracking fields aligned with the retry handle.
-        triggerRunId: retryHandle.id,
-        trigger_status_verified: verify.status,
-        trigger_started: verify.started,
-        trigger_verified_at: new Date().toISOString()
-      });
-    }
-
-    return { handle: retryHandle, verify };
-  }
-
   if (runId) {
     await mergeRunMetadata(runId, {
       trigger_status_verified: verify.status,
@@ -170,6 +141,12 @@ async function recoverStaleQueuedRuns({ maxAgeMinutes = 5, limit = 25, maxAttemp
         error: `Trigger run ${triggerRunId} ended as ${triggerStatus}`
       });
       failed++;
+      continue;
+    }
+
+    // QUEUED / PENDING_VERSION — Trigger.dev accepted the run; it will execute
+    // when the worker is ready.  Do NOT create a replacement.
+    if (ACCEPTED_STATUSES.has(triggerStatus) || STARTED_STATUSES.has(triggerStatus)) {
       continue;
     }
 
