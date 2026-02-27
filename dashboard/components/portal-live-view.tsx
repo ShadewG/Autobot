@@ -67,13 +67,7 @@ export function PortalLiveView({ caseId, initialScreenshotUrl, portalTaskUrl, is
   const screenshots = historyData?.screenshots || [];
   const screenshotUrl = data?.screenshot_url || initialScreenshotUrl || null;
   const taskUrl = data?.portal_task_url || portalTaskUrl || null;
-  // Keep hook order stable across renders (don't declare hooks after early returns)
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
-
-  // In history mode, hide entirely if there are no screenshots (data loaded and empty)
-  if (!isLive && historyData && screenshots.length === 0) {
-    return null;
-  }
 
   // Current display: in live mode show latest from live poll, in history mode show last from history
   const mainImageUrl = isLive
@@ -120,6 +114,12 @@ export function PortalLiveView({ caseId, initialScreenshotUrl, portalTaskUrl, is
   });
 
   const showFilmstrip = screenshots.length > 1;
+
+  // In history mode, hide entirely if there are no screenshots (data loaded and empty)
+  // IMPORTANT: This early return must be AFTER all hooks to satisfy React's Rules of Hooks
+  if (!isLive && historyData && screenshots.length === 0) {
+    return null;
+  }
 
   return (
     <>
