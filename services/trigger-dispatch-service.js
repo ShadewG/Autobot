@@ -76,7 +76,32 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
     });
   }
 
-  const verify = await verifyTriggerRunStarted(handle.id, context);
+  let verify = await verifyTriggerRunStarted(handle.id, context);
+
+  // Trigger can briefly return PENDING_VERSION during worker promotion windows.
+  // Retry once with a new idempotency key to avoid leaving local runs parked in queued.
+  if (!verify.started && verify.status === 'PENDING_VERSION') {
+    await sleep(3500);
+    const retryOptions = {
+      ...triggerOptions,
+      idempotencyKey: `${triggerOptions.idempotencyKey}:pv-retry`,
+      idempotencyKeyTTL: triggerOptions.idempotencyKeyTTL || '1h'
+    };
+    const retryHandle = await tasks.trigger(taskId, payload, retryOptions);
+    verify = await verifyTriggerRunStarted(retryHandle.id, context);
+
+    if (runId) {
+      await mergeRunMetadata(runId, {
+        pending_version_retry: true,
+        pending_version_retry_trigger_run_id: retryHandle.id,
+        pending_version_retry_status: verify.status,
+        pending_version_retry_started: verify.started,
+        pending_version_retry_at: new Date().toISOString()
+      });
+    }
+
+    return { handle: retryHandle, verify };
+  }
 
   if (runId) {
     await mergeRunMetadata(runId, {
