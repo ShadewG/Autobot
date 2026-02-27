@@ -79,6 +79,9 @@ import {
   Phone,
   Edit,
   Trash2,
+  Copy,
+  Check,
+  ChevronRight,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -279,6 +282,9 @@ function RequestDetailContent() {
   const [editedSubject, setEditedSubject] = useState<string>("");
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
+  const [manualSubmitOpen, setManualSubmitOpen] = useState(false);
+  const [isManualSubmitting, setIsManualSubmitting] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
 
@@ -460,6 +466,31 @@ function RequestDetailContent() {
       alert(e.message);
     } finally {
       setIsAdjustingPending(false);
+    }
+  };
+
+  const copyField = (key: string, value: string) => {
+    navigator.clipboard.writeText(value);
+    setCopiedField(key);
+    setTimeout(() => setCopiedField(null), 1500);
+  };
+
+  const handleManualSubmit = async () => {
+    if (!data?.pending_proposal) return;
+    setIsManualSubmitting(true);
+    try {
+      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "MANUAL_SUBMIT" }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      optimisticClear();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setIsManualSubmitting(false);
     }
   };
 
@@ -782,6 +813,7 @@ function RequestDetailContent() {
     deadline_milestones,
     state_deadline,
     pending_proposal,
+    portal_helper,
     review_state,
     active_run,
     case_agencies = [],
@@ -1335,6 +1367,189 @@ function RequestDetailContent() {
                             No outbound message draft for this action. Approve to continue processing this proposal.
                           </p>
                         )}
+                        {/* Manual Submit Helper — only for SUBMIT_PORTAL */}
+                        {pending_proposal.action_type === "SUBMIT_PORTAL" && portal_helper && (
+                          <div className="border rounded">
+                            <button
+                              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+                              onClick={() => setManualSubmitOpen(!manualSubmitOpen)}
+                            >
+                              <ChevronRight className={cn("h-3 w-3 transition-transform", manualSubmitOpen && "rotate-90")} />
+                              Manual Submit Helper
+                            </button>
+                            {manualSubmitOpen && (
+                              <div className="px-3 pb-3 space-y-3">
+                                {portal_helper.portal_url && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="w-full"
+                                    onClick={() => window.open(portal_helper.portal_url!, "_blank")}
+                                  >
+                                    <ExternalLink className="h-3 w-3 mr-1.5" /> Open Portal
+                                  </Button>
+                                )}
+
+                                {/* Requester Info */}
+                                <div>
+                                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Requester</p>
+                                  <div className="space-y-0.5">
+                                    {([
+                                      ["Name", portal_helper.requester.name],
+                                      ["Email", portal_helper.requester.email],
+                                      ["Phone", portal_helper.requester.phone],
+                                      ["Organization", portal_helper.requester.organization],
+                                      ["Title", portal_helper.requester.title],
+                                    ] as const).map(([label, val]) => (
+                                      <div key={label} className="flex items-center gap-2 text-xs group">
+                                        <span className="text-muted-foreground w-20 shrink-0">{label}</span>
+                                        <span className="flex-1 truncate">{val}</span>
+                                        <button
+                                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+                                          onClick={() => copyField(label, val)}
+                                          title={`Copy ${label}`}
+                                        >
+                                          {copiedField === label ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Address */}
+                                <div>
+                                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Address</p>
+                                  <div className="space-y-0.5">
+                                    {([
+                                      ["Street", portal_helper.address.line1],
+                                      ["Apt/Suite", portal_helper.address.line2],
+                                      ["City", portal_helper.address.city],
+                                      ["State", portal_helper.address.state],
+                                      ["Zip", portal_helper.address.zip],
+                                    ] as const).map(([label, val]) => (
+                                      <div key={label} className="flex items-center gap-2 text-xs group">
+                                        <span className="text-muted-foreground w-20 shrink-0">{label}</span>
+                                        <span className="flex-1 truncate">{val}</span>
+                                        <button
+                                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+                                          onClick={() => copyField(`addr-${label}`, val)}
+                                          title={`Copy ${label}`}
+                                        >
+                                          {copiedField === `addr-${label}` ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Request Details */}
+                                <div>
+                                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Request Details</p>
+                                  <div className="space-y-0.5">
+                                    {portal_helper.case_info.subject_name && (
+                                      <div className="flex items-center gap-2 text-xs group">
+                                        <span className="text-muted-foreground w-20 shrink-0">Subject</span>
+                                        <span className="flex-1 truncate">{portal_helper.case_info.subject_name}</span>
+                                        <button className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5" onClick={() => copyField("subject", portal_helper.case_info.subject_name!)}>
+                                          {copiedField === "subject" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                        </button>
+                                      </div>
+                                    )}
+                                    {portal_helper.case_info.incident_date && (
+                                      <div className="flex items-center gap-2 text-xs group">
+                                        <span className="text-muted-foreground w-20 shrink-0">Date</span>
+                                        <span className="flex-1 truncate">{portal_helper.case_info.incident_date}</span>
+                                        <button className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5" onClick={() => copyField("date", portal_helper.case_info.incident_date!)}>
+                                          {copiedField === "date" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                        </button>
+                                      </div>
+                                    )}
+                                    {portal_helper.case_info.incident_location && (
+                                      <div className="flex items-center gap-2 text-xs group">
+                                        <span className="text-muted-foreground w-20 shrink-0">Location</span>
+                                        <span className="flex-1 truncate">{portal_helper.case_info.incident_location}</span>
+                                        <button className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5" onClick={() => copyField("location", portal_helper.case_info.incident_location!)}>
+                                          {copiedField === "location" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                        </button>
+                                      </div>
+                                    )}
+                                    {portal_helper.case_info.requested_records.length > 0 && (
+                                      <div className="text-xs">
+                                        <div className="flex items-center gap-2 group">
+                                          <span className="text-muted-foreground w-20 shrink-0">Records</span>
+                                          <span className="flex-1 truncate">{portal_helper.case_info.requested_records.length} type(s)</span>
+                                          <button
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5"
+                                            onClick={() => copyField("records", portal_helper.case_info.requested_records.join("\n"))}
+                                            title="Copy all records"
+                                          >
+                                            {copiedField === "records" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                          </button>
+                                        </div>
+                                        <div className="ml-[88px] mt-0.5 space-y-0.5">
+                                          {portal_helper.case_info.requested_records.map((rec, i) => (
+                                            <div key={i} className="flex items-center gap-1.5 group/rec">
+                                              <span className="text-muted-foreground">-</span>
+                                              <span className="flex-1 truncate">{rec}</span>
+                                              <button
+                                                className="opacity-0 group-hover/rec:opacity-100 transition-opacity p-0.5"
+                                                onClick={() => copyField(`rec-${i}`, rec)}
+                                              >
+                                                {copiedField === `rec-${i}` ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                              </button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    {portal_helper.case_info.additional_details && (
+                                      <div className="text-xs">
+                                        <div className="flex items-center gap-2 group">
+                                          <span className="text-muted-foreground w-20 shrink-0">Details</span>
+                                          <span className="flex-1 truncate">{portal_helper.case_info.additional_details.slice(0, 60)}...</span>
+                                          <button className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5" onClick={() => copyField("details", portal_helper.case_info.additional_details!)}>
+                                            {copiedField === "details" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-2 text-xs group">
+                                      <span className="text-muted-foreground w-20 shrink-0">Fee Waiver</span>
+                                      <span className="flex-1 truncate">{portal_helper.fee_waiver_reason}</span>
+                                      <button className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5" onClick={() => copyField("fee", portal_helper.fee_waiver_reason)}>
+                                        {copiedField === "fee" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                      </button>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs group">
+                                      <span className="text-muted-foreground w-20 shrink-0">Delivery</span>
+                                      <span className="flex-1 truncate">{portal_helper.preferred_delivery}</span>
+                                      <button className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5" onClick={() => copyField("delivery", portal_helper.preferred_delivery)}>
+                                        {copiedField === "delivery" ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3 text-muted-foreground" />}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <Separator />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="w-full border-green-700/50 text-green-400 hover:bg-green-700/20"
+                                  onClick={handleManualSubmit}
+                                  disabled={isManualSubmitting}
+                                >
+                                  {isManualSubmitting ? (
+                                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                                  ) : (
+                                    <CheckCircle className="h-3 w-3 mr-1.5" />
+                                  )}
+                                  Mark as Manually Submitted
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
                         {/* Reasoning */}
                         {Array.isArray(pending_proposal.reasoning) && pending_proposal.reasoning.length > 0 && (
                           <ul className="text-xs text-muted-foreground space-y-1">

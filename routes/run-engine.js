@@ -307,7 +307,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
   try {
     // Validate action
-    const validActions = ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'];
+    const validActions = ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW', 'MANUAL_SUBMIT'];
     if (!action || !validActions.includes(action)) {
       return res.status(400).json({
         success: false,
@@ -404,6 +404,54 @@ router.post('/proposals/:id/decision', async (req, res) => {
          ON CONFLICT (proposal_id) DO NOTHING`,
         [proposalId, proposal.case_id, proposal.trigger_message_id || null, proposal.action_type, instruction || reason || null]
       ).catch(err => logger.warn('Auto eval-case insert failed (non-fatal)', { proposalId, error: err.message }));
+    }
+
+    // === MANUAL_SUBMIT: user filled the portal form manually ===
+    if (action === 'MANUAL_SUBMIT') {
+      await db.updateProposal(proposalId, {
+        human_decision: humanDecision,
+        status: 'EXECUTED'
+      });
+      await db.updateCaseStatus(caseId, 'sent', {
+        requires_human: false,
+        pause_reason: null,
+        send_date: new Date(),
+        substatus: 'Manually submitted via portal',
+      });
+      await db.logActivity('proposal_manual_submit', `Proposal ${proposalId} manually submitted via portal`, {
+        case_id: caseId,
+        proposal_id: proposalId,
+      });
+
+      // Complete the waiting Trigger.dev run if one exists
+      if (proposal.waitpoint_token?.startsWith('waitpoint_')) {
+        try {
+          const triggerApiUrl = process.env.TRIGGER_API_URL || 'https://api.trigger.dev';
+          await fetch(
+            `${triggerApiUrl}/api/v1/waitpoints/tokens/${proposal.waitpoint_token}/complete`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+              },
+              body: JSON.stringify({ data: { action: 'MANUAL_SUBMIT' } }),
+            }
+          );
+        } catch (tokenErr) {
+          logger.warn('Failed to complete waitpoint token for manual submit (non-fatal)', {
+            proposalId, error: tokenErr.message,
+          });
+        }
+      }
+
+      logger.info('Proposal manually submitted via portal', { caseId, proposalId });
+      return res.json({
+        success: true,
+        message: 'Marked as manually submitted',
+        proposal_id: proposalId,
+        action: 'MANUAL_SUBMIT',
+      });
     }
 
     // === Trigger.dev path: complete waitpoint token ===

@@ -444,6 +444,22 @@ export interface RequestsListResponse {
   completed: RequestListItem[];
 }
 
+export interface PortalHelper {
+  portal_url: string | null;
+  agency_name: string | null;
+  requester: { name: string; email: string; phone: string; organization: string; title: string };
+  address: { line1: string; line2: string; city: string; state: string; zip: string };
+  case_info: {
+    subject_name: string | null;
+    incident_date: string | null;
+    incident_location: string | null;
+    requested_records: string[];
+    additional_details: string | null;
+  };
+  fee_waiver_reason: string;
+  preferred_delivery: string;
+}
+
 export interface PendingProposal {
   id: number;
   action_type: string;
@@ -478,6 +494,7 @@ export interface RequestWorkspaceResponse {
   deadline_milestones?: DeadlineMilestone[];
   state_deadline?: StateDeadline;
   pending_proposal?: PendingProposal | null;
+  portal_helper?: PortalHelper | null;
   review_state?: ReviewState;
   active_run?: AgentRunSummary | null;
   agent_decisions?: AgentDecision[];

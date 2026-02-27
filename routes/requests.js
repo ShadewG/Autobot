@@ -1226,6 +1226,53 @@ router.get('/:id/workspace', async (req, res) => {
         `, [requestId]);
         const pendingProposal = pendingProposalResult.rows[0] || null;
 
+        // Build portal_helper for SUBMIT_PORTAL proposals — one-stop copy-paste cheat sheet
+        let portalHelper = null;
+        if (pendingProposal?.action_type === 'SUBMIT_PORTAL') {
+            const caseOwner = caseData.user_id ? await db.getUserById(caseData.user_id) : null;
+            const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+            const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
+            const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
+            const ownerOrg = caseOwner?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team';
+            const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
+
+            const rawRecords = caseData.requested_records;
+            let recordsList = [];
+            if (Array.isArray(rawRecords)) {
+                recordsList = rawRecords;
+            } else if (typeof rawRecords === 'string') {
+                try { recordsList = JSON.parse(rawRecords); } catch { recordsList = [rawRecords]; }
+            }
+
+            portalHelper = {
+                portal_url: agencySummary?.portal_url || caseData.portal_url || null,
+                agency_name: resolvedAgencyName || caseData.agency_name || null,
+                requester: {
+                    name: ownerName,
+                    email: ownerEmail,
+                    phone: ownerPhone,
+                    organization: ownerOrg,
+                    title: ownerTitle,
+                },
+                address: {
+                    line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
+                    line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
+                    city: caseOwner?.address_city || process.env.REQUESTER_CITY || 'Seattle',
+                    state: caseOwner?.address_state || process.env.REQUESTER_STATE || 'WA',
+                    zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || '98199',
+                },
+                case_info: {
+                    subject_name: caseData.subject_name || caseData.case_name || null,
+                    incident_date: caseData.incident_date || null,
+                    incident_location: caseData.incident_location || null,
+                    requested_records: recordsList,
+                    additional_details: caseData.additional_details || null,
+                },
+                fee_waiver_reason: 'Non-commercial documentary / public interest',
+                preferred_delivery: 'electronic',
+            };
+        }
+
         const agentDecisionsResult = await db.query(
             `SELECT id, reasoning, action_taken, confidence, trigger_type, outcome, created_at
              FROM agent_decisions
@@ -1276,6 +1323,7 @@ router.get('/:id/workspace', async (req, res) => {
             deadline_milestones: deadlineMilestones,
             state_deadline: stateDeadline,
             pending_proposal: pendingProposal,
+            portal_helper: portalHelper,
             review_state,
             active_run: activeRun,
             agent_decisions: agentDecisions,
