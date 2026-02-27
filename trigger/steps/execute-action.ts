@@ -18,7 +18,7 @@ import type { ActionType, ExecutionResult } from "../lib/types";
 import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/portal-utils";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
-import { submitPortal } from "../tasks/submit-portal";
+import { tasks } from "@trigger.dev/sdk";
 
 const AI_ROUTER_V2_EXEC = process.env.AI_ROUTER_V2 || "false";
 
@@ -276,15 +276,16 @@ export async function executeAction(
     });
     await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
 
-    // Trigger portal submission as a separate Trigger.dev task
-    await submitPortal.trigger({
+    // Trigger portal submission as a top-level Trigger.dev task (not a child task).
+    // Using tasks.trigger() avoids parent-child version coupling that causes
+    // PENDING_VERSION issues during deploys. No queue override — use task defaults.
+    await tasks.trigger("submit-portal", {
       caseId,
       portalUrl: targetPortalUrl!,
       provider: caseData.portal_provider || null,
       instructions: portalInstructions,
       portalTaskId: portalResult.taskId || null,
     }, {
-      queue: `case-${caseId}`,
       idempotencyKey: `exec-portal:${caseId}:${proposalId}`,
       idempotencyKeyTTL: "1h",
     });
