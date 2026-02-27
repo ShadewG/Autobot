@@ -6,6 +6,7 @@ const actionValidator = require('../services/action-validator');
 const logger = require('../services/logger');
 const triggerDispatch = require('../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../lib/email-cleaner');
+const { resolveReviewState } = require('../lib/resolve-review-state');
 
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
@@ -298,6 +299,17 @@ function toRequestListItem(caseData) {
     const dueInfo = buildDueInfo(caseData);
     const feeQuote = parseFeeQuote(caseData);
 
+    // Derive review_state from available lateral join data
+    const review_state = resolveReviewState({
+        caseData,
+        activeProposal: caseData.active_proposal_status
+            ? { status: caseData.active_proposal_status }
+            : null,
+        activeRun: caseData.active_run_status
+            ? { status: caseData.active_run_status }
+            : null,
+    });
+
     return {
         id: String(caseData.id),
         subject: subject,
@@ -322,7 +334,8 @@ function toRequestListItem(caseData) {
         active_run_trigger_type: caseData.active_run_trigger_type || null,
         active_run_started_at: caseData.active_run_started_at || null,
         active_portal_task_status: caseData.active_portal_task_status || null,
-        active_portal_task_type: caseData.active_portal_task_type || null
+        active_portal_task_type: caseData.active_portal_task_type || null,
+        review_state,
     };
 }
 
@@ -761,13 +774,14 @@ router.get('/', async (req, res) => {
                 ar.trigger_type AS active_run_trigger_type,
                 ar.started_at AS active_run_started_at,
                 pt.status AS active_portal_task_status,
-                pt.action_type AS active_portal_task_type
+                pt.action_type AS active_portal_task_type,
+                pp.status AS active_proposal_status
             FROM cases c
             LEFT JOIN LATERAL (
                 SELECT status, trigger_type, started_at
                 FROM agent_runs
                 WHERE case_id = c.id
-                  AND status IN ('created', 'queued', 'processing', 'waiting')
+                  AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
                 ORDER BY started_at DESC NULLS LAST, id DESC
                 LIMIT 1
             ) ar ON TRUE
@@ -779,6 +793,14 @@ router.get('/', async (req, res) => {
                 ORDER BY updated_at DESC NULLS LAST, id DESC
                 LIMIT 1
             ) pt ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT status
+                FROM proposals
+                WHERE case_id = c.id
+                  AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) pp ON TRUE
             WHERE (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
         `;
         const params = [];
@@ -1023,15 +1045,32 @@ router.get('/:id/workspace', async (req, res) => {
         const stateDeadline = STATE_DEADLINES[caseData.state?.toUpperCase()] || null;
         const deadlineMilestones = buildDeadlineMilestones(caseData, timelineEvents, stateDeadline);
 
-        // Fetch latest pending Trigger.dev proposal (not from auto_reply_queue)
+        // Fetch latest active proposal (includes DECISION_RECEIVED for review_state)
         const pendingProposalResult = await db.query(`
             SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason
             FROM proposals
-            WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED')
+            WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
             ORDER BY created_at DESC
             LIMIT 1
         `, [requestId]);
         const pendingProposal = pendingProposalResult.rows[0] || null;
+
+        // Fetch active agent run for review_state
+        const activeRunResult = await db.query(`
+            SELECT id, status, trigger_type, started_at
+            FROM agent_runs
+            WHERE case_id = $1 AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
+            ORDER BY started_at DESC NULLS LAST
+            LIMIT 1
+        `, [requestId]);
+        const activeRun = activeRunResult.rows[0] || null;
+
+        // Compute derived review_state
+        const review_state = resolveReviewState({
+            caseData: rawCaseData,
+            activeProposal: pendingProposal,
+            activeRun,
+        });
 
         res.json({
             success: true,
@@ -1042,7 +1081,9 @@ router.get('/:id/workspace', async (req, res) => {
             agency_summary: agencySummary,
             deadline_milestones: deadlineMilestones,
             state_deadline: stateDeadline,
-            pending_proposal: pendingProposal
+            pending_proposal: pendingProposal,
+            review_state,
+            active_run: activeRun,
         });
     } catch (error) {
         console.error('Error fetching request workspace:', error);

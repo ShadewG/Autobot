@@ -70,6 +70,11 @@ function formatDueWithSeverity(request: RequestListItem): {
 }
 
 function formatActiveRun(request: RequestListItem): string | null {
+  // Use review_state for authoritative "applying decision" indicator
+  if (request.review_state === "DECISION_APPLYING") {
+    return "Applying decision...";
+  }
+
   const portalTaskStatus = String(request.active_portal_task_status || "").toLowerCase();
   if (portalTaskStatus === "pending" || portalTaskStatus === "in_progress") {
     return "Running: processing portal submission";

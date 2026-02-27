@@ -8,6 +8,8 @@ import type {
   DueInfo,
   PauseReason,
   AutopilotMode,
+  ReviewState,
+  AgentRunSummary,
 } from "@/lib/types";
 
 /**
@@ -64,6 +66,11 @@ export interface RequestVM {
   portalProvider: string | null;
   isPortal: boolean;
 
+  // Review state (derived server-side)
+  reviewState: ReviewState | null;
+  isDecisionRequired: boolean;
+  isDecisionApplying: boolean;
+
   // Quick access
   hasInboundMessages: boolean;
   lastInboundMessageId: string | null;
@@ -78,6 +85,7 @@ export interface WorkspaceVM {
   threadMessages: ThreadMessage[];
   nextAction: NextAction | null;
   agency: AgencySummary;
+  activeRun: AgentRunSummary | null;
 
   // Filtered/computed lists
   inboundMessages: ThreadMessage[];
@@ -304,6 +312,10 @@ export function toRequestVM(
     portalProvider: nextAction?.portal_provider || agency?.portal_provider || null,
     isPortal: channel === "PORTAL",
 
+    reviewState: null, // Set at workspace level from API response
+    isDecisionRequired: false, // Set at workspace level
+    isDecisionApplying: false, // Set at workspace level
+
     hasInboundMessages: false, // Set at workspace level
     lastInboundMessageId: null, // Set at workspace level
     hasDraft: !!nextAction?.draft_content,
@@ -326,6 +338,10 @@ export function toWorkspaceVM(data: RequestWorkspaceResponse): WorkspaceVM {
   const requestVM = toRequestVM(request, agency_summary, next_action_proposal);
 
   // Enhance with workspace-level data
+  const reviewState = data.review_state ?? null;
+  requestVM.reviewState = reviewState;
+  requestVM.isDecisionRequired = reviewState === 'DECISION_REQUIRED';
+  requestVM.isDecisionApplying = reviewState === 'DECISION_APPLYING';
   requestVM.hasInboundMessages = inboundMessages.length > 0;
   requestVM.lastInboundMessageId = inboundMessages.length > 0
     ? String(inboundMessages[inboundMessages.length - 1].id)
@@ -338,6 +354,7 @@ export function toWorkspaceVM(data: RequestWorkspaceResponse): WorkspaceVM {
     threadMessages: thread_messages,
     nextAction: next_action_proposal,
     agency: agency_summary,
+    activeRun: data.active_run ?? null,
     inboundMessages,
     outboundMessages,
     decisionEvents,

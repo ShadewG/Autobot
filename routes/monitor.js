@@ -1378,7 +1378,16 @@ router.get('/live-overview', async (req, res) => {
                 (SELECT m2.body_text FROM messages m2 WHERE m2.case_id = c.id AND m2.direction = 'inbound' ORDER BY COALESCE(m2.received_at, m2.created_at) DESC LIMIT 1) AS last_inbound_preview
             FROM cases c
             WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
-              AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.case_id = c.id AND p.status IN ('PENDING_APPROVAL', 'BLOCKED'))
+              AND NOT EXISTS (
+                  SELECT 1 FROM proposals p WHERE p.case_id = c.id
+                  AND (
+                      p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                      OR (p.status = 'DECISION_RECEIVED'
+                          AND EXISTS (SELECT 1 FROM agent_runs ar
+                                      WHERE ar.case_id = c.id
+                                      AND ar.status IN ('created','queued','processing','running','waiting')))
+                  )
+              )
               AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
               ${caseUserFilter}
             ORDER BY

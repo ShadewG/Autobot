@@ -18,7 +18,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { RequestDetail, NextAction, AgencySummary, PauseReason, ReviewReason, ThreadMessage } from "@/lib/types";
+import type { RequestDetail, NextAction, AgencySummary, PauseReason, ReviewReason, ThreadMessage, ReviewState } from "@/lib/types";
 import {
   CheckCircle,
   MessageSquare,
@@ -50,6 +50,7 @@ interface DecisionPanelProps {
   nextAction: NextAction | null;
   agency: AgencySummary;
   lastInboundMessage?: ThreadMessage | null;
+  reviewState?: ReviewState | null;
   onProceed: (costCap?: number) => Promise<void>;
   onNegotiate: () => void;
   onCustomAdjust?: () => void;
@@ -552,6 +553,7 @@ export function DecisionPanel({
   nextAction,
   agency,
   lastInboundMessage,
+  reviewState,
   onProceed,
   onNegotiate,
   onCustomAdjust,
@@ -570,15 +572,59 @@ export function DecisionPanel({
   const [showCustomInstruction, setShowCustomInstruction] = useState(false);
   const [reviewActionLoading, setReviewActionLoading] = useState<string | null>(null);
 
-  // Robust detection of whether decision is required
-  const pauseReasonRaw = request.pause_reason ?? null;
-  const isDecisionRequired =
-    Boolean(pauseReasonRaw) ||
-    request.requires_human ||
-    request.status?.toUpperCase() === "PAUSED" ||
-    request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
-    request.status?.toLowerCase().includes("needs_human") ||
-    Boolean(nextAction?.blocked_reason);
+  // Use server-derived review_state when available, fall back to legacy heuristic
+  const isDecisionRequired = reviewState
+    ? reviewState === 'DECISION_REQUIRED'
+    : (() => {
+        const pauseReasonRaw = request.pause_reason ?? null;
+        return Boolean(pauseReasonRaw) ||
+          request.requires_human ||
+          request.status?.toUpperCase() === "PAUSED" ||
+          request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
+          request.status?.toLowerCase().includes("needs_human") ||
+          Boolean(nextAction?.blocked_reason);
+      })();
+
+  const isDecisionApplying = reviewState === 'DECISION_APPLYING';
+  const isProcessing = reviewState === 'PROCESSING';
+
+  // If decision is being applied, show "Applying Decision" card
+  if (isDecisionApplying) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2 text-blue-300">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Applying Decision
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Your decision has been received and is being applied by the agent.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // If agent is actively working (no human needed), show processing state
+  if (isProcessing) {
+    return (
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2 text-blue-300">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Agent Working
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            The agent is currently processing this request.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   // If not paused, show minimal status
   if (!isDecisionRequired) {
@@ -598,6 +644,8 @@ export function DecisionPanel({
       </Card>
     );
   }
+
+  const pauseReasonRaw = request.pause_reason ?? null;
 
   // Normalize the pause reason
   const normalized = normalizePauseReason(pauseReasonRaw, request, lastInboundMessage);

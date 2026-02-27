@@ -573,6 +573,8 @@ function RequestDetailContent() {
     deadline_milestones,
     state_deadline,
     pending_proposal,
+    review_state,
+    active_run,
   } = data;
 
   const pendingActionType = pending_proposal?.action_type || "";
@@ -599,13 +601,15 @@ function RequestDetailContent() {
     !request.pause_reason ||
     (pauseReasonValue === "PENDING_APPROVAL" && Boolean(waitingRun));
 
-  // Robust detection of whether request is paused (same pattern as DecisionPanel)
-  const isPaused =
-    Boolean(request.pause_reason) ||
-    request.requires_human ||
-    request.status?.toUpperCase() === "PAUSED" ||
-    request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
-    request.status?.toLowerCase().includes("needs_human");
+  // Use server-derived review_state when available, fall back to legacy heuristic
+  const isPaused = review_state
+    ? review_state === 'DECISION_REQUIRED'
+    : (Boolean(request.pause_reason) ||
+       request.requires_human ||
+       request.status?.toUpperCase() === "PAUSED" ||
+       request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
+       request.status?.toLowerCase().includes("needs_human"));
+  const isDecisionApplying = review_state === 'DECISION_APPLYING';
 
   const gateDisplay = request.pause_reason
     ? (GATE_DISPLAY[request.pause_reason] || FALLBACK_GATE_DISPLAY)
@@ -1069,6 +1073,7 @@ function RequestDetailContent() {
                     nextAction={nextAction}
                     agency={agency_summary}
                     lastInboundMessage={lastInboundMessage}
+                    reviewState={review_state}
                     onProceed={handleProceed}
                     onNegotiate={handleNegotiate}
                     onCustomAdjust={handleCustomAdjust}

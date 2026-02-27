@@ -1,3 +1,13 @@
+// Derived review state — computed server-side from case + proposal + run
+export type ReviewState = 'DECISION_REQUIRED' | 'DECISION_APPLYING' | 'PROCESSING' | 'WAITING_AGENCY' | 'IDLE';
+
+export interface AgentRunSummary {
+  id: string;
+  status: string;
+  trigger_type: string;
+  started_at: string;
+}
+
 // Due date information with context
 export interface DueInfo {
   next_due_at: string | null;
@@ -35,6 +45,7 @@ export interface RequestListItem {
   active_run_started_at?: string | null;
   active_portal_task_status?: string | null;
   active_portal_task_type?: string | null;
+  review_state?: ReviewState;
 }
 
 // Scope item with availability status
@@ -422,6 +433,8 @@ export interface RequestWorkspaceResponse {
   deadline_milestones?: DeadlineMilestone[];
   state_deadline?: StateDeadline;
   pending_proposal?: PendingProposal | null;
+  review_state?: ReviewState;
+  active_run?: AgentRunSummary | null;
 }
 
 export interface AgenciesListResponse {
