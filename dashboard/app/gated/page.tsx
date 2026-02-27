@@ -491,6 +491,7 @@ function MonitorPageContent() {
   const [showCorrespondence, setShowCorrespondence] = useState(false);
   const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
+  const [escalateInstruction, setEscalateInstruction] = useState("");
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [inboundFilter, setInboundFilter] = useState<"all" | "unmatched" | "matched">("all");
   const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null);
@@ -584,6 +585,8 @@ function MonitorPageContent() {
     if (safeIndex !== currentIndex) setCurrentIndex(safeIndex);
   }, [safeIndex, currentIndex]);
   const selectedItem = queue[safeIndex] || null;
+  const isEscalateProposal =
+    selectedItem?.type === "proposal" && selectedItem.data.action_type === "ESCALATE";
 
   // Deep link: on first load, jump to the case from ?case=XXXX
   useEffect(() => {
@@ -615,6 +618,11 @@ function MonitorPageContent() {
     url.searchParams.set("case", String(caseId));
     window.history.replaceState({}, "", url.toString());
   }, [selectedItem]);
+
+  // Reset guided instruction when changing selected card.
+  useEffect(() => {
+    setEscalateInstruction("");
+  }, [selectedItem?.type, selectedItem?.type === "proposal" ? selectedItem?.data.id : null]);
 
   // Fetch full proposal detail for the selected proposal
   const selectedProposalId =
@@ -771,9 +779,16 @@ function MonitorPageContent() {
 
   const handleApprove = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
+    if (isEscalateProposal && !escalateInstruction.trim()) {
+      showToast("Provide instructions before approving this review item", "error");
+      return;
+    }
     setIsSubmitting(true);
     try {
       const body: Record<string, unknown> = { action: "APPROVE" };
+      if (isEscalateProposal) {
+        body.instruction = escalateInstruction.trim();
+      }
       // Include any edits the user made to the draft
       if (editedBody && editedBody !== draftBody) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== draftSubject) body.draft_subject = editedSubject;
@@ -1735,11 +1750,24 @@ function MonitorPageContent() {
             <p className="text-[10px] text-muted-foreground">
               {getActionExplanation(selectedItem.data.action_type, !!draftBody, selectedItem.data.portal_url, selectedItem.data.agency_email)}
             </p>
+            {isEscalateProposal && (
+              <div className="space-y-1">
+                <p className="text-[10px] text-muted-foreground">
+                  Provide guidance and approve. The AI will execute this direction and return with a concrete next proposal.
+                </p>
+                <Textarea
+                  placeholder="Example: Research the correct records custodian for body-cam footage, then draft a targeted request to that agency."
+                  value={escalateInstruction}
+                  onChange={(e) => setEscalateInstruction(e.target.value)}
+                  className="text-xs bg-background min-h-[76px]"
+                />
+              </div>
+            )}
             <div className="flex gap-2">
               <Button
                 className="flex-1 bg-green-700 hover:bg-green-600 text-white"
                 onClick={handleApprove}
-                disabled={isSubmitting}
+                disabled={isSubmitting || (isEscalateProposal && !escalateInstruction.trim())}
               >
                 {isSubmitting ? (
                   <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />

@@ -120,12 +120,35 @@ function noAction(reasoning: string[]): DecisionResult {
   return decision("NONE", { isComplete: true, requiresHuman: false, reasoning });
 }
 
-function shouldPrioritizeBodycamCustodianResearch(caseData: any, latestAnalysis: any): boolean {
-  const requested = (Array.isArray(caseData?.requested_records)
+function shouldPrioritizeBodycamCustodianResearch(
+  caseData: any,
+  latestAnalysis: any,
+  constraints: string[] = []
+): boolean {
+  const requested = Array.isArray(caseData?.requested_records)
     ? caseData.requested_records.join(" ")
-    : caseData?.requested_records || "").toLowerCase();
-  const bodycamRequested = /body.?cam|bodycam|bwc|body.?worn|dash.?cam|officer video/.test(requested);
-  if (!bodycamRequested) return false;
+    : caseData?.requested_records || "";
+  const scopeText = Array.isArray(caseData?.scope_items_jsonb)
+    ? caseData.scope_items_jsonb.map((s: any) => s?.name || "").join(" ")
+    : "";
+  const detailsText = String(caseData?.additional_details || "");
+  const corpus = `${requested} ${scopeText} ${detailsText}`.toLowerCase();
+  const bodycamSignal = /body.?cam|bodycam|bwc|body.?worn|dash.?cam|officer video|video footage/.test(corpus);
+
+  const caseConstraints = [
+    ...(Array.isArray(caseData?.constraints_jsonb) ? caseData.constraints_jsonb : []),
+    ...(Array.isArray(constraints) ? constraints : []),
+  ];
+  const wrongAgencyTo911Signal = caseConstraints.some((c: string) =>
+    [
+      "WRONG_AGENCY",
+      "WRONG_AGENCY_REDIRECT",
+      "REFERRED_TO_911_CENTER",
+      "REFERRED_TO_OTHER_CUSTODIAN",
+      "REFERRED_TO_OTHER_AGENCY",
+      "REFERRAL_OTHER_AGENCY",
+    ].includes(c)
+  );
 
   const analysisBlob = [
     ...(latestAnalysis?.key_points || []),
@@ -138,7 +161,8 @@ function shouldPrioritizeBodycamCustodianResearch(caseData: any, latestAnalysis:
 
   // Trigger when agency guidance is clearly scoped to 911/form workflow and
   // does not address where body-cam/video custody is held.
-  return is911Scoped && formGate && !mentionsBodycamHandling;
+  // We allow either explicit body-cam signals OR wrong-agency->911 handoff signals.
+  return is911Scoped && formGate && !mentionsBodycamHandling && (bodycamSignal || wrongAgencyTo911Signal);
 }
 
 function buildHumanDirectivesSection(
@@ -643,7 +667,7 @@ async function aiDecision(params: {
     if (
       params.classification === "CLARIFICATION_REQUEST" &&
       object.action !== "RESEARCH_AGENCY" &&
-      shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis)
+      shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, params.constraints)
     ) {
       return decision("RESEARCH_AGENCY", {
         pauseReason: "DENIAL",
@@ -913,7 +937,7 @@ async function deterministicRouting(
   if (classification === "CLARIFICATION_REQUEST") {
     const caseData = await db.getCaseById(caseId);
     const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
-    if (shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis)) {
+    if (shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, constraints)) {
       return decision("RESEARCH_AGENCY", {
         pauseReason: "DENIAL",
         researchLevel: "deep",
@@ -1249,6 +1273,19 @@ export async function decideNextAction(
         reprocess: async () => decision("ESCALATE", { reasoning }),
         custom: async () => {
           if (!ri) return noAction([...reasoning, "Custom action with no instruction"]);
+          const text = ri.toLowerCase();
+          if (/\bresearch\b|\bfind\b.*\bagency\b|\bwrong agency\b|\bcustodian\b/.test(text)) {
+            return decision("RESEARCH_AGENCY", { adjustmentInstruction: ri, reasoning });
+          }
+          if (/\bappeal\b|\brebuttal\b|\bchallenge\b|\bdenial\b/.test(text)) {
+            return decision("SEND_REBUTTAL", { adjustmentInstruction: ri, reasoning });
+          }
+          if (/\bclarif(y|ication)\b|\bnarrow\b|\bscope\b/.test(text)) {
+            return decision("SEND_CLARIFICATION", { adjustmentInstruction: ri, reasoning });
+          }
+          if (/\bportal\b/.test(text)) {
+            return decision("SUBMIT_PORTAL", { adjustmentInstruction: ri, reasoning });
+          }
           return decision("SEND_FOLLOWUP", { adjustmentInstruction: ri, reasoning });
         },
         retry_portal: async () => {

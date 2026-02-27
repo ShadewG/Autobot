@@ -146,10 +146,12 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         }
     }
 
+    const trimmedInstruction = typeof instruction === 'string' ? instruction.trim() : '';
+
     const humanDecision = {
         action,
         proposalId,
-        instruction,
+        instruction: trimmedInstruction || null,
         route_mode,
         reason,
         decidedAt: new Date().toISOString(),
@@ -183,6 +185,62 @@ async function processProposalDecision(proposalId, action, { instruction = null,
             message: 'Proposal dismissed',
             proposal_id: proposalId,
             action
+        };
+    }
+
+    // ESCALATE is a human-routing placeholder. Approving it should always include
+    // guidance and then reprocess to produce a concrete next proposal.
+    if (proposal.action_type === 'ESCALATE' && action === 'APPROVE') {
+        if (!trimmedInstruction) {
+            const err = new Error('Instruction is required when approving an ESCALATE proposal');
+            err.status = 400;
+            throw err;
+        }
+
+        await db.updateProposal(proposalId, {
+            human_decision: humanDecision,
+            status: 'DISMISSED'
+        });
+
+        let handle;
+        try {
+            handle = await tasks.trigger('process-inbound', {
+                runId: 0, // task creates canonical agent_run
+                caseId,
+                messageId: proposal.trigger_message_id || null,
+                autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+                triggerType: 'HUMAN_REVIEW_RESOLUTION',
+                reviewAction: 'custom',
+                reviewInstruction: trimmedInstruction,
+            }, triggerOpts(caseId, 'escalate-guided', proposalId));
+        } catch (triggerError) {
+            // Keep it actionable if dispatch fails.
+            await db.updateProposal(proposalId, {
+                status: 'PENDING_APPROVAL',
+                human_decision: null
+            });
+            await db.logActivity('proposal_dispatch_failed', `Guided reprocess for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
+                case_id: caseId,
+                proposal_id: proposalId,
+                error: triggerError.message
+            });
+            throw triggerError;
+        }
+
+        await db.logActivity('proposal_guided_reprocess', `ESCALATE converted to guided reprocess for proposal #${proposalId}`, {
+            case_id: caseId,
+            proposal_id: proposalId,
+            instruction: trimmedInstruction,
+            trigger_run_id: handle.id
+        });
+        notify('info', `Guided reprocess started for case ${caseId}`, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
+        return {
+            success: true,
+            message: 'Guided reprocess started. A new concrete proposal will be generated.',
+            proposal_id: proposalId,
+            action,
+            trigger_run_id: handle.id
         };
     }
 
