@@ -41,6 +41,7 @@ export default defineConfig({
           "SKYVERN_APP_BASE_URL",
           "SKYVERN_PROXY_LOCATION",
           "REQUESTS_INBOX",
+          "AI_ROUTER_V2",
         ];
         const result = vars
           .filter((name) => process.env[name])

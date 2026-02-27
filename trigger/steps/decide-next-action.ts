@@ -227,11 +227,12 @@ function buildEnrichedDecisionPrompt(params: {
   allowedActions: ActionType[];
   preComputed: PreComputedContext;
   customInstruction?: string | null;
+  inlineKeyPoints?: string[];
 }): string {
   const {
     caseData, classification, classificationConfidence, constraints, scopeItems,
     extractedFeeAmount, sentiment, autopilotMode, threadMessages,
-    allowedActions, preComputed, customInstruction,
+    allowedActions, preComputed, customInstruction, inlineKeyPoints,
   } = params;
 
   const requestedRecords = Array.isArray(caseData?.requested_records)
@@ -295,9 +296,12 @@ function buildEnrichedDecisionPrompt(params: {
   if (caseData?.incident_location) timingParts.push(`Incident location: ${caseData.incident_location}`);
   if (timingParts.length) timingSection = `\n## Timing & Deadlines\n${timingParts.map(p => `- ${p}`).join("\n")}`;
 
-  // Latest analysis key points
-  const latestAnalysisSection = preComputed.latestAnalysis?.key_points?.length
-    ? `\n## Latest Analysis Key Points\n${preComputed.latestAnalysis.key_points.map((p: string) => `- ${p}`).join("\n")}`
+  // Latest analysis key points (DB analysis preferred, fall back to inline classifier key points)
+  const keyPointsSource = preComputed.latestAnalysis?.key_points?.length
+    ? preComputed.latestAnalysis.key_points
+    : (inlineKeyPoints?.length ? inlineKeyPoints : []);
+  const latestAnalysisSection = keyPointsSource.length
+    ? `\n## Latest Analysis Key Points\n${keyPointsSource.map((p: string) => `- ${p}`).join("\n")}`
     : "";
 
   // Pre-computed analysis section
@@ -389,7 +393,7 @@ ${feeSection}${portalSection}${researchSection}
 
 ## Thread Summary
 IMPORTANT: Messages labeled [PORTAL_NOTIFICATION:*] are automated emails from records portals (NextRequest, GovQA, etc.) and reflect ONLY the portal track status. A portal marked "closed" or "completed" does NOT mean the case is resolved — there may be active direct email correspondence with the agency that still needs a response. Base your decision on the classifier result and direct agency correspondence.
-${threadSummary || "No thread messages available."}
+${threadSummary || "No thread messages available. IMPORTANT: When thread messages are unavailable, rely on the Classifier Result and Latest Analysis Key Points above to make your decision. Do NOT escalate solely because thread messages are missing — the classifier has already analyzed the message content and its findings are trustworthy. Choose the action that best matches the classification, denial subtype, and key points."}
 
 ## ALLOWED ACTIONS (you MUST choose from this list)
 ${allowedActionsSection}
@@ -481,6 +485,7 @@ async function makeAIDecisionV2(params: {
     allowedActions,
     preComputed,
     customInstruction,
+    inlineKeyPoints: params.inlineKeyPoints,
   });
 
   // 3-attempt self-repair loop
@@ -559,7 +564,7 @@ async function makeAIDecisionV2(params: {
         adjustmentInstruction: object.adjustmentInstruction,
         isComplete: object.action === "NONE",
         researchLevel: (object as any).researchLevel || "none",
-        overrideMessageId: (object as any).overrideMessageId ?? undefined,
+        overrideMessageId: (object as any).overrideMessageId || undefined,
       });
     } catch (error: any) {
       lastError = error.message;
@@ -1397,7 +1402,7 @@ async function deterministicRouting(
 
     switch (resolvedSubtype) {
       case "no_records":
-        if (!caseData.contact_research_notes) {
+        if (!caseData?.contact_research_notes) {
           return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "deep", reasoning: [...reasoning, "No records - researching correct agency (deep)"] });
         }
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Already researched - reformulating request"] });

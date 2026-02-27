@@ -177,8 +177,8 @@ export const decisionSchema = z.object({
   adjustmentInstruction: z.string().nullable().describe("Specific instructions for drafting (e.g., 'negotiate fee down to $50')"),
   researchLevel: z.enum(["none", "light", "medium", "deep"])
     .describe("How much research to do before drafting (none=skip, light=contacts, medium=+laws, deep=+full custodian chain)"),
-  overrideMessageId: z.number().nullable().optional()
-    .describe("If set, redirect drafting to target this specific inbound message instead of the latest one"),
+  overrideMessageId: z.number().nullable()
+    .describe("If set, redirect drafting to target this specific inbound message instead of the latest one. Use null if not needed."),
 }).strict();
 
 export type DecisionOutput = z.infer<typeof decisionSchema>;
