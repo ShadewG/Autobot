@@ -108,7 +108,7 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
               <p className="font-medium">{request.state}</p>
             </div>
           </div>
-          {request.additional_details && (
+          {request.additional_details && !request.additional_details.startsWith('--- Notion Fields ---') && (
             <>
               <Separator />
               <div>
