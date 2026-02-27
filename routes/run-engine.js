@@ -499,15 +499,21 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
 
       const latestInbound = await db.getLatestInboundMessage(caseId);
+      const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
+      const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
+      const replyHeaders =
+        latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
+          ? {
+              'In-Reply-To': latestInbound.message_id,
+              'References': latestInbound.message_id
+            }
+          : null;
       const emailResult = await emailExecutor.sendEmail({
         to: caseData.agency_email,
         subject: refreshedProposal.draft_subject,
         bodyText: refreshedProposal.draft_body_text,
         bodyHtml: refreshedProposal.draft_body_html || null,
-        headers: latestInbound ? {
-          'In-Reply-To': latestInbound.message_id,
-          'References': latestInbound.message_id
-        } : null,
+        headers: replyHeaders,
         caseId,
         proposalId,
         runId: null,
@@ -567,6 +573,17 @@ router.post('/proposals/:id/decision', async (req, res) => {
         }, triggerOptsDebounced(caseId, 'resume-inbound', proposalId));
       }
     } catch (triggerError) {
+      // Keep proposal actionable if Trigger.dev dispatch fails.
+      await db.updateProposal(proposalId, {
+        status: 'PENDING_APPROVAL',
+        human_decision: null
+      });
+      await db.logActivity('proposal_dispatch_failed', `Decision for proposal #${proposalId} could not be dispatched to Trigger.dev: ${triggerError.message}`, {
+        case_id: caseId,
+        proposal_id: proposalId,
+        action,
+        error: triggerError.message
+      });
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
     }

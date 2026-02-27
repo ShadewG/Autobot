@@ -229,6 +229,39 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Proposal recovery watchdog: unstick decisions that were accepted but never dispatched.
+        this.jobs.proposalDispatchRecovery = new CronJob('*/5 * * * *', async () => {
+            try {
+                const result = await db.query(`
+                    UPDATE proposals p
+                    SET status = 'PENDING_APPROVAL',
+                        human_decision = NULL,
+                        updated_at = NOW()
+                    WHERE p.status = 'DECISION_RECEIVED'
+                      AND p.waitpoint_token IS NULL
+                      AND p.updated_at < NOW() - INTERVAL '5 minutes'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM execution_records er
+                          WHERE er.proposal_id = p.id
+                      )
+                    RETURNING p.id, p.case_id, p.action_type
+                `);
+
+                if (result.rowCount > 0) {
+                    for (const row of result.rows) {
+                        await db.logActivity('proposal_recovered', `Recovered stuck proposal #${row.id} (${row.action_type}) back to PENDING_APPROVAL`, {
+                            case_id: row.case_id,
+                            proposal_id: row.id,
+                            action_type: row.action_type
+                        });
+                    }
+                    console.log(`[proposal-recovery] Recovered ${result.rowCount} stuck proposals`);
+                }
+            } catch (error) {
+                console.error('Error in proposal dispatch recovery watchdog:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
@@ -238,6 +271,7 @@ class CronService {
         console.log('✓ Stuck portal sweep: Every 30 minutes');
         console.log('✓ Stale run reaper: Every 15 minutes');
         console.log('✓ Loop breaker: Every 30 minutes');
+        console.log('✓ Proposal dispatch recovery: Every 5 minutes');
     }
 
     /**
@@ -907,17 +941,32 @@ class CronService {
             console.error('Error in follow-up status fix sweep:', error);
         }
 
-        // Sweep 4: Clean up stuck agent runs (queued/running > 1 hour)
-        // These block proposal approvals and pile up when the worker isn't processing
+        // Sweep 4: Clean up stuck agent runs
+        // - queued/running > 1 hour
+        // - waiting > 2 hours with no active proposal (orphaned wait state)
         let stuckRunsCleaned = 0;
         try {
             const stuckResult = await db.query(`
                 UPDATE agent_runs
                 SET status = 'failed',
                     ended_at = NOW(),
-                    error = 'Auto-cleaned: stuck in queued/running for >1h'
-                WHERE status IN ('queued', 'running')
-                  AND started_at < NOW() - INTERVAL '1 hour'
+                    error = CASE
+                        WHEN status = 'waiting' THEN 'Auto-cleaned: orphaned waiting run >2h with no active proposal'
+                        ELSE 'Auto-cleaned: stuck in queued/running for >1h'
+                    END
+                WHERE (
+                    status IN ('queued', 'running')
+                    AND started_at < NOW() - INTERVAL '1 hour'
+                ) OR (
+                    status = 'waiting'
+                    AND started_at < NOW() - INTERVAL '2 hours'
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM proposals p
+                        WHERE p.case_id = agent_runs.case_id
+                          AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                    )
+                )
                 RETURNING id, case_id
             `);
             stuckRunsCleaned = stuckResult.rowCount || 0;

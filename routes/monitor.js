@@ -277,10 +277,10 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         };
     }
 
-    // SUBMIT_PORTAL: Execute directly — trigger the portal submission task.
-    // These proposals are created by cron-service or Skyvern failure handlers
-    // outside the Trigger.dev gate flow, so they have no waitpoint_token.
-    if (proposal.action_type === 'SUBMIT_PORTAL' && action === 'APPROVE') {
+    // SUBMIT_PORTAL: Execute directly only for legacy/manual proposals that do
+    // not have a Trigger.dev waitpoint token. If a token exists, let the normal
+    // waitpoint completion path resume the run.
+    if (proposal.action_type === 'SUBMIT_PORTAL' && action === 'APPROVE' && !proposal.waitpoint_token) {
         const caseData = await db.getCaseById(caseId);
         if (!caseData) {
             const err = new Error(`Case ${caseId} not found`);
@@ -303,15 +303,14 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 
         // Trigger submit-portal task via Trigger.dev
         let portalTaskId = null;
-        try {
-            // Create a portal_task record for tracking
-            const ptResult = await db.query(
-                `INSERT INTO portal_tasks (case_id, portal_url, status, proposal_id)
-                 VALUES ($1, $2, 'PENDING', $3) RETURNING id`,
-                [caseId, portalUrl, proposalId]
-            );
-            portalTaskId = ptResult.rows[0]?.id;
-        } catch (_) {}
+        // Create a portal_task record for tracking (action_type is required)
+        const ptResult = await db.query(
+            `INSERT INTO portal_tasks (case_id, portal_url, action_type, status, proposal_id, instructions)
+             VALUES ($1, $2, $3, 'PENDING', $4, $5)
+             RETURNING id`,
+            [caseId, portalUrl, proposal.action_type, proposalId, proposal.draft_body_text || null]
+        );
+        portalTaskId = ptResult.rows[0]?.id || null;
 
         const handle = await tasks.trigger('submit-portal', {
             caseId,
@@ -380,21 +379,36 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         originalActionType: action === 'ADJUST' ? proposal.action_type : undefined,
         originalProposalId: proposalId,
     };
-    if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
-        handle = await tasks.trigger('process-initial-request', {
-            runId: 0, // placeholder — task creates its own agent_run
-            caseId,
-            autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-            ...triggerContext,
-        }, triggerOpts(caseId, 'approve-initial', proposalId));
-    } else {
-        handle = await tasks.trigger('process-inbound', {
-            runId: 0,
-            caseId,
-            messageId: proposal.trigger_message_id,
-            autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-            ...triggerContext,
-        }, triggerOpts(caseId, 'approve-inbound', proposalId));
+    try {
+        if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
+            handle = await tasks.trigger('process-initial-request', {
+                runId: 0, // placeholder — task creates its own agent_run
+                caseId,
+                autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+                ...triggerContext,
+            }, triggerOpts(caseId, 'approve-initial', proposalId));
+        } else {
+            handle = await tasks.trigger('process-inbound', {
+                runId: 0,
+                caseId,
+                messageId: proposal.trigger_message_id,
+                autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+                ...triggerContext,
+            }, triggerOpts(caseId, 'approve-inbound', proposalId));
+        }
+    } catch (triggerError) {
+        // Never leave proposals stranded in DECISION_RECEIVED when dispatch fails.
+        await db.updateProposal(proposalId, {
+            status: 'PENDING_APPROVAL',
+            human_decision: null
+        });
+        await db.logActivity('proposal_dispatch_failed', `Decision for proposal #${proposalId} could not be dispatched to Trigger.dev: ${triggerError.message}`, {
+            case_id: caseId,
+            proposal_id: proposalId,
+            action,
+            error: triggerError.message
+        });
+        throw triggerError;
     }
 
     notify('info', `Proposal ${action.toLowerCase()} — re-triggered via Trigger.dev for case ${caseId}`, { case_id: caseId });
