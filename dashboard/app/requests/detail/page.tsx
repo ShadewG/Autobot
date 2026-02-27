@@ -1146,7 +1146,7 @@ function RequestDetailContent() {
                     {runsData.runs.map((run) => (
                       <TableRow key={run.id}>
                         <TableCell className="font-mono text-sm">
-                          {run.id.slice(0, 8)}...
+                          {String(run.id).slice(0, 8)}...
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{run.trigger_type}</Badge>
@@ -1224,7 +1224,7 @@ function RequestDetailContent() {
                   <div className="flex items-center gap-2 mb-2">
                     <XCircle className="h-4 w-4 text-red-400" />
                     <span className="font-medium text-red-300">
-                      Run {run.id.slice(0, 8)} Failed
+                      Run {String(run.id).slice(0, 8)} Failed
                     </span>
                   </div>
                   <pre className="text-xs text-red-400 whitespace-pre-wrap font-mono bg-red-950/50 p-2">
@@ -1239,7 +1239,7 @@ function RequestDetailContent() {
                   <div className="flex items-center gap-2 mb-2">
                     <UserCheck className="h-4 w-4 text-amber-400" />
                     <span className="font-medium text-amber-300">
-                      Run {run.id.slice(0, 8)} Awaiting Approval
+                      Run {String(run.id).slice(0, 8)} Awaiting Approval
                     </span>
                   </div>
                   <p className="text-sm text-amber-400">{run.gated_reason}</p>
