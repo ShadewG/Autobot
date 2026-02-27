@@ -995,6 +995,7 @@ async function deterministicRouting(
         instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
         portalTaskId: task?.id || null,
       }, {
+        queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
         idempotencyKey: `portal-redirect:${caseId}:${Date.now()}`,
         idempotencyKeyTTL: "1h",
       });
@@ -1147,6 +1148,7 @@ export async function decideNextAction(
             instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
             portalTaskId: task?.id || null,
           }, {
+            queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
             idempotencyKey: `use-portal:${caseId}:${Date.now()}`,
             idempotencyKeyTTL: "1h",
           });
@@ -1269,7 +1271,101 @@ export async function decideNextAction(
           adjustmentInstruction: ri || "Reformulate with a different approach",
           reasoning,
         }),
-        reprocess: async () => decision("ESCALATE", { reasoning }),
+        reprocess: async () => {
+          const aiReprocess = await aiDecision({
+            caseId,
+            classification,
+            constraints,
+            extractedFeeAmount,
+            sentiment,
+            autopilotMode,
+            denialSubtype,
+            jurisdictionLevel: jurisdictionLevel || null,
+            inlineKeyPoints,
+          });
+
+          if (aiReprocess && aiReprocess.actionType !== "ESCALATE") {
+            return {
+              ...aiReprocess,
+              reasoning: [...reasoning, ...(aiReprocess.reasoning || [])],
+            };
+          }
+
+          const deterministicReprocess = await deterministicRouting(
+            caseId,
+            classification,
+            extractedFeeAmount,
+            sentiment,
+            autopilotMode,
+            triggerType,
+            requiresResponse,
+            portalUrl,
+            denialSubtype,
+            inlineKeyPoints
+          );
+          if (deterministicReprocess.actionType !== "ESCALATE") {
+            return {
+              ...deterministicReprocess,
+              reasoning: [...reasoning, ...(deterministicReprocess.reasoning || [])],
+            };
+          }
+
+          const [latestInbound, lastPortalTask, recentDismissed] = await Promise.all([
+            db.query(
+              `SELECT subject, body_text
+               FROM messages
+               WHERE case_id = $1 AND direction = 'inbound'
+               ORDER BY created_at DESC
+               LIMIT 1`,
+              [caseId]
+            ),
+            db.query(
+              `SELECT status, completion_notes
+               FROM portal_tasks
+               WHERE case_id = $1
+               ORDER BY updated_at DESC
+               LIMIT 1`,
+              [caseId]
+            ),
+            db.query(
+              `SELECT action_type
+               FROM proposals
+               WHERE case_id = $1 AND status = 'DISMISSED'
+               ORDER BY created_at DESC
+               LIMIT 3`,
+              [caseId]
+            ),
+          ]);
+
+          const inboundSubject = latestInbound.rows[0]?.subject || null;
+          const inboundPreview = (latestInbound.rows[0]?.body_text || "").replace(/\s+/g, " ").trim();
+          const portalStatus = lastPortalTask.rows[0]?.status || null;
+          const portalNote = lastPortalTask.rows[0]?.completion_notes || null;
+          const dismissedActions = recentDismissed.rows
+            .map((r: { action_type: string | null }) => r.action_type)
+            .filter(Boolean) as string[];
+
+          return decision("ESCALATE", {
+            pauseReason: "SENSITIVE",
+            reasoning: [
+              ...reasoning,
+              `Reprocess could not find a safe executable action for classification=${classification}.`,
+              caseDataForReview?.status ? `Case status: ${caseDataForReview.status}` : "Case status unavailable.",
+              caseDataForReview?.substatus ? `Case substatus: ${caseDataForReview.substatus}` : "Case substatus unavailable.",
+              inboundSubject
+                ? `Latest inbound subject: ${inboundSubject}`
+                : inboundPreview
+                ? `Latest inbound preview: ${inboundPreview.substring(0, 220)}`
+                : "No inbound message context found on this case.",
+              portalStatus ? `Last portal task status: ${portalStatus}` : "No portal task history found.",
+              portalNote ? `Last portal note: ${portalNote}` : "No portal task note available.",
+              dismissedActions.length > 0
+                ? `Recently dismissed actions: ${dismissedActions.join(", ")}`
+                : "No recently dismissed actions recorded.",
+              "Provide explicit guidance (e.g., send_via_email, research_agency, appeal, narrow_scope).",
+            ],
+          });
+        },
         custom: async () => {
           if (!ri) return noAction([...reasoning, "Custom action with no instruction"]);
           const text = ri.toLowerCase();
@@ -1309,6 +1405,7 @@ export async function decideNextAction(
                 instructions: ri || "Retry portal submission",
                 portalTaskId: task?.id || null,
               }, {
+                queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
                 idempotencyKey: `retry-portal:${caseId}:${Date.now()}`,
                 idempotencyKeyTTL: "1h",
               });
