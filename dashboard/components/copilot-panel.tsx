@@ -40,6 +40,7 @@ export function CopilotPanel({
   onRefresh,
 }: CopilotPanelProps) {
   const [isUpdatingScope, setIsUpdatingScope] = useState(false);
+  const hasAgencyDetailLink = Boolean(agency?.id && /^\d+$/.test(String(agency.id)));
 
   const handleScopeStatusChange = async (
     itemIndex: number,
@@ -227,13 +228,17 @@ export function CopilotPanel({
           <CardHeader className="pb-2">
             <CardTitle className="text-sm flex items-center justify-between">
               Agency
-              <a
-                href={`/agencies/detail?id=${agency.id}`}
-                className="text-xs text-primary hover:underline"
-              >
-                <ExternalLink className="h-3 w-3 inline mr-1" />
-                Full profile
-              </a>
+              {hasAgencyDetailLink ? (
+                <a
+                  href={`/agencies/detail?id=${agency.id}`}
+                  className="text-xs text-primary hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3 inline mr-1" />
+                  Full profile
+                </a>
+              ) : (
+                <span className="text-xs text-muted-foreground">Profile unavailable</span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm">

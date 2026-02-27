@@ -849,6 +849,7 @@ function RequestDetailContent() {
   };
 
   const pauseContext = getPauseContext();
+  const hasAgencyDetailLink = Boolean(agency_summary?.id && /^\d+$/.test(String(agency_summary.id)));
 
   return (
     <div className="space-y-4">
@@ -1715,12 +1716,18 @@ function RequestDetailContent() {
                 </div>
               )}
               <Separator />
-              <Link
-                href={`/agencies/detail?id=${agency_summary.id}`}
-                className="text-primary hover:underline inline-block"
-              >
-                View Full Agency Profile
-              </Link>
+              {hasAgencyDetailLink ? (
+                <Link
+                  href={`/agencies/detail?id=${agency_summary.id}`}
+                  className="text-primary hover:underline inline-block"
+                >
+                  View Full Agency Profile
+                </Link>
+              ) : (
+                <span className="text-muted-foreground text-sm inline-block">
+                  Agency profile unavailable
+                </span>
+              )}
             </CardContent>
           </Card>
 

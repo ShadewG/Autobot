@@ -1084,8 +1084,50 @@ router.get('/:id/workspace', async (req, res) => {
         const feeQuote = parseFeeQuote(caseData);
         const constraints = parseConstraints(caseData);
 
+        // Resolve canonical agency id for deep-linking to /agencies/detail.
+        // Never use case id as an agency id.
+        let resolvedAgencyId = caseData.agency_id || null;
+        if (!resolvedAgencyId && caseData.agency_name) {
+            const agencyLookup = await db.query(
+                `SELECT id
+                 FROM agencies
+                 WHERE name = $1
+                    OR LOWER(name) = LOWER($1)
+                    OR name ILIKE $2
+                 ORDER BY
+                    CASE WHEN name = $1 THEN 0
+                         WHEN LOWER(name) = LOWER($1) THEN 1
+                         ELSE 2
+                    END
+                 LIMIT 1`,
+                [caseData.agency_name, `%${caseData.agency_name}%`]
+            );
+            resolvedAgencyId = agencyLookup.rows[0]?.id || null;
+        }
+        if (!resolvedAgencyId && caseData.portal_url) {
+            const agencyLookupByPortal = await db.query(
+                `SELECT id
+                 FROM agencies
+                 WHERE portal_url = $1 OR portal_url_alt = $1
+                 LIMIT 1`,
+                [caseData.portal_url]
+            );
+            resolvedAgencyId = agencyLookupByPortal.rows[0]?.id || null;
+        }
+        if (!resolvedAgencyId && caseData.agency_email) {
+            const agencyLookupByEmail = await db.query(
+                `SELECT id
+                 FROM agencies
+                 WHERE LOWER(email_main) = LOWER($1)
+                    OR LOWER(email_foia) = LOWER($1)
+                 LIMIT 1`,
+                [caseData.agency_email]
+            );
+            resolvedAgencyId = agencyLookupByEmail.rows[0]?.id || null;
+        }
+
         const agencySummary = {
-            id: String(requestId), // Use case ID as placeholder since we don't have agency table
+            id: resolvedAgencyId != null ? String(resolvedAgencyId) : '',
             name: caseData.agency_name || '—',
             state: caseData.state || '—',
             submission_method: caseData.portal_url ? 'PORTAL' : 'EMAIL',
