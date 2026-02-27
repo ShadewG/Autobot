@@ -278,6 +278,8 @@ export const submitPortal = task({
     if (caseData.status !== "sent") {
       await db.updateCaseStatus(caseId, "portal_in_progress", {
         substatus: "Agency requested portal submission",
+        requires_human: false,
+        pause_reason: null,
         last_portal_status: "Portal submission started",
         last_portal_status_at: new Date(),
       });
