@@ -116,8 +116,10 @@ function deriveNowLine(request: RequestListItem): {
     };
   }
   if (request.review_state === "WAITING_AGENCY") {
+    const status = String(request.status || "").toLowerCase();
+    const hasAgencyReply = status === "responded";
     return {
-      text: "Waiting on agency response",
+      text: hasAgencyReply ? "Active correspondence" : "Waiting on agency response",
       tone: "green",
       isRunning: false,
     };
