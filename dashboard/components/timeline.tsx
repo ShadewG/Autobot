@@ -239,18 +239,20 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
               {event.gate_details.fee_amount && ` $${event.gate_details.fee_amount}`}
             </Badge>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 px-2"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
-          </Button>
+          {(event.ai_audit || event.raw_content || event.metadata) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+            </Button>
+          )}
         </div>
         <p className="text-xs text-muted-foreground">
           {formatDateTime(event.timestamp)}
