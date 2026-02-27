@@ -1746,7 +1746,7 @@ Look for a records division email, FOIA email, or general agency email that acce
      */
     mapStatusToNotion(internalStatus) {
         const statusMap = {
-            'ready_to_send': 'Ready to Send',
+            'ready_to_send': 'Ready To Send',
             'sent': 'Sent',
             'awaiting_response': 'Awaiting Response',
             'responded': 'Responded',
