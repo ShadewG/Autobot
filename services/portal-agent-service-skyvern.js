@@ -138,30 +138,7 @@ class PortalAgentServiceSkyvern {
         }
     }
 
-    async _persistNewPortalAccount({ caseData, portalUrl, taskId, email, password }) {
-        if (!email || !password) {
-            return;
-        }
 
-        console.log(`\n💾 Saving new portal account credentials...`);
-        try {
-            const savedAccount = await database.createPortalAccount({
-                portal_url: portalUrl,
-                email,
-                password,
-                first_name: caseData.subject_name ? caseData.subject_name.split(' ')[0] : 'FOIB',
-                last_name: caseData.subject_name ? caseData.subject_name.split(' ').slice(1).join(' ') : 'Request',
-                portal_type: 'Auto-detected',
-                additional_info: {
-                    case_id: caseData.id,
-                    created_by_task: taskId
-                }
-            });
-            console.log(`   ✅ Saved account ID: ${savedAccount.id}`);
-        } catch (error) {
-            console.error(`   ⚠️  Failed to save account: ${error.message}`);
-        }
-    }
 
     _detectVerificationNeeded(finalTask) {
         if (!finalTask) return false;
