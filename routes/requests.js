@@ -385,6 +385,13 @@ function toRequestListItem(caseData) {
             : null,
     });
 
+    // Use derived review_state as the UI source of truth so stale requires_human
+    // flags in DB don't misclassify actively-processing cases in the queue.
+    const effectiveRequiresHuman = review_state === 'DECISION_REQUIRED';
+    const effectivePauseReason = effectiveRequiresHuman
+        ? (caseData.pause_reason || null)
+        : null;
+
     return {
         id: String(caseData.id),
         subject: subject,
@@ -395,8 +402,8 @@ function toRequestListItem(caseData) {
         last_activity_at: caseData.updated_at || caseData.created_at,
         next_due_at: dueInfo.next_due_at,
         due_info: dueInfo,
-        requires_human: caseData.requires_human || false,
-        pause_reason: caseData.pause_reason || null,
+        requires_human: effectiveRequiresHuman,
+        pause_reason: effectivePauseReason,
         autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
         cost_status: deriveCostStatus(caseData),
         cost_amount: feeQuote?.amount || null,
@@ -1204,9 +1211,17 @@ router.get('/:id/workspace', async (req, res) => {
             activeRun,
         });
 
+        const requestDetail = toRequestDetail(caseData);
+        // Keep workspace request fields aligned with derived state to prevent
+        // transient "needs decision" UI while an execution run is active.
+        requestDetail.requires_human = review_state === 'DECISION_REQUIRED';
+        if (review_state !== 'DECISION_REQUIRED') {
+            requestDetail.pause_reason = null;
+        }
+
         res.json({
             success: true,
-            request: toRequestDetail(caseData),
+            request: requestDetail,
             timeline_events: timelineEvents,
             thread_messages: threadMessages,
             next_action_proposal: nextActionProposal,
