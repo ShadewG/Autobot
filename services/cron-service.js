@@ -1338,6 +1338,7 @@ class CronService {
                     provider: pt.portal_provider || null,
                     instructions: pt.instructions || 'Submit through agency portal',
                     portalTaskId: pt.id,
+                    agentRunId: run.id,
                 }, {
                     idempotencyKey: `portal-cron:${pt.case_id}:${pt.id}`,
                     idempotencyKeyTTL: '1h',

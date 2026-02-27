@@ -140,6 +140,16 @@ async function recoverStaleQueuedRuns({ maxAgeMinutes = 5, limit = 25, maxAttemp
       continue;
     }
 
+    // Trigger.dev run completed successfully — mark the DB agent_run as completed too.
+    if (triggerStatus === 'COMPLETED') {
+      await db.updateAgentRun(run.id, {
+        status: 'completed',
+        ended_at: new Date(),
+      });
+      recovered++;
+      continue;
+    }
+
     // QUEUED / PENDING_VERSION — Trigger.dev accepted the run; it will execute
     // when the worker is ready.  Do NOT create a replacement.
     if (ACCEPTED_STATUSES.has(triggerStatus) || STARTED_STATUSES.has(triggerStatus)) {

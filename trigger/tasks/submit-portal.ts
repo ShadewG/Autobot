@@ -39,7 +39,7 @@ export const submitPortal = task({
     // Runs on hard timeout or unexpected crash — ensure case is flagged for human
     if (!payload || typeof payload !== "object") return;
     const db = getDb();
-    const { caseId, portalTaskId } = payload as any;
+    const { caseId, portalTaskId, agentRunId } = payload as any;
     if (!caseId) return;
     try {
       // Cancel the orphaned Skyvern workflow so it doesn't keep running
@@ -67,6 +67,13 @@ export const submitPortal = task({
       await db.logActivity("portal_submission_failed", `Portal timed out for case ${caseId}`, {
         case_id: caseId, error: String(error).substring(0, 500),
       });
+      // Close the tracking agent_run
+      if (agentRunId) {
+        await db.query(
+          `UPDATE agent_runs SET status = 'failed', ended_at = NOW(), error = $2 WHERE id = $1 AND status IN ('created', 'queued', 'running', 'processing')`,
+          [agentRunId, `Trigger.dev task crashed: ${String(error).substring(0, 200)}`]
+        );
+      }
     } catch {}
   },
 
@@ -76,9 +83,22 @@ export const submitPortal = task({
     provider: string | null;
     instructions: string | null;
     portalTaskId?: number;
+    agentRunId?: number;
   }) => {
-    const { caseId, portalUrl, provider, instructions, portalTaskId } = payload;
+    const { caseId, portalUrl, provider, instructions, portalTaskId, agentRunId } = payload;
     const db = getDb();
+
+    // Helper: mark the tracking agent_run as completed/failed
+    const closeAgentRun = async (status: "completed" | "failed", error?: string) => {
+      if (!agentRunId) return;
+      try {
+        await db.query(
+          `UPDATE agent_runs SET status = $1, ended_at = NOW(), error = $3 WHERE id = $2 AND status IN ('created', 'queued', 'running', 'processing')`,
+          [status, agentRunId, error || null]
+        );
+      } catch {}
+    };
+
     const cancelPortalTask = async (note: string) => {
       if (!portalTaskId) return;
       await db.query(
@@ -93,7 +113,17 @@ export const submitPortal = task({
       );
     };
 
-    logger.info("submit-portal started", { caseId, portalUrl, portalTaskId });
+    logger.info("submit-portal started", { caseId, portalUrl, portalTaskId, agentRunId });
+
+    // Mark agent_run as running
+    if (agentRunId) {
+      try {
+        await db.query(
+          `UPDATE agent_runs SET status = 'running' WHERE id = $1 AND status IN ('created', 'queued')`,
+          [agentRunId]
+        );
+      } catch {}
+    }
 
     // ── Circuit breaker: check recent failures for this case ──
     const recentFailures = await db.query(
@@ -118,6 +148,7 @@ export const submitPortal = task({
           [portalTaskId]
         );
       }
+      await closeAgentRun("failed", "Circuit breaker triggered");
       return { success: false, skipped: true, reason: "circuit_breaker" };
     }
 
@@ -148,6 +179,7 @@ export const submitPortal = task({
           [portalTaskId]
         );
       }
+      await closeAgentRun("failed", "Hard rate limit");
       return { success: false, skipped: true, reason: "hard_rate_limit" };
     }
 
@@ -162,6 +194,7 @@ export const submitPortal = task({
     if (skipStatuses.includes(caseData.status)) {
       logger.info("Portal submission skipped — case already advanced", { caseId, status: caseData.status });
       await cancelPortalTask(`Case already advanced (${caseData.status})`);
+      await closeAgentRun("completed");
       return { success: true, skipped: true, reason: caseData.status };
     }
 
@@ -187,6 +220,7 @@ export const submitPortal = task({
           [portalTaskId]
         );
       }
+      await closeAgentRun("failed", "Provider is paper-only");
       return { success: false, skipped: true, reason: "provider_paper_only" };
     }
 
@@ -196,6 +230,7 @@ export const submitPortal = task({
     if (constraints.includes("WRONG_AGENCY")) {
       logger.warn("Portal submission skipped — wrong agency", { caseId });
       await cancelPortalTask("Case marked WRONG_AGENCY");
+      await closeAgentRun("failed", "Wrong agency");
       return { success: false, skipped: true, reason: "wrong_agency" };
     }
 
@@ -204,6 +239,7 @@ export const submitPortal = task({
       const taskCheck = await db.query("SELECT status FROM portal_tasks WHERE id = $1", [portalTaskId]);
       if (taskCheck.rows[0]?.status === "CANCELLED") {
         logger.warn("Portal task was cancelled", { caseId, portalTaskId });
+        await closeAgentRun("completed");
         return { success: false, skipped: true, reason: "task_cancelled" };
       }
     }
@@ -221,6 +257,7 @@ export const submitPortal = task({
     if (recentSuccess.rows.length > 0) {
       logger.warn("Portal submission skipped — successful submission within last hour", { caseId });
       await cancelPortalTask("Recent successful portal submission detected");
+      await closeAgentRun("completed");
       return { success: true, skipped: true, reason: "recent_success" };
     }
 
@@ -237,6 +274,7 @@ export const submitPortal = task({
           [portalTaskId]
         );
       }
+      await closeAgentRun("failed", "Missing portal URL");
       return { success: false, skipped: true, reason: "invalid_portal_url" };
     }
 
@@ -262,6 +300,7 @@ export const submitPortal = task({
             [portalTaskId, `Portal account blocked: ${portalAccount.account_status}`]
           );
         }
+        await closeAgentRun("failed", `Portal account ${portalAccount.account_status}`);
         return { success: false, skipped: true, reason: `portal_account_${portalAccount.account_status}` };
       }
 
@@ -322,6 +361,7 @@ export const submitPortal = task({
               [portalTaskId]
             );
           }
+          await closeAgentRun("completed");
           return result;
         }
         // PDF fallback / not-real-portal handled inside Skyvern service
@@ -351,6 +391,7 @@ export const submitPortal = task({
               [portalTaskId, `Alternative path: ${result.status}`]
             );
           }
+          await closeAgentRun("failed", `Alternative path: ${result.status}`);
           return result;
         }
         throw new Error(result?.error || "Portal submission failed");
@@ -366,6 +407,7 @@ export const submitPortal = task({
           });
         }
         await cancelPortalTask(`Skyvern dedup skip: ${result.reason || "already handled"}`);
+        await closeAgentRun("completed");
         return result;
       }
 
@@ -430,6 +472,7 @@ export const submitPortal = task({
       });
 
       logger.info("Portal submission succeeded", { caseId, engine: engineUsed, taskUrl });
+      await closeAgentRun("completed");
       return result;
 
     } catch (error: any) {
@@ -460,6 +503,7 @@ export const submitPortal = task({
       try { await getNotion().syncStatusToNotion(caseId); } catch {}
 
       // Don't re-throw — we've handled the failure. Retrying Skyvern is expensive.
+      await closeAgentRun("failed", error.message);
       return { success: false, error: error.message };
     }
   },
