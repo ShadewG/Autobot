@@ -28,14 +28,14 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
   const hasRawVersion = message.raw_body && message.raw_body !== message.body;
 
   return (
-    <div className="w-full">
+    <div className="w-full overflow-hidden">
       {/* Header - always full width */}
       <div className={cn(
         "flex items-center gap-1.5 text-xs text-muted-foreground mb-1",
         isOutbound ? "justify-end" : "justify-start"
       )}>
         {channelIcons[message.channel]}
-        <span>{isOutbound ? "To:" : "From:"}</span>
+        <span className="shrink-0">{isOutbound ? "To:" : "From:"}</span>
         <span className="font-medium truncate max-w-[200px]">
           {isOutbound ? (message.to_email || "Unknown") : (message.from_email || "records@agency.gov")}
         </span>
@@ -82,14 +82,14 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
       {/* Message bubble - full width, colored border to indicate direction */}
       <div
         className={cn(
-          "p-3 w-full border-l-4",
+          "p-3 w-full border-l-4 overflow-hidden",
           isOutbound
             ? "bg-primary/5 border-l-primary"
             : "bg-muted border-l-amber-500"
         )}
       >
         <p className="text-xs font-semibold mb-1.5">{message.subject}</p>
-        <p className="text-sm whitespace-pre-wrap break-words">{displayBody}</p>
+        <p className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{displayBody}</p>
       </div>
 
       {/* Attachments */}

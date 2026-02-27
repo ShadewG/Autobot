@@ -525,7 +525,7 @@ function toRequestDetail(caseData) {
  * Transform message to ThreadMessage format
  * Includes cleaned body (boilerplate removed) and raw_body (original)
  */
-function toThreadMessage(message) {
+function toThreadMessage(message, attachments = []) {
     // Prefer body_text; fall back to body_html converted to plain text
     const rawBody = message.body_text || (message.body_html ? htmlToPlainText(message.body_html) : '');
     const cleanedBody = cleanEmailBody(rawBody);
@@ -543,7 +543,7 @@ function toThreadMessage(message) {
         sent_at: timestamp,
         timestamp: timestamp,  // Alias for convenience
         processed_at: message.processed_at || null,  // When this message was processed by the agent
-        attachments: []
+        attachments: attachments
     };
 }
 
@@ -1028,9 +1028,25 @@ router.get('/:id/workspace', async (req, res) => {
                 }
             }
 
+            // Fetch attachments for the case and group by message_id
+            const caseAttachments = await db.getAttachmentsByCaseId(requestId);
+            const attachmentsByMessageId = {};
+            for (const att of caseAttachments) {
+                if (!attachmentsByMessageId[att.message_id]) {
+                    attachmentsByMessageId[att.message_id] = [];
+                }
+                attachmentsByMessageId[att.message_id].push({
+                    id: att.id,
+                    filename: att.filename,
+                    content_type: att.content_type,
+                    size_bytes: att.size_bytes,
+                    url: att.storage_url || null,
+                });
+            }
+
             // Build thread messages with analysis data attached
             threadMessages = messages.map(msg => {
-                const tm = toThreadMessage(msg);
+                const tm = toThreadMessage(msg, attachmentsByMessageId[msg.id] || []);
                 const analysis = analysisMap[msg.id];
                 if (analysis) {
                     tm.classification = analysis.intent || null;

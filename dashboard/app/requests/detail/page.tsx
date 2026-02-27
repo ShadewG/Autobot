@@ -1213,9 +1213,9 @@ function RequestDetailContent() {
         <TabsContent value="overview" className="mt-4">
           {isPaused ? (
             /* Paused Layout: Conversation | Timeline | Decision Panel */
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4 items-start">
               {/* Conversation - takes most space, user needs to read this first */}
-              <div className="lg:col-span-5 min-w-0">
+              <div className="md:col-span-2 lg:col-span-5 min-w-0">
                 <Card className="h-full">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
@@ -1254,7 +1254,7 @@ function RequestDetailContent() {
               </div>
 
               {/* Timeline - middle */}
-              <div className="lg:col-span-3 min-w-0">
+              <div className="md:col-span-1 lg:col-span-3 min-w-0">
                 <Card className="h-full">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base flex items-center justify-between">
@@ -1283,7 +1283,7 @@ function RequestDetailContent() {
               </div>
 
               {/* Decision Panel - sticky on right */}
-              <div className="lg:col-span-4 min-w-0">
+              <div className="md:col-span-1 lg:col-span-4 min-w-0">
                 <div className="sticky top-44 space-y-4">
                   {portalTaskActive && (
                     <PortalLiveView
@@ -1657,8 +1657,8 @@ function RequestDetailContent() {
             </div>
           ) : portalTaskActive ? (
             /* Portal Active Layout: Conversation | Timeline | Live View */
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-              <div className="lg:col-span-5 min-w-0">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4 items-start">
+              <div className="md:col-span-2 lg:col-span-5 min-w-0">
                 <Card className="h-full">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
@@ -1696,7 +1696,7 @@ function RequestDetailContent() {
                 </Card>
               </div>
 
-              <div className="lg:col-span-3 min-w-0">
+              <div className="md:col-span-1 lg:col-span-3 min-w-0">
                 <Card className="h-full">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base flex items-center justify-between">
@@ -1722,7 +1722,7 @@ function RequestDetailContent() {
                 </Card>
               </div>
 
-              <div className="lg:col-span-4 min-w-0">
+              <div className="md:col-span-1 lg:col-span-4 min-w-0">
                 <div className="sticky top-44">
                   <PortalLiveView
                     caseId={id!}
@@ -1734,7 +1734,7 @@ function RequestDetailContent() {
             </div>
           ) : (
             /* Not Paused Layout: Timeline | Conversation | Copilot */
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
               <Card className="h-full min-w-0">
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base flex items-center justify-between">

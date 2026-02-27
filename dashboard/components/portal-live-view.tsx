@@ -68,6 +68,11 @@ export function PortalLiveView({ caseId, initialScreenshotUrl, portalTaskUrl, is
   const screenshotUrl = data?.screenshot_url || initialScreenshotUrl || null;
   const taskUrl = data?.portal_task_url || portalTaskUrl || null;
 
+  // In history mode, hide entirely if there are no screenshots (data loaded and empty)
+  if (!isLive && historyData && screenshots.length === 0) {
+    return null;
+  }
+
   // Current display: in live mode show latest from live poll, in history mode show last from history
   const mainImageUrl = isLive
     ? screenshotUrl
