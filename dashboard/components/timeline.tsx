@@ -239,20 +239,18 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
               {event.gate_details.fee_amount && ` $${event.gate_details.fee_amount}`}
             </Badge>
           )}
-          {(event.ai_audit || event.raw_content) && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2"
-              onClick={() => setExpanded(!expanded)}
-            >
-              {expanded ? (
-                <ChevronDown className="h-3 w-3" />
-              ) : (
-                <ChevronRight className="h-3 w-3" />
-              )}
-            </Button>
-          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+          </Button>
         </div>
         <p className="text-xs text-muted-foreground">
           {formatDateTime(event.timestamp)}
@@ -342,6 +340,11 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
                 {event.raw_content.length > 300 && "..."}
               </div>
             )}
+            {!event.raw_content && !event.ai_audit && event.metadata && (
+              <pre className="bg-muted rounded p-2 text-xs overflow-auto max-h-48">
+                {JSON.stringify(event.metadata, null, 2)}
+              </pre>
+            )}
           </div>
         )}
       </div>
@@ -387,12 +390,32 @@ export function Timeline({ events }: TimelineProps) {
       deduped.push({ ...lastEvent, mergedCount: mergeCount > 1 ? mergeCount : undefined });
     }
 
-    // Then filter by category (unless showAll is true)
-    if (showAll) {
-      return deduped;
+    // Collapse timeline spam from repeated auto-dispatch events, regardless of adjacency.
+    const spamCollapsed: (TimelineEvent & { mergedCount?: number })[] = [];
+    const dispatchSummaryIndex = new Map<string, number>();
+    for (const event of deduped) {
+      const isAutoDispatch = /^Auto-dispatched initial request for case/i.test(event.summary || "");
+      if (!isAutoDispatch) {
+        spamCollapsed.push(event);
+        continue;
+      }
+      const key = `${event.type}:${event.summary}`;
+      const existingIndex = dispatchSummaryIndex.get(key);
+      if (existingIndex === undefined) {
+        dispatchSummaryIndex.set(key, spamCollapsed.length);
+        spamCollapsed.push(event);
+        continue;
+      }
+      const prev = spamCollapsed[existingIndex];
+      prev.mergedCount = (prev.mergedCount || 1) + (event.mergedCount || 1);
     }
 
-    return deduped.filter((e) => {
+    // Then filter by category (unless showAll is true)
+    if (showAll) {
+      return spamCollapsed;
+    }
+
+    return spamCollapsed.filter((e) => {
       const category = e.category || 'STATUS';
       return activeFilters.has(category as CategoryFilter);
     });

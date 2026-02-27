@@ -45,8 +45,7 @@ import { requestsAPI, casesAPI, fetcher, type AgentRun } from "@/lib/api";
 import type {
   RequestWorkspaceResponse,
   NextAction,
-  PauseReason,
-  PendingProposal,
+  AgentDecision,
   CaseAgency,
   AgencyCandidate,
 } from "@/lib/types";
@@ -852,6 +851,9 @@ function RequestDetailContent() {
 
   const pauseContext = getPauseContext();
   const hasAgencyDetailLink = Boolean(agency_summary?.id && /^\d+$/.test(String(agency_summary.id)));
+  const submittedAtDisplay = request.submitted_at || thread_messages.find((m) => m.direction === "OUTBOUND")?.timestamp || null;
+  const lastInboundAtDisplay = request.last_inbound_at || lastInboundMessage?.timestamp || null;
+  const agentDecisions: AgentDecision[] = data.agent_decisions || [];
 
   return (
     <div className="space-y-4">
@@ -1113,17 +1115,12 @@ function RequestDetailContent() {
               <Clock className="h-3 w-3 text-amber-400" />
               <span className="text-xs font-medium text-amber-300">Paused: awaiting human decision</span>
             </div>
-          ) : isPaused ? (
-            <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
-              <Clock className="h-3 w-3 text-amber-400" />
-              <span className="text-xs text-amber-300">Waiting: decision required</span>
-            </div>
-          ) : (
+          ) : !isPaused ? (
             <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
               <Clock className="h-3 w-3 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Idle: no active run</span>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* Status after approval */}
@@ -1140,11 +1137,11 @@ function RequestDetailContent() {
         <div className="flex items-center gap-4 flex-wrap text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Calendar className="h-3 w-3" />
-            <span>Submitted: {formatDate(request.submitted_at)}</span>
+            <span>Submitted: {formatDate(submittedAtDisplay)}</span>
           </div>
           <div className="flex items-center gap-1">
             <Clock className="h-3 w-3" />
-            <span>Last Inbound: {formatDate(request.last_inbound_at)}</span>
+            <span>Last Inbound: {formatDate(lastInboundAtDisplay)}</span>
           </div>
           <Separator orientation="vertical" className="h-3" />
           <DueDisplay
@@ -1261,6 +1258,11 @@ function RequestDetailContent() {
                         <CardTitle className="text-sm flex items-center gap-2 text-blue-300">
                           {isEmailLikePendingAction ? <Send className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
                           {pendingCardTitle}
+                          {typeof pending_proposal.confidence === "number" && (
+                            <Badge variant="outline" className="text-[10px]">
+                              {Math.round(pending_proposal.confidence * 100)}%
+                            </Badge>
+                          )}
                           <Badge variant="outline" className="text-[10px] ml-auto">
                             {ACTION_TYPE_LABELS[pending_proposal.action_type]?.label || pending_proposal.action_type.replace(/_/g, " ")}
                           </Badge>
@@ -1620,7 +1622,11 @@ function RequestDetailContent() {
                   </TableHeader>
                   <TableBody>
                     {runsData.runs.map((run) => (
-                      <TableRow key={run.id}>
+                      <TableRow
+                        key={run.id}
+                        className="cursor-pointer hover:bg-muted/30"
+                        onClick={() => router.push(`/runs?run_id=${run.id}`)}
+                      >
                         <TableCell className="font-mono text-sm">
                           {String(run.id).slice(0, 8)}...
                         </TableCell>
@@ -1675,7 +1681,11 @@ function RequestDetailContent() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={async () => {
+                            title="Re-run this execution"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const confirmed = window.confirm(`Re-run ${String(run.id).slice(0, 8)} now?`);
+                              if (!confirmed) return;
                               try {
                                 const result = await requestsAPI.replayAgentRun(id!, run.id);
                                 if (result.success) {
@@ -1734,35 +1744,50 @@ function RequestDetailContent() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {timeline_events
-                  .filter((e) => e.ai_audit)
-                  .map((event) => (
-                    <div key={event.id} className="border rounded-lg p-4">
+                {(agentDecisions.length > 0
+                  ? agentDecisions.map((decision) => ({
+                      id: `decision-${decision.id}`,
+                      type: decision.action_taken || "DECISION",
+                      timestamp: decision.created_at,
+                      summary: decision.reasoning,
+                      confidence: decision.confidence,
+                      outcome: decision.outcome,
+                      trigger_type: decision.trigger_type,
+                    }))
+                  : timeline_events.filter((e) => e.ai_audit).map((event) => ({
+                      id: event.id,
+                      type: event.type,
+                      timestamp: event.timestamp,
+                      summary: event.summary,
+                      confidence: event.ai_audit?.confidence,
+                      outcome: null,
+                      trigger_type: null,
+                    })))
+                  .map((entry) => (
+                    <div key={entry.id} className="border rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
-                        <Badge variant="outline">{event.type}</Badge>
+                        <Badge variant="outline">{entry.type}</Badge>
                         <span className="text-xs text-muted-foreground">
-                          {formatDate(event.timestamp)}
+                          {formatDate(entry.timestamp)}
                         </span>
                       </div>
-                      <p className="text-sm font-medium mb-2">{event.summary}</p>
-                      {event.ai_audit && (
-                        <div className="bg-muted rounded p-3 text-sm">
-                          <p className="font-medium mb-2">AI Analysis:</p>
-                          <ul className="space-y-1">
-                            {(event.ai_audit.summary || []).map((point, i) => (
-                              <li key={i}>• {point}</li>
-                            ))}
-                          </ul>
-                          {event.ai_audit.confidence !== undefined && (
-                            <p className="mt-2 text-xs text-muted-foreground">
-                              Confidence: {Math.round(event.ai_audit.confidence * 100)}%
-                            </p>
-                          )}
-                        </div>
-                      )}
+                      <p className="text-sm font-medium mb-2 whitespace-pre-wrap">{entry.summary}</p>
+                      <div className="bg-muted rounded p-3 text-sm space-y-2">
+                        {typeof entry.confidence === "number" && (
+                          <p className="text-xs text-muted-foreground">
+                            Confidence: {Math.round(entry.confidence * 100)}%
+                          </p>
+                        )}
+                        {entry.trigger_type && (
+                          <p className="text-xs text-muted-foreground">Trigger: {entry.trigger_type}</p>
+                        )}
+                        {entry.outcome && (
+                          <p className="text-xs text-muted-foreground">Outcome: {entry.outcome}</p>
+                        )}
+                      </div>
                     </div>
                   ))}
-                {timeline_events.filter((e) => e.ai_audit).length === 0 && (
+                {agentDecisions.length === 0 && timeline_events.filter((e) => e.ai_audit).length === 0 && (
                   <p className="text-center text-muted-foreground py-8">
                     No agent decisions recorded
                   </p>
@@ -1854,7 +1879,7 @@ function RequestDetailContent() {
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={agencyActionLoadingId === ca.id}
+                            disabled={agencyActionLoadingId === ca.id || ca.id <= 0}
                             onClick={() => handleSetPrimaryAgency(ca.id)}
                           >
                             Set Primary
@@ -1863,7 +1888,7 @@ function RequestDetailContent() {
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={agencyActionLoadingId === ca.id}
+                          disabled={agencyActionLoadingId === ca.id || ca.id <= 0}
                           onClick={() => handleResearchAgency(ca.id)}
                         >
                           {agencyActionLoadingId === ca.id ? "Researching..." : "Research"}

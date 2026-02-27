@@ -127,6 +127,7 @@ export interface TimelineEvent {
   category: 'MESSAGE' | 'STATUS' | 'COST' | 'RESEARCH' | 'AGENT' | 'GATE';
   summary: string;
   raw_content?: string;
+  metadata?: Record<string, unknown>;
   ai_audit?: AIAudit;
   attachments?: Attachment[];
   // For gate events
@@ -452,6 +453,17 @@ export interface PendingProposal {
   reasoning: string[];
   waitpoint_token: string | null;
   pause_reason: string | null;
+  confidence?: number | null;
+}
+
+export interface AgentDecision {
+  id: number;
+  reasoning: string;
+  action_taken: string;
+  confidence: number | null;
+  trigger_type: string | null;
+  outcome: string | null;
+  created_at: string;
 }
 
 export interface RequestWorkspaceResponse {
@@ -468,6 +480,7 @@ export interface RequestWorkspaceResponse {
   pending_proposal?: PendingProposal | null;
   review_state?: ReviewState;
   active_run?: AgentRunSummary | null;
+  agent_decisions?: AgentDecision[];
 }
 
 export interface AgenciesListResponse {

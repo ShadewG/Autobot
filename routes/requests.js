@@ -733,7 +733,8 @@ function toTimelineEvent(activity, analysisMap = {}) {
         type: mapTimelineType(eventType, meta),
         summary: activity.description || eventType,
         category: mapTimelineCategory(eventType, meta),
-        raw_content: meta.raw_content || activity.metadata?.raw_content || null
+        raw_content: meta.raw_content || activity.metadata?.raw_content || null,
+        metadata: meta || null
     };
 
     // Add classification if present
@@ -1096,6 +1097,7 @@ router.get('/:id/workspace', async (req, res) => {
         // Resolve canonical agency id for deep-linking to /agencies/detail.
         // Never use case id as an agency id.
         let resolvedAgencyId = caseData.agency_id || null;
+        let resolvedAgencyName = null;
         if (!resolvedAgencyId && caseData.agency_name) {
             const agencyLookup = await db.query(
                 `SELECT id
@@ -1134,10 +1136,20 @@ router.get('/:id/workspace', async (req, res) => {
             );
             resolvedAgencyId = agencyLookupByEmail.rows[0]?.id || null;
         }
+        if (resolvedAgencyId) {
+            const canonicalAgency = await db.query(
+                `SELECT name
+                 FROM agencies
+                 WHERE id = $1
+                 LIMIT 1`,
+                [resolvedAgencyId]
+            );
+            resolvedAgencyName = canonicalAgency.rows[0]?.name || null;
+        }
 
         const agencySummary = {
             id: resolvedAgencyId != null ? String(resolvedAgencyId) : '',
-            name: caseData.agency_name || '—',
+            name: resolvedAgencyName || caseData.agency_name || '—',
             state: caseData.state || '—',
             submission_method: caseData.portal_url ? 'PORTAL' : 'EMAIL',
             portal_url: caseData.portal_url || undefined,
@@ -1155,7 +1167,7 @@ router.get('/:id/workspace', async (req, res) => {
         };
 
         const caseAgencies = await db.getCaseAgencies(requestId, false);
-        const sortedCaseAgencies = [...caseAgencies].sort((a, b) => {
+        let sortedCaseAgencies = [...caseAgencies].sort((a, b) => {
             if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
             const aStatus = String(a.status || 'pending').toLowerCase();
             const bStatus = String(b.status || 'pending').toLowerCase();
@@ -1165,6 +1177,26 @@ router.get('/:id/workspace', async (req, res) => {
             if (ar !== br) return ar - br;
             return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
         });
+        // Backfill a synthetic primary entry so the UI doesn't show "Case Agencies (0)"
+        // when the case has a primary agency in the cases table but no case_agencies row yet.
+        if (sortedCaseAgencies.length === 0 && (caseData.agency_name || caseData.agency_email || caseData.portal_url)) {
+            sortedCaseAgencies = [{
+                id: -requestId,
+                case_id: requestId,
+                agency_id: resolvedAgencyId || null,
+                agency_name: resolvedAgencyName || caseData.agency_name || '—',
+                agency_email: caseData.agency_email || null,
+                portal_url: caseData.portal_url || null,
+                portal_provider: caseData.portal_provider || null,
+                is_primary: true,
+                is_active: true,
+                added_source: 'case_row_fallback',
+                status: 'active',
+                notes: 'Synthetic primary agency entry generated from case record.',
+                created_at: caseData.created_at,
+                updated_at: caseData.updated_at,
+            }];
+        }
         const agencyCandidates = extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes);
 
         // Build state deadline info (static data - would come from state_deadlines table)
@@ -1186,13 +1218,23 @@ router.get('/:id/workspace', async (req, res) => {
 
         // Fetch latest active proposal (includes DECISION_RECEIVED for review_state)
         const pendingProposalResult = await db.query(`
-            SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason
+            SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason, confidence
             FROM proposals
             WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
             ORDER BY created_at DESC
             LIMIT 1
         `, [requestId]);
         const pendingProposal = pendingProposalResult.rows[0] || null;
+
+        const agentDecisionsResult = await db.query(
+            `SELECT id, reasoning, action_taken, confidence, trigger_type, outcome, created_at
+             FROM agent_decisions
+             WHERE case_id = $1
+             ORDER BY created_at DESC
+             LIMIT 100`,
+            [requestId]
+        );
+        const agentDecisions = agentDecisionsResult.rows;
 
         // Fetch active agent run for review_state
         const activeRunResult = await db.query(`
@@ -1212,6 +1254,9 @@ router.get('/:id/workspace', async (req, res) => {
         });
 
         const requestDetail = toRequestDetail(caseData);
+        if (resolvedAgencyName) {
+            requestDetail.agency_name = resolvedAgencyName;
+        }
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
         requestDetail.requires_human = review_state === 'DECISION_REQUIRED';
@@ -1233,6 +1278,7 @@ router.get('/:id/workspace', async (req, res) => {
             pending_proposal: pendingProposal,
             review_state,
             active_run: activeRun,
+            agent_decisions: agentDecisions,
         });
     } catch (error) {
         console.error('Error fetching request workspace:', error);
@@ -2274,17 +2320,26 @@ router.get('/:id/agent-runs', async (req, res) => {
             // Preserve queue/waiting states for live status UI.
             const statusMap = { paused: 'waiting' };
             const displayStatus = statusMap[run.status] || run.status;
+            const nodeTraceFromMetadata = Array.isArray(run.metadata?.node_trace)
+                ? run.metadata.node_trace
+                : (typeof run.metadata?.current_node === 'string' ? [run.metadata.current_node] : []);
             return {
-            id: run.id,
+            id: String(run.id),
+            case_id: String(run.case_id),
             trigger_type: run.trigger_type,
             started_at: run.started_at,
-            ended_at: run.ended_at,
+            completed_at: run.ended_at || null,
+            ended_at: run.ended_at || null,
             duration_ms: run.ended_at && run.started_at
                 ? new Date(run.ended_at) - new Date(run.started_at)
                 : null,
             status: displayStatus,
             error: run.error || null,
+            error_message: run.error || null,
+            gated_reason: run.metadata?.gated_reason || null,
             lock_acquired: run.lock_acquired,
+            node_trace: nodeTraceFromMetadata,
+            trigger_run_id: run.metadata?.trigger_run_id || run.metadata?.triggerRunId || null,
             proposal: run.proposal_id ? {
                 id: run.proposal_id,
                 action_type: run.proposal_action_type,

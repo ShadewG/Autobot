@@ -252,7 +252,7 @@ export function ScopeSummary({ items }: ScopeSummaryProps) {
       {counts.unknown > 0 && (
         <span className="flex items-center gap-1 text-gray-500">
           <HelpCircle className="h-3 w-3" />
-          {counts.unknown} unknown
+          {counts.unknown} unclassified
         </span>
       )}
     </div>
