@@ -880,7 +880,7 @@ class PortalAgentServiceSkyvern {
 
     _isLoginFailureText(value) {
         if (!value) return false;
-        return /(login failed|invalid password|wrong password|incorrect password|invalid credentials|authentication failed|account locked|locked out|too many (login |sign.?in )?attempts|sign.?in failed|could not (log|sign) ?in)/i.test(String(value));
+        return /(login (attempt )?failed|invalid (email.{0,20})?password|wrong password|incorrect password|invalid (email.{0,20})?credentials|authentication failed|account locked|locked out|too many (login |sign.?in )?attempts|sign.?in failed|could not (log|sign) ?in|invalid email\/username)/i.test(String(value));
     }
 
     async _lockPortalAccountAfterLoginFailure({ portalAccount, portalUrl, userId, failureReason, caseData, runId }) {
@@ -1346,9 +1346,68 @@ class PortalAgentServiceSkyvern {
                 this._isLoginFailureText(fullRunText) ||
                 this._isLoginFailureText(extractedInfoText);
 
+            // Login failures MUST be checked before PDF check — the full response JSON
+            // contains the FOIA request text which has words like "form", "email", "download"
+            // that cause false positives in isPdfFormFailure.
+            if (loginFailureDetected) {
+                // Lock the bad credentials so they're not reused
+                await this._lockPortalAccountAfterLoginFailure({
+                    portalAccount,
+                    portalUrl,
+                    userId,
+                    failureReason,
+                    caseData,
+                    runId: workflowRunId
+                });
+
+                await database.logActivity(
+                    'portal_login_failed',
+                    `Login failed for ${portalUrl} — credentials invalid, will retry with account creation`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        run_id: workflowRunId,
+                        engine: 'skyvern_workflow',
+                        error: failureReason,
+                    }
+                );
+
+                // If this is the first attempt with stored credentials, retry WITHOUT
+                // an account so Skyvern creates a new one (password is always Insanity10M).
+                if (portalAccount && !retryContext) {
+                    console.log(`🔄 Login failed for ${portalUrl} — retrying with account creation (no stored creds)`);
+                    return this._submitViaWorkflow({
+                        caseData, portalUrl, dryRun,
+                        runId: crypto.randomUUID(),
+                        retryContext: { previousError: failureReason, loginFailed: true }
+                    });
+                }
+
+                // Already retried or no account to lock — escalate to human
+                const truncatedReason = String(failureReason || 'Login failed').substring(0, 80);
+                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    substatus: `Portal login failed: ${truncatedReason}`.substring(0, 100),
+                    requires_human: true
+                });
+                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
+
+                return {
+                    success: false,
+                    status: finalResult.status || 'failed',
+                    runId: workflowRunId,
+                    recording_url: recordingUrl || null,
+                    workflow_url: finalWorkflowRunLink || null,
+                    error: failureReason,
+                    workflow_response: finalResult,
+                    doNotRetry: true,
+                    engine: 'skyvern_workflow'
+                };
+            }
+
             // NOT A REAL PORTAL: PDF download, fax-only, cannot-automate, etc.
-            // Delegate to shared handler which researches then falls back to PDF.
-            if (pdfFormService.isPdfFormFailure(failureReason, finalResult)) {
+            // Only check failureReason — NOT fullRunText which contains FOIA text with
+            // false-positive words like "form", "email", "download".
+            if (pdfFormService.isPdfFormFailure(failureReason, null, portalUrl)) {
                 console.log(`🔍 Skyvern confirmed portal not automatable for case ${caseData.id}`);
                 await database.logActivity('portal_not_automatable',
                     `Skyvern says not automatable: ${failureReason}`, {
@@ -1368,52 +1427,6 @@ class PortalAgentServiceSkyvern {
                     });
                 } catch (_) { /* non-critical */ }
                 return this._handleNotRealPortal(caseData, portalUrl, dryRun, failureReason);
-            }
-
-            // Login failures indicate bad credentials or account lock state.
-            // Lock known credentials and stop retries to avoid burning Skyvern credits.
-            if (loginFailureDetected) {
-                await this._lockPortalAccountAfterLoginFailure({
-                    portalAccount,
-                    portalUrl,
-                    userId,
-                    failureReason,
-                    caseData,
-                    runId: workflowRunId
-                });
-
-                const truncatedReason = String(failureReason || 'Login failed').substring(0, 80);
-                await database.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: `Portal login failed: ${truncatedReason}`.substring(0, 100),
-                    requires_human: true
-                });
-                try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
-
-                await database.logActivity(
-                    'portal_stage_failed',
-                    `Skyvern workflow login failed for ${caseData.case_name}: ${failureReason}`,
-                    {
-                        case_id: caseData.id || null,
-                        portal_url: portalUrl,
-                        run_id: workflowRunId,
-                        engine: 'skyvern_workflow',
-                        error: failureReason,
-                        task_url: finalWorkflowRunLink || workflowRunLink || null,
-                        do_not_retry: true
-                    }
-                );
-
-                return {
-                    success: false,
-                    status: finalResult.status || 'failed',
-                    runId: workflowRunId,
-                    recording_url: recordingUrl || null,
-                    workflow_url: finalWorkflowRunLink || null,
-                    error: failureReason,
-                    workflow_response: finalResult,
-                    doNotRetry: true,
-                    engine: 'skyvern_workflow'
-                };
             }
 
             // ── Re-check case status before any retry — prevents duplicate submissions
