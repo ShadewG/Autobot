@@ -2124,57 +2124,99 @@ Look for a records division email, FOIA email, or general agency email that acce
 
     async processSinglePage(pageId) {
         try {
-            console.log(`Fetching single Notion page: ${pageId}`);
+            console.log(`[import] Fetching Notion page: ${pageId}`);
 
-            // Fetch the page
+            // Step 1: Fetch case page + blocks
             const page = await this.notion.pages.retrieve({ page_id: pageId });
 
-            // Fetch page content (blocks)
             let pageContent = '';
             try {
                 const blocks = await this.notion.blocks.children.list({
                     block_id: pageId,
                     page_size: 100
                 });
-
-                // Extract text from blocks
                 pageContent = blocks.results
-                    .map(block => {
-                        if (block.type === 'paragraph' && block.paragraph?.rich_text) {
-                            return block.paragraph.rich_text.map(t => t.plain_text).join('');
-                        }
-                        if (block.type === 'heading_1' && block.heading_1?.rich_text) {
-                            return block.heading_1.rich_text.map(t => t.plain_text).join('');
-                        }
-                        if (block.type === 'heading_2' && block.heading_2?.rich_text) {
-                            return block.heading_2.rich_text.map(t => t.plain_text).join('');
-                        }
-                        if (block.type === 'heading_3' && block.heading_3?.rich_text) {
-                            return block.heading_3.rich_text.map(t => t.plain_text).join('');
-                        }
-                        if (block.type === 'bulleted_list_item' && block.bulleted_list_item?.rich_text) {
-                            return '- ' + block.bulleted_list_item.rich_text.map(t => t.plain_text).join('');
-                        }
-                        return '';
-                    })
+                    .map(block => this.extractTextFromBlock(block))
                     .filter(text => text.length > 0)
                     .join('\n');
-
-                console.log(`Extracted ${pageContent.length} characters of content from page`);
+                console.log(`[import] Extracted ${pageContent.length} chars of content`);
             } catch (contentError) {
-                console.warn('Could not fetch page content:', contentError.message);
+                console.warn('[import] Could not fetch page content:', contentError.message);
             }
 
-            // Parse the page
             const notionCase = this.parseNotionPage(page);
 
-            // Export ALL case page property values so nothing is missed
+            // Step 2: Dedup check FIRST — before any AI calls
+            const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
+            if (existing) {
+                console.log(`[import] Case already exists: ${notionCase.case_name}`);
+                return existing;
+            }
+
+            // Step 3: Fetch PD page + text (if relation exists)
+            let deptPage = null;
+            let deptText = '';
+            if (notionCase.police_dept_id) {
+                try {
+                    deptPage = await this.notion.pages.retrieve({ page_id: notionCase.police_dept_id });
+                    deptText = await this.getFullPagePlainText(notionCase.police_dept_id);
+                } catch (pdErr) {
+                    console.warn(`[import] Failed to fetch PD page: ${pdErr.message}`);
+                }
+            }
+
+            // Step 4: Single AI call — normalize case + extract contacts
+            const casePropsForAI = this.preparePropertiesForAI(page.properties);
+            const pdPropsForAI = deptPage ? this.preparePropertiesForAI(deptPage.properties) : null;
+
+            const aiResult = await aiService.normalizeAndExtractContacts(
+                casePropsForAI, pageContent, pdPropsForAI, deptText
+            );
+
+            // Apply AI results to notionCase (only overwrite if AI returned non-null values)
+            if (aiResult) {
+                if (aiResult.case_name) notionCase.case_name = aiResult.case_name;
+                if (aiResult.state) notionCase.state = aiResult.state;
+                if (aiResult.incident_date) notionCase.incident_date = aiResult.incident_date;
+                if (aiResult.incident_location) notionCase.incident_location = aiResult.incident_location;
+                if (aiResult.subject_name) notionCase.subject_name = aiResult.subject_name;
+                if (aiResult.additional_details) notionCase.additional_details = aiResult.additional_details;
+                if (aiResult.records_requested?.length) notionCase.requested_records = aiResult.records_requested;
+                if (aiResult.tags?.length) notionCase.tags = aiResult.tags;
+                // Contact info — only overwrite if AI found something (fix email preservation bug)
+                if (aiResult.portal_url) notionCase.portal_url = aiResult.portal_url;
+                if (aiResult.agency_email) notionCase.agency_email = aiResult.agency_email;
+            }
+
+            // Apply agency name from PD page title (more reliable than AI extraction)
+            if (deptPage) {
+                const deptTitleProp = Object.values(deptPage.properties).find(p => p.type === 'title');
+                notionCase.agency_name = deptTitleProp?.title?.[0]?.plain_text || notionCase.agency_name || 'Police Department';
+
+                // Extract PD Rating as case priority
+                const ratingProp = deptPage.properties['Rating'] || deptPage.properties['rating'];
+                if (ratingProp?.type === 'number' && ratingProp.number != null) {
+                    notionCase.priority = Math.max(0, Math.min(5, Math.round(ratingProp.number)));
+                } else if (ratingProp?.type === 'select' && ratingProp.select?.name) {
+                    const parsed = parseInt(ratingProp.select.name, 10);
+                    if (!isNaN(parsed)) notionCase.priority = Math.max(0, Math.min(5, parsed));
+                }
+
+                // Direct URL extraction from PD fields as fallback
+                if (!notionCase.portal_url) {
+                    const directPortal = this.extractFirstUrlFromProperties(deptPage.properties);
+                    if (directPortal) {
+                        notionCase.portal_url = directPortal;
+                        console.log(`[import] Portal URL from PD fields: ${directPortal}`);
+                    }
+                }
+            }
+
+            // Fallback contacts from case page properties
+            this.applyFallbackContactsFromPage(notionCase, page);
+
+            // Enrich additional_details with all property text + page content
             const allPropsText = this.formatAllPropertiesAsText(page.properties);
-
-            // Enrich with police department data and fallback contact extraction from case page.
-            await this.enrichWithPoliceDepartment(notionCase, page);
-
-            // Combine: existing details + all properties + page content
             notionCase.additional_details = [
                 notionCase.additional_details,
                 allPropsText,
@@ -2182,76 +2224,54 @@ Look for a records division email, FOIA email, or general agency email that acce
             ].filter(Boolean).join('\n\n').trim();
             this.enrichCaseFromNarrative(notionCase);
 
+            // Regex portal fallback from text
             if (!notionCase.portal_url) {
                 const portalFromText = this.findPortalInText(notionCase.additional_details || pageContent || '');
                 if (portalFromText) {
                     notionCase.portal_url = portalFromText;
-                    console.log(`Detected portal URL from single-page import text: ${portalFromText}`);
+                    console.log(`[import] Portal URL from text scan: ${portalFromText}`);
                 }
             }
 
-            // pd-contact lookup: try dedicated service first
-            let pdContactHandledSingle = false;
-            if (notionCase.agency_name) {
+            // Normalize portal URL
+            if (notionCase.portal_url) {
+                const normalized = normalizePortalUrl(notionCase.portal_url);
+                if (normalized && isSupportedPortalUrl(normalized)) {
+                    notionCase.portal_url = normalized;
+                    notionCase.portal_provider = notionCase.portal_provider || detectPortalProviderByUrl(normalized)?.name || null;
+                } else {
+                    notionCase.portal_url = null;
+                }
+            }
+
+            notionCase.state = this.normalizeStateCode(notionCase.state);
+
+            // Step 5: Firecrawl fallback — ONLY if still missing portal_url or agency_email
+            if ((!notionCase.portal_url || !notionCase.agency_email) && notionCase.agency_name) {
                 try {
+                    console.log(`[import] Missing ${!notionCase.portal_url ? 'portal' : ''}${!notionCase.portal_url && !notionCase.agency_email ? '+' : ''}${!notionCase.agency_email ? 'email' : ''}, trying Firecrawl...`);
                     const pdResult = await pdContactService.lookupContact(
                         notionCase.agency_name,
                         notionCase.state || notionCase.incident_location
                     );
                     if (pdResult) {
-                        if (pdResult.portal_url) {
+                        if (pdResult.portal_url && !notionCase.portal_url) {
                             const normalized = normalizePortalUrl(pdResult.portal_url);
                             if (normalized && isSupportedPortalUrl(normalized)) {
                                 notionCase.portal_url = normalized;
                                 notionCase.portal_provider = pdResult.portal_provider || detectPortalProviderByUrl(normalized)?.name || null;
-                                pdContactHandledSingle = true;
                             }
                         }
                         if (pdResult.contact_email && !notionCase.agency_email) {
                             notionCase.agency_email = pdResult.contact_email;
-                            pdContactHandledSingle = true;
                         }
                     }
                 } catch (pdErr) {
-                    console.log(`pd-contact lookup failed for "${notionCase.agency_name}": ${pdErr.message}`);
+                    console.log(`[import] Firecrawl lookup failed for "${notionCase.agency_name}": ${pdErr.message}`);
                 }
             }
 
-            // GPT web search fallback: confirm existing portal URL or discover one
-            if (!pdContactHandledSingle && notionCase.agency_name) {
-                const searchResult = await this.searchForPortalUrl(
-                    notionCase.agency_name,
-                    notionCase.state,
-                    notionCase.portal_url
-                );
-                if (searchResult?.portal_url && searchResult.confidence !== 'low') {
-                    const normalized = normalizePortalUrl(searchResult.portal_url);
-                    if (normalized && isSupportedPortalUrl(normalized)) {
-                        notionCase.portal_url = normalized;
-                        if (searchResult.provider && searchResult.provider !== 'other') {
-                            notionCase.portal_provider = searchResult.provider;
-                        }
-                    }
-                }
-            }
-
-            // Check if already exists
-            const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
-            if (existing) {
-                console.log(`Case already exists: ${notionCase.case_name}`);
-                return existing;
-            }
-
-            notionCase.state = this.normalizeStateCode(notionCase.state);
-
-            // If no portal and no email, use AI web search to find an email
-            if (!notionCase.portal_url && !notionCase.agency_email && notionCase.agency_name) {
-                const emailResult = await this.searchForAgencyEmail(notionCase.agency_name, notionCase.state);
-                if (emailResult?.email) {
-                    notionCase.agency_email = emailResult.email;
-                    console.log(`AI email search found: ${emailResult.email}`);
-                }
-            }
+            // Step 6: Resolve user, calculate deadline, create case
 
             // Resolve assigned person to user_id
             if (notionCase.assigned_person) {
@@ -2260,34 +2280,31 @@ Look for a records division email, FOIA email, or general agency email that acce
                     if (userId) {
                         notionCase.user_id = userId;
                         const user = await db.getUserById(userId);
-                        console.log(`Assigned case to user: ${user?.name || userId} (${user?.email || 'n/a'})`);
+                        console.log(`[import] Assigned to user: ${user?.name || userId}`);
                     } else {
-                        console.warn(`No matching user for Notion assignee: ${notionCase.assigned_person}`);
+                        console.warn(`[import] No matching user for assignee: ${notionCase.assigned_person}`);
                     }
                 } catch (err) {
-                    console.warn(`Failed to resolve assigned user: ${err.message}`);
+                    console.warn(`[import] Failed to resolve assigned user: ${err.message}`);
                 }
             }
 
-            // Calculate deadline
             const deadline = await this.calculateDeadline(notionCase.state);
             notionCase.deadline_date = deadline;
 
-            // Create case
             const newCase = await db.createCase(notionCase);
-            console.log(`Created case from Notion page: ${newCase.case_name}`);
+            console.log(`[import] Created case: ${newCase.case_name} (${newCase.id})`);
 
             // Import additional Police Departments as case_agencies
             const additionalPDIds = notionCase.additional_police_dept_ids || [];
             if (additionalPDIds.length > 0) {
                 for (const pdId of additionalPDIds) {
                     try {
-                        const deptPage = await this.notion.pages.retrieve({ page_id: pdId });
-                        const deptProps = deptPage.properties;
+                        const addlDeptPage = await this.notion.pages.retrieve({ page_id: pdId });
+                        const deptProps = addlDeptPage.properties;
                         const titleProp = Object.values(deptProps).find(p => p.type === 'title');
                         const pdName = titleProp?.title?.[0]?.plain_text || 'Unknown PD';
 
-                        // Extract email from the PD page
                         let pdEmail = null;
                         let pdPortalUrl = null;
                         for (const [, prop] of Object.entries(deptProps)) {
@@ -2301,19 +2318,18 @@ Look for a records division email, FOIA email, or general agency email that acce
                             portal_url: pdPortalUrl,
                             added_source: 'notion_import'
                         });
-                        console.log(`Added additional agency "${pdName}" to case ${newCase.id}`);
+                        console.log(`[import] Added additional agency "${pdName}"`);
                     } catch (pdErr) {
-                        console.warn(`Failed to import additional PD ${pdId}: ${pdErr.message}`);
+                        console.warn(`[import] Failed to import additional PD ${pdId}: ${pdErr.message}`);
                     }
                 }
             }
 
-            // Update Notion: set Status to "Auto" and Live Status to current state
+            // Update Notion status
             try {
                 await this.updatePage(notionCase.notion_page_id, {
                     live_status: this.mapStatusToNotion(newCase.status)
                 });
-                // Also set legacy Status to "Auto" if the property exists
                 const availableProps = await this.getPagePropertyNames(notionCase.notion_page_id);
                 if (availableProps.includes(this.legacyStatusProperty)) {
                     await this.notion.pages.update({
@@ -2324,20 +2340,18 @@ Look for a records division email, FOIA email, or general agency email that acce
                             }
                         }
                     });
-                    console.log(`Set Notion "${this.legacyStatusProperty}" to "${this.statusAutoValue}"`);
                 }
             } catch (syncErr) {
-                console.warn('Failed to update Notion status on import:', syncErr.message);
+                console.warn('[import] Failed to update Notion status:', syncErr.message);
             }
 
-            // Log activity
             await db.logActivity('case_imported', `Imported case from Notion page: ${newCase.case_name}`, {
                 case_id: newCase.id
             });
 
             return newCase;
         } catch (error) {
-            console.error('Error processing single Notion page:', error);
+            console.error('[import] Error processing Notion page:', error);
             throw error;
         }
     }

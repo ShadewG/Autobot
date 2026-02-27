@@ -7,6 +7,9 @@ const db = require('../services/database');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
 const { notify } = require('../services/event-bus');
 
+// In-memory guard: track page IDs currently being imported to prevent concurrent duplicates
+const _importingPages = new Set();
+
 /**
  * Detect verification code emails and forward to Skyvern TOTP API
  * No Zapier needed - we handle it directly in our inbound email webhook
@@ -577,19 +580,38 @@ router.post('/notion', express.json(), async (req, res) => {
         const notionService = require('../services/notion-service');
 
         if (!existing) {
-            // Page not in our DB yet — import it directly
-            try {
-                const newCase = await notionService.processSinglePage(strippedId);
-                if (newCase && newCase.id) {
-                    console.log(`[notion-webhook] Imported new case ${newCase.id} from page ${pageId}`);
-                    notify('info', `Notion webhook: imported case ${newCase.id}`, { case_id: newCase.id, page_id: pageId });
-                    // Don't dispatch here — createCase already triggers reactive dispatch via _dispatchStatusAction
-                    return res.status(200).json({ success: true, case_id: newCase.id, action: 'imported', status: newCase.status });
-                }
-            } catch (importErr) {
-                console.warn(`[notion-webhook] Failed to import page ${pageId}:`, importErr.message);
+            // Concurrent import guard — skip if already importing this page
+            if (_importingPages.has(pageId)) {
+                console.log(`[notion-webhook] Import already in progress for ${pageId}, skipping`);
+                return res.status(200).json({ success: true, action: 'import_already_in_progress', page_id: pageId });
             }
-            return res.status(200).json({ success: true, action: 'import_attempted', page_id: pageId });
+
+            // Fire-and-forget: respond immediately, import in background
+            _importingPages.add(pageId);
+            notionService.processSinglePage(strippedId)
+                .then(newCase => {
+                    if (newCase && newCase.id) {
+                        console.log(`[notion-webhook] Imported case ${newCase.id} from page ${pageId}`);
+                        notify('info', `Notion webhook: imported case ${newCase.id}`, { case_id: newCase.id, page_id: pageId });
+                    } else {
+                        console.warn(`[notion-webhook] processSinglePage returned empty for page ${pageId}`);
+                        db.logActivity('notion_webhook_import_failed', `Webhook import returned no case for page ${pageId}`, {
+                            page_id: pageId, stripped_page_id: strippedId, reason: 'processSinglePage_returned_empty'
+                        }).catch(() => {});
+                    }
+                })
+                .catch(importErr => {
+                    console.error(`[notion-webhook] Import failed for ${pageId}:`, importErr.message);
+                    db.logActivity('notion_webhook_import_failed', `Import failed: ${importErr.message}`, {
+                        page_id: pageId, stripped_page_id: strippedId, error: importErr.message
+                    }).catch(() => {});
+                })
+                .finally(() => {
+                    _importingPages.delete(pageId);
+                });
+
+            return res.status(200).json({ success: true, action: 'import_queued', page_id: pageId
+            });
         }
 
         // Re-sync existing case from Notion to pick up latest property changes

@@ -1499,6 +1499,108 @@ CRITICAL: DO NOT extract URLs, email addresses, or contact information. These wi
     }
 
     /**
+     * Single cheap AI call that merges PD normalization + contact extraction.
+     * Replaces the sequential normalizeNotionCase → extractContactsWithAI calls
+     * inside processSinglePage() for faster imports.
+     *
+     * @param {Object} casePageProps - Prepared (plain-value) case page properties
+     * @param {string} casePageContent - Plain text body from case page blocks
+     * @param {Object} pdPageProps - Prepared (plain-value) PD page properties
+     * @param {string} pdPageText - Plain text from PD page blocks
+     * @returns {{ case_name, agency_name, state, incident_date, incident_location,
+     *             records_requested, subject_name, additional_details, tags,
+     *             portal_url, agency_email, records_officer, phone }}
+     */
+    async normalizeAndExtractContacts(casePageProps, casePageContent, pdPageProps, pdPageText) {
+        try {
+            if (!this.openai) throw new Error('OPENAI_API_KEY not configured');
+
+            const systemPrompt = `You are a data extraction specialist. You will receive two Notion pages:
+1. A CASE page (contains incident info: suspect name, date, location, records requested)
+2. A POLICE DEPARTMENT page (contains agency contact info: emails, portal URLs, phone numbers, officers)
+
+Extract ALL information that is explicitly present. Never fabricate data.
+
+For contact info (portal_url, agency_email, phone, records_officer): extract ONLY from the POLICE DEPARTMENT page fields.
+For case metadata (case_name, subject_name, incident_date, etc.): extract from BOTH pages but prefer the CASE page.
+
+Return valid JSON matching the schema below. Use null for missing fields, [] for missing arrays.`;
+
+            const schema = `{
+  "case_name": string | null,
+  "agency_name": string | null,
+  "state": string | null,
+  "incident_date": string | null,
+  "incident_location": string | null,
+  "records_requested": string[] (short descriptions),
+  "subject_name": string | null,
+  "additional_details": string | null,
+  "tags": string[] (3-5 lowercase kebab-case tags e.g. "police-records", "body-camera"),
+  "portal_url": string | null (FOIA portal URL from PD fields - govqa, nextrequest, mycusthelp, etc.),
+  "agency_email": string | null (best email for records requests from PD fields),
+  "records_officer": string | null,
+  "phone": string | null
+}`;
+
+            const parts = [];
+            if (casePageProps) {
+                parts.push('=== CASE PAGE PROPERTIES ===\n' + JSON.stringify(casePageProps, null, 2));
+            }
+            if (casePageContent) {
+                parts.push('=== CASE PAGE CONTENT ===\n' + casePageContent.substring(0, 3000));
+            }
+            if (pdPageProps) {
+                parts.push('=== POLICE DEPARTMENT PAGE PROPERTIES ===\n' + JSON.stringify(pdPageProps, null, 2));
+            }
+            if (pdPageText) {
+                parts.push('=== POLICE DEPARTMENT PAGE TEXT ===\n' + pdPageText.substring(0, 2000));
+            }
+
+            const prompt = parts.join('\n\n');
+
+            const response = await this.openai.chat.completions.create({
+                model: 'gpt-4o-mini',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: `Schema:\n${schema}\n\n${prompt}` }
+                ],
+                response_format: { type: 'json_object' },
+                temperature: 0
+            });
+
+            const rawText = response.choices?.[0]?.message?.content?.trim();
+            if (!rawText) return null;
+
+            let parsed;
+            try {
+                parsed = JSON.parse(rawText);
+            } catch (parseErr) {
+                console.warn('normalizeAndExtractContacts: JSON parse failed, returning null');
+                return null;
+            }
+
+            // Validate essential structure
+            if (typeof parsed !== 'object' || parsed === null) return null;
+
+            // Normalize arrays
+            if (parsed.records_requested && !Array.isArray(parsed.records_requested)) {
+                parsed.records_requested = [parsed.records_requested].filter(Boolean);
+            }
+            if (!Array.isArray(parsed.records_requested)) parsed.records_requested = [];
+
+            if (parsed.tags && !Array.isArray(parsed.tags)) {
+                parsed.tags = [parsed.tags].filter(Boolean);
+            }
+            if (!Array.isArray(parsed.tags)) parsed.tags = [];
+
+            return parsed;
+        } catch (error) {
+            console.warn('normalizeAndExtractContacts failed:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Generate clarification response for LangGraph
      * Used when agency requests more information
      */
