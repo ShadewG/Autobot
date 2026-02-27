@@ -97,6 +97,8 @@ interface PendingProposal {
   created_at: string;
   proposal_pause_reason: string | null;
   case_pause_reason: string | null;
+  case_status?: string | null;
+  case_substatus?: string | null;
   last_inbound_preview: string | null;
   last_inbound_subject: string | null;
   inbound_count: number;
@@ -300,6 +302,17 @@ function formatReasoning(reasoning: unknown): string[] {
   return [];
 }
 
+function extractEscalationRequestedAction(reasoning: string[]): string | null {
+  for (const line of reasoning) {
+    if (!line) continue;
+    const match = line.match(/action\s*[:=]\s*([a-z_]+)/i);
+    if (match?.[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+  return null;
+}
+
 const ACTION_LABELS: Record<string, string> = {
   SEND_REBUTTAL: "SEND REBUTTAL",
   SEND_APPEAL: "SEND APPEAL",
@@ -317,7 +330,7 @@ const ACTION_LABELS: Record<string, string> = {
   RESEARCH_AGENCY: "RUN RESEARCH",
   REFORMULATE_REQUEST: "REFORMULATE REQUEST",
   CLOSE_CASE: "CLOSE CASE",
-  ESCALATE: "REVIEW & DECIDE",
+  ESCALATE: "REPROCESS WITH GUIDANCE",
 };
 
 function getApproveLabel(actionType: string | null): string {
@@ -1221,6 +1234,10 @@ function MonitorPageContent() {
     if (proposalDetail?.proposal?.reasoning) return proposalDetail.proposal.reasoning;
     return formatReasoning(selectedItem.data.reasoning);
   })();
+  const escalationRequestedAction =
+    selectedItem?.type === "proposal" && selectedItem.data.action_type === "ESCALATE"
+      ? extractEscalationRequestedAction(reasoning)
+      : null;
 
   const INTERNAL_FLAGS = new Set(["NO_DRAFT", "MISSING_DRAFT", "DRAFT_EMPTY"]);
   const riskFlags = (() => {
@@ -1562,7 +1579,34 @@ function MonitorPageContent() {
                 <p className="text-xs text-muted-foreground">Will mark this case as closed/denial accepted.</p>
               )}
               {selectedItem.data.action_type === "ESCALATE" && (
-                <p className="text-xs text-muted-foreground">Review the reasoning below and choose an action — approve, adjust, or dismiss.</p>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground">Review the reasoning below and choose an action — approve, adjust, or dismiss.</p>
+                  <div className="text-xs space-y-1">
+                    {escalationRequestedAction && (
+                      <p>
+                        <span className="text-muted-foreground">Requested action:</span>{" "}
+                        <span className="font-medium">{escalationRequestedAction.replace(/_/g, " ")}</span>
+                      </p>
+                    )}
+                    {selectedItem.data.case_status && (
+                      <p>
+                        <span className="text-muted-foreground">Case status:</span>{" "}
+                        {selectedItem.data.case_status.replace(/_/g, " ")}
+                      </p>
+                    )}
+                    {selectedItem.data.case_substatus && (
+                      <p>
+                        <span className="text-muted-foreground">Case substatus:</span>{" "}
+                        {selectedItem.data.case_substatus}
+                      </p>
+                    )}
+                    {!selectedItem.data.last_inbound_preview && (
+                      <p className="text-amber-400">
+                        No inbound message context is attached to this proposal.
+                      </p>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           )}

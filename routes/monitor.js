@@ -1188,6 +1188,7 @@ router.get('/live-overview', async (req, res) => {
                 c.case_name,
                 c.agency_name,
                 c.status AS case_status,
+                c.substatus AS case_substatus,
                 c.portal_url,
                 c.agency_email,
                 c.user_id,
