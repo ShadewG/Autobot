@@ -1421,6 +1421,45 @@ router.post('/:id/resolve-review', async (req, res) => {
             }
         }
 
+        // Guard: if a matching proposal was already executed recently, don't duplicate
+        if (matchingProposalType) {
+            const recentlyExecuted = await db.query(
+                `SELECT id, executed_at FROM proposals
+                 WHERE case_id = $1 AND action_type = $2 AND status IN ('EXECUTED', 'APPROVED')
+                 AND executed_at > NOW() - INTERVAL '10 minutes'
+                 LIMIT 1`,
+                [requestId, matchingProposalType]
+            );
+            if (recentlyExecuted.rows.length > 0) {
+                log.info(`Already-executed guard: ${matchingProposalType} proposal #${recentlyExecuted.rows[0].id} was recently sent`);
+                return res.json({
+                    success: true,
+                    message: `This action was already executed (proposal #${recentlyExecuted.rows[0].id}). No duplicate needed.`,
+                    immediate: true,
+                    already_executed: true,
+                    executed_proposal_id: recentlyExecuted.rows[0].id
+                });
+            }
+        }
+
+        // Broad guard: if ANY proposal was executed very recently, block rapid double-actions
+        const veryRecentExecution = await db.query(
+            `SELECT id, action_type, executed_at FROM proposals
+             WHERE case_id = $1 AND status IN ('EXECUTED', 'APPROVED')
+             AND executed_at > NOW() - INTERVAL '2 minutes'
+             LIMIT 1`,
+            [requestId]
+        );
+        if (veryRecentExecution.rows.length > 0) {
+            log.info(`Recent execution guard: proposal #${veryRecentExecution.rows[0].id} (${veryRecentExecution.rows[0].action_type}) executed < 2min ago`);
+            return res.json({
+                success: true,
+                message: `A ${veryRecentExecution.rows[0].action_type.replace(/_/g, ' ').toLowerCase()} was just sent (proposal #${veryRecentExecution.rows[0].id}). Wait for it to process.`,
+                immediate: true,
+                already_executed: true
+            });
+        }
+
         // Complete waitpoint tokens on active proposals before dismissing.
         // This unblocks any Trigger.dev tasks waiting on human approval so they exit cleanly.
         try {

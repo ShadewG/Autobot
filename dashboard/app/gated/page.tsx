@@ -776,13 +776,19 @@ function MonitorPageContent() {
       const next = new Set(prev);
       next.add(key);
       next.add(`r:${caseId}`); // prevent case reappearing as review item
+      // Also remove all proposals for the same case (race condition prevention)
+      if (overview?.pending_approvals) {
+        for (const p of overview.pending_approvals) {
+          if (p.case_id === caseId) next.add(`p:${p.id}`);
+        }
+      }
       return next;
     });
     // If we're at the end, move back; otherwise stay (next item slides in)
     if (currentIndex >= queue.length - 1 && currentIndex > 0) {
       setCurrentIndex(currentIndex - 1);
     }
-  }, [selectedItem, currentIndex, queue.length]);
+  }, [selectedItem, currentIndex, queue.length, overview]);
 
   // Background revalidate + clear removedIds once server data is fresh
   // Smart revalidate: fetch fresh data, then only keep removedIds that the server still returns
