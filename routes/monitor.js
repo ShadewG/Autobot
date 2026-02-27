@@ -39,6 +39,57 @@ function deriveMessageSource(message) {
     return 'webhook inbound';
 }
 
+function uniqStrings(values = []) {
+    return [...new Set(values.filter(Boolean).map((v) => String(v).trim()).filter(Boolean))];
+}
+
+function extractAttachmentInsights(attachments = []) {
+    const text = attachments.map((a) => a.extracted_text || '').join('\n');
+    const hasExtractedText = text.trim().length > 0;
+
+    const feeMatches = [...text.matchAll(/\$\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)/g)]
+        .map((m) => Number(String(m[1]).replace(/,/g, '')))
+        .filter((n) => Number.isFinite(n) && n >= 0);
+    const feeAmounts = [...new Set(feeMatches)].slice(0, 5);
+
+    const dateMatches = [
+        ...text.matchAll(/\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g),
+        ...text.matchAll(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b/gi),
+    ].map((m) => m[0]);
+    const deadlineMentions = uniqStrings(dateMatches).slice(0, 6);
+
+    const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l.length >= 12);
+    const highlightLines = uniqStrings(
+        lines.filter((l) => /(fee|invoice|payment|due|deadline|business day|waiver|appeal|denial|exempt|redact)/i.test(l))
+    ).slice(0, 4);
+
+    const filenameSignals = uniqStrings(
+        attachments.flatMap((a) => {
+            const name = String(a.filename || '').toLowerCase();
+            const out = [];
+            if (!name) return out;
+            if (/(invoice|billing|bill|receipt|fee|cost|quote)/i.test(name)) out.push('possible_fee_document');
+            if (/(denial|reject|withhold|exempt|appeal)/i.test(name)) out.push('possible_denial_document');
+            if (/(report|records|response|release|disclosure)/i.test(name)) out.push('possible_records_document');
+            if (/(deadline|due|notice)/i.test(name)) out.push('possible_deadline_document');
+            return out;
+        })
+    );
+
+    return {
+        total: attachments.length,
+        has_pdf: attachments.some((a) => (a.content_type || '').toLowerCase().includes('pdf')),
+        has_extracted_text: hasExtractedText,
+        fee_amounts: feeAmounts,
+        deadline_mentions: deadlineMentions,
+        highlights: highlightLines,
+        filename_signals: filenameSignals
+    };
+}
+
 async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED', force_new_run = false } = {}) {
     const caseData = message.case_id ? await db.getCaseById(message.case_id) : null;
     if (!caseData) {
@@ -1140,6 +1191,59 @@ router.get('/live-overview', async (req, res) => {
             LIMIT $1
         `, [limit]);
 
+        // Enrich pending approvals with inbound attachments + quick extracted insights.
+        const pendingApprovalRows = pendingApprovalsResult.rows || [];
+        const triggerMessageIds = [...new Set(
+            pendingApprovalRows
+                .map((r) => Number(r.trigger_message_id))
+                .filter((n) => Number.isFinite(n) && n > 0)
+        )];
+
+        let attachmentsByMessage = new Map();
+        if (triggerMessageIds.length > 0) {
+            const attachmentResult = await db.query(`
+                SELECT
+                    a.id,
+                    a.message_id,
+                    a.filename,
+                    a.content_type,
+                    a.size_bytes,
+                    a.storage_url,
+                    a.extracted_text,
+                    a.created_at
+                FROM attachments a
+                WHERE a.message_id = ANY($1::int[])
+                ORDER BY a.created_at ASC
+            `, [triggerMessageIds]);
+
+            attachmentsByMessage = attachmentResult.rows.reduce((acc, row) => {
+                const messageId = Number(row.message_id);
+                if (!acc.has(messageId)) acc.set(messageId, []);
+                acc.get(messageId).push({
+                    id: row.id,
+                    message_id: row.message_id,
+                    filename: row.filename,
+                    content_type: row.content_type,
+                    size_bytes: row.size_bytes,
+                    storage_url: row.storage_url,
+                    extracted_text: row.extracted_text,
+                    created_at: row.created_at,
+                    download_url: `/api/monitor/attachments/${row.id}/download`
+                });
+                return acc;
+            }, new Map());
+        }
+
+        const pendingApprovalsWithAttachments = pendingApprovalRows.map((row) => {
+            const messageId = Number(row.trigger_message_id);
+            const attachments = attachmentsByMessage.get(messageId) || [];
+            return {
+                ...row,
+                attachments,
+                attachment_insights: extractAttachmentInsights(attachments)
+            };
+        });
+
         const activeRunsResult = await db.query(`
             SELECT
                 r.id,
@@ -1275,7 +1379,7 @@ router.get('/live-overview', async (req, res) => {
                 stuck_runs_total: stuckRunsResult.rows.length,
                 human_review_total: humanReviewResult.rows.length
             },
-            pending_approvals: pendingApprovalsResult.rows,
+            pending_approvals: pendingApprovalsWithAttachments,
             active_runs: activeRunsResult.rows,
             unmatched_inbound: unmatchedInboundResult.rows,
             unprocessed_inbound: unprocessedInboundResult.rows,

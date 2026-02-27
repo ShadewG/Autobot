@@ -52,6 +52,9 @@ import {
   RotateCcw,
   Undo2,
   Clock,
+  Paperclip,
+  DollarSign,
+  CalendarDays,
 } from "lucide-react";
 import {
   Collapsible,
@@ -101,6 +104,23 @@ interface PendingProposal {
   portal_url?: string | null;
   agency_email?: string | null;
   user_id?: number | null;
+  attachments?: Array<{
+    id: number;
+    message_id: number;
+    filename: string | null;
+    content_type: string | null;
+    size_bytes: number | null;
+    download_url: string;
+  }>;
+  attachment_insights?: {
+    total: number;
+    has_pdf: boolean;
+    has_extracted_text: boolean;
+    fee_amounts: number[];
+    deadline_mentions: string[];
+    highlights: string[];
+    filename_signals: string[];
+  };
 }
 
 interface HumanReviewCase {
@@ -1645,6 +1665,68 @@ function MonitorPageContent() {
                   {selectedItem.data.last_inbound_preview}
                 </pre>
               </div>
+            </div>
+          )}
+
+          {/* Inbound attachments + extracted insights */}
+          {selectedItem.data.attachments && selectedItem.data.attachments.length > 0 && (
+            <div className="border p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <SectionLabel>Attachments</SectionLabel>
+                <Badge variant="outline" className="text-[10px]">
+                  {selectedItem.data.attachments.length} file(s)
+                </Badge>
+              </div>
+              <div className="space-y-1.5">
+                {selectedItem.data.attachments.map((att) => (
+                  <a
+                    key={att.id}
+                    href={att.download_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between border bg-background px-2 py-1.5 text-xs hover:bg-muted/40"
+                  >
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <Paperclip className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+                      <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
+                    </span>
+                    <span className="text-muted-foreground ml-2 flex-shrink-0">
+                      {att.size_bytes ? `${Math.max(1, Math.round(att.size_bytes / 1024))} KB` : "file"}
+                    </span>
+                  </a>
+                ))}
+              </div>
+
+              {selectedItem.data.attachment_insights && (
+                <div className="space-y-1.5 pt-1">
+                  {(selectedItem.data.attachment_insights.fee_amounts || []).length > 0 && (
+                    <div className="text-xs text-foreground/90 flex items-center gap-1.5">
+                      <DollarSign className="h-3 w-3 text-amber-400" />
+                      Fee mentions: {selectedItem.data.attachment_insights.fee_amounts.map((n) => `$${n.toFixed(2)}`).join(", ")}
+                    </div>
+                  )}
+                  {(selectedItem.data.attachment_insights.deadline_mentions || []).length > 0 && (
+                    <div className="text-xs text-foreground/90 flex items-center gap-1.5">
+                      <CalendarDays className="h-3 w-3 text-blue-400" />
+                      Date mentions: {selectedItem.data.attachment_insights.deadline_mentions.slice(0, 3).join(" • ")}
+                    </div>
+                  )}
+                  {(selectedItem.data.attachment_insights.highlights || []).length > 0 && (
+                    <div className="bg-background border p-2 space-y-1">
+                      {selectedItem.data.attachment_insights.highlights.slice(0, 3).map((line, idx) => (
+                        <p key={idx} className="text-[11px] text-muted-foreground">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {(selectedItem.data.attachment_insights.filename_signals || []).length > 0 && (
+                    <div className="text-[11px] text-muted-foreground">
+                      Detected from filenames: {selectedItem.data.attachment_insights.filename_signals.join(", ").replaceAll("_", " ")}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
