@@ -82,7 +82,11 @@ function formatActiveRun(request: RequestListItem): string | null {
   else if (trigger.includes("followup")) activity = "processing follow-up";
   else if (trigger.includes("portal")) activity = "processing portal task";
 
-  if (status === "waiting") return `Waiting: ${activity}`;
+  if (status === "waiting") {
+    return request.requires_human
+      ? "Paused: awaiting human decision"
+      : "Paused: waiting for next step";
+  }
   if (status === "queued" || status === "created") return `Queued: ${activity}`;
   return `Running: ${activity}`;
 }

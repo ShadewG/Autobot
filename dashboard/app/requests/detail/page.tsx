@@ -162,7 +162,7 @@ function formatLiveRunLabel(run: AgentRun | null): string | null {
     };
     action = knownNodes[normalized] || node.replace(/[_-]/g, " ");
   }
-  if (status === "waiting") return `Waiting: ${action}`;
+  if (status === "waiting") return "Paused: awaiting human decision";
   if (status === "queued" || status === "created") return `Queued: ${action}`;
   if (status === "running" || status === "processing") return `Running: ${action}`;
   return null;
@@ -496,9 +496,13 @@ function RequestDetailContent() {
   }, [data?.thread_messages]);
   const liveRun = useMemo(() => {
     const list = runsData?.runs || [];
-    return list.find((r) => ["running", "queued", "created", "waiting", "processing"].includes(String(r.status).toLowerCase())) || null;
+    return list.find((r) => ["running", "queued", "created", "processing"].includes(String(r.status).toLowerCase())) || null;
   }, [runsData?.runs]);
   const liveRunLabel = useMemo(() => formatLiveRunLabel(liveRun), [liveRun]);
+  const waitingRun = useMemo(() => {
+    const list = runsData?.runs || [];
+    return list.find((r) => String(r.status).toLowerCase() === "waiting") || null;
+  }, [runsData?.runs]);
 
   const handleRevise = async (instruction: string) => {
     if (!id) return;
@@ -817,12 +821,17 @@ function RequestDetailContent() {
           <SafetyHints
             lastInboundProcessed={lastInboundMessage?.processed_at !== undefined && lastInboundMessage?.processed_at !== null}
             lastInboundProcessedAt={lastInboundMessage?.processed_at || undefined}
-            hasActiveRun={runsData?.runs?.some(r => ['running', 'queued', 'created', 'waiting'].includes(r.status))}
+            hasActiveRun={runsData?.runs?.some(r => ['running', 'queued', 'created', 'processing'].includes(r.status))}
           />
           {liveRunLabel ? (
             <div className="flex items-center gap-1.5 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
               <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
               <span className="text-xs font-medium text-blue-300">{liveRunLabel}</span>
+            </div>
+          ) : waitingRun ? (
+            <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
+              <Clock className="h-3 w-3 text-amber-400" />
+              <span className="text-xs font-medium text-amber-300">Paused: awaiting human decision</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
@@ -1157,7 +1166,8 @@ function RequestDetailContent() {
                             variant={
                               run.status === 'completed' ? 'default' :
                               run.status === 'failed' ? 'destructive' :
-                              ['running', 'processing', 'queued', 'created', 'waiting'].includes(run.status) ? 'secondary' :
+                              ['running', 'processing', 'queued', 'created'].includes(run.status) ? 'secondary' :
+                              run.status === 'waiting' ? 'outline' :
                               run.status === 'gated' ? 'outline' :
                               'secondary'
                             }
@@ -1165,7 +1175,7 @@ function RequestDetailContent() {
                               run.status === 'completed' && 'bg-green-500/10 text-green-400',
                               ['running', 'processing'].includes(run.status) && 'bg-blue-500/10 text-blue-400',
                               ['queued', 'created'].includes(run.status) && 'bg-indigo-500/10 text-indigo-400',
-                              run.status === 'waiting' && 'bg-amber-500/10 text-amber-400'
+                              run.status === 'waiting' && 'bg-amber-500/10 text-amber-400 border-amber-700/50'
                             )}
                           >
                             {run.status}
