@@ -232,6 +232,9 @@ class DatabaseService {
     }
 
     async updateCaseStatus(caseId, status, additionalFields = {}) {
+        if (typeof additionalFields.substatus === 'string') {
+            additionalFields.substatus = additionalFields.substatus.substring(0, 100);
+        }
         const updateFields = { status, updated_at: new Date(), ...additionalFields };
         const setClause = Object.keys(updateFields).map((key, i) => `${key} = $${i + 2}`).join(', ');
         const values = [caseId, ...Object.values(updateFields)];
