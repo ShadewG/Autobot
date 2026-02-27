@@ -1153,10 +1153,10 @@ class CronService {
                         [proposal.id, retryCount + 1]
                     );
 
-                    // Check if there's already an active/queued agent run for this case
+                    // Check if there's already an active agent run for this case
                     const activeRun = await db.query(`
                         SELECT id FROM agent_runs
-                        WHERE case_id = $1 AND status IN ('queued', 'running')
+                        WHERE case_id = $1 AND status IN ('created', 'queued', 'running', 'processing', 'waiting', 'paused')
                         LIMIT 1
                     `, [proposal.case_id]);
 

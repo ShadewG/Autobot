@@ -150,7 +150,8 @@ async function recoverStaleQueuedRuns({ maxAgeMinutes = 5, limit = 25, maxAttemp
       continue;
     }
 
-    if (!PENDING_STATUSES.has(triggerStatus) && triggerStatus !== 'UNKNOWN') {
+    // If we can't determine the remote status, skip rather than risk duplicates.
+    if (!PENDING_STATUSES.has(triggerStatus)) {
       continue;
     }
 
