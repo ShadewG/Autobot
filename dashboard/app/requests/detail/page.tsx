@@ -316,7 +316,8 @@ function RequestDetailContent() {
 
   const handleDismissPending = async () => {
     if (!data?.pending_proposal) return;
-    if (!confirm("Dismiss this draft? The AI will need to re-analyze.")) return;
+    const dismissLabel = isEmailLikePendingAction ? "draft" : "proposal";
+    if (!confirm(`Dismiss this ${dismissLabel}? The AI will need to re-analyze.`)) return;
     try {
       const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
         method: "POST",
@@ -994,8 +995,8 @@ function RequestDetailContent() {
                     <Card className="border-2 border-blue-700/50 bg-blue-500/5">
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm flex items-center gap-2 text-blue-300">
-                          <Send className="h-4 w-4" />
-                          Draft Pending Approval
+                          {isEmailLikePendingAction ? <Send className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                          {pendingCardTitle}
                           <Badge variant="outline" className="text-[10px] ml-auto">
                             {ACTION_TYPE_LABELS[pending_proposal.action_type]?.label || pending_proposal.action_type.replace(/_/g, " ")}
                           </Badge>
@@ -1011,6 +1012,11 @@ function RequestDetailContent() {
                           <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-[inherit] line-clamp-6 overflow-hidden max-h-32">
                             {pending_proposal.draft_body_text}
                           </pre>
+                        )}
+                        {!pending_proposal.draft_subject && !pending_proposal.draft_body_text && (
+                          <p className="text-xs text-muted-foreground">
+                            No outbound message draft for this action. Approve to continue processing this proposal.
+                          </p>
                         )}
                         {Array.isArray(pending_proposal.reasoning) && pending_proposal.reasoning.length > 0 && (
                           <ul className="text-xs text-muted-foreground space-y-1">
@@ -1029,8 +1035,14 @@ function RequestDetailContent() {
                             onClick={handleApprovePending}
                             disabled={isApproving}
                           >
-                            {isApproving ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Send className="h-3 w-3 mr-1.5" />}
-                            Send
+                            {isApproving ? (
+                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                            ) : isEmailLikePendingAction ? (
+                              <Send className="h-3 w-3 mr-1.5" />
+                            ) : (
+                              <CheckCircle className="h-3 w-3 mr-1.5" />
+                            )}
+                            {pendingApproveLabel}
                           </Button>
                           <Button
                             size="sm"
