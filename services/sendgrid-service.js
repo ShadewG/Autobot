@@ -644,7 +644,7 @@ class SendGridService {
                             try {
                                 const attachmentProcessor = require('./attachment-processor');
                                 await attachmentProcessor.processAttachment(
-                                    savedAtt.id, att.buffer, att.mimetype
+                                    savedAtt.id, att.buffer, att.mimetype, att.filename
                                 );
                             } catch (extractErr) {
                                 console.error(`Text extraction failed for ${att.filename}:`, extractErr.message);
