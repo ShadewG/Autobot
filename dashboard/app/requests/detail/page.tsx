@@ -121,6 +121,38 @@ function getActionExplanation(actionType: string | null, hasDraft: boolean, port
   return explanation;
 }
 
+function getDeliveryTarget(
+  actionType: string | null,
+  request: RequestWorkspaceResponse["request"],
+  agency: RequestWorkspaceResponse["agency_summary"] | null
+): { method: string; target: string | null } | null {
+  if (!actionType) return null;
+  if (actionType === "SUBMIT_PORTAL") {
+    return {
+      method: "PORTAL",
+      target: request.portal_url || agency?.portal_url || null,
+    };
+  }
+  if (
+    [
+      "SEND_INITIAL_REQUEST",
+      "SEND_FOLLOWUP",
+      "SEND_CLARIFICATION",
+      "SEND_REBUTTAL",
+      "NEGOTIATE_FEE",
+      "ACCEPT_FEE",
+      "DECLINE_FEE",
+      "SEND_PDF_EMAIL",
+    ].includes(actionType)
+  ) {
+    return {
+      method: "EMAIL",
+      target: request.agency_email || null,
+    };
+  }
+  return null;
+}
+
 // Gate icons and colors
 const GATE_DISPLAY: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   FEE_QUOTE: {
@@ -667,6 +699,18 @@ function RequestDetailContent() {
     ? "Draft Pending Approval"
     : "Proposal Pending Approval";
   const pendingApproveLabel = isEmailLikePendingAction ? "Send" : "Approve";
+  const pendingDelivery = getDeliveryTarget(pendingActionType || null, request, agency_summary || null);
+  const nextDelivery = pendingDelivery
+    ? pendingDelivery
+    : nextAction?.channel
+      ? {
+          method: nextAction.channel,
+          target:
+            nextAction.channel === "PORTAL"
+              ? (request.portal_url || agency_summary?.portal_url || null)
+              : (nextAction.recipient_email || request.agency_email || null),
+        }
+      : null;
 
   const statusValue = String(request.status || "").toUpperCase();
   const isPausedStatus = statusValue === "NEEDS_HUMAN_REVIEW" || statusValue === "PAUSED";
@@ -879,15 +923,17 @@ function RequestDetailContent() {
               {statusDisplay}
             </Badge>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">Autopilot:</span>
-            <Badge
-              variant={request.autopilot_mode === 'AUTO' ? 'default' : 'secondary'}
-              className="font-medium"
-            >
-              {request.autopilot_mode}
-            </Badge>
-          </div>
+          {nextDelivery && (
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-muted-foreground">Next delivery:</span>
+              <Badge variant="outline" className="font-medium">
+                {nextDelivery.method}
+              </Badge>
+              <span className="truncate max-w-[280px]" title={nextDelivery.target || "Destination not set yet"}>
+                {nextDelivery.target || "Destination not set yet"}
+              </span>
+            </div>
+          )}
           {request.requires_human && !isPausedStatus && (
             <div className="flex items-center gap-1.5">
               <UserCheck className="h-3 w-3 text-amber-500" />
@@ -917,7 +963,7 @@ function RequestDetailContent() {
               {request.last_portal_status}
             </Badge>
           )}
-          {!shouldHidePauseReason && (
+          {!shouldHidePauseReason && !(isPaused && gateDisplay) && (
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Pause Reason:</span>
               <Badge variant="outline" className="font-medium text-amber-400">
@@ -948,6 +994,11 @@ function RequestDetailContent() {
             <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
               <Clock className="h-3 w-3 text-amber-400" />
               <span className="text-xs font-medium text-amber-300">Paused: awaiting human decision</span>
+            </div>
+          ) : isPaused ? (
+            <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
+              <Clock className="h-3 w-3 text-amber-400" />
+              <span className="text-xs text-amber-300">Waiting: decision required</span>
             </div>
           ) : (
             <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
@@ -1093,6 +1144,17 @@ function RequestDetailContent() {
                         {/* Draft content — editable */}
                         {(pending_proposal.draft_body_text || pending_proposal.draft_subject) ? (
                           <div className="border rounded p-3 space-y-2">
+                            {pendingDelivery && (
+                              <div className="rounded border bg-muted/30 px-2 py-1.5 text-[11px]">
+                                <span className="font-medium">Destination:</span>{" "}
+                                {pendingDelivery.method}{" "}
+                                {pendingDelivery.target ? (
+                                  <span className="text-muted-foreground">→ {pendingDelivery.target}</span>
+                                ) : (
+                                  <span className="text-amber-400">→ not set</span>
+                                )}
+                              </div>
+                            )}
                             <div className="flex items-center justify-between">
                               <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                                 {pending_proposal.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
@@ -1146,7 +1208,8 @@ function RequestDetailContent() {
                           {getActionExplanation(
                             pending_proposal.action_type,
                             !!(pending_proposal.draft_body_text),
-                            agency_summary?.portal_url
+                            agency_summary?.portal_url,
+                            request.agency_email
                           )}
                         </p>
                         {/* Action buttons */}
