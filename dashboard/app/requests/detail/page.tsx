@@ -42,7 +42,14 @@ import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
 import { requestsAPI, casesAPI, fetcher, type AgentRun } from "@/lib/api";
-import type { RequestWorkspaceResponse, NextAction, PauseReason, PendingProposal } from "@/lib/types";
+import type {
+  RequestWorkspaceResponse,
+  NextAction,
+  PauseReason,
+  PendingProposal,
+  CaseAgency,
+  AgencyCandidate,
+} from "@/lib/types";
 import { formatDate, cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -242,6 +249,18 @@ function formatLiveRunLabel(run: AgentRun | null): string | null {
   return null;
 }
 
+function formatAgencyNotes(notes?: string | null): string | null {
+  if (!notes) return null;
+  const trimmed = String(notes).trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return JSON.stringify(parsed, null, 2);
+  } catch (_) {
+    return trimmed;
+  }
+}
+
 function RequestDetailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -259,6 +278,8 @@ function RequestDetailContent() {
   const [editedSubject, setEditedSubject] = useState<string>("");
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
+  const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
+  const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
@@ -436,6 +457,61 @@ function RequestDetailContent() {
       alert(e.message);
     } finally {
       setIsAdjustingPending(false);
+    }
+  };
+
+  const handleSetPrimaryAgency = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoadingId(caseAgencyId);
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/set-primary`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to set primary agency");
+      mutate();
+    } catch (e: any) {
+      alert(e.message || "Failed to set primary agency");
+    } finally {
+      setAgencyActionLoadingId(null);
+    }
+  };
+
+  const handleResearchAgency = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoadingId(caseAgencyId);
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/research`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to research agency");
+      mutate();
+    } catch (e: any) {
+      alert(e.message || "Failed to research agency");
+    } finally {
+      setAgencyActionLoadingId(null);
+    }
+  };
+
+  const handleAddCandidateAgency = async (candidate: AgencyCandidate) => {
+    if (!id || !candidate?.name) return;
+    setCandidateActionLoadingName(candidate.name);
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agency_name: candidate.name,
+          agency_email: candidate.agency_email || undefined,
+          portal_url: candidate.portal_url || undefined,
+          notes: candidate.reason || undefined,
+          added_source: candidate.source || "research_candidate",
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to add agency candidate");
+      mutate();
+    } catch (e: any) {
+      alert(e.message || "Failed to add agency candidate");
+    } finally {
+      setCandidateActionLoadingName(null);
     }
   };
 
@@ -682,6 +758,8 @@ function RequestDetailContent() {
     pending_proposal,
     review_state,
     active_run,
+    case_agencies = [],
+    agency_candidates = [],
   } = data;
 
   const pendingActionType = pending_proposal?.action_type || "";
@@ -1560,7 +1638,7 @@ function RequestDetailContent() {
 
         {/* Agency Tab */}
         <TabsContent value="agency" className="mt-4">
-          <Card>
+          <Card className="mb-4">
             <CardHeader>
               <CardTitle>{agency_summary.name}</CardTitle>
             </CardHeader>
@@ -1595,7 +1673,7 @@ function RequestDetailContent() {
               {agency_summary.notes && (
                 <div>
                   <p className="text-sm text-muted-foreground">Notes</p>
-                  <p>{agency_summary.notes}</p>
+                  <pre className="text-xs whitespace-pre-wrap bg-muted rounded p-2">{formatAgencyNotes(agency_summary.notes)}</pre>
                 </div>
               )}
               <Separator />
@@ -1607,6 +1685,93 @@ function RequestDetailContent() {
               </Link>
             </CardContent>
           </Card>
+
+          <Card className="mb-4">
+            <CardHeader>
+              <CardTitle>Case Agencies ({case_agencies.length})</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {case_agencies.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No linked case agencies yet.</p>
+              ) : (
+                case_agencies.map((ca: CaseAgency) => (
+                  <div key={ca.id} className="rounded border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium">{ca.agency_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {ca.agency_email || "No email"} {ca.portal_url ? `• Portal` : ""}
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          {ca.is_primary && <Badge>Primary</Badge>}
+                          <Badge variant="outline">{ca.status || "pending"}</Badge>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        {!ca.is_primary && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={agencyActionLoadingId === ca.id}
+                            onClick={() => handleSetPrimaryAgency(ca.id)}
+                          >
+                            Set Primary
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={agencyActionLoadingId === ca.id}
+                          onClick={() => handleResearchAgency(ca.id)}
+                        >
+                          {agencyActionLoadingId === ca.id ? "Researching..." : "Research"}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+
+          {agency_candidates.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Research Candidates</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {agency_candidates.map((candidate: AgencyCandidate, idx: number) => (
+                  <div key={`${candidate.name || "candidate"}-${idx}`} className="rounded border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium">{candidate.name || "Unnamed agency"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {candidate.agency_email || "No email"} {candidate.portal_url ? "• Portal found" : ""}
+                        </p>
+                        {candidate.reason && (
+                          <p className="text-xs text-muted-foreground mt-1">{candidate.reason}</p>
+                        )}
+                        <div className="mt-2 flex gap-2">
+                          {candidate.source && <Badge variant="outline">{candidate.source}</Badge>}
+                          {typeof candidate.confidence === "number" && (
+                            <Badge variant="outline">{Math.round(candidate.confidence * 100)}% confidence</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!candidate.name || candidateActionLoadingName === candidate.name}
+                        onClick={() => handleAddCandidateAgency(candidate)}
+                      >
+                        {candidateActionLoadingName === candidate.name ? "Adding..." : "Add To Case"}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
       </Tabs>
 

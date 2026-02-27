@@ -163,6 +163,81 @@ function parseScopeItems(caseData) {
     return [];
 }
 
+function safeJsonParse(value) {
+    if (!value) return null;
+    if (typeof value === 'object') return value;
+    if (typeof value !== 'string') return null;
+    try {
+        return JSON.parse(value);
+    } catch (_) {
+        return null;
+    }
+}
+
+function extractAgencyCandidatesFromResearchNotes(contactResearchNotes) {
+    const parsed = safeJsonParse(contactResearchNotes);
+    if (!parsed || typeof parsed !== 'object') return [];
+
+    const candidates = [];
+    const brief = parsed.brief && typeof parsed.brief === 'object' ? parsed.brief : null;
+    const contact = parsed.contactResult && typeof parsed.contactResult === 'object' ? parsed.contactResult : null;
+
+    if (brief && Array.isArray(brief.suggested_agencies)) {
+        for (const item of brief.suggested_agencies) {
+            if (!item || typeof item !== 'object') continue;
+            if (!item.name) continue;
+            candidates.push({
+                name: item.name,
+                reason: item.reason || null,
+                confidence: item.confidence ?? null,
+                source: 'suggested_agency',
+                agency_email: null,
+                portal_url: null,
+                contact_phone: null,
+            });
+        }
+    }
+
+    if (contact && (contact.contact_email || contact.portal_url || contact.notes)) {
+        const primaryName = candidates[0]?.name || null;
+        candidates.push({
+            name: primaryName,
+            reason: contact.notes || null,
+            confidence: contact.confidence ?? null,
+            source: contact.source || 'contact_research',
+            agency_email: contact.contact_email || null,
+            portal_url: contact.portal_url || null,
+            contact_phone: contact.contact_phone || null,
+        });
+    }
+
+    const deduped = new Map();
+    for (const c of candidates) {
+        const key = String(c.name || '').trim().toLowerCase() || `candidate-${deduped.size + 1}`;
+        const prev = deduped.get(key);
+        if (!prev) {
+            deduped.set(key, c);
+            continue;
+        }
+        // Merge richer candidate details
+        deduped.set(key, {
+            ...prev,
+            reason: prev.reason || c.reason,
+            confidence: prev.confidence ?? c.confidence,
+            source: prev.source || c.source,
+            agency_email: prev.agency_email || c.agency_email,
+            portal_url: prev.portal_url || c.portal_url,
+            contact_phone: prev.contact_phone || c.contact_phone,
+        });
+    }
+
+    return Array.from(deduped.values()).sort((a, b) => {
+        const ac = typeof a.confidence === 'number' ? a.confidence : -1;
+        const bc = typeof b.confidence === 'number' ? b.confidence : -1;
+        return bc - ac;
+    });
+}
+
 /**
  * Parse constraints from JSONB.
  * Normalizes both plain string constraints (legacy) and full objects
@@ -1028,6 +1103,19 @@ router.get('/:id/workspace', async (req, res) => {
             }
         };
 
+        const caseAgencies = await db.getCaseAgencies(requestId, false);
+        const sortedCaseAgencies = [...caseAgencies].sort((a, b) => {
+            if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
+            const aStatus = String(a.status || 'pending').toLowerCase();
+            const bStatus = String(b.status || 'pending').toLowerCase();
+            const rank = { active: 0, pending: 1, researching: 2, inactive: 3 };
+            const ar = rank[aStatus] ?? 9;
+            const br = rank[bStatus] ?? 9;
+            if (ar !== br) return ar - br;
+            return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
+        });
+        const agencyCandidates = extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes);
+
         // Build state deadline info (static data - would come from state_deadlines table)
         const STATE_DEADLINES = {
             SC: { state_code: 'SC', response_days: 10, statute_citation: 'SC Code § 30-4-30(c): 10 business days' },
@@ -1079,6 +1167,8 @@ router.get('/:id/workspace', async (req, res) => {
             thread_messages: threadMessages,
             next_action_proposal: nextActionProposal,
             agency_summary: agencySummary,
+            case_agencies: sortedCaseAgencies,
+            agency_candidates: agencyCandidates,
             deadline_milestones: deadlineMilestones,
             state_deadline: stateDeadline,
             pending_proposal: pendingProposal,

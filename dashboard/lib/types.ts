@@ -232,6 +232,36 @@ export interface AgencySummary {
   rules?: AgencyRules;
 }
 
+export interface CaseAgency {
+  id: number;
+  case_id: number;
+  agency_id: number | null;
+  agency_name: string;
+  agency_email: string | null;
+  portal_url: string | null;
+  portal_provider: string | null;
+  is_primary: boolean;
+  is_active: boolean;
+  added_source: string | null;
+  status: string | null;
+  substatus: string | null;
+  notes: string | null;
+  contact_research_notes?: string | null;
+  created_at: string;
+  updated_at: string;
+  agency_notion_page_id?: string | null;
+}
+
+export interface AgencyCandidate {
+  name: string | null;
+  reason: string | null;
+  confidence: number | null;
+  source: string | null;
+  agency_email: string | null;
+  portal_url: string | null;
+  contact_phone: string | null;
+}
+
 // Attachment
 export interface Attachment {
   id: string;
@@ -430,6 +460,8 @@ export interface RequestWorkspaceResponse {
   thread_messages: ThreadMessage[];
   next_action_proposal: NextAction | null;
   agency_summary: AgencySummary;
+  case_agencies?: CaseAgency[];
+  agency_candidates?: AgencyCandidate[];
   deadline_milestones?: DeadlineMilestone[];
   state_deadline?: StateDeadline;
   pending_proposal?: PendingProposal | null;

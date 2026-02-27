@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
+const pdContactService = require('../services/pd-contact-service');
 
 /**
  * GET /api/cases/:id/agencies
@@ -126,6 +127,73 @@ router.post('/:id/agencies/:caId/set-primary', async (req, res) => {
         });
 
         res.json({ success: true, primary: newPrimary });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/cases/:id/agencies/:caId/research
+ * Re-run contact research for a specific case agency and update fields.
+ */
+router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const caseAgencyId = parseInt(req.params.caId, 10);
+        if (!caseId || !caseAgencyId) return res.status(400).json({ success: false, error: 'Invalid ids' });
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
+
+        const caseAgency = await db.getCaseAgencyById(caseAgencyId);
+        if (!caseAgency || caseAgency.case_id !== caseId) {
+            return res.status(404).json({ success: false, error: 'Case agency not found' });
+        }
+
+        const lookup = await pdContactService.lookupContact(
+            caseAgency.agency_name,
+            caseData.state,
+            { forceSearch: true }
+        );
+        if (!lookup) {
+            await db.logActivity(
+                'case_agency_research_failed',
+                `Agency research found no contact info for "${caseAgency.agency_name}"`,
+                { case_id: caseId, case_agency_id: caseAgencyId }
+            );
+            return res.status(404).json({ success: false, error: 'No contact data found' });
+        }
+
+        const mergedNotes = JSON.stringify({
+            researched_at: new Date().toISOString(),
+            source: lookup.source || 'pd-contact',
+            confidence: lookup.confidence || null,
+            notes: lookup.notes || null,
+            result: lookup,
+        });
+
+        const updated = await db.updateCaseAgency(caseAgencyId, {
+            agency_email: lookup.contact_email || caseAgency.agency_email || null,
+            portal_url: lookup.portal_url || caseAgency.portal_url || null,
+            portal_provider: lookup.portal_provider || caseAgency.portal_provider || null,
+            status: caseAgency.status || 'pending',
+            contact_research_notes: mergedNotes,
+        });
+
+        await db.logActivity(
+            'case_agency_researched',
+            `Updated contact research for "${caseAgency.agency_name}"`,
+            {
+                case_id: caseId,
+                case_agency_id: caseAgencyId,
+                source: lookup.source || null,
+                confidence: lookup.confidence || null,
+                found_email: lookup.contact_email || null,
+                found_portal: lookup.portal_url || null,
+            }
+        );
+
+        res.json({ success: true, case_agency: updated, research: lookup });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
