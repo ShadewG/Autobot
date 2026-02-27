@@ -493,6 +493,11 @@ function RequestDetailContent() {
       m.direction === "INBOUND" && !m.processed_at
     );
   }, [data?.thread_messages]);
+  const liveRun = useMemo(() => {
+    const list = runsData?.runs || [];
+    return list.find((r) => ["running", "queued", "created", "waiting", "processing"].includes(String(r.status).toLowerCase())) || null;
+  }, [runsData?.runs]);
+  const liveRunLabel = useMemo(() => formatLiveRunLabel(liveRun), [liveRun]);
 
   const handleRevise = async (instruction: string) => {
     if (!id) return;
@@ -587,11 +592,6 @@ function RequestDetailContent() {
   };
 
   const pauseContext = getPauseContext();
-  const liveRun = useMemo(() => {
-    const list = runsData?.runs || [];
-    return list.find((r) => ["running", "queued", "created", "waiting", "processing"].includes(String(r.status).toLowerCase())) || null;
-  }, [runsData?.runs]);
-  const liveRunLabel = useMemo(() => formatLiveRunLabel(liveRun), [liveRun]);
 
   return (
     <div className="space-y-4">
