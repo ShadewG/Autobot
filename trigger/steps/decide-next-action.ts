@@ -120,6 +120,27 @@ function noAction(reasoning: string[]): DecisionResult {
   return decision("NONE", { isComplete: true, requiresHuman: false, reasoning });
 }
 
+function shouldPrioritizeBodycamCustodianResearch(caseData: any, latestAnalysis: any): boolean {
+  const requested = (Array.isArray(caseData?.requested_records)
+    ? caseData.requested_records.join(" ")
+    : caseData?.requested_records || "").toLowerCase();
+  const bodycamRequested = /body.?cam|bodycam|bwc|body.?worn|dash.?cam|officer video/.test(requested);
+  if (!bodycamRequested) return false;
+
+  const analysisBlob = [
+    ...(latestAnalysis?.key_points || []),
+    JSON.stringify(latestAnalysis?.full_analysis_json || {}),
+  ].join(" ").toLowerCase();
+
+  const is911Scoped = /911|dispatch|central communications|audio/.test(analysisBlob);
+  const formGate = /request form|apra\/foia request form|complete (the )?form|mailing address/.test(analysisBlob);
+  const mentionsBodycamHandling = /body.?cam|body.?worn|bwc|dash.?cam/.test(analysisBlob);
+
+  // Trigger when agency guidance is clearly scoped to 911/form workflow and
+  // does not address where body-cam/video custody is held.
+  return is911Scoped && formGate && !mentionsBodycamHandling;
+}
+
 function buildHumanDirectivesSection(
   dismissedProposals?: any[],
   humanDirectives?: any[],
@@ -617,6 +638,26 @@ async function aiDecision(params: {
       !requiresHuman &&
       object.action !== "ESCALATE";
 
+    // Guardrail: if body-cam is requested but inbound guidance is only 911/form
+    // process, force custodian research rather than staying in a 911-only loop.
+    if (
+      params.classification === "CLARIFICATION_REQUEST" &&
+      object.action !== "RESEARCH_AGENCY" &&
+      shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis)
+    ) {
+      return decision("RESEARCH_AGENCY", {
+        pauseReason: "DENIAL",
+        researchLevel: "deep",
+        canAutoExecute: false,
+        requiresHuman: true,
+        reasoning: [
+          "Body-cam/video is still a top requested record.",
+          "Inbound message appears limited to 911/dispatch form workflow.",
+          "Researching additional custodians for body-cam/video before continuing 911-only track.",
+        ],
+      });
+    }
+
     return decision(object.action, {
       canAutoExecute,
       requiresHuman,
@@ -870,6 +911,20 @@ async function deterministicRouting(
 
   // CLARIFICATION_REQUEST
   if (classification === "CLARIFICATION_REQUEST") {
+    const caseData = await db.getCaseById(caseId);
+    const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
+    if (shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis)) {
+      return decision("RESEARCH_AGENCY", {
+        pauseReason: "DENIAL",
+        researchLevel: "deep",
+        reasoning: [
+          "Clarification response is scoped to 911/form process only.",
+          "Case still prioritizes body-cam/video records.",
+          "Researching additional custodians for body-cam/video records.",
+        ],
+      });
+    }
+
     const canAuto = autopilotMode === "AUTO" && sentiment !== "hostile";
     return decision("SEND_CLARIFICATION", {
       canAutoExecute: canAuto,
@@ -1120,11 +1175,34 @@ export async function decideNextAction(
     if (triggerType === "HUMAN_REVIEW_RESOLUTION" && reviewAction) {
       reasoning.push(`Human review resolution: action=${reviewAction}`);
       const ri = reviewInstruction || null;
+      const reviewActionRaw = String(reviewAction);
 
       // Block send_via_email if case is flagged as wrong agency
       const caseDataForReview = await db.getCaseById(caseId);
       const caseConstraints = caseDataForReview?.constraints_jsonb || caseDataForReview?.constraints || [];
       const isWrongAgency = caseConstraints.includes("WRONG_AGENCY") || classification === "WRONG_AGENCY";
+
+      // Monitor/API decision approvals often arrive as reviewAction=APPROVE with the
+      // selected proposal already moved to DECISION_RECEIVED. Resume that proposal action.
+      if (reviewActionRaw === "APPROVE") {
+        const approvedProposal = await db.query(
+          `SELECT id, action_type
+           FROM proposals
+           WHERE case_id = $1
+             AND status = 'DECISION_RECEIVED'
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+          [caseId]
+        );
+        const approvedAction = approvedProposal.rows[0]?.action_type;
+        if (approvedAction) {
+          return decision(approvedAction as any, {
+            canAutoExecute: true,
+            requiresHuman: false,
+            reasoning: [...reasoning, `Approved proposal #${approvedProposal.rows[0].id} (${approvedAction})`],
+          });
+        }
+      }
 
       const reviewMap: Record<string, () => Promise<DecisionResult>> = {
         send_via_email: async () => {
