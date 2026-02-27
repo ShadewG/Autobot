@@ -42,6 +42,17 @@ export const submitPortal = task({
     const { caseId, portalTaskId } = payload as any;
     if (!caseId) return;
     try {
+      // Cancel the orphaned Skyvern workflow so it doesn't keep running
+      const caseRow = await db.query(
+        `SELECT last_portal_run_id FROM cases WHERE id = $1`,
+        [caseId]
+      );
+      const skyvernRunId = caseRow.rows[0]?.last_portal_run_id;
+      if (skyvernRunId) {
+        const skyvern = getSkyvern();
+        await skyvern.cancelWorkflowRun(skyvernRunId);
+      }
+
       if (portalTaskId) {
         await db.query(
           `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW(),

@@ -704,6 +704,29 @@ class PortalAgentServiceSkyvern {
     }
 
     /**
+     * Cancel a running Skyvern workflow/task run.
+     * Uses POST /v1/runs/{run_id}/cancel — works for both task and workflow runs.
+     */
+    async cancelWorkflowRun(workflowRunId) {
+        if (!workflowRunId) return false;
+        try {
+            await axios.post(
+                `https://api.skyvern.com/v1/runs/${workflowRunId}/cancel`,
+                {},
+                {
+                    headers: { 'x-api-key': this.apiKey },
+                    timeout: 10000,
+                }
+            );
+            console.log(`🛑 Cancelled Skyvern run ${workflowRunId}`);
+            return true;
+        } catch (err) {
+            console.warn(`⚠️ Failed to cancel Skyvern run ${workflowRunId}: ${err.message}`);
+            return false;
+        }
+    }
+
+    /**
      * Workflow helper utilities
      */
     _buildWorkflowRunUrl(workflowRunId, workflowResponse = {}) {
