@@ -819,8 +819,9 @@ class PortalAgentServiceSkyvern {
         // Use case owner's info if available, fall back to env vars / defaults
         const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
         // Important: requestor contact email should be the case owner's identity,
-        // not the shared portal login inbox.
-        const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        // not the shared portal login inbox (REQUESTS_INBOX). Portal confirmations
+        // sent to REQUESTS_INBOX don't route to cases properly.
+        const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
         const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
         const ownerOrg = caseOwner?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team';
         const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
@@ -861,7 +862,7 @@ class PortalAgentServiceSkyvern {
 
         // Always send login credentials — either from saved account or defaults.
         // This ensures Skyvern uses OUR password when creating accounts, not a random one.
-        const defaultEmail = personalInfo.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const defaultEmail = personalInfo.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
         const defaultPassword = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
         const loginPayload = JSON.stringify({
             email: portalAccount?.email || defaultEmail,
@@ -974,7 +975,7 @@ class PortalAgentServiceSkyvern {
 
         // 2. No account found — run scout task using the case owner's email
         console.log(`🔍 No portal account found for ${portalUrl} (user_id=${userId}) — running scout task...`);
-        const email = caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
+        const email = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
         const password = process.env.PORTAL_DEFAULT_PASSWORD || 'Insanity10M';
 
         await database.logActivity('portal_scout_started', `Scout task started for ${portalUrl}`, {
@@ -1113,7 +1114,7 @@ class PortalAgentServiceSkyvern {
             if (portalAccount) await database.updatePortalAccountLastUsed(portalAccount.id);
         }
 
-        const totpIdentifier = caseOwner?.email || process.env.REQUESTS_INBOX || process.env.TOTP_INBOX || 'requests@foib-request.com';
+        const totpIdentifier = caseOwner?.email || process.env.TOTP_INBOX || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
         const parameters = await this._buildWorkflowParameters({ caseData, portalUrl, portalAccount, dryRun, instructions, caseOwner });
         if (retryContext?.navigation_goal) {
             parameters.navigation_goal = retryContext.navigation_goal;
@@ -1201,7 +1202,7 @@ class PortalAgentServiceSkyvern {
                     await notionService.addSubmissionComment(caseData.id, {
                         portal_url: portalUrl,
                         provider: caseData.portal_provider || null,
-                        account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                         status: 'timeout',
                         confirmation_number: null,
                         notes: timeoutReason,
@@ -1283,7 +1284,7 @@ class PortalAgentServiceSkyvern {
                     await notionService.addSubmissionComment(caseData.id, {
                         portal_url: portalUrl,
                         provider: caseData.portal_provider || null,
-                        account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                         status: finalResult.status || 'completed',
                         confirmation_number: extractedData?.confirmation_number || caseData.portal_request_number || null,
                         agency_notion_page_id: primary?.agency_notion_page_id || null
@@ -1299,7 +1300,7 @@ class PortalAgentServiceSkyvern {
                         await database.createPortalAccount({
                             portal_url: portalUrl,
                             portal_type: caseData.portal_provider || null,
-                            email: caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                            email: caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                             password: defaultPassword,
                             first_name: caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
                             last_name: caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
@@ -1359,7 +1360,7 @@ class PortalAgentServiceSkyvern {
                     await notionService.addSubmissionComment(caseData.id, {
                         portal_url: portalUrl,
                         provider: caseData.portal_provider || null,
-                        account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                         status: 'not_automatable',
                         confirmation_number: null,
                         notes: `Portal not automatable: ${String(failureReason).substring(0, 200)}`,
@@ -1438,7 +1439,7 @@ class PortalAgentServiceSkyvern {
                     await database.createPortalAccount({
                         portal_url: portalUrl,
                         portal_type: caseData.portal_provider || null,
-                        email: caseOwner?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                        email: caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                         password: defaultPassword,
                         first_name: caseOwner?.name?.split(' ')[0] || process.env.REQUESTER_NAME?.split(' ')[0] || 'Samuel',
                         last_name: caseOwner?.name?.split(' ').slice(1).join(' ') || process.env.REQUESTER_NAME?.split(' ').slice(1).join(' ') || 'Hylton',
@@ -1496,7 +1497,7 @@ class PortalAgentServiceSkyvern {
                 await notionService.addSubmissionComment(caseData.id, {
                     portal_url: portalUrl,
                     provider: caseData.portal_provider || null,
-                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                     status: 'failed',
                     confirmation_number: null,
                     notes: `Error: ${failureStr.substring(0, 200)}`,
@@ -1573,7 +1574,7 @@ class PortalAgentServiceSkyvern {
                 await notionService.addSubmissionComment(caseData.id, {
                     portal_url: portalUrl,
                     provider: caseData.portal_provider || null,
-                    account_email: portalAccount?.email || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+                    account_email: portalAccount?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
                     status: 'failed',
                     confirmation_number: null,
                     notes: `Crash: ${message.substring(0, 200)}`,
@@ -2052,9 +2053,9 @@ INSTRUCTIONS:
     buildNavigationPayloadWithoutAccount(caseData) {
         return {
             // Requester Information (person making the FOIA request)
-            email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+            email: process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
             requester_name: 'Samuel Hylton',
-            requester_email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+            requester_email: process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
             first_name: 'Samuel',
             last_name: 'Hylton',
             phone: '209-800-7702',
