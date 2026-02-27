@@ -67,6 +67,8 @@ export function PortalLiveView({ caseId, initialScreenshotUrl, portalTaskUrl, is
   const screenshots = historyData?.screenshots || [];
   const screenshotUrl = data?.screenshot_url || initialScreenshotUrl || null;
   const taskUrl = data?.portal_task_url || portalTaskUrl || null;
+  // Keep hook order stable across renders (don't declare hooks after early returns)
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
   // In history mode, hide entirely if there are no screenshots (data loaded and empty)
   if (!isLive && historyData && screenshots.length === 0) {
@@ -79,7 +81,6 @@ export function PortalLiveView({ caseId, initialScreenshotUrl, portalTaskUrl, is
     : (screenshots.length > 0 ? screenshots[screenshots.length - 1].url : null);
 
   // Selected image for main view (click thumbnail to select)
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const displayUrl = selectedIndex !== null && screenshots[selectedIndex]
     ? screenshots[selectedIndex].url
     : mainImageUrl;
