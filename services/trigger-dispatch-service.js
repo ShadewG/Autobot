@@ -61,11 +61,14 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
   const source = context.source || 'app_dispatch';
   const triggerOptions = withStableIdempotency(options, taskId, runId, caseId);
 
-  // Enforce per-case concurrency: only one Trigger.dev task per case at a time
-  if (typeof triggerOptions.queue === 'string') {
-    triggerOptions.queue = { name: triggerOptions.queue, concurrencyLimit: 1 };
-  } else if (triggerOptions.queue?.name && !triggerOptions.queue.concurrencyLimit) {
-    triggerOptions.queue.concurrencyLimit = 1;
+  // Trigger.dev v4 expects a queue identifier string in trigger options.
+  // Keep queue options as a string (e.g. "case-25169") to avoid schema validation errors.
+  if (triggerOptions.queue && typeof triggerOptions.queue !== 'string') {
+    if (typeof triggerOptions.queue.name === 'string') {
+      triggerOptions.queue = triggerOptions.queue.name;
+    } else {
+      delete triggerOptions.queue;
+    }
   }
 
   const handle = await tasks.trigger(taskId, payload, triggerOptions);
