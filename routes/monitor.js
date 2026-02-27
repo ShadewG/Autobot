@@ -18,7 +18,7 @@ if (process.env.SENDGRID_API_KEY) {
 // Trigger.dev queue + idempotency options for per-case concurrency control
 function triggerOpts(caseId, taskType, uniqueId) {
   return {
-    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    queue: `case-${caseId}`,
     idempotencyKey: `${taskType}:${caseId}:${uniqueId || Date.now()}`,
     idempotencyKeyTTL: "1h",
   };
@@ -27,7 +27,7 @@ function triggerOpts(caseId, taskType, uniqueId) {
 // NOTE: idempotency keys take precedence over debounce, so we omit them here
 function triggerOptsDebounced(caseId, taskType, uniqueId) {
   return {
-    queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+    queue: `case-${caseId}`,
     debounce: { key: `${taskType}:${caseId}`, delay: "5s", mode: "trailing" },
   };
 }
@@ -62,6 +62,26 @@ async function autoCaptureEvalCase(proposal, { action, instruction = null, reaso
         // Non-blocking: never fail the human decision flow due to eval capture.
         console.warn(`Auto eval-case capture failed for proposal ${proposal?.id}: ${err.message}`);
     }
+}
+
+function normalizeProposalReasoning(row, context = {}) {
+    const base = Array.isArray(row?.reasoning) ? row.reasoning.filter(Boolean) : [];
+    const genericOnly = base.length > 0 && base.every((line) => /human review resolution: action=/i.test(String(line)));
+    const hasUnknown = base.some((line) => /unknown review action/i.test(String(line)));
+    const shouldExpand = base.length === 0 || genericOnly || hasUnknown;
+    if (!shouldExpand) return base;
+
+    const action = String((context.reviewAction || 'reprocess')).toLowerCase();
+    const expanded = [
+        `This proposal was generated after a human review decision (${action}).`,
+    ];
+    if (context.reviewInstruction) {
+        expanded.push(`Instruction provided: ${context.reviewInstruction}`);
+    } else {
+        expanded.push('No specific instruction was found on the latest review decision for this case.');
+    }
+    expanded.push('The system could not select a concrete next action with high confidence, so it escalated for clearer guidance.');
+    return expanded;
 }
 
 function deriveMessageSource(message) {
@@ -1256,6 +1276,31 @@ router.get('/live-overview', async (req, res) => {
                 .map((r) => Number(r.trigger_message_id))
                 .filter((n) => Number.isFinite(n) && n > 0)
         )];
+        const caseIdsForReasoning = [...new Set(
+            pendingApprovalRows
+                .map((r) => Number(r.case_id))
+                .filter((n) => Number.isFinite(n) && n > 0)
+        )];
+
+        let latestReviewByCase = new Map();
+        if (caseIdsForReasoning.length > 0) {
+            const reviewCtx = await db.query(`
+                SELECT DISTINCT ON (p.case_id)
+                    p.case_id,
+                    p.action_type,
+                    p.human_decision->>'action' AS review_action,
+                    p.human_decision->>'instruction' AS review_instruction,
+                    p.updated_at
+                FROM proposals p
+                WHERE p.case_id = ANY($1::int[])
+                  AND p.human_decision IS NOT NULL
+                ORDER BY p.case_id, p.updated_at DESC
+            `, [caseIdsForReasoning]);
+            latestReviewByCase = reviewCtx.rows.reduce((acc, row) => {
+                acc.set(Number(row.case_id), row);
+                return acc;
+            }, new Map());
+        }
 
         let attachmentsByMessage = new Map();
         if (triggerMessageIds.length > 0) {
@@ -1295,8 +1340,13 @@ router.get('/live-overview', async (req, res) => {
         const pendingApprovalsWithAttachments = pendingApprovalRows.map((row) => {
             const messageId = Number(row.trigger_message_id);
             const attachments = attachmentsByMessage.get(messageId) || [];
+            const reviewCtx = latestReviewByCase.get(Number(row.case_id)) || {};
             return {
                 ...row,
+                reasoning: normalizeProposalReasoning(row, {
+                    reviewAction: reviewCtx.review_action,
+                    reviewInstruction: reviewCtx.review_instruction,
+                }),
                 attachments,
                 attachment_insights: extractAttachmentInsights(attachments)
             };
