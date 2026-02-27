@@ -70,6 +70,11 @@ function formatDueWithSeverity(request: RequestListItem): {
 }
 
 function formatActiveRun(request: RequestListItem): string | null {
+  const portalTaskStatus = String(request.active_portal_task_status || "").toLowerCase();
+  if (portalTaskStatus === "pending" || portalTaskStatus === "in_progress") {
+    return "Running: processing portal submission";
+  }
+
   if (!request.active_run_status) return null;
   const status = request.active_run_status.toLowerCase();
   if (!["created", "queued", "processing", "waiting", "running"].includes(status)) return null;

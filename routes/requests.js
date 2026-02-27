@@ -319,7 +319,28 @@ function toRequestListItem(caseData) {
         substatus: caseData.substatus || null,
         active_run_status: caseData.active_run_status || null,
         active_run_trigger_type: caseData.active_run_trigger_type || null,
-        active_run_started_at: caseData.active_run_started_at || null
+        active_run_started_at: caseData.active_run_started_at || null,
+        active_portal_task_status: caseData.active_portal_task_status || null,
+        active_portal_task_type: caseData.active_portal_task_type || null
+    };
+}
+
+async function attachActivePortalTask(caseData) {
+    if (!caseData?.id) return caseData;
+    const result = await db.query(
+        `SELECT status, action_type
+         FROM portal_tasks
+         WHERE case_id = $1
+           AND status IN ('PENDING', 'IN_PROGRESS')
+         ORDER BY updated_at DESC, id DESC
+         LIMIT 1`,
+        [caseData.id]
+    );
+    const active = result.rows[0] || null;
+    return {
+        ...caseData,
+        active_portal_task_status: active?.status || null,
+        active_portal_task_type: active?.action_type || null,
     };
 }
 
@@ -737,7 +758,9 @@ router.get('/', async (req, res) => {
                 c.*,
                 ar.status AS active_run_status,
                 ar.trigger_type AS active_run_trigger_type,
-                ar.started_at AS active_run_started_at
+                ar.started_at AS active_run_started_at,
+                pt.status AS active_portal_task_status,
+                pt.action_type AS active_portal_task_type
             FROM cases c
             LEFT JOIN LATERAL (
                 SELECT status, trigger_type, started_at
@@ -747,6 +770,14 @@ router.get('/', async (req, res) => {
                 ORDER BY started_at DESC NULLS LAST, id DESC
                 LIMIT 1
             ) ar ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT status, action_type
+                FROM portal_tasks
+                WHERE case_id = c.id
+                  AND status IN ('PENDING', 'IN_PROGRESS')
+                ORDER BY updated_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) pt ON TRUE
             WHERE (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
         `;
         const params = [];
@@ -832,7 +863,8 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
-        const caseData = await db.getCaseById(requestId);
+        const rawCaseData = await db.getCaseById(requestId);
+        const caseData = await attachActivePortalTask(rawCaseData);
 
         if (!caseData) {
             return res.status(404).json({
@@ -863,7 +895,8 @@ router.get('/:id/workspace', async (req, res) => {
         const requestId = parseInt(req.params.id);
 
         // Fetch case data
-        const caseData = await db.getCaseById(requestId);
+        const rawCaseData = await db.getCaseById(requestId);
+        const caseData = await attachActivePortalTask(rawCaseData);
         if (!caseData) {
             return res.status(404).json({
                 success: false,

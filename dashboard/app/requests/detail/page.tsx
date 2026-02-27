@@ -499,6 +499,10 @@ function RequestDetailContent() {
     return list.find((r) => ["running", "queued", "created", "processing"].includes(String(r.status).toLowerCase())) || null;
   }, [runsData?.runs]);
   const liveRunLabel = useMemo(() => formatLiveRunLabel(liveRun), [liveRun]);
+  const portalTaskActive = useMemo(() => {
+    const status = String(data?.request?.active_portal_task_status || "").toUpperCase();
+    return status === "PENDING" || status === "IN_PROGRESS";
+  }, [data?.request?.active_portal_task_status]);
   const waitingRun = useMemo(() => {
     const list = runsData?.runs || [];
     return list.find((r) => String(r.status).toLowerCase() === "waiting") || null;
@@ -569,6 +573,22 @@ function RequestDetailContent() {
     state_deadline,
     pending_proposal,
   } = data;
+
+  const pendingActionType = pending_proposal?.action_type || "";
+  const isEmailLikePendingAction = [
+    "SEND_INITIAL_REQUEST",
+    "SEND_FOLLOWUP",
+    "SEND_CLARIFICATION",
+    "SEND_REBUTTAL",
+    "NEGOTIATE_FEE",
+    "ACCEPT_FEE",
+    "DECLINE_FEE",
+    "SEND_PDF_EMAIL",
+  ].includes(pendingActionType);
+  const pendingCardTitle = isEmailLikePendingAction
+    ? "Draft Pending Approval"
+    : "Proposal Pending Approval";
+  const pendingApproveLabel = isEmailLikePendingAction ? "Send" : "Approve";
 
   // Robust detection of whether request is paused (same pattern as DecisionPanel)
   const isPaused =
@@ -821,12 +841,20 @@ function RequestDetailContent() {
           <SafetyHints
             lastInboundProcessed={lastInboundMessage?.processed_at !== undefined && lastInboundMessage?.processed_at !== null}
             lastInboundProcessedAt={lastInboundMessage?.processed_at || undefined}
-            hasActiveRun={runsData?.runs?.some(r => ['running', 'queued', 'created', 'processing'].includes(r.status))}
+            hasActiveRun={
+              (runsData?.runs?.some(r => ['running', 'queued', 'created', 'processing'].includes(r.status)) || false) ||
+              portalTaskActive
+            }
           />
           {liveRunLabel ? (
             <div className="flex items-center gap-1.5 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
               <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
               <span className="text-xs font-medium text-blue-300">{liveRunLabel}</span>
+            </div>
+          ) : portalTaskActive ? (
+            <div className="flex items-center gap-1.5 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
+              <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
+              <span className="text-xs font-medium text-blue-300">Running: processing portal submission</span>
             </div>
           ) : waitingRun ? (
             <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
