@@ -1316,14 +1316,31 @@ export async function decideNextAction(
             } catch (e: any) {
               logger.error("Failed to create/trigger portal retry", { caseId, error: e.message });
             }
+            return noAction([...reasoning, "Portal retry initiated"]);
           } else {
             logger.info("Skipped retry_portal: provider/url not automatable", {
               caseId,
               portalUrl: caseData?.portal_url || null,
               provider: caseData?.portal_provider || null,
             });
+
+            // Portal cannot be automated; pivot to actionable next step instead of idling.
+            if (caseData?.agency_email) {
+              return decision("SEND_INITIAL_REQUEST", {
+                adjustmentInstruction:
+                  ri ||
+                  `Portal is non-automatable; send via email to ${caseData.agency_email}`,
+                reasoning: [...reasoning, "Portal is non-automatable; switching to email submission"],
+              });
+            }
+
+            return decision("RESEARCH_AGENCY", {
+              adjustmentInstruction:
+                ri || "Portal is non-automatable and no agency email is available; research the right contact",
+              reasoning: [...reasoning, "Portal is non-automatable and no email is on file"],
+              researchLevel: "deep",
+            });
           }
-          return noAction([...reasoning, "Portal retry initiated"]);
         },
         call_agency: async () => {
           try {

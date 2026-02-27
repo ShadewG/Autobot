@@ -273,6 +273,20 @@ export const submitPortal = task({
         // PDF fallback / not-real-portal handled inside Skyvern service
         if (result?.status === "pdf_form_pending" || result?.status === "not_real_portal") {
           logger.info("Portal handled via alternative path", { caseId, status: result.status });
+          // Mark provider as non-automatable so future "retry_portal" actions
+          // fall back to email/research instead of looping portal attempts.
+          try {
+            await db.updateCasePortalStatus(caseId, {
+              portal_provider: "No online portal - paper form required",
+              last_portal_status: `Alternative path required (${result.status})`,
+              last_portal_status_at: new Date(),
+            });
+          } catch (providerErr: any) {
+            logger.warn("Failed to update portal provider after alternative path", {
+              caseId,
+              error: providerErr?.message,
+            });
+          }
           await db.updateCaseStatus(caseId, "needs_human_review", {
             requires_human: true,
             substatus: `Portal requires manual handling: ${result.status}`,
