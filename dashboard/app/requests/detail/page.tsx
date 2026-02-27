@@ -128,6 +128,45 @@ const FALLBACK_GATE_DISPLAY = {
   label: "Needs Review",
 };
 
+function formatLiveRunLabel(run: AgentRun | null): string | null {
+  if (!run) return null;
+  const status = (run.status || "").toLowerCase();
+  const trigger = (run.trigger_type || "").toLowerCase();
+  const node = typeof run.metadata?.current_node === "string" ? String(run.metadata?.current_node) : "";
+
+  let action = "working";
+  if (trigger.includes("human_review")) action = "processing approval";
+  else if (trigger.includes("inbound")) action = "processing inbound";
+  else if (trigger.includes("followup")) action = "processing follow-up";
+  else if (trigger.includes("portal")) action = "processing portal";
+  else if (trigger.includes("initial")) action = "building initial request";
+
+  if (node) {
+    const normalized = node.toLowerCase();
+    const knownNodes: Record<string, string> = {
+      load_context: "loading context",
+      classify_inbound: "classifying inbound",
+      decide_action: "deciding next action",
+      research_context: "researching",
+      draft_response: "generating draft",
+      draft_initial_request: "generating initial request",
+      create_proposal_gate: "creating proposal",
+      wait_human_decision: "waiting for human decision",
+      execute_action: "executing action",
+      commit_state: "updating case state",
+      schedule_followups: "scheduling follow-up",
+      safety_check: "performing safety check",
+      complete: "completed",
+      failed: "failed"
+    };
+    action = knownNodes[normalized] || node.replace(/[_-]/g, " ");
+  }
+  if (status === "waiting") return `Waiting: ${action}`;
+  if (status === "queued" || status === "created") return `Queued: ${action}`;
+  if (status === "running" || status === "processing") return `Running: ${action}`;
+  return null;
+}
+
 function RequestDetailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -523,6 +562,11 @@ function RequestDetailContent() {
   };
 
   const pauseContext = getPauseContext();
+  const liveRun = useMemo(() => {
+    const list = runsData?.runs || [];
+    return list.find((r) => ["running", "queued", "created", "waiting", "processing"].includes(String(r.status).toLowerCase())) || null;
+  }, [runsData?.runs]);
+  const liveRunLabel = useMemo(() => formatLiveRunLabel(liveRun), [liveRun]);
 
   return (
     <div className="space-y-4">
@@ -745,6 +789,17 @@ function RequestDetailContent() {
             lastInboundProcessedAt={lastInboundMessage?.processed_at || undefined}
             hasActiveRun={runsData?.runs?.some(r => ['running', 'queued', 'created', 'waiting'].includes(r.status))}
           />
+          {liveRunLabel ? (
+            <div className="flex items-center gap-1.5 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
+              <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
+              <span className="text-xs font-medium text-blue-300">{liveRunLabel}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
+              <Clock className="h-3 w-3 text-muted-foreground" />
+              <span className="text-xs text-muted-foreground">Idle: no active run</span>
+            </div>
+          )}
         </div>
 
         {/* Status after approval */}
@@ -1072,13 +1127,15 @@ function RequestDetailContent() {
                             variant={
                               run.status === 'completed' ? 'default' :
                               run.status === 'failed' ? 'destructive' :
-                              run.status === 'running' ? 'secondary' :
+                              ['running', 'processing', 'queued', 'created', 'waiting'].includes(run.status) ? 'secondary' :
                               run.status === 'gated' ? 'outline' :
                               'secondary'
                             }
                             className={cn(
                               run.status === 'completed' && 'bg-green-500/10 text-green-400',
-                              run.status === 'running' && 'bg-blue-500/10 text-blue-400'
+                              ['running', 'processing'].includes(run.status) && 'bg-blue-500/10 text-blue-400',
+                              ['queued', 'created'].includes(run.status) && 'bg-indigo-500/10 text-indigo-400',
+                              run.status === 'waiting' && 'bg-amber-500/10 text-amber-400'
                             )}
                           >
                             {run.status}

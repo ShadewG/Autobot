@@ -268,7 +268,7 @@ export interface AgentRun {
   case_id: string;
   case_name?: string;
   trigger_type: string;
-  status: 'running' | 'completed' | 'failed' | 'gated';
+  status: 'created' | 'queued' | 'processing' | 'running' | 'waiting' | 'completed' | 'failed' | 'gated' | 'cancelled';
   started_at: string;
   completed_at?: string;
   duration_seconds?: number;

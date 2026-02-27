@@ -48,6 +48,9 @@ export const processFollowup = task({
         requires_human: true,
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
       });
+      await db.logActivity("agent_run_failed", `Process-followup failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
+        case_id: caseId,
+      });
     } catch {}
   },
 
@@ -67,13 +70,30 @@ export const processFollowup = task({
       source: "trigger.dev",
     });
     const runId = agentRun.id;
+    const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
+      try {
+        await db.updateAgentRunNodeProgress(runId, step);
+        await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
+          case_id: caseId,
+          run_id: runId,
+          step,
+          category: "AGENT",
+          ...extra,
+        });
+      } catch {
+        // non-fatal
+      }
+    };
 
     logger.info("process-followup started", { runId, caseId, followupScheduleId });
+    await markStep("start", `Run #${runId}: started scheduled follow-up`);
 
     // Step 1: Load context
+    await markStep("load_context", `Run #${runId}: loading follow-up context`);
     const context = await loadContext(caseId, null);
 
     // Step 2: Decide (classification = NO_RESPONSE for scheduled followups)
+    await markStep("decide_next_action", `Run #${runId}: deciding follow-up action`);
     const decision = await decideNextAction(
       caseId, "NO_RESPONSE", context.constraints,
       null, "neutral", context.autopilotMode,
@@ -96,10 +116,12 @@ export const processFollowup = task({
       decision.researchLevel, !!(context.caseData.contact_research_notes)
     );
     if (followupResearchLevel !== "none") {
+      await markStep("research_context", `Run #${runId}: running follow-up research`, { level: followupResearchLevel });
       research = await researchContext(caseId, decision.actionType, "NO_RESPONSE", null, followupResearchLevel);
     }
 
     // Step 3: Draft follow-up
+    await markStep("draft_response", `Run #${runId}: drafting follow-up`, { action_type: decision.actionType });
     const draft = await draftResponse(
       caseId, decision.actionType, context.constraints, context.scopeItems,
       null, decision.adjustmentInstruction, null,
@@ -107,6 +129,7 @@ export const processFollowup = task({
     );
 
     // Step 4: Safety check
+    await markStep("safety_check", `Run #${runId}: safety checking follow-up draft`);
     const safety = await safetyCheck(
       draft.bodyText, draft.subject, decision.actionType,
       context.constraints, context.scopeItems,
@@ -114,6 +137,7 @@ export const processFollowup = task({
     );
 
     // Step 5: Gate
+    await markStep("gate", `Run #${runId}: creating proposal/gate for follow-up`);
     const gate = await createProposalAndGate(
       caseId, runId, decision.actionType,
       null, draft, safety,
@@ -124,6 +148,7 @@ export const processFollowup = task({
 
     // Step 6: Wait if needed
     if (gate.shouldWait && gate.waitpointTokenId) {
+      await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
       await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
       const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
 
@@ -169,12 +194,14 @@ export const processFollowup = task({
     }
 
     // Step 7: Execute
+    await markStep("execute_action", `Run #${runId}: executing follow-up action`, { action_type: decision.actionType });
     const execution = await executeAction(
       caseId, gate.proposalId, decision.actionType, runId,
       draft, null, decision.reasoning
     );
 
     // Step 8: Commit
+    await markStep("commit_state", `Run #${runId}: committing follow-up state`);
     await commitState(
       caseId, runId, decision.actionType, decision.reasoning,
       1.0, "SCHEDULED_FOLLOWUP", execution.actionExecuted, execution.executionResult

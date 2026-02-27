@@ -316,7 +316,10 @@ function toRequestListItem(caseData) {
         outcome_type: caseData.outcome_type || null,
         outcome_summary: caseData.outcome_summary || null,
         closed_at: caseData.closed_at || null,
-        substatus: caseData.substatus || null
+        substatus: caseData.substatus || null,
+        active_run_status: caseData.active_run_status || null,
+        active_run_trigger_type: caseData.active_run_trigger_type || null,
+        active_run_started_at: caseData.active_run_started_at || null
     };
 }
 
@@ -429,52 +432,188 @@ function toThreadMessage(message) {
  * Map event types to categories
  */
 const EVENT_CATEGORY_MAP = {
+    // Message transport + ingest
     'email_sent': 'MESSAGE',
+    'email_send_failed': 'MESSAGE',
     'email_received': 'MESSAGE',
+    'email_ingested': 'MESSAGE',
+    'correspondence_logged': 'MESSAGE',
+    'webhook_received': 'MESSAGE',
+    'webhook_unmatched': 'MESSAGE',
+    'webhook_portal_retry_matched': 'MESSAGE',
+
+    // Case status / lifecycle
     'case_created': 'STATUS',
+    'case_status_changed': 'STATUS',
+    'case_completed_by_ai': 'STATUS',
+    'request_withdrawn': 'STATUS',
+    'scope_updated': 'STATUS',
+    'scope_item_updated': 'STATUS',
     'followup_scheduled': 'STATUS',
+    'followup_queued': 'STATUS',
+    'followup_status_fixed': 'STATUS',
+    'followup_max_reached': 'STATUS',
+
+    // Cost / fee
     'fee_quote_received': 'COST',
+    'fee_quote_detected': 'COST',
+    'fee_response_prepared': 'COST',
+    'fee_response_regenerated': 'COST',
+    'fee_response_sent': 'COST',
+    'fee_response_failed': 'COST',
+
+    // Research / discovery / enrichment
+    'constraint_detected': 'RESEARCH',
+    'exemption_researched': 'RESEARCH',
+    'contact_research_completed': 'RESEARCH',
+    'pd_contact_lookup': 'RESEARCH',
+    'portal_research_email_found': 'RESEARCH',
+    'portal_research_redirect': 'RESEARCH',
+    'portal_research_failed': 'RESEARCH',
+    'research_followup_proposed': 'RESEARCH',
+    'decision_spin_detected': 'RESEARCH',
+    'loop_detected': 'RESEARCH',
+
+    // Human review / gates / proposals
     'denial_received': 'GATE',
+    'gate_triggered': 'GATE',
+    'approval_required': 'GATE',
+    'human_decision': 'GATE',
+    'human_review_decision': 'GATE',
+    'human_review_proposal_created': 'GATE',
+    'proposal_dismissed': 'GATE',
+    'proposal_withdrawn': 'GATE',
+    'proposal_dispatch_failed': 'GATE',
+    'proposal_guided_reprocess': 'GATE',
+    'action_blocked': 'GATE',
+
+    // Agent run + execution
     'portal_submission': 'AGENT',
+    'portal_submission_blocked': 'AGENT',
+    'portal_submission_failed': 'AGENT',
     'portal_task_started': 'AGENT',
     'portal_task_completed': 'AGENT',
     'portal_task_failed': 'AGENT',
-    'gate_triggered': 'GATE',
-    'constraint_detected': 'RESEARCH',
-    'scope_updated': 'STATUS'
+    'portal_run_completed': 'AGENT',
+    'portal_run_failed': 'AGENT',
+    'portal_scout_started': 'AGENT',
+    'portal_scout_completed': 'AGENT',
+    'portal_scout_failed': 'AGENT',
+    'portal_notification': 'AGENT',
+    'portal_confirmation_link': 'AGENT',
+    'portal_retry_requested': 'AGENT',
+    'portal_link_added': 'AGENT',
+    'monitor_portal_trigger': 'AGENT',
+    'agent_action_executed': 'AGENT',
+    'proposal_executed': 'AGENT',
+    'dispatch_run_created': 'AGENT',
+    'agent_run_step': 'AGENT',
+    'agent_run_started': 'AGENT',
+    'agent_run_completed': 'AGENT',
+    'agent_run_failed': 'AGENT',
+    'agent_run_replayed': 'AGENT'
 };
+
+function mapTimelineCategory(eventType, meta = {}) {
+    if (meta.category) return meta.category;
+    if (EVENT_CATEGORY_MAP[eventType]) return EVENT_CATEGORY_MAP[eventType];
+    if (eventType.startsWith('phone_')) return 'STATUS';
+    if (eventType.startsWith('portal_')) return 'AGENT';
+    if (eventType.startsWith('proposal_')) return 'GATE';
+    if (eventType.startsWith('agent_')) return 'AGENT';
+    if (eventType.startsWith('fee_')) return 'COST';
+    if (eventType.startsWith('webhook_') || eventType.includes('email')) return 'MESSAGE';
+    return 'STATUS';
+}
+
+function mapTimelineType(eventType, meta = {}) {
+    // Handle dynamic mappings that depend on meta before the static map
+    if (eventType === 'correspondence_logged') {
+        return (meta.direction || '').toUpperCase() === 'OUTBOUND' ? 'SENT' : 'RECEIVED';
+    }
+
+    const explicitMap = {
+        // Message lifecycle
+        'email_sent': 'SENT',
+        'manual_reply_sent': 'SENT',
+        'email_received': 'RECEIVED',
+        'email_ingested': 'RECEIVED',
+        'webhook_received': 'RECEIVED',
+        'webhook_unmatched': 'RECEIVED',
+        'webhook_portal_retry_matched': 'RECEIVED',
+        // Case lifecycle
+        'case_created': 'CREATED',
+        'case_status_changed': 'STATUS_CHANGED',
+        'case_completed_by_ai': 'CASE_CLOSED',
+        'request_withdrawn': 'CASE_WITHDRAWN',
+        // Follow-up
+        'followup_scheduled': 'FOLLOWUP_SCHEDULED',
+        'followup_queued': 'FOLLOWUP_TRIGGERED',
+        // Cost
+        'fee_quote_received': 'FEE_QUOTE',
+        'fee_quote_detected': 'FEE_QUOTE',
+        'fee_response_sent': 'FEE_ACCEPTED',
+        'fee_response_regenerated': 'FEE_NEGOTIATED',
+        // Gate/proposal
+        'gate_triggered': 'GATE_TRIGGERED',
+        'approval_required': 'RUN_GATED',
+        'human_decision': 'HUMAN_DECISION',
+        'human_review_decision': 'HUMAN_DECISION',
+        'human_review_proposal_created': 'PROPOSAL_CREATED',
+        'proposal_queued': 'PROPOSAL_QUEUED',
+        'proposal_approved': 'PROPOSAL_APPROVED',
+        'proposal_adjusted': 'PROPOSAL_ADJUSTED',
+        'proposal_dismissed': 'PROPOSAL_DISMISSED',
+        'proposal_withdrawn': 'PROPOSAL_DISMISSED',
+        // Run state + execution
+        'agent_run_step': 'RUN_STARTED',
+        'agent_run_started': 'RUN_STARTED',
+        'agent_run_completed': 'RUN_COMPLETED',
+        'agent_run_failed': 'RUN_FAILED',
+        'agent_run_replayed': 'RUN_STARTED',
+        'agent_action_executed': 'ACTION_EXECUTED',
+        'proposal_executed': 'ACTION_EXECUTED',
+        'action_blocked': 'RUN_GATED',
+        // Constraint/scope/research
+        'constraint_detected': 'CONSTRAINT_DETECTED',
+        'scope_updated': 'SCOPE_UPDATED',
+        'scope_item_updated': 'SCOPE_UPDATED',
+        // Portal
+        'portal_submission': 'PORTAL_TASK',
+        'portal_submission_blocked': 'PORTAL_TASK',
+        'portal_submission_failed': 'PORTAL_TASK',
+        'portal_task_started': 'PORTAL_TASK_CREATED',
+        'portal_task_completed': 'PORTAL_TASK_COMPLETED',
+        'portal_task_failed': 'PORTAL_TASK',
+        'portal_run_completed': 'PORTAL_TASK_COMPLETED',
+        'portal_run_failed': 'PORTAL_TASK',
+        'monitor_portal_trigger': 'PORTAL_TASK_CREATED'
+    };
+
+    const mapped = explicitMap[eventType];
+    if (mapped) return mapped;
+    if (eventType.startsWith('proposal_')) return 'PROPOSAL_CREATED';
+    if (eventType.startsWith('portal_')) return 'PORTAL_TASK';
+    if (eventType.startsWith('agent_')) return 'RUN_STARTED';
+    if (eventType.startsWith('fee_')) return 'FEE_QUOTE';
+    if (eventType.startsWith('webhook_') || eventType.includes('email')) return 'RECEIVED';
+    return 'CREATED';
+}
 
 /**
  * Transform activity log to TimelineEvent format
  */
 function toTimelineEvent(activity, analysisMap = {}) {
-    const typeMap = {
-        'email_sent': 'SENT',
-        'email_received': 'RECEIVED',
-        'case_created': 'CREATED',
-        'followup_scheduled': 'FOLLOW_UP',
-        'fee_quote_received': 'FEE_QUOTE',
-        'denial_received': 'DENIAL',
-        'portal_submission': 'PORTAL_TASK',
-        'portal_task_started': 'PORTAL_TASK',
-        'portal_task_completed': 'PORTAL_TASK',
-        'portal_task_failed': 'PORTAL_TASK',
-        'gate_triggered': 'GATE_TRIGGERED',
-        'constraint_detected': 'CONSTRAINT_DETECTED',
-        'scope_updated': 'SCOPE_UPDATED',
-        'proposal_queued': 'PROPOSAL_QUEUED',
-        'human_decision': 'HUMAN_DECISION'
-    };
-
     // Extract meta from meta_jsonb if available
     const meta = activity.meta_jsonb || activity.metadata || {};
+    const eventType = activity.event_type;
 
     const event = {
         id: String(activity.id),
         timestamp: activity.created_at,
-        type: typeMap[activity.event_type] || 'CREATED',
-        summary: activity.description || activity.event_type,
-        category: meta.category || EVENT_CATEGORY_MAP[activity.event_type] || 'STATUS',
+        type: mapTimelineType(eventType, meta),
+        summary: activity.description || eventType,
+        category: mapTimelineCategory(eventType, meta),
         raw_content: meta.raw_content || activity.metadata?.raw_content || null
     };
 
@@ -594,8 +733,20 @@ router.get('/', async (req, res) => {
         const includeCompleted = req.query.include_completed === 'true';
 
         let query = `
-            SELECT c.*
+            SELECT
+                c.*,
+                ar.status AS active_run_status,
+                ar.trigger_type AS active_run_trigger_type,
+                ar.started_at AS active_run_started_at
             FROM cases c
+            LEFT JOIN LATERAL (
+                SELECT status, trigger_type, started_at
+                FROM agent_runs
+                WHERE case_id = c.id
+                  AND status IN ('created', 'queued', 'processing', 'waiting')
+                ORDER BY started_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) ar ON TRUE
             WHERE (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
         `;
         const params = [];
@@ -1815,8 +1966,8 @@ router.get('/:id/agent-runs', async (req, res) => {
 
         // Transform runs for API response
         const transformedRuns = runs.map(run => {
-            // Map DB statuses to frontend-friendly values
-            const statusMap = { created: 'running', queued: 'running', waiting: 'running', paused: 'running' };
+            // Preserve queue/waiting states for live status UI.
+            const statusMap = { paused: 'waiting' };
             const displayStatus = statusMap[run.status] || run.status;
             return {
             id: run.id,
@@ -1845,6 +1996,7 @@ router.get('/:id/agent-runs', async (req, res) => {
             success: true,
             case_id: requestId,
             count: transformedRuns.length,
+            runs: transformedRuns,
             agent_runs: transformedRuns
         });
     } catch (error) {

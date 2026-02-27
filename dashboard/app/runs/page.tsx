@@ -52,10 +52,30 @@ const STATUS_CONFIG: Record<AgentRun['status'], {
   color: string;
   label: string;
 }> = {
+  created: {
+    icon: Clock,
+    color: "text-indigo-400 bg-indigo-500/10",
+    label: "Created",
+  },
+  queued: {
+    icon: Clock,
+    color: "text-indigo-400 bg-indigo-500/10",
+    label: "Queued",
+  },
+  processing: {
+    icon: Loader2,
+    color: "text-blue-400 bg-blue-500/10",
+    label: "Processing",
+  },
   running: {
     icon: Loader2,
     color: "text-blue-400 bg-blue-500/10",
     label: "Running",
+  },
+  waiting: {
+    icon: Clock,
+    color: "text-amber-400 bg-amber-500/10",
+    label: "Waiting",
   },
   completed: {
     icon: CheckCircle,
@@ -71,6 +91,11 @@ const STATUS_CONFIG: Record<AgentRun['status'], {
     icon: AlertTriangle,
     color: "text-amber-400 bg-amber-500/10",
     label: "Gated",
+  },
+  cancelled: {
+    icon: AlertTriangle,
+    color: "text-muted-foreground bg-muted",
+    label: "Cancelled",
   },
 };
 

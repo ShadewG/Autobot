@@ -30,6 +30,9 @@ export interface RequestListItem {
   outcome_summary: string | null;
   closed_at: string | null;
   substatus: string | null;
+  active_run_status?: string | null;
+  active_run_trigger_type?: string | null;
+  active_run_started_at?: string | null;
 }
 
 // Scope item with availability status

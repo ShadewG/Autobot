@@ -51,6 +51,9 @@ export const processInitialRequest = task({
         requires_human: true,
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
       });
+      await db.logActivity("agent_run_failed", `Process-initial-request failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
+        case_id: caseId,
+      });
     } catch {}
   },
 
@@ -70,8 +73,23 @@ export const processInitialRequest = task({
       source: "trigger.dev",
     });
     const runId = agentRun.id;
+    const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
+      try {
+        await db.updateAgentRunNodeProgress(runId, step);
+        await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
+          case_id: caseId,
+          run_id: runId,
+          step,
+          category: "AGENT",
+          ...extra,
+        });
+      } catch {
+        // non-fatal
+      }
+    };
 
     logger.info("process-initial-request started", { runId, caseId, autopilotMode, triggerType });
+    await markStep("start", `Run #${runId}: started process-initial-request`);
 
     // ── ADJUSTMENT FAST-PATH ──
     // When human clicks ADJUST on a proposal, skip the normal flow.
@@ -84,6 +102,7 @@ export const processInitialRequest = task({
       }
 
       try {
+        await markStep("load_context", `Run #${runId}: loading context for adjusted initial request`);
         const context = await loadContext(caseId, null);
         const currentConstraints = context.constraints || [];
         const currentScopeItems = context.scopeItems || [];
@@ -91,9 +110,11 @@ export const processInitialRequest = task({
 
         let research: ResearchContext = emptyResearchContext();
         if (RESEARCH_INSTRUCTION_RE.test(reviewInstruction)) {
+          await markStep("research_context", `Run #${runId}: running adjustment research`);
           research = await researchContext(caseId, originalActionType as any, "UNKNOWN" as any, null, "medium");
         }
 
+        await markStep("draft_response", `Run #${runId}: drafting adjusted initial request`, { action_type: originalActionType });
         const adjustedDraft = await draftResponse(
           caseId, originalActionType as any, currentConstraints, currentScopeItems,
           context.caseData.fee_amount ?? null,
@@ -102,11 +123,13 @@ export const processInitialRequest = task({
           research
         );
 
+        await markStep("safety_check", `Run #${runId}: safety checking adjusted initial draft`);
         const adjustedSafety = await safetyCheck(
           adjustedDraft.bodyText, adjustedDraft.subject,
           originalActionType, currentConstraints, currentScopeItems
         );
 
+        await markStep("gate", `Run #${runId}: creating adjusted initial proposal`);
         const adjustedGate = await createProposalAndGate(
           caseId, runId, originalActionType as any,
           null, adjustedDraft, adjustedSafety,
@@ -116,6 +139,7 @@ export const processInitialRequest = task({
         );
 
         if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
+          await markStep("wait_human_decision", `Run #${runId}: waiting for adjusted initial approval`, { proposal_id: adjustedGate.proposalId });
           await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
           const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
@@ -152,6 +176,7 @@ export const processInitialRequest = task({
 
           // APPROVE: execute
           await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          await markStep("execute_action", `Run #${runId}: executing adjusted initial action`, { action_type: originalActionType });
           const execution = await executeAction(
             caseId, adjustedGate.proposalId, originalActionType as any, runId,
             adjustedDraft, null, adjustmentReasoning
@@ -162,6 +187,7 @@ export const processInitialRequest = task({
             await scheduleFollowups(caseId, execution.actionExecuted, execution.executionResult);
           }
 
+          await markStep("commit_state", `Run #${runId}: committing adjusted initial state`);
           await commitState(
             caseId, runId, originalActionType as any,
             adjustmentReasoning,
@@ -208,12 +234,15 @@ export const processInitialRequest = task({
     }
 
     // Step 1: Load context
+    await markStep("load_context", `Run #${runId}: loading initial-request context`);
     const context = await loadContext(caseId, null);
 
     // Step 2: Draft initial FOIA request
+    await markStep("draft_initial_request", `Run #${runId}: drafting initial request`);
     const draft = await draftInitialRequest(caseId, runId, autopilotMode);
 
     // Step 3: Safety check
+    await markStep("safety_check", `Run #${runId}: safety checking initial request`);
     const safety = await safetyCheck(
       draft.bodyText, draft.subject,
       draft.actionType, context.constraints, context.scopeItems
@@ -221,6 +250,7 @@ export const processInitialRequest = task({
 
     // If requires human review, wait for approval
     if (draft.requiresHuman) {
+      await markStep("wait_human_decision", `Run #${runId}: waiting for initial request approval`, { proposal_id: draft.proposalId });
       await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
       const tokenId = crypto.randomUUID();
       await db.updateProposal(draft.proposalId, { waitpoint_token: tokenId });
@@ -357,6 +387,7 @@ export const processInitialRequest = task({
     }
 
     // Step 4: Execute
+    await markStep("execute_action", `Run #${runId}: executing initial request`, { action_type: draft.actionType });
     const execution = await executeAction(
       caseId, draft.proposalId, draft.actionType, runId,
       { subject: draft.subject, bodyText: draft.bodyText, bodyHtml: draft.bodyHtml },
@@ -370,6 +401,7 @@ export const processInitialRequest = task({
     }
 
     // Step 6: Commit state
+    await markStep("commit_state", `Run #${runId}: committing initial request state`);
     await commitState(
       caseId, runId, draft.actionType, draft.reasoning,
       0.9, "initial_request", execution.actionExecuted, execution.executionResult

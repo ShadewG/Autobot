@@ -10,7 +10,7 @@ import { AtRiskBadge } from "./at-risk-badge";
 import type { RequestListItem } from "@/lib/types";
 import type { TableVariant } from "./request-table";
 import { formatRelativeTime, truncate, cn } from "@/lib/utils";
-import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle, CheckCircle2, XCircle, FileText } from "lucide-react";
+import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle, CheckCircle2, XCircle, FileText, Loader2 } from "lucide-react";
 
 interface RequestRowProps {
   request: RequestListItem;
@@ -67,6 +67,23 @@ function formatDueWithSeverity(request: RequestListItem): {
     isOverdue,
     typeChip,
   };
+}
+
+function formatActiveRun(request: RequestListItem): string | null {
+  if (!request.active_run_status) return null;
+  const status = request.active_run_status.toLowerCase();
+  if (!["created", "queued", "processing", "waiting", "running"].includes(status)) return null;
+
+  const trigger = (request.active_run_trigger_type || "").toLowerCase();
+  let activity = "working";
+  if (trigger.includes("human_review")) activity = "processing approval";
+  else if (trigger.includes("inbound")) activity = "processing inbound";
+  else if (trigger.includes("followup")) activity = "processing follow-up";
+  else if (trigger.includes("portal")) activity = "processing portal task";
+
+  if (status === "waiting") return `Waiting: ${activity}`;
+  if (status === "queued" || status === "created") return `Queued: ${activity}`;
+  return `Running: ${activity}`;
 }
 
 // Outcome badge for completed cases
@@ -161,6 +178,7 @@ export function RequestRow({
   };
 
   const inboundSummary = getInboundSummary();
+  const activeRunSummary = formatActiveRun(request);
 
   return (
     <TableRow
@@ -191,6 +209,12 @@ export function RequestRow({
           {isPaused && inboundSummary && (
             <span className="text-xs text-amber-300 font-medium">
               {inboundSummary}
+            </span>
+          )}
+          {activeRunSummary && (
+            <span className="text-xs text-blue-300 flex items-center gap-1 font-medium">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              {activeRunSummary}
             </span>
           )}
         </div>

@@ -88,8 +88,23 @@ export const processInbound = task({
       source: "trigger.dev",
     });
     const runId = agentRun.id;
+    const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
+      try {
+        await db.updateAgentRunNodeProgress(runId, step);
+        await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
+          case_id: caseId,
+          run_id: runId,
+          step,
+          category: "AGENT",
+          ...extra,
+        });
+      } catch {
+        // non-fatal: live step telemetry should not break the run
+      }
+    };
 
     logger.info("process-inbound started", { runId, caseId, messageId, autopilotMode, triggerType });
+    await markStep("start", `Run #${runId}: started process-inbound`, { trigger_type: triggerType || "INBOUND_MESSAGE" });
 
     // ── ADJUSTMENT FAST-PATH ──
     // When human clicks ADJUST on a proposal, skip classify/decide entirely.
@@ -103,6 +118,7 @@ export const processInbound = task({
       }
 
       try {
+        await markStep("load_context", `Run #${runId}: loading context for adjusted re-draft`);
         const context = await loadContext(caseId, messageId);
         const currentConstraints = context.constraints || [];
         const currentScopeItems = context.scopeItems || [];
@@ -116,6 +132,7 @@ export const processInbound = task({
         }
 
         // Re-draft with the user's adjustment instruction
+        await markStep("draft_response", `Run #${runId}: drafting adjusted response`, { action_type: originalActionType });
         const adjustedDraft = await draftResponse(
           caseId, originalActionType as any, currentConstraints, currentScopeItems,
           context.caseData.fee_amount ?? null,
@@ -125,6 +142,7 @@ export const processInbound = task({
         );
 
         // Safety check the adjusted draft
+        await markStep("safety_check", `Run #${runId}: safety checking adjusted draft`);
         const adjustedSafety = await safetyCheck(
           adjustedDraft.bodyText, adjustedDraft.subject,
           originalActionType, currentConstraints, currentScopeItems,
@@ -132,6 +150,7 @@ export const processInbound = task({
         );
 
         // Create new proposal for human review (always requires human approval)
+        await markStep("gate", `Run #${runId}: creating adjusted proposal for approval`);
         const adjustedGate = await createProposalAndGate(
           caseId, runId, originalActionType as any,
           messageId, adjustedDraft, adjustedSafety,
@@ -142,6 +161,7 @@ export const processInbound = task({
 
         // Wait for human to approve the adjusted draft
         if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
+          await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: adjustedGate.proposalId });
           await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
           const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
@@ -182,6 +202,7 @@ export const processInbound = task({
 
           // APPROVE: execute the adjusted action
           await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          await markStep("execute_action", `Run #${runId}: executing approved adjusted action`, { action_type: originalActionType });
           const execution = await executeAction(
             caseId, adjustedGate.proposalId, originalActionType as any, runId,
             adjustedDraft, null, adjustmentReasoning
@@ -192,6 +213,7 @@ export const processInbound = task({
             await db.updateProposal(adjustedGate.proposalId, { status: "EXECUTED", executedAt: new Date() });
           }
 
+          await markStep("commit_state", `Run #${runId}: committing adjusted decision state`);
           await commitState(
             caseId, runId, originalActionType,
             adjustmentReasoning,
@@ -212,6 +234,7 @@ export const processInbound = task({
     }
 
     // Step 1: Load context
+    await markStep("load_context", `Run #${runId}: loading inbound context`);
     const context = await loadContext(caseId, messageId);
 
     // Step 1b: Extract text from any unprocessed PDF attachments
@@ -235,6 +258,7 @@ export const processInbound = task({
     }
 
     // Step 2: Classify inbound (Vercel AI SDK + Zod)
+    await markStep("classify_inbound", `Run #${runId}: classifying inbound message`, { message_id: messageId });
     const classification = await classifyInbound(context, messageId, "INBOUND_MESSAGE");
 
     // Step 2b: Classification safety gates (before constraint mutation)
@@ -279,6 +303,7 @@ export const processInbound = task({
     }
 
     // Step 3: Update constraints (uses effective classification, not raw)
+    await markStep("update_constraints", `Run #${runId}: updating constraints/scope from classification`);
     const { constraints, scopeItems } = await updateConstraints(
       caseId, effectiveClassification, classification.extractedFeeAmount,
       messageId, context.constraints, context.scopeItems
@@ -286,6 +311,7 @@ export const processInbound = task({
 
     // Step 4: Decide next action
     const effectiveTriggerType = triggerType || "INBOUND_MESSAGE";
+    await markStep("decide_next_action", `Run #${runId}: deciding next action`, { classification: effectiveClassification });
     const decision = await decideNextAction(
       caseId, effectiveClassification, constraints,
       classification.extractedFeeAmount, classification.sentiment,
@@ -323,6 +349,7 @@ export const processInbound = task({
         return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
       }
 
+      await markStep("commit_state", `Run #${runId}: no-action path, committing state`);
       await commitState(
         caseId, runId, decision.actionType, decision.reasoning,
         classification.confidence, "INBOUND_MESSAGE", false, null
@@ -341,6 +368,7 @@ export const processInbound = task({
       !!(context.caseData.contact_research_notes)
     );
     if (researchLevel !== "none") {
+      await markStep("research_context", `Run #${runId}: running research context`, { level: researchLevel });
       research = await researchContext(
         caseId, decision.actionType, classification.classification,
         classification.denialSubtype, researchLevel,
@@ -354,6 +382,7 @@ export const processInbound = task({
       ["RESEARCH_AGENCY", "REFORMULATE_REQUEST"].includes(decision.actionType);
 
     if (needsDraft) {
+      await markStep("draft_response", `Run #${runId}: generating draft`, { action_type: decision.actionType });
       draft = await draftResponse(
         caseId, decision.actionType, constraints, scopeItems,
         classification.extractedFeeAmount, decision.adjustmentInstruction,
@@ -363,12 +392,14 @@ export const processInbound = task({
     }
 
     // Step 6: Safety check
+    await markStep("safety_check", `Run #${runId}: safety checking draft`);
     const safety = await safetyCheck(
       draft.bodyText, draft.subject, decision.actionType, constraints, scopeItems,
       classification.jurisdiction_level, context.caseData.state
     );
 
     // Step 7: Create proposal + determine gate
+    await markStep("gate", `Run #${runId}: creating proposal and evaluating gate`, { action_type: decision.actionType });
     const gate = await createProposalAndGate(
       caseId, runId, decision.actionType,
       messageId, draft, safety,
@@ -380,6 +411,7 @@ export const processInbound = task({
 
     // Step 8: If human gate, wait for approval
     if (gate.shouldWait && gate.waitpointTokenId) {
+      await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
       await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
       logger.info("Waiting for human decision", {
         caseId, proposalId: gate.proposalId, tokenId: gate.waitpointTokenId,
@@ -440,6 +472,7 @@ export const processInbound = task({
       }
 
       if (humanDecision.action === "ADJUST") {
+        await markStep("adjust_draft", `Run #${runId}: applying human adjustment`, { proposal_id: gate.proposalId });
         // Upgrade research if instruction mentions research keywords and original research was empty
         const ADJUST_RESEARCH_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
         let adjustResearch = research;
@@ -470,6 +503,7 @@ export const processInbound = task({
         );
 
         if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
+          await markStep("wait_human_decision", `Run #${runId}: waiting for adjusted draft approval`, { proposal_id: adjustedGate.proposalId });
           const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
           if (!adjustResult.ok) {
@@ -486,10 +520,12 @@ export const processInbound = task({
             return { status: adjustResult.output.action.toLowerCase(), proposalId: adjustedGate.proposalId };
           }
 
+          await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: decision.actionType });
           const adjustedExecution = await executeAction(
             caseId, adjustedGate.proposalId, decision.actionType, runId,
             adjustedDraft, null, decision.reasoning
           );
+          await markStep("commit_state", `Run #${runId}: committing adjusted approved action state`);
           await commitState(
             caseId, runId, decision.actionType, decision.reasoning,
             classification.confidence, "INBOUND_MESSAGE",
@@ -503,6 +539,7 @@ export const processInbound = task({
     }
 
     // Step 9: Execute
+    await markStep("execute_action", `Run #${runId}: executing action`, { action_type: decision.actionType });
     const execution = await executeAction(
       caseId, gate.proposalId, decision.actionType, runId,
       draft, null, decision.reasoning,
@@ -510,6 +547,7 @@ export const processInbound = task({
     );
 
     // Step 10: Commit
+    await markStep("commit_state", `Run #${runId}: committing state`);
     await commitState(
       caseId, runId, decision.actionType, decision.reasoning,
       classification.confidence, "INBOUND_MESSAGE",

@@ -15,8 +15,32 @@ import db, {
   EXECUTION_MODE,
 } from "../lib/db";
 import type { ActionType, ExecutionResult } from "../lib/types";
+import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
 import { submitPortal } from "../tasks/submit-portal";
+
+function buildReplyHeaders(
+  targetEmail: string | null | undefined,
+  latestInbound: any
+): Record<string, string> | null {
+  const messageId = latestInbound?.message_id;
+  if (!messageId) return null;
+
+  const inboundFrom = String(latestInbound?.from_email || "").trim().toLowerCase();
+  const target = String(targetEmail || "").trim().toLowerCase();
+  if (!inboundFrom || !target) return null;
+
+  // Only thread when replying to the same mailbox. Cross-recipient threading
+  // can make it appear like we're replying to the wrong contact.
+  if (inboundFrom !== target) {
+    return null;
+  }
+
+  return {
+    "In-Reply-To": messageId,
+    References: messageId,
+  };
+}
 
 export async function executeAction(
   caseId: number,
@@ -90,8 +114,8 @@ export async function executeAction(
 
   // Recover missing draft data from proposal
   const subject = draft.subject || existingProposal?.draft_subject;
-  const bodyText = draft.bodyText || existingProposal?.draft_body_text;
-  const bodyHtml = draft.bodyHtml || existingProposal?.draft_body_html;
+  const originalBodyText = draft.bodyText || existingProposal?.draft_body_text;
+  const originalBodyHtml = draft.bodyHtml || existingProposal?.draft_body_html;
 
   // Claim execution
   const executionKey = generateExecutionKey(caseId, actionType, proposalId);
@@ -135,7 +159,7 @@ export async function executeAction(
     // use the request-specific URL instead of /requests/new
     const isFollowup = resolvedActionType !== "SEND_INITIAL_REQUEST" && resolvedActionType !== "SUBMIT_PORTAL";
     const requestNumber = caseData?.portal_request_number;
-    let portalInstructions = bodyText || bodyHtml || null;
+    let portalInstructions = originalBodyText || originalBodyHtml || null;
 
     if (isFollowup && requestNumber && targetPortalUrl) {
       // Build request-specific URL for NextRequest portals
@@ -155,8 +179,8 @@ export async function executeAction(
       runId,
       actionType,
       subject,
-      bodyText: isFollowup && requestNumber ? portalInstructions : bodyText,
-      bodyHtml,
+      bodyText: isFollowup && requestNumber ? portalInstructions : originalBodyText,
+      bodyHtml: originalBodyHtml,
     });
     await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
 
@@ -200,6 +224,20 @@ export async function executeAction(
     case "DECLINE_FEE":
     case "REFORMULATE_REQUEST": {
       // Validate
+      // This execution path currently sends no attachments. Prevent accidental
+      // "Attached..." claims from drafts when nothing is actually attached.
+      let bodyText = originalBodyText;
+      let bodyHtml = originalBodyHtml;
+      if (textClaimsAttachment(bodyText) || textClaimsAttachment(bodyHtml)) {
+        bodyText = bodyText ? stripAttachmentClaimLines(bodyText) : bodyText;
+        bodyHtml = null; // Force plain-text fallback derived from sanitized bodyText.
+        logger.warn("Removed attachment claim from outbound draft with no attachments", {
+          caseId,
+          proposalId,
+          actionType: resolvedActionType,
+        });
+      }
+
       if (!targetEmail && !hasPortal) throw new Error("No agency_email or portal_url");
       if (!subject) throw new Error("No subject for email");
       if (!bodyText && !bodyHtml) throw new Error("No body content for email");
@@ -214,6 +252,7 @@ export async function executeAction(
 
       const thread = await db.getThreadByCaseId(caseId);
       const latestInbound = await db.getLatestInboundMessage(caseId);
+      const replyHeaders = buildReplyHeaders(targetEmail, latestInbound);
       const isInitial = resolvedActionType === "SEND_INITIAL_REQUEST";
       const delayMinutes = isInitial ? 0 : Math.floor(Math.random() * 480) + 120;
       const delayMs = delayMinutes * 60 * 1000;
@@ -223,7 +262,7 @@ export async function executeAction(
         subject,
         bodyHtml,
         bodyText,
-        headers: latestInbound ? { "In-Reply-To": latestInbound.message_id, References: latestInbound.message_id } : null,
+        headers: replyHeaders,
         caseId,
         proposalId,
         runId,
