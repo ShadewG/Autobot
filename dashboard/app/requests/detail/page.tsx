@@ -591,6 +591,14 @@ function RequestDetailContent() {
     : "Proposal Pending Approval";
   const pendingApproveLabel = isEmailLikePendingAction ? "Send" : "Approve";
 
+  const statusValue = String(request.status || "").toUpperCase();
+  const isPausedStatus = statusValue === "NEEDS_HUMAN_REVIEW" || statusValue === "PAUSED";
+  const statusDisplay = isPausedStatus ? "PAUSED" : (request.status || "—");
+  const pauseReasonValue = String(request.pause_reason || "").toUpperCase();
+  const shouldHidePauseReason =
+    !request.pause_reason ||
+    (pauseReasonValue === "PENDING_APPROVAL" && Boolean(waitingRun));
+
   // Robust detection of whether request is paused (same pattern as DecisionPanel)
   const isPaused =
     Boolean(request.pause_reason) ||
@@ -789,7 +797,7 @@ function RequestDetailContent() {
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">Status:</span>
             <Badge variant="outline" className="font-medium">
-              {request.status}
+              {statusDisplay}
             </Badge>
           </div>
           <div className="flex items-center gap-1.5">
@@ -801,7 +809,7 @@ function RequestDetailContent() {
               {request.autopilot_mode}
             </Badge>
           </div>
-          {request.requires_human && (
+          {request.requires_human && !isPausedStatus && (
             <div className="flex items-center gap-1.5">
               <UserCheck className="h-3 w-3 text-amber-500" />
               <span className="text-amber-400 font-medium">Requires Human</span>
@@ -830,7 +838,7 @@ function RequestDetailContent() {
               {request.last_portal_status}
             </Badge>
           )}
-          {request.pause_reason && (
+          {!shouldHidePauseReason && (
             <div className="flex items-center gap-1.5">
               <span className="text-muted-foreground">Pause Reason:</span>
               <Badge variant="outline" className="font-medium text-amber-400">
