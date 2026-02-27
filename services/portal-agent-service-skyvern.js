@@ -35,6 +35,14 @@ class PortalAgentServiceSkyvern {
         });
     }
 
+    _captchaInputRules() {
+        return `CAPTCHA INPUT RULES (CRITICAL):
+- If a captcha/verification text input already has any value, CLEAR IT COMPLETELY before typing.
+- Use select-all + delete/backspace, then type the captcha once.
+- Never append characters to an existing captcha value.
+- If captcha fails and a new one appears, clear the field again and replace with the new value.`;
+    }
+
     async _runPortalStage({ stage, caseData, portalUrl, navigationGoal, navigationPayload, maxSteps }) {
         const stageLabel = this._formatStageLabel(stage);
         await database.logActivity(
@@ -1925,7 +1933,9 @@ INSTRUCTIONS:
    - Delivery format preference (electronic/email)
    - Fee waiver request (if available, request as press/media)
 
-4. ${dryRun ? 'STOP before clicking the final submit button (this is a test/dry run)' : 'Complete the full submission by clicking the submit button'}
+4. ${this._captchaInputRules()}
+
+5. ${dryRun ? 'STOP before clicking the final submit button (this is a test/dry run)' : 'Complete the full submission by clicking the submit button'}
 
 Be thorough and fill out every available field with the provided information. The goal is to create a complete, detailed FOIA request.`;
     }
@@ -1950,6 +1960,8 @@ ACCOUNT SETUP GOAL:
 
 4. If the portal allows guest submissions without an account, skip account creation and go directly to the submission form, then stop on that page.
 
+5. ${this._captchaInputRules()}
+
 The stage is successful only when the request submission form is open and ready for future automation.`;
     }
 
@@ -1961,6 +1973,8 @@ VERIFICATION STAGE INSTRUCTIONS:
 2. If prompted, request a verification code to be sent to ${account.email}.
 3. Enter the verification code ${verificationCode ? `(${verificationCode})` : 'that was emailed to you'} to activate the account.
 4. Once the portal confirms the account is verified or allows access to the request form, STOP.
+
+5. ${this._captchaInputRules()}
 
 If no verification is required, simply log in successfully and stop.`;
     }
@@ -2163,6 +2177,7 @@ ACCOUNT STAGE OBJECTIVE:
 1. If an account already exists, log in with Email: ${email} and Password: ${password}. If not, create it with the same credentials.
 2. Complete any profile fields (address, phone, etc.) using the provided data.
 3. Solve CAPTCHAs if needed.
+   ${this._captchaInputRules()}
 4. Navigate to the "New Request" or submission form and stop there (do NOT submit yet).
 5. Use Set Extracted Information with this schema:
 {
@@ -2203,8 +2218,9 @@ SUBMISSION STAGE OBJECTIVE:
 1. Go to ${submissionUrl || 'the portal request form'}.
 2. Log in with Email: ${email} / Password: ${password} if prompted.
 3. Fill out the request form completely using the provided payload.
-4. ${dryRun ? 'Stop on the final review screen without submitting.' : 'Submit the request and capture confirmation details.'}
-5. Use Set Extracted Information with this schema:
+4. ${this._captchaInputRules()}
+5. ${dryRun ? 'Stop on the final review screen without submitting.' : 'Submit the request and capture confirmation details.'}
+6. Use Set Extracted Information with this schema:
 {
   "submission_status": string,
   "confirmation_number": string,
@@ -2347,7 +2363,8 @@ INSTRUCTIONS:
    - status_updated_at
    - due_date
    - portal_link
-6. Do NOT submit or create any new requests. This is read-only status checking.`;
+6. ${this._captchaInputRules()}
+7. Do NOT submit or create any new requests. This is read-only status checking.`;
     }
 }
 
