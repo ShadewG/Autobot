@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { InboxSections } from "@/components/inbox-sections";
 import { NotionImport } from "@/components/notion-import";
+import { useUserFilter } from "@/components/user-filter";
 import { requestsAPI, fetcher } from "@/lib/api";
 import type { RequestsListResponse, RequestListItem, PauseReason } from "@/lib/types";
 import { Search, Loader2 } from "lucide-react";
@@ -75,9 +76,10 @@ function sortWaiting(requests: RequestListItem[]): RequestListItem[] {
 
 export default function RequestsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const { appendUser } = useUserFilter();
 
   const { data, error, isLoading, mutate } = useSWR<RequestsListResponse>(
-    "/requests",
+    appendUser("/requests"),
     fetcher,
     { refreshInterval: 30000 }
   );
