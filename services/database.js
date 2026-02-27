@@ -12,6 +12,8 @@ const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'r
 // CLEAR is used when a case transitions INTO one of these statuses — dismiss stale proposals.
 // Excludes needs_phone_call because that is still a human review state where proposals may be relevant.
 const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled'];
+const FOLLOWUP_ELIGIBLE_CASE_STATUSES = ['sent', 'awaiting_response'];
+const FOLLOWUP_TERMINAL_CASE_STATUSES = ['completed', 'cancelled', 'needs_phone_call'];
 
 class DatabaseService {
     constructor() {
@@ -235,6 +237,9 @@ class DatabaseService {
         if (typeof additionalFields.substatus === 'string') {
             additionalFields.substatus = additionalFields.substatus.substring(0, 100);
         }
+        if (HUMAN_REVIEW_CASE_STATUSES.includes(status) && additionalFields.requires_human === undefined) {
+            additionalFields.requires_human = true;
+        }
         const updateFields = { status, updated_at: new Date(), ...additionalFields };
         const setClause = Object.keys(updateFields).map((key, i) => `${key} = $${i + 2}`).join(', ');
         const values = [caseId, ...Object.values(updateFields)];
@@ -256,6 +261,30 @@ class DatabaseService {
                    AND status = ANY($3::text[])`,
                 [caseId, `case_status:${status}`, ACTIVE_PROPOSAL_STATUSES]
             );
+        }
+
+        // Keep follow-up lifecycle aligned with case status.
+        // Cases outside sent/awaiting_response should not remain due for auto-followups.
+        if (updatedCase) {
+            if (FOLLOWUP_TERMINAL_CASE_STATUSES.includes(status)) {
+                await this.query(
+                    `UPDATE follow_up_schedule
+                     SET status = 'cancelled',
+                         updated_at = NOW()
+                     WHERE case_id = $1
+                       AND status NOT IN ('cancelled', 'max_reached')`,
+                    [caseId]
+                );
+            } else if (!FOLLOWUP_ELIGIBLE_CASE_STATUSES.includes(status)) {
+                await this.query(
+                    `UPDATE follow_up_schedule
+                     SET status = 'paused',
+                         updated_at = NOW()
+                     WHERE case_id = $1
+                       AND status IN ('scheduled', 'processing')`,
+                    [caseId]
+                );
+            }
         }
 
         // Safety net: needs_human_review must always carry a pause reason.
