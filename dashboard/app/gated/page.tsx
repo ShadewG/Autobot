@@ -491,7 +491,6 @@ function MonitorPageContent() {
   const [showCorrespondence, setShowCorrespondence] = useState(false);
   const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
-  const [escalateInstruction, setEscalateInstruction] = useState("");
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
   const [inboundFilter, setInboundFilter] = useState<"all" | "unmatched" | "matched">("all");
   const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null);
@@ -618,11 +617,6 @@ function MonitorPageContent() {
     url.searchParams.set("case", String(caseId));
     window.history.replaceState({}, "", url.toString());
   }, [selectedItem]);
-
-  // Reset guided instruction when changing selected card.
-  useEffect(() => {
-    setEscalateInstruction("");
-  }, [selectedItem?.type, selectedItem?.type === "proposal" ? selectedItem?.data.id : null]);
 
   // Fetch full proposal detail for the selected proposal
   const selectedProposalId =
@@ -779,7 +773,7 @@ function MonitorPageContent() {
 
   const handleApprove = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
-    if (isEscalateProposal && !escalateInstruction.trim()) {
+    if (isEscalateProposal && !reviewInstruction.trim()) {
       showToast("Provide instructions before approving this review item", "error");
       return;
     }
@@ -787,7 +781,7 @@ function MonitorPageContent() {
     try {
       const body: Record<string, unknown> = { action: "APPROVE" };
       if (isEscalateProposal) {
-        body.instruction = escalateInstruction.trim();
+        body.instruction = reviewInstruction.trim();
       }
       // Include any edits the user made to the draft
       if (editedBody && editedBody !== draftBody) body.draft_body_text = editedBody;
@@ -807,6 +801,7 @@ function MonitorPageContent() {
       }
       removeCurrentItem();
       showToast("Approved — sending now");
+      if (isEscalateProposal) setReviewInstruction("");
       revalidateQueue();
     } catch (err) {
       showToast(`Approve failed: ${err instanceof Error ? err.message : err}`, "error");
@@ -1757,8 +1752,8 @@ function MonitorPageContent() {
                 </p>
                 <Textarea
                   placeholder="Example: Research the correct records custodian for body-cam footage, then draft a targeted request to that agency."
-                  value={escalateInstruction}
-                  onChange={(e) => setEscalateInstruction(e.target.value)}
+                  value={reviewInstruction}
+                  onChange={(e) => setReviewInstruction(e.target.value)}
                   className="text-xs bg-background min-h-[76px]"
                 />
               </div>
@@ -1767,7 +1762,7 @@ function MonitorPageContent() {
               <Button
                 className="flex-1 bg-green-700 hover:bg-green-600 text-white"
                 onClick={handleApprove}
-                disabled={isSubmitting || (isEscalateProposal && !escalateInstruction.trim())}
+                disabled={isSubmitting || (isEscalateProposal && !reviewInstruction.trim())}
               >
                 {isSubmitting ? (
                   <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
