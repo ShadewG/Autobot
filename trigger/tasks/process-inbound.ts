@@ -532,7 +532,9 @@ export const processInbound = task({
           await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: decision.actionType });
           const adjustedExecution = await executeAction(
             caseId, adjustedGate.proposalId, decision.actionType, runId,
-            adjustedDraft, null, decision.reasoning
+            adjustedDraft, null, decision.reasoning,
+            undefined, undefined,
+            classification.classification
           );
           await markStep("commit_state", `Run #${runId}: committing adjusted approved action state`);
           await commitState(
@@ -552,7 +554,8 @@ export const processInbound = task({
     const execution = await executeAction(
       caseId, gate.proposalId, decision.actionType, runId,
       draft, null, decision.reasoning,
-      draft.researchContactResult, draft.researchBrief
+      draft.researchContactResult, draft.researchBrief,
+      classification.classification
     );
 
     // Step 10: Commit

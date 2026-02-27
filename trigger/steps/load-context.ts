@@ -6,7 +6,15 @@
  */
 
 import db, { logger } from "../lib/db";
-import type { CaseContext, AutopilotMode, ScopeItem } from "../lib/types";
+import type {
+  CaseContext,
+  AutopilotMode,
+  ScopeItem,
+  DecisionHistoryEntry,
+  PortalTaskHistoryEntry,
+  FeeEventEntry,
+  DismissedProposalEntry,
+} from "../lib/types";
 
 export async function loadContext(
   caseId: number,
@@ -25,8 +33,48 @@ export async function loadContext(
     analysis = await db.getResponseAnalysisByMessageId(messageId);
   }
 
-  const followups = await db.getFollowUpScheduleByCaseId(caseId);
-  const existingProposal = await db.getLatestPendingProposal(caseId);
+  const [followups, existingProposal, decisionHistoryResult, portalTaskHistoryResult, feeEventsResult, dismissedProposalsResult] = await Promise.all([
+    db.getFollowUpScheduleByCaseId(caseId),
+    db.getLatestPendingProposal(caseId),
+    db.query(
+      `SELECT action_taken, reasoning, outcome, created_at
+       FROM agent_decisions
+       WHERE case_id = $1
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [caseId]
+    ).catch(() => ({ rows: [] })),
+    db.query(
+      `SELECT status, completion_notes, portal_url, created_at
+       FROM portal_tasks
+       WHERE case_id = $1
+       ORDER BY created_at DESC
+       LIMIT 5`,
+      [caseId]
+    ).catch(() => ({ rows: [] })),
+    db.query(
+      `SELECT event_type, amount, notes, created_at
+       FROM fee_events
+       WHERE case_id = $1
+       ORDER BY created_at DESC
+       LIMIT 5`,
+      [caseId]
+    ).catch(() => ({ rows: [] })),
+    db.query(
+      `SELECT action_type, reasoning, human_decision, created_at,
+              COUNT(*) OVER (PARTITION BY action_type) as dismiss_count
+       FROM proposals
+       WHERE case_id = $1 AND status = 'DISMISSED'
+       ORDER BY created_at DESC
+       LIMIT 10`,
+      [caseId]
+    ).catch(() => ({ rows: [] })),
+  ]);
+
+  const decisionHistory: DecisionHistoryEntry[] = decisionHistoryResult.rows;
+  const portalTaskHistory: PortalTaskHistoryEntry[] = portalTaskHistoryResult.rows;
+  const feeEvents: FeeEventEntry[] = feeEventsResult.rows;
+  const dismissedProposals: DismissedProposalEntry[] = dismissedProposalsResult.rows;
 
   // Extract constraints and scope from case data (JSONB columns with fallbacks)
   const constraints: string[] =
@@ -67,5 +115,9 @@ export async function loadContext(
     autopilotMode: (caseData.autopilot_mode as AutopilotMode) || "SUPERVISED",
     constraints,
     scopeItems,
+    decisionHistory,
+    portalTaskHistory,
+    feeEvents,
+    dismissedProposals,
   };
 }

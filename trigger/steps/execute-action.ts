@@ -20,6 +20,56 @@ import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-san
 
 import { submitPortal } from "../tasks/submit-portal";
 
+const AI_ROUTER_V2_EXEC = process.env.AI_ROUTER_V2 || "false";
+
+function isAIRouterV2Active(caseId: number): boolean {
+  if (AI_ROUTER_V2_EXEC === "true") return true;
+  if (AI_ROUTER_V2_EXEC === "false") return false;
+  const pct = parseInt(AI_ROUTER_V2_EXEC, 10);
+  if (isNaN(pct)) return false;
+  return (caseId % 100) < pct;
+}
+
+async function applyClassificationSideEffects(
+  caseId: number,
+  actionType: ActionType,
+  classification?: string | null
+): Promise<void> {
+  // WRONG_AGENCY cleanup: cancel portal tasks, dismiss proposals, add constraint
+  // In legacy mode these run at decision time in decide-next-action.ts.
+  // In v2 mode they run here at execution time so the AI decision is read-only.
+  // Only fire for explicit WRONG_AGENCY classification — not for RESEARCH_AGENCY from other reasons
+  // (e.g., no_records denial, bodycam custodian research) which should NOT cancel portal tasks.
+  if (classification === "WRONG_AGENCY") {
+    const caseData = await db.getCaseById(caseId);
+    const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+
+    await Promise.all([
+      db.query(
+        `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
+         WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
+        [caseId]
+      ),
+      db.query(
+        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
+         AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
+        [caseId]
+      ),
+    ]);
+
+    if (classification === "WRONG_AGENCY" && !currentConstraints.includes("WRONG_AGENCY")) {
+      await db.updateCase(caseId, {
+        constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+      });
+    }
+
+    logger.info("Applied WRONG_AGENCY classification side effects at execution time (v2)", {
+      caseId, actionType, classification,
+    });
+  }
+}
+
 function buildReplyHeaders(
   targetEmail: string | null | undefined,
   latestInbound: any
@@ -52,8 +102,14 @@ export async function executeAction(
   caseAgencyId: number | null,
   reasoning: string[],
   researchContactResult?: any,
-  researchBrief?: any
+  researchBrief?: any,
+  classification?: string | null
 ): Promise<{ actionExecuted: boolean; executionResult: ExecutionResult | null }> {
+  // AI Router v2: apply classification side effects at execution time
+  if (isAIRouterV2Active(caseId) && classification) {
+    await applyClassificationSideEffects(caseId, actionType, classification);
+  }
+
   // TIMEOUT GUARD
   if (runId) {
     const currentRun = await db.getAgentRunById(runId);
