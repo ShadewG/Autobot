@@ -530,7 +530,7 @@ class DatabaseService {
 
     async getMessagesByThreadId(threadId) {
         const result = await this.query(
-            'SELECT * FROM messages WHERE thread_id = $1 ORDER BY created_at ASC',
+            'SELECT * FROM messages WHERE thread_id = $1 ORDER BY created_at DESC',
             [threadId]
         );
         return result.rows;
