@@ -135,7 +135,8 @@ function formatLiveRunLabel(run: AgentRun | null): string | null {
   const node = typeof run.metadata?.current_node === "string" ? String(run.metadata?.current_node) : "";
 
   let action = "working";
-  if (trigger.includes("human_review")) action = "processing approval";
+  if (trigger.includes("human_review_resolution")) action = "applying review decision";
+  else if (trigger.includes("human_review")) action = "processing approval";
   else if (trigger.includes("inbound")) action = "processing inbound";
   else if (trigger.includes("followup")) action = "processing follow-up";
   else if (trigger.includes("portal")) action = "processing portal";

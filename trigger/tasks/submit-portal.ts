@@ -227,6 +227,17 @@ export const submitPortal = task({
       });
     }
 
+    let bypassApprovalGate = false;
+    if (portalTaskId) {
+      const portalTaskMeta = await db.query(
+        `SELECT action_type FROM portal_tasks WHERE id = $1 LIMIT 1`,
+        [portalTaskId]
+      );
+      const actionType = String(portalTaskMeta.rows[0]?.action_type || "");
+      // Retry/manual portal tasks are human-initiated and should not require an additional proposal approval gate.
+      bypassApprovalGate = actionType === "SUBMIT_VIA_PORTAL";
+    }
+
     // ── Mark case as portal in progress ──
     if (caseData.status !== "sent") {
       await db.updateCaseStatus(caseId, "portal_in_progress", {
@@ -243,6 +254,7 @@ export const submitPortal = task({
         maxSteps: 60,
         dryRun: false,
         instructions,
+        bypassApprovalGate,
       });
 
       if (!result || !result.success) {

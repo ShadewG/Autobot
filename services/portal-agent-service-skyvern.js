@@ -559,7 +559,7 @@ class PortalAgentServiceSkyvern {
      * Submit to portal using Skyvern (workflow only)
      */
     async submitToPortal(caseData, portalUrl, options = {}) {
-        const { dryRun = false, instructions = null } = options;
+        const { dryRun = false, instructions = null, bypassApprovalGate = false } = options;
 
         // Early detection: document file URLs are not real portals — skip Skyvern entirely
         if (/\.(doc|docx|pdf|xls|xlsx|rtf|odt)(\?|#|$)/i.test(portalUrl)) {
@@ -634,7 +634,7 @@ class PortalAgentServiceSkyvern {
              ORDER BY created_at DESC LIMIT 1`,
             [caseData.id]
         );
-        if (approvedProposal.rows.length === 0) {
+        if (approvedProposal.rows.length === 0 && !bypassApprovalGate) {
             console.log(`🛑 Portal submission blocked for case ${caseData.id} — no approved proposal found, creating one for review`);
             // Check if there's already a PENDING_APPROVAL proposal for this case (don't create duplicates)
             const existingPending = await database.query(
@@ -678,6 +678,9 @@ class PortalAgentServiceSkyvern {
                 case_id: caseData.id, portal_url: portalUrl
             });
             return { success: false, needsApproval: true, reason: 'no_approved_proposal' };
+        }
+        if (approvedProposal.rows.length === 0 && bypassApprovalGate) {
+            console.log(`✅ Portal submission approval gate bypassed for case ${caseData.id} (manual retry path)`);
         }
 
         const runId = crypto.randomUUID();

@@ -76,7 +76,8 @@ function formatActiveRun(request: RequestListItem): string | null {
 
   const trigger = (request.active_run_trigger_type || "").toLowerCase();
   let activity = "working";
-  if (trigger.includes("human_review")) activity = "processing approval";
+  if (trigger.includes("human_review_resolution")) activity = "applying review decision";
+  else if (trigger.includes("human_review")) activity = "processing approval";
   else if (trigger.includes("inbound")) activity = "processing inbound";
   else if (trigger.includes("followup")) activity = "processing follow-up";
   else if (trigger.includes("portal")) activity = "processing portal task";
