@@ -936,6 +936,21 @@ function RequestDetailContent() {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleResetToLastInbound}
+            disabled={!lastInboundMessage || isResettingCase || isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound}
+            title={lastInboundMessage ? "Reset run/proposal state and reprocess from latest inbound" : "No inbound message available to repair from"}
+          >
+            {isResettingCase ? (
+              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+            ) : (
+              <RotateCcw className="h-4 w-4 mr-1" />
+            )}
+            Repair
+          </Button>
+
           {/* See in Notion button */}
           {request.notion_url && (
             <Button
@@ -1381,6 +1396,7 @@ function RequestDetailContent() {
                     onAppeal={handleAppeal}
                     onAddToPhoneQueue={handleAddToPhoneQueue}
                     onResolveReview={handleResolveReview}
+                    onRepair={handleResetToLastInbound}
                     isLoading={isApproving || isRevising || isResolving}
                   />
                   )}

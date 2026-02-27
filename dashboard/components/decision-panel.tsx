@@ -60,6 +60,7 @@ interface DecisionPanelProps {
   onOpenPortal?: () => void;
   onAddToPhoneQueue?: () => void;
   onResolveReview?: (action: string, instruction?: string) => Promise<void>;
+  onRepair?: () => void;
   isLoading?: boolean;
 }
 
@@ -541,7 +542,7 @@ const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
     title: "Needs Review",
     question: "This request needs human review. What would you like to do?",
     actions: [
-      { id: "reprocess", label: "Re-process", description: "Re-analyze and determine best action", variant: "default", recommended: true },
+      { id: "reprocess", label: "Re-process", description: "Re-analyze and determine best action", variant: "default" },
       { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "outline" },
       { id: "close", label: "Close Request", description: "Close this request", variant: "ghost" },
     ],
@@ -563,6 +564,7 @@ export function DecisionPanel({
   onOpenPortal,
   onAddToPhoneQueue,
   onResolveReview,
+  onRepair,
   isLoading,
 }: DecisionPanelProps) {
   const [costCap, setCostCap] = useState<string>("");
@@ -658,6 +660,8 @@ export function DecisionPanel({
   // If we have a review_reason, show the review-specific panel with action buttons
   if (request.review_reason && onResolveReview) {
     const reviewConfig = REVIEW_CONFIGS[request.review_reason] || REVIEW_CONFIGS.GENERAL;
+    const substatus = String(request.substatus || "");
+    const hasPendingProposalContext = /proposal\s*#?\d+\s+pending review/i.test(substatus);
 
     const handleReviewAction = async (actionId: string) => {
       setReviewActionLoading(actionId);
@@ -707,6 +711,15 @@ export function DecisionPanel({
             </div>
           )}
 
+          {hasPendingProposalContext && (
+            <div className="bg-blue-500/10 border border-blue-700/50 rounded-md p-3">
+              <p className="text-xs text-blue-300">
+                A proposal is already pending review. Use the proposal approval controls first.
+                Re-process is for repair/recovery only.
+              </p>
+            </div>
+          )}
+
           {/* The explicit decision question */}
           <p className="text-sm font-semibold">
             {reviewConfig.question}
@@ -733,7 +746,7 @@ export function DecisionPanel({
                   ) : (
                     <span className="text-sm">{action.label}</span>
                   )}
-                  {action.recommended && (
+                  {action.recommended && !hasPendingProposalContext && (
                     <Badge variant="secondary" className="ml-1 text-[10px]">Recommended</Badge>
                   )}
                 </span>
@@ -741,6 +754,18 @@ export function DecisionPanel({
               </Button>
             ))}
           </div>
+
+          {onRepair && (
+            <Button
+              onClick={onRepair}
+              variant="outline"
+              className="w-full justify-between"
+              disabled={isLoading || reviewActionLoading !== null}
+            >
+              <span className="text-sm">Repair (Reset + Reprocess Latest Inbound)</span>
+              <RotateCcw className="h-4 w-4 flex-shrink-0" />
+            </Button>
+          )}
 
           {/* Custom instructions textarea — collapsible */}
           <Collapsible open={showCustomInstruction} onOpenChange={setShowCustomInstruction}>
