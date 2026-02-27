@@ -593,7 +593,37 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
     let handle;
     try {
-      if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
+      if (proposal.action_type === 'SUBMIT_PORTAL') {
+        // Portal approval: create portal_task and dispatch submit-portal directly
+        const caseData = await db.getCaseById(caseId);
+        const portalUrl = caseData?.portal_url;
+        if (!portalUrl) throw new Error(`No portal URL on case ${caseId}`);
+
+        const ptResult = await db.query(
+          `INSERT INTO portal_tasks (case_id, portal_url, action_type, status, proposal_id, instructions)
+           VALUES ($1, $2, $3, 'PENDING', $4, $5)
+           RETURNING id`,
+          [caseId, portalUrl, proposal.action_type, proposalId, refreshedProposal.draft_body_text || null]
+        );
+        const portalTaskId = ptResult.rows[0]?.id || null;
+
+        // Update run trigger_type for clarity
+        await db.updateAgentRun(run.id, { trigger_type: 'submit_portal' });
+
+        handle = (await triggerDispatch.triggerTask('submit-portal', {
+          caseId,
+          portalUrl,
+          provider: caseData.portal_provider || null,
+          instructions: refreshedProposal.draft_body_text || null,
+          portalTaskId,
+          agentRunId: run.id,
+        }, triggerOpts(caseId, 'portal', run.id), {
+          runId: run.id,
+          caseId,
+          triggerType: 'submit_portal',
+          source: 'run_engine_approve_portal',
+        })).handle;
+      } else if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
         handle = (await triggerDispatch.triggerTask('process-initial-request', {
           runId: run.id,
           caseId,
