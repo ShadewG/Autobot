@@ -2010,7 +2010,7 @@ function RequestDetailContent() {
                           {formatDate(entry.timestamp)}
                         </span>
                       </div>
-                      <p className="text-sm font-medium mb-2 whitespace-pre-wrap">{entry.summary}</p>
+                      <p className="text-sm font-medium mb-2 whitespace-pre-wrap">{Array.isArray(entry.summary) ? entry.summary.join("\n") : entry.summary}</p>
                       <div className="bg-muted rounded p-3 text-sm space-y-2">
                         {typeof entry.confidence === "number" && (
                           <p className="text-xs text-muted-foreground">
