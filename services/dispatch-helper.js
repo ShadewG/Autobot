@@ -1,6 +1,6 @@
 const db = require('./database');
 const { notify } = require('./event-bus');
-const { tasks } = require('@trigger.dev/sdk/v3');
+const triggerDispatch = require('./trigger-dispatch-service');
 
 /**
  * Dispatch a ready_to_send case through the Run Engine.
@@ -61,10 +61,19 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
 
     // 4. Trigger Trigger.dev task (clean up run on failure)
     try {
-        await tasks.trigger('process-initial-request', {
+        await triggerDispatch.triggerTask('process-initial-request', {
             runId: run.id,
             caseId,
             autopilotMode: 'SUPERVISED',
+        }, {
+            queue: `case-${caseId}`,
+            idempotencyKey: `ready-to-send:${caseId}:${run.id}`,
+            idempotencyKeyTTL: '1h',
+        }, {
+            runId: run.id,
+            caseId,
+            triggerType: 'initial_request',
+            source,
         });
     } catch (triggerErr) {
         await db.updateAgentRun(run.id, {

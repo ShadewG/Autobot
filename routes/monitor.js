@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const sgMail = require('@sendgrid/mail');
-const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
+const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+const triggerDispatch = require('../services/trigger-dispatch-service');
 const { portalQueue } = require('../queues/email-queue');
 const crypto = require('crypto');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
@@ -130,7 +131,7 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
         langgraph_thread_id: `case:${caseData.id}:msg-${message.id}`
     });
 
-    const handle = await tasks.trigger('process-inbound', {
+    const { handle } = await triggerDispatch.triggerTask('process-inbound', {
         runId: run.id,
         caseId: caseData.id,
         messageId: message.id,
@@ -255,7 +256,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
 
         let handle;
         try {
-            handle = await tasks.trigger('process-inbound', {
+            handle = (await triggerDispatch.triggerTask('process-inbound', {
                 runId: 0, // task creates canonical agent_run
                 caseId,
                 messageId: proposal.trigger_message_id || null,
@@ -263,7 +264,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
                 triggerType: 'HUMAN_REVIEW_RESOLUTION',
                 reviewAction: 'custom',
                 reviewInstruction: trimmedInstruction,
-            }, triggerOpts(caseId, 'escalate-guided', proposalId));
+            }, triggerOpts(caseId, 'escalate-guided', proposalId))).handle;
         } catch (triggerError) {
             // Keep it actionable if dispatch fails.
             await db.updateProposal(proposalId, {
@@ -421,16 +422,34 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         );
         portalTaskId = ptResult.rows[0]?.id || null;
 
-        const handle = await tasks.trigger('submit-portal', {
+        const dispatchRun = await db.createAgentRunFull({
+            case_id: caseId,
+            trigger_type: 'portal_submit',
+            status: 'queued',
+            autopilot_mode: proposal.autopilot_mode || caseData.autopilot_mode || 'SUPERVISED',
+            langgraph_thread_id: `portal:${caseId}:proposal-${proposalId}:${Date.now()}`,
+            metadata: {
+                proposal_id: proposalId,
+                portal_task_id: portalTaskId,
+                source: 'monitor_approve_portal',
+            }
+        });
+
+        const { handle } = await triggerDispatch.triggerTask('submit-portal', {
             caseId,
             portalUrl,
             provider: caseData.portal_provider || null,
             instructions: proposal.draft_body_text || null,
             portalTaskId,
-        }, triggerOpts(caseId, 'portal', proposalId));
+        }, triggerOpts(caseId, 'portal', dispatchRun.id), {
+            runId: dispatchRun.id,
+            caseId,
+            triggerType: 'portal_submit',
+            source: 'monitor_approve_portal',
+        });
 
         // Update proposal to PENDING_PORTAL
-        await db.updateProposal(proposalId, { status: 'PENDING_PORTAL' });
+        await db.updateProposal(proposalId, { status: 'PENDING_PORTAL', run_id: dispatchRun.id });
 
         notify('info', `Portal submission approved — Trigger.dev task started for case ${caseId}`, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
@@ -490,20 +509,20 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     };
     try {
         if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
-            handle = await tasks.trigger('process-initial-request', {
+            handle = (await triggerDispatch.triggerTask('process-initial-request', {
                 runId: 0, // placeholder — task creates its own agent_run
                 caseId,
                 autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
                 ...triggerContext,
-            }, triggerOpts(caseId, 'approve-initial', proposalId));
+            }, triggerOpts(caseId, 'approve-initial', proposalId))).handle;
         } else {
-            handle = await tasks.trigger('process-inbound', {
+            handle = (await triggerDispatch.triggerTask('process-inbound', {
                 runId: 0,
                 caseId,
                 messageId: proposal.trigger_message_id,
                 autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
                 ...triggerContext,
-            }, triggerOpts(caseId, 'approve-inbound', proposalId));
+            }, triggerOpts(caseId, 'approve-inbound', proposalId))).handle;
         }
     } catch (triggerError) {
         // Never leave proposals stranded in DECISION_RECEIVED when dispatch fails.

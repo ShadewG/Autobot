@@ -7,6 +7,7 @@ const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const stuckResponseDetector = require('./stuck-response-detector');
 const agencyNotionSync = require('./agency-notion-sync');
 const pdContactService = require('./pd-contact-service');
+const triggerDispatch = require('./trigger-dispatch-service');
 
 // Feature flag: Use new Run Engine follow-up scheduler
 const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false';
@@ -262,6 +263,26 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Trigger dispatch recovery: re-dispatch runs stuck in queued + pending-version/no-machine states.
+        this.jobs.triggerDispatchRecovery = new CronJob('*/5 * * * *', async () => {
+            try {
+                const result = await triggerDispatch.recoverStaleQueuedRuns({
+                    maxAgeMinutes: 6,
+                    limit: 20,
+                    maxAttempts: 3
+                });
+                if ((result.recovered || 0) > 0 || (result.failed || 0) > 0) {
+                    console.log(`[trigger-recovery] scanned=${result.scanned} recovered=${result.recovered} failed=${result.failed}`);
+                    await db.logActivity('trigger_dispatch_recovery',
+                        `Trigger dispatch recovery scanned ${result.scanned}, recovered ${result.recovered}, failed ${result.failed}`,
+                        result
+                    );
+                }
+            } catch (error) {
+                console.error('Error in trigger dispatch recovery watchdog:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
@@ -272,6 +293,7 @@ class CronService {
         console.log('✓ Stale run reaper: Every 15 minutes');
         console.log('✓ Loop breaker: Every 30 minutes');
         console.log('✓ Proposal dispatch recovery: Every 5 minutes');
+        console.log('✓ Trigger dispatch recovery: Every 5 minutes');
     }
 
     /**
@@ -1033,7 +1055,6 @@ class CronService {
                     }
 
                     // Re-trigger through Trigger.dev
-                    const { tasks } = require('@trigger.dev/sdk/v3');
                     const run = await db.createAgentRunFull({
                         case_id: proposal.case_id,
                         trigger_type: 'resume_retry',
@@ -1043,17 +1064,35 @@ class CronService {
                     });
 
                     if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
-                        await tasks.trigger('process-initial-request', {
+                        await triggerDispatch.triggerTask('process-initial-request', {
                             runId: run.id,
                             caseId: proposal.case_id,
                             autopilotMode: 'SUPERVISED',
+                        }, {
+                            queue: `case-${proposal.case_id}`,
+                            idempotencyKey: `resume-retry-initial:${proposal.case_id}:${run.id}`,
+                            idempotencyKeyTTL: '1h',
+                        }, {
+                            runId: run.id,
+                            caseId: proposal.case_id,
+                            triggerType: 'resume_retry',
+                            source: 'cron_stuck_decision_retry',
                         });
                     } else {
-                        await tasks.trigger('process-inbound', {
+                        await triggerDispatch.triggerTask('process-inbound', {
                             runId: run.id,
                             caseId: proposal.case_id,
                             messageId: proposal.trigger_message_id,
                             autopilotMode: 'SUPERVISED',
+                        }, {
+                            queue: `case-${proposal.case_id}`,
+                            idempotencyKey: `resume-retry-inbound:${proposal.case_id}:${run.id}`,
+                            idempotencyKeyTTL: '1h',
+                        }, {
+                            runId: run.id,
+                            caseId: proposal.case_id,
+                            triggerType: 'resume_retry',
+                            source: 'cron_stuck_decision_retry',
                         });
                     }
 

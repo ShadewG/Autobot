@@ -15,7 +15,8 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { tasks, wait: triggerWait } = require('@trigger.dev/sdk/v3');
+const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+const triggerDispatch = require('../services/trigger-dispatch-service');
 const logger = require('../services/logger');
 const { emailExecutor } = require('../services/executor-adapter');
 
@@ -117,11 +118,11 @@ router.post('/cases/:id/run-initial', async (req, res) => {
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
     try {
-      handle = await tasks.trigger('process-initial-request', {
+      handle = (await triggerDispatch.triggerTask('process-initial-request', {
         runId: run.id,
         caseId,
         autopilotMode,
-      }, triggerOpts(caseId, 'initial', caseId));
+      }, triggerOpts(caseId, 'initial', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -247,12 +248,12 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
     try {
-      handle = await tasks.trigger('process-inbound', {
+      handle = (await triggerDispatch.triggerTask('process-inbound', {
         runId: run.id,
         caseId,
         messageId,
         autopilotMode,
-      }, triggerOpts(caseId, 'inbound', messageId));
+      }, triggerOpts(caseId, 'inbound', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -559,18 +560,18 @@ router.post('/proposals/:id/decision', async (req, res) => {
     let handle;
     try {
       if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
-        handle = await tasks.trigger('process-initial-request', {
+        handle = (await triggerDispatch.triggerTask('process-initial-request', {
           runId: run.id,
           caseId,
           autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-        }, triggerOptsDebounced(caseId, 'resume-initial', proposalId));
+        }, triggerOptsDebounced(caseId, 'resume-initial', run.id))).handle;
       } else {
-        handle = await tasks.trigger('process-inbound', {
+        handle = (await triggerDispatch.triggerTask('process-inbound', {
           runId: run.id,
           caseId,
           messageId: proposal.trigger_message_id,
           autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-        }, triggerOptsDebounced(caseId, 'resume-inbound', proposalId));
+        }, triggerOptsDebounced(caseId, 'resume-inbound', run.id))).handle;
       }
     } catch (triggerError) {
       // Keep proposal actionable if Trigger.dev dispatch fails.
@@ -713,11 +714,11 @@ router.post('/cases/:id/run-followup', async (req, res) => {
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
     try {
-      handle = await tasks.trigger('process-followup', {
+      handle = (await triggerDispatch.triggerTask('process-followup', {
         runId: run.id,
         caseId,
         followupScheduleId: followupSchedule?.id || null,
-      }, triggerOpts(caseId, 'followup', followupSchedule?.id || 'manual'));
+      }, triggerOpts(caseId, 'followup', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -836,11 +837,11 @@ router.post('/followups/:id/trigger', async (req, res) => {
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
     try {
-      handle = await tasks.trigger('process-followup', {
+      handle = (await triggerDispatch.triggerTask('process-followup', {
         runId: run.id,
         caseId,
         followupScheduleId: followupId,
-      }, triggerOpts(caseId, 'followup', followupId));
+      }, triggerOpts(caseId, 'followup', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -1408,29 +1409,29 @@ router.post('/runs/:id/retry', async (req, res) => {
 
     try {
       if (triggerType.includes('initial')) {
-        handle = await tasks.trigger('process-initial-request', {
+        handle = (await triggerDispatch.triggerTask('process-initial-request', {
           runId: newRun.id,
           caseId: originalRun.case_id,
           autopilotMode: newRun.autopilot_mode || 'SUPERVISED',
-        }, triggerOpts(originalRun.case_id, 'retry-initial', newRun.id));
+        }, triggerOpts(originalRun.case_id, 'retry-initial', newRun.id))).handle;
       } else if (triggerType.includes('inbound') || triggerType.includes('manual')) {
         const messageId = originalRun.message_id;
         if (!messageId) {
           await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: 'No message_id on original run — cannot retry' });
           return res.status(400).json({ success: false, error: 'Original run has no message_id, cannot retry as inbound' });
         }
-        handle = await tasks.trigger('process-inbound', {
+        handle = (await triggerDispatch.triggerTask('process-inbound', {
           runId: newRun.id,
           caseId: originalRun.case_id,
           messageId,
           autopilotMode: newRun.autopilot_mode || 'SUPERVISED',
-        }, triggerOpts(originalRun.case_id, 'retry-inbound', newRun.id));
+        }, triggerOpts(originalRun.case_id, 'retry-inbound', newRun.id))).handle;
       } else if (triggerType.includes('followup')) {
-        handle = await tasks.trigger('process-followup', {
+        handle = (await triggerDispatch.triggerTask('process-followup', {
           runId: newRun.id,
           caseId: originalRun.case_id,
           followupScheduleId: null,
-        }, triggerOpts(originalRun.case_id, 'retry-followup', newRun.id));
+        }, triggerOpts(originalRun.case_id, 'retry-followup', newRun.id))).handle;
       } else {
         await db.updateAgentRun(newRun.id, { status: 'failed', ended_at: new Date(), error: `Unsupported trigger type for retry: ${triggerType}` });
         return res.status(400).json({ success: false, error: `Cannot retry trigger type: ${triggerType}` });
@@ -1667,12 +1668,12 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
 
       // Trigger Trigger.dev task (clean up orphaned run on failure)
       try {
-        const handle = await tasks.trigger('process-inbound', {
+        const handle = (await triggerDispatch.triggerTask('process-inbound', {
           runId: run.id,
           caseId,
           messageId: message.id,
           autopilotMode: autopilot_mode,
-        }, triggerOpts(caseId, 'inbound', message.id));
+        }, triggerOpts(caseId, 'inbound', run.id))).handle;
         job = { id: handle.id };
       } catch (triggerError) {
         await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
@@ -1894,12 +1895,12 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
       });
 
       try {
-        const handle = await tasks.trigger('process-inbound', {
+        const handle = (await triggerDispatch.triggerTask('process-inbound', {
           runId: run.id,
           caseId,
           messageId: message.id,
           autopilotMode: 'SUPERVISED',
-        }, triggerOpts(caseId, 'inbound', message.id));
+        }, triggerOpts(caseId, 'inbound', run.id))).handle;
         job = { id: handle.id };
       } catch (triggerError) {
         await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
@@ -2075,12 +2076,12 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
     try {
-      handle = await tasks.trigger('process-inbound', {
+      handle = (await triggerDispatch.triggerTask('process-inbound', {
         runId: run.id,
         caseId,
         messageId: message.id,
         autopilotMode,
-      }, triggerOpts(caseId, 'inbound', message.id));
+      }, triggerOpts(caseId, 'inbound', run.id))).handle;
     } catch (triggerError) {
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;

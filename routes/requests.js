@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const db = require('../services/database');
 const actionValidator = require('../services/action-validator');
 const logger = require('../services/logger');
+const triggerDispatch = require('../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../lib/email-cleaner');
 
 /**
@@ -1389,7 +1390,7 @@ router.post('/:id/resolve-review', async (req, res) => {
                 [requestId]
             );
             if (tokensToComplete.rows.length > 0) {
-                const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+                const { wait: triggerWait } = require('@trigger.dev/sdk');
                 for (const p of tokensToComplete.rows) {
                     try {
                         await triggerWait.completeToken(p.waitpoint_token, {
@@ -1424,7 +1425,6 @@ router.post('/:id/resolve-review', async (req, res) => {
         });
 
         // Trigger Trigger.dev task for re-processing — pass review action + instruction
-        const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
         const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
         const triggerRun = await db.createAgentRunFull({
             case_id: requestId,
@@ -1433,7 +1433,7 @@ router.post('/:id/resolve-review', async (req, res) => {
             autopilot_mode: 'SUPERVISED',
             langgraph_thread_id: `review:${requestId}:${Date.now()}`
         });
-        const handle = await triggerTasks.trigger('process-inbound', {
+        const { handle } = await triggerDispatch.triggerTask('process-inbound', {
             runId: triggerRun.id,
             caseId: requestId,
             messageId: latestMsg.rows[0]?.id || null,
@@ -1441,6 +1441,15 @@ router.post('/:id/resolve-review', async (req, res) => {
             triggerType: 'HUMAN_REVIEW_RESOLUTION',
             reviewAction: action,
             reviewInstruction: combinedInstruction,
+        }, {
+            queue: `case-${requestId}`,
+            idempotencyKey: `human-review-resolution:${requestId}:${triggerRun.id}`,
+            idempotencyKeyTTL: '1h',
+        }, {
+            runId: triggerRun.id,
+            caseId: requestId,
+            triggerType: 'human_review_resolution',
+            source: 'requests_human_review_resolution',
         });
         const job = { id: handle.id };
 
@@ -2206,8 +2215,7 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
             log.info(`Trigger.dev waitpoint completed for approve on proposal ${proposalId}`);
         } else {
             // Legacy proposal — re-trigger inbound processing
-            const { tasks } = require('@trigger.dev/sdk/v3');
-            await tasks.trigger('process-inbound', {
+            await triggerDispatch.triggerTask('process-inbound', {
                 runId: proposal.run_id || 0,
                 caseId: requestId,
                 messageId: proposal.message_id || 0,
@@ -2216,6 +2224,9 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
                 queue: `case-${requestId}`,
                 idempotencyKey: `req-approve:${requestId}:${proposalId}`,
                 idempotencyKeyTTL: "1h",
+            }, {
+                caseId: requestId,
+                source: 'requests_approve_legacy',
             });
             log.info(`Re-triggered process-inbound for legacy proposal ${proposalId}`);
         }
@@ -2290,8 +2301,7 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
             log.info(`Trigger.dev waitpoint completed for adjust on proposal ${proposalId}`);
         } else {
             // Legacy proposal — re-trigger inbound processing with adjustment context
-            const { tasks } = require('@trigger.dev/sdk/v3');
-            await tasks.trigger('process-inbound', {
+            await triggerDispatch.triggerTask('process-inbound', {
                 runId: proposal.run_id || 0,
                 caseId: requestId,
                 messageId: proposal.message_id || 0,
@@ -2300,6 +2310,9 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
                 queue: `case-${requestId}`,
                 idempotencyKey: `req-adjust:${requestId}:${proposalId}`,
                 idempotencyKeyTTL: "1h",
+            }, {
+                caseId: requestId,
+                source: 'requests_adjust_legacy',
             });
             log.info(`Re-triggered process-inbound for legacy adjust on proposal ${proposalId}`);
         }
@@ -2461,7 +2474,6 @@ router.post('/:id/invoke-agent', async (req, res) => {
 
         log.info(`Manual agent invocation requested`);
 
-        const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
         const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
         const triggerRun = await db.createAgentRunFull({
             case_id: requestId,
@@ -2470,11 +2482,20 @@ router.post('/:id/invoke-agent', async (req, res) => {
             autopilot_mode: 'SUPERVISED',
             langgraph_thread_id: `manual:${requestId}:${Date.now()}`
         });
-        const handle = await triggerTasks.trigger('process-inbound', {
+        const { handle } = await triggerDispatch.triggerTask('process-inbound', {
             runId: triggerRun.id,
             caseId: requestId,
             messageId: latestMsg.rows[0]?.id || null,
             autopilotMode: 'SUPERVISED',
+        }, {
+            queue: `case-${requestId}`,
+            idempotencyKey: `invoke-agent:${requestId}:${triggerRun.id}`,
+            idempotencyKeyTTL: '1h',
+        }, {
+            runId: triggerRun.id,
+            caseId: requestId,
+            triggerType: trigger_type || 'manual',
+            source: 'requests_invoke_agent',
         });
 
         log.info(`Trigger.dev task triggered (run: ${handle.id})`);
@@ -2614,7 +2635,8 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             // Clear case pause state within the transaction.
             await txQuery(
                 `UPDATE cases
-                 SET requires_human = false,
+                 SET status = 'awaiting_response',
+                     requires_human = false,
                      pause_reason = NULL,
                      substatus = $2,
                      updated_at = NOW()
@@ -2645,7 +2667,6 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
         );
 
         // Re-run from the anchor inbound via Trigger.dev.
-        const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
         const replayRun = await db.createAgentRunFull({
             case_id: requestId,
             trigger_type: 'RESET_TO_LAST_INBOUND',
@@ -2655,7 +2676,7 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             langgraph_thread_id: `reset:${requestId}:msg-${latestInbound.id}:${Date.now()}`
         });
 
-        const handle = await triggerTasks.trigger('process-inbound', {
+        const { handle } = await triggerDispatch.triggerTask('process-inbound', {
             runId: replayRun.id,
             caseId: requestId,
             messageId: latestInbound.id,
@@ -2663,8 +2684,13 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             triggerType: 'RESET_TO_LAST_INBOUND',
         }, {
             queue: `case-${requestId}`,
-            idempotencyKey: `reset-to-last-inbound:${requestId}:${latestInbound.id}:${Date.now()}`,
+            idempotencyKey: `reset-to-last-inbound:${requestId}:${replayRun.id}`,
             idempotencyKeyTTL: '1h',
+        }, {
+            runId: replayRun.id,
+            caseId: requestId,
+            triggerType: 'reset_to_last_inbound',
+            source: 'requests_reset_to_last_inbound',
         });
 
         res.json({
@@ -2949,13 +2975,21 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
             // Live mode: actually re-run the agent
             log.warn('Live replay mode requested - queueing agent job');
 
-            const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
             const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
-            const handle = await triggerTasks.trigger('process-inbound', {
+            const { handle } = await triggerDispatch.triggerTask('process-inbound', {
                 runId: replayRun.id,
                 caseId: requestId,
                 messageId: latestMsg.rows[0]?.id || null,
                 autopilotMode: 'SUPERVISED',
+            }, {
+                queue: `case-${requestId}`,
+                idempotencyKey: `live-replay:${requestId}:${replayRun.id}`,
+                idempotencyKeyTTL: '1h',
+            }, {
+                runId: replayRun.id,
+                caseId: requestId,
+                triggerType: 'replay',
+                source: 'requests_live_replay',
             });
 
             await db.updateAgentRun(replayRun.id, {

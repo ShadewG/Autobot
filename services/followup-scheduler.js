@@ -15,7 +15,7 @@
 const { CronJob } = require('cron');
 const db = require('./database');
 const logger = require('./logger');
-const { tasks } = require('@trigger.dev/sdk/v3');
+const triggerDispatch = require('./trigger-dispatch-service');
 
 // Configuration
 const FOLLOWUP_CHECK_CRON = process.env.FOLLOWUP_CHECK_CRON || '*/15 * * * *'; // Every 15 minutes
@@ -181,10 +181,19 @@ class FollowupScheduler {
     `, [followupId, scheduledKey, run.id]);
 
     // Trigger Trigger.dev task
-    const handle = await tasks.trigger('process-followup', {
+    const { handle } = await triggerDispatch.triggerTask('process-followup', {
       runId: run.id,
       caseId,
       followupScheduleId: followupId,
+    }, {
+      queue: `case-${caseId}`,
+      idempotencyKey: `followup:${caseId}:${run.id}`,
+      idempotencyKeyTTL: '1h',
+    }, {
+      runId: run.id,
+      caseId,
+      triggerType: 'followup_trigger',
+      source: 'followup_scheduler',
     });
 
     logger.info('Followup trigger task triggered', {
