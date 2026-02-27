@@ -345,6 +345,7 @@ function RequestDetailContent() {
   const [isInvokingAgent, setIsInvokingAgent] = useState(false);
   const [isGeneratingInitial, setIsGeneratingInitial] = useState(false);
   const [isRunningFollowup, setIsRunningFollowup] = useState(false);
+  const [isResettingCase, setIsResettingCase] = useState(false);
   const [showInboundDialog, setShowInboundDialog] = useState(false);
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
   const [isRunningInbound, setIsRunningInbound] = useState(false);
@@ -458,6 +459,30 @@ function RequestDetailContent() {
       alert(error.message || "Failed to resimulate inbound message");
     } finally {
       setIsRunningInbound(false);
+    }
+  };
+
+  const handleResetToLastInbound = async () => {
+    if (!id) return;
+    const ok = window.confirm(
+      "Reset this case to the latest inbound message?\n\nThis will dismiss active proposals, clear in-flight run state, and reprocess from the latest inbound."
+    );
+    if (!ok) return;
+
+    setIsResettingCase(true);
+    try {
+      const result = await requestsAPI.resetToLastInbound(id);
+      if (result.success) {
+        mutate();
+        mutateRuns();
+      } else {
+        alert("Failed to reset case");
+      }
+    } catch (error: any) {
+      console.error("Error resetting case:", error);
+      alert(error.message || "Failed to reset case");
+    } finally {
+      setIsResettingCase(false);
     }
   };
 
@@ -603,9 +628,9 @@ function RequestDetailContent() {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound}
+                disabled={isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound || isResettingCase}
               >
-                {(isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound) ? (
+                {(isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound || isResettingCase) ? (
                   <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                 ) : (
                   <Play className="h-4 w-4 mr-1" />
@@ -641,6 +666,10 @@ function RequestDetailContent() {
               <DropdownMenuItem onClick={handleRunFollowup}>
                 <RotateCcw className="h-4 w-4 mr-2" />
                 Run Follow-up
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleResetToLastInbound} disabled={!lastInboundMessage || isResettingCase}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Reset + Reprocess Latest Inbound
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleInvokeAgent}>

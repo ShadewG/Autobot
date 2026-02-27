@@ -12,6 +12,7 @@ import db, { logger } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
 import { submitPortal } from "../tasks/submit-portal";
+import { hasAutomatablePortal } from "../lib/portal-utils";
 import type {
   DecisionResult,
   Classification,
@@ -1290,7 +1291,7 @@ export async function decideNextAction(
         },
         retry_portal: async () => {
           const caseData = await db.getCaseById(caseId);
-          if (caseData?.portal_url) {
+          if (caseData?.portal_url && hasAutomatablePortal(caseData.portal_url, caseData.portal_provider)) {
             await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "Portal retry", requires_human: false });
             try {
               const task = await createPortalTask({
@@ -1318,6 +1319,12 @@ export async function decideNextAction(
             } catch (e: any) {
               logger.error("Failed to create/trigger portal retry", { caseId, error: e.message });
             }
+          } else {
+            logger.info("Skipped retry_portal: provider/url not automatable", {
+              caseId,
+              portalUrl: caseData?.portal_url || null,
+              provider: caseData?.portal_provider || null,
+            });
           }
           return noAction([...reasoning, "Portal retry initiated"]);
         },

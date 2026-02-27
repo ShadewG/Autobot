@@ -217,6 +217,21 @@ export const requestsAPI = {
     });
   },
 
+  // Reset queue/proposal state and replay from latest inbound
+  resetToLastInbound: (
+    id: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    anchor_message_id: number;
+    run_id: number;
+    trigger_run_id: string;
+  }> => {
+    return fetchAPI(`/requests/${id}/reset-to-last-inbound`, {
+      method: 'POST',
+    });
+  },
+
   // Get agent runs for a request
   getAgentRuns: (id: string): Promise<{ runs: AgentRun[] }> => {
     return fetchAPI(`/requests/${id}/agent-runs`);

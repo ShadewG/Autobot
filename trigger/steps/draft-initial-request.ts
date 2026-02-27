@@ -7,6 +7,7 @@
 
 import db, { aiService, logger } from "../lib/db";
 import type { AutopilotMode, ProposalRecord } from "../lib/types";
+import { hasAutomatablePortal } from "../lib/portal-utils";
 
 function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean): string {
   const action = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
@@ -33,7 +34,7 @@ export async function draftInitialRequest(
   const caseData = await db.getCaseById(caseId);
   if (!caseData) throw new Error(`Case ${caseId} not found`);
 
-  const hasPortal = !!(caseData.portal_url);
+  const hasPortal = hasAutomatablePortal(caseData.portal_url, caseData.portal_provider);
   const actionType = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
   const proposalKey = generateInitialRequestProposalKey(caseId, hasPortal);
 

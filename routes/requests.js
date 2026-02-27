@@ -2460,6 +2460,188 @@ router.post('/:id/invoke-agent', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/requests/:id/reset-to-last-inbound
+ *
+ * Reset case queue state and reprocess from latest inbound message.
+ * Intended for deterministic "clean retest" against current pipeline logic.
+ */
+router.post('/:id/reset-to-last-inbound', async (req, res) => {
+    const requestId = parseInt(req.params.id, 10);
+    const log = logger.forCase(requestId);
+
+    try {
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        const latestInboundResult = await db.query(
+            `SELECT id, COALESCE(received_at, created_at) AS inbound_at
+             FROM messages
+             WHERE case_id = $1
+               AND direction = 'inbound'
+             ORDER BY COALESCE(received_at, created_at) DESC
+             LIMIT 1`,
+            [requestId]
+        );
+        const latestInbound = latestInboundResult.rows[0];
+        if (!latestInbound) {
+            return res.status(400).json({
+                success: false,
+                error: 'No inbound message found for this case'
+            });
+        }
+
+        log.info(`Resetting case to latest inbound message ${latestInbound.id}`);
+
+        // Unblock any Trigger.dev waitpoints tied to active proposals so stale waiting runs can exit cleanly.
+        try {
+            const tokenRows = await db.query(
+                `SELECT id, waitpoint_token
+                 FROM proposals
+                 WHERE case_id = $1
+                   AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                   AND waitpoint_token IS NOT NULL`,
+                [requestId]
+            );
+            if (tokenRows.rows.length > 0) {
+                const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+                for (const row of tokenRows.rows) {
+                    try {
+                        await triggerWait.completeToken(row.waitpoint_token, {
+                            action: 'DISMISS',
+                            reason: `Case reset to latest inbound #${latestInbound.id}`,
+                        });
+                    } catch (_) {
+                        // token already completed/expired
+                    }
+                }
+            }
+        } catch (_) {
+            // non-fatal
+        }
+
+        await db.query('BEGIN');
+        try {
+            // Remove active proposals from queue.
+            const dismissedProposals = await db.query(
+                `UPDATE proposals
+                 SET status = 'DISMISSED',
+                     updated_at = NOW(),
+                     human_decision = COALESCE(human_decision, '{}'::jsonb)
+                        || jsonb_build_object(
+                            'auto_dismiss_reason', 'reset_to_last_inbound',
+                            'auto_dismissed_at', NOW()::text,
+                            'reset_anchor_message_id', $2::int
+                        )
+                 WHERE case_id = $1
+                   AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')`,
+                [requestId, latestInbound.id]
+            );
+
+            // Mark in-flight/queued runs as failed (superseded by reset).
+            const failedRuns = await db.query(
+                `UPDATE agent_runs
+                 SET status = 'failed',
+                     ended_at = NOW(),
+                     error = COALESCE(error, 'superseded by reset_to_last_inbound')
+                 WHERE case_id = $1
+                   AND status IN ('created', 'queued', 'processing', 'running', 'paused', 'waiting', 'gated')`,
+                [requestId]
+            );
+
+            // Clear processed marker on anchor inbound so it can be re-run through run-engine path.
+            await db.query(
+                `UPDATE messages
+                 SET processed_at = NULL,
+                     processed_run_id = NULL,
+                     last_error = NULL
+                 WHERE id = $1`,
+                [latestInbound.id]
+            );
+
+            // Clear decision artifacts at/after this inbound timestamp.
+            const prunedAnalyses = await db.query(
+                `DELETE FROM response_analysis
+                 WHERE case_id = $1
+                   AND created_at >= $2`,
+                [requestId, latestInbound.inbound_at]
+            );
+            const prunedDecisions = await db.query(
+                `DELETE FROM agent_decisions
+                 WHERE case_id = $1
+                   AND created_at >= $2`,
+                [requestId, latestInbound.inbound_at]
+            );
+
+            await db.updateCase(requestId, {
+                requires_human: false,
+                pause_reason: null,
+                substatus: `Reset to inbound #${latestInbound.id}; reprocessing`,
+            });
+
+            await db.logActivity(
+                'case_reset_to_last_inbound',
+                `Reset to latest inbound #${latestInbound.id} and queued fresh processing`,
+                {
+                    case_id: requestId,
+                    message_id: latestInbound.id,
+                    dismissed_proposals: dismissedProposals.rowCount || 0,
+                    failed_runs: failedRuns.rowCount || 0,
+                    analyses_pruned: prunedAnalyses.rowCount || 0,
+                    decisions_pruned: prunedDecisions.rowCount || 0,
+                }
+            );
+
+            await db.query('COMMIT');
+        } catch (txErr) {
+            await db.query('ROLLBACK');
+            throw txErr;
+        }
+
+        // Re-run from the anchor inbound via Trigger.dev.
+        const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+        const replayRun = await db.createAgentRunFull({
+            case_id: requestId,
+            trigger_type: 'RESET_TO_LAST_INBOUND',
+            message_id: latestInbound.id,
+            status: 'queued',
+            autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
+            langgraph_thread_id: `reset:${requestId}:msg-${latestInbound.id}:${Date.now()}`
+        });
+
+        const handle = await triggerTasks.trigger('process-inbound', {
+            runId: replayRun.id,
+            caseId: requestId,
+            messageId: latestInbound.id,
+            autopilotMode: caseData.autopilot_mode || 'SUPERVISED',
+            triggerType: 'RESET_TO_LAST_INBOUND',
+        }, {
+            queue: `case-${requestId}`,
+            idempotencyKey: `reset-to-last-inbound:${requestId}:${latestInbound.id}:${Date.now()}`,
+            idempotencyKeyTTL: '1h',
+        });
+
+        res.json({
+            success: true,
+            message: `Case reset to inbound #${latestInbound.id} and reprocessing queued`,
+            anchor_message_id: latestInbound.id,
+            run_id: replayRun.id,
+            trigger_run_id: handle.id,
+        });
+    } catch (error) {
+        log.error(`Error resetting case to latest inbound: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // =========================================================================
 // Replay / Dry-Run Tooling
 // =========================================================================

@@ -15,6 +15,7 @@ import db, {
   EXECUTION_MODE,
 } from "../lib/db";
 import type { ActionType, ExecutionResult } from "../lib/types";
+import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/portal-utils";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
 import { submitPortal } from "../tasks/submit-portal";
@@ -140,12 +141,19 @@ export async function executeAction(
     }
   }
 
-  const hasPortal = portalExecutor.requiresPortal({ ...caseData, portal_url: targetPortalUrl });
+  const hasPortal = hasAutomatablePortal(targetPortalUrl, caseData?.portal_provider);
 
   // Portal check for SEND_ actions or explicit SUBMIT_PORTAL
   // If SUBMIT_PORTAL but no portal, downgrade to email send (common after agency redirect)
   let resolvedActionType: ActionType = actionType;
   if (actionType === "SUBMIT_PORTAL" && !hasPortal) {
+    if (isNonAutomatablePortalProvider(caseData?.portal_provider)) {
+      logger.info("SUBMIT_PORTAL downgraded to email — provider marked as non-automatable", {
+        caseId,
+        provider: caseData?.portal_provider,
+        targetEmail,
+      });
+    }
     if (targetEmail) {
       logger.info("SUBMIT_PORTAL downgraded to email — no portal_url after agency override", { caseId, targetEmail });
       resolvedActionType = "SEND_INITIAL_REQUEST";
