@@ -501,6 +501,7 @@ function toRequestDetail(caseData) {
         portal_request_number: caseData.portal_request_number || null,
         last_portal_task_url: caseData.last_portal_task_url || null,
         last_portal_status: caseData.last_portal_status || null,
+        last_portal_screenshot_url: caseData.last_portal_screenshot_url || null,
         agency_email: caseData.agency_email || null,
         notion_url: notionUrl,
         submitted_at: caseData.send_date || null,
@@ -1224,6 +1225,40 @@ router.get('/:id/workspace', async (req, res) => {
             success: false,
             error: error.message
         });
+    }
+});
+
+/**
+ * GET /api/requests/:id/portal-screenshot
+ * Lightweight endpoint for live portal screenshot polling
+ */
+router.get('/:id/portal-screenshot', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+        if (isNaN(requestId)) {
+            return res.status(400).json({ success: false, error: 'Invalid request ID' });
+        }
+
+        const result = await db.query(
+            'SELECT last_portal_screenshot_url, last_portal_status, last_portal_task_url, updated_at FROM cases WHERE id = $1',
+            [requestId]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Request not found' });
+        }
+
+        const row = result.rows[0];
+        res.json({
+            success: true,
+            screenshot_url: row.last_portal_screenshot_url || null,
+            status: row.last_portal_status || null,
+            portal_task_url: row.last_portal_task_url || null,
+            updated_at: row.updated_at || null
+        });
+    } catch (error) {
+        console.error('Error fetching portal screenshot:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 

@@ -1182,7 +1182,7 @@ class PortalAgentServiceSkyvern {
             );
 
             const finalResult = workflowRunId
-                ? await this._pollWorkflowRun(workflowRunId)
+                ? await this._pollWorkflowRun(workflowRunId, caseData.id)
                 : null;
 
             if (!finalResult) {
@@ -1264,7 +1264,8 @@ class PortalAgentServiceSkyvern {
                 last_portal_status_at: new Date(),
                 last_portal_recording_url: recordingUrl || null,
                 last_portal_details: JSON.stringify(finalResult),
-                last_portal_task_url: finalWorkflowRunLink || null
+                last_portal_task_url: finalWorkflowRunLink || null,
+                last_portal_screenshot_url: null // Clear live screenshot on completion
             });
 
             if (completed && !failed) {
@@ -1885,7 +1886,7 @@ class PortalAgentServiceSkyvern {
         return { success: false, status: 'not_real_portal', error: reason, engine: 'research_fallback' };
     }
 
-    async _pollWorkflowRun(workflowRunId) {
+    async _pollWorkflowRun(workflowRunId, caseId = null) {
         if (!workflowRunId) {
             return null;
         }
@@ -1895,6 +1896,7 @@ class PortalAgentServiceSkyvern {
         const statusUrl = `${this.baseUrl}/workflows/${this.workflowId}/runs/${workflowRunId}`;
 
         console.log(`⏳ Polling workflow run ${workflowRunId} for completion...`);
+        let lastScreenshotUrl = null;
 
         for (let poll = 0; poll < maxPolls; poll++) {
             await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
@@ -1909,6 +1911,22 @@ class PortalAgentServiceSkyvern {
                 const data = statusResponse.data;
                 const status = (data.status || data.final_status || '').toLowerCase();
                 console.log(`   Poll ${poll + 1}: status=${status || 'unknown'}`);
+
+                // Extract latest screenshot and persist to DB for live view
+                if (caseId && Array.isArray(data.screenshot_urls) && data.screenshot_urls.length > 0) {
+                    const latestUrl = data.screenshot_urls[data.screenshot_urls.length - 1];
+                    if (latestUrl && latestUrl !== lastScreenshotUrl) {
+                        lastScreenshotUrl = latestUrl;
+                        try {
+                            await database.query(
+                                'UPDATE cases SET last_portal_screenshot_url = $1 WHERE id = $2',
+                                [latestUrl, caseId]
+                            );
+                        } catch (ssErr) {
+                            console.warn(`   Screenshot DB update failed: ${ssErr.message}`);
+                        }
+                    }
+                }
 
                 if (['completed', 'succeeded', 'success', 'failed', 'terminated', 'error'].includes(status)) {
                     return data;

@@ -88,6 +88,7 @@ import { SafetyHints } from "@/components/safety-hints";
 import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
 import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
 import { CaseInfoTab } from "@/components/case-info-tab";
+import { PortalLiveView } from "@/components/portal-live-view";
 
 const DISMISS_REASONS = [
   "Wrong action",
@@ -1247,6 +1248,13 @@ function RequestDetailContent() {
               {/* Decision Panel - sticky on right */}
               <div className="lg:col-span-4 min-w-0">
                 <div className="sticky top-44 space-y-4">
+                  {portalTaskActive && (
+                    <PortalLiveView
+                      caseId={id!}
+                      initialScreenshotUrl={request.last_portal_screenshot_url}
+                      portalTaskUrl={request.last_portal_task_url}
+                    />
+                  )}
                   {pending_proposal ? (
                     <Card className="border-2 border-blue-700/50 bg-blue-500/5">
                       <CardHeader className="pb-2">
@@ -1411,6 +1419,83 @@ function RequestDetailContent() {
                     agency={agency_summary}
                     onChallenge={handleChallenge}
                     onRefresh={mutate}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : portalTaskActive ? (
+            /* Portal Active Layout: Conversation | Timeline | Live View */
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+              <div className="lg:col-span-5 min-w-0">
+                <Card className="h-full">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Mail className="h-4 w-4" />
+                        Conversation
+                      </CardTitle>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setShowCorrespondenceDialog(true)}
+                        >
+                          <Phone className="h-3 w-3 mr-1" />
+                          Log Call
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setShowPasteInboundDialog(true)}
+                        >
+                          <ClipboardPaste className="h-3 w-3 mr-1" />
+                          Paste Email
+                        </Button>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <Thread messages={thread_messages} />
+                    <Separator />
+                    <Composer onSend={handleSendMessage} />
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="lg:col-span-3 min-w-0">
+                <Card className="h-full">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Timeline</span>
+                      {state_deadline && (
+                        <span className="text-xs font-normal text-muted-foreground">
+                          {state_deadline.state_code} - {state_deadline.response_days} business days
+                        </span>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    {deadline_milestones && deadline_milestones.length > 0 && (
+                      <DeadlineCalculator
+                        milestones={deadline_milestones}
+                        stateDeadline={state_deadline}
+                        compact
+                      />
+                    )}
+                    {deadline_milestones && deadline_milestones.length > 0 && <Separator />}
+                    <Timeline events={timeline_events} />
+                  </CardContent>
+                </Card>
+              </div>
+
+              <div className="lg:col-span-4 min-w-0">
+                <div className="sticky top-44">
+                  <PortalLiveView
+                    caseId={id!}
+                    initialScreenshotUrl={request.last_portal_screenshot_url}
+                    portalTaskUrl={request.last_portal_task_url}
                   />
                 </div>
               </div>

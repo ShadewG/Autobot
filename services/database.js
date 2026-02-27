@@ -366,7 +366,8 @@ class DatabaseService {
             last_portal_task_url: portalData.last_portal_task_url,
             last_portal_recording_url: portalData.last_portal_recording_url,
             last_portal_account_email: portalData.last_portal_account_email,
-            portal_request_number: portalData.portal_request_number
+            portal_request_number: portalData.portal_request_number,
+            last_portal_screenshot_url: portalData.last_portal_screenshot_url
         };
 
         const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
