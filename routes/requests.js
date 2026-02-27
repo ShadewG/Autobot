@@ -501,6 +501,7 @@ function toRequestDetail(caseData) {
         portal_request_number: caseData.portal_request_number || null,
         last_portal_task_url: caseData.last_portal_task_url || null,
         last_portal_status: caseData.last_portal_status || null,
+        agency_email: caseData.agency_email || null,
         notion_url: notionUrl,
         submitted_at: caseData.send_date || null,
         statutory_due_at: listItem.due_info.statutory_due_at,

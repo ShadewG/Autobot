@@ -87,6 +87,7 @@ import { AutopilotSelector } from "@/components/autopilot-selector";
 import { SafetyHints } from "@/components/safety-hints";
 import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
 import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
+import { CaseInfoTab } from "@/components/case-info-tab";
 
 const DISMISS_REASONS = [
   "Wrong action",
@@ -1157,6 +1158,7 @@ function RequestDetailContent() {
       <Tabs defaultValue="overview">
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="case-info">Case Info</TabsTrigger>
           <TabsTrigger value="runs" className="flex items-center gap-1">
             <Activity className="h-3 w-3" />
             Runs
@@ -1491,6 +1493,16 @@ function RequestDetailContent() {
               </Card>
             </div>
           )}
+        </TabsContent>
+
+        {/* Case Info Tab */}
+        <TabsContent value="case-info" className="mt-4">
+          <CaseInfoTab
+            request={request}
+            agencySummary={agency_summary}
+            deadlineMilestones={deadline_milestones}
+            stateDeadline={state_deadline}
+          />
         </TabsContent>
 
         {/* Runs Tab */}
