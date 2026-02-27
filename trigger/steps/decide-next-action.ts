@@ -11,7 +11,7 @@ import { decisionSchema, type DecisionOutput } from "../lib/schemas";
 import db, { logger } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
-import { submitPortal } from "../tasks/submit-portal";
+import { tasks } from "@trigger.dev/sdk";
 import { hasAutomatablePortal } from "../lib/portal-utils";
 import type {
   DecisionResult,
@@ -988,7 +988,7 @@ async function deterministicRouting(
         status: "PENDING",
         instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
       });
-      await submitPortal.trigger({
+      await tasks.trigger("submit-portal", {
         caseId,
         portalUrl: effectiveUrl!,
         provider: caseData?.portal_provider || null,
@@ -1141,7 +1141,7 @@ export async function decideNextAction(
             status: "PENDING",
             instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
           });
-          await submitPortal.trigger({
+          await tasks.trigger("submit-portal", {
             caseId,
             portalUrl: effectiveUrl!,
             provider: caseData?.portal_provider || null,
@@ -1304,7 +1304,7 @@ export async function decideNextAction(
                 instructions: `Retry portal submission to ${caseData.agency_name || "agency"} at: ${caseData.portal_url}`,
               });
               // Trigger the actual portal submission task
-              await submitPortal.trigger({
+              await tasks.trigger("submit-portal", {
                 caseId,
                 portalUrl: caseData.portal_url,
                 provider: caseData.portal_provider || null,
