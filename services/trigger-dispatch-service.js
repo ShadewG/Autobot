@@ -1,4 +1,4 @@
-const { tasks, runs } = require('@trigger.dev/sdk/v3');
+const { tasks, runs } = require('@trigger.dev/sdk');
 const db = require('./database');
 
 const PENDING_STATUSES = new Set(['PENDING', 'QUEUED', 'PENDING_VERSION', 'PENDING_DEPLOYMENT', 'PENDING_EXECUTION']);
@@ -206,4 +206,3 @@ module.exports = {
   recoverStaleQueuedRuns,
   verifyTriggerRunStarted,
 };
-
