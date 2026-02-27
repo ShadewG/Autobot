@@ -210,7 +210,9 @@ export const processInbound = task({
           await markStep("execute_action", `Run #${runId}: executing approved adjusted action`, { action_type: originalActionType });
           const execution = await executeAction(
             caseId, adjustedGate.proposalId, originalActionType as any, runId,
-            adjustedDraft, null, adjustmentReasoning
+            adjustedDraft, null, adjustmentReasoning,
+            undefined, undefined,
+            null // classification: fast-path skips classify; side effects ran in original run
           );
 
           // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)

@@ -1878,7 +1878,7 @@ export async function decideNextAction(
               followupCount: preComputed.followupCount,
               maxFollowups: MAX_FOLLOWUPS,
               hasAutomatablePortal: portalAvailable,
-              triggerType,
+              triggerType: "INITIAL_REQUEST", // Allow full action set for reprocess
               dismissedActionCounts: preComputed.dismissedActionCounts,
             });
             const v2Result = await makeAIDecisionV2({
@@ -2000,7 +2000,7 @@ export async function decideNextAction(
               followupCount: preComputed.followupCount,
               maxFollowups: MAX_FOLLOWUPS,
               hasAutomatablePortal: portalAvailable,
-              triggerType,
+              triggerType: "INITIAL_REQUEST", // Allow full action set for custom instruction
               dismissedActionCounts: preComputed.dismissedActionCounts,
             });
             const v2Result = await makeAIDecisionV2({

@@ -101,35 +101,6 @@ export interface FollowupPayload {
   followupScheduleId: number | null;
 }
 
-export interface DecisionHistoryEntry {
-  action_taken: string;
-  reasoning: string;
-  outcome: string;
-  created_at: string;
-}
-
-export interface PortalTaskHistoryEntry {
-  status: string;
-  completion_notes: string;
-  portal_url: string;
-  created_at: string;
-}
-
-export interface FeeEventEntry {
-  event_type: string;
-  amount: number | null;
-  notes: string;
-  created_at: string;
-}
-
-export interface DismissedProposalEntry {
-  action_type: string;
-  reasoning: string[];
-  human_decision: any;
-  created_at: string;
-  dismiss_count: number;
-}
-
 export interface CaseContext {
   caseId: number;
   caseData: any;
@@ -141,10 +112,6 @@ export interface CaseContext {
   autopilotMode: AutopilotMode;
   constraints: string[];
   scopeItems: ScopeItem[];
-  decisionHistory?: DecisionHistoryEntry[];
-  portalTaskHistory?: PortalTaskHistoryEntry[];
-  feeEvents?: FeeEventEntry[];
-  dismissedProposals?: DismissedProposalEntry[];
 }
 
 export interface ScopeItem {
