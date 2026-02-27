@@ -19,6 +19,7 @@ import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger, attachmentProcessor } from "../lib/db";
+import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { HumanDecision, InboundPayload, ResearchContext } from "../lib/types";
 
 const DRAFT_REQUIRED_ACTIONS = [
@@ -177,6 +178,7 @@ export const processInbound = task({
           const humanDecision = result.output;
           if (humanDecision.action === "DISMISS") {
             await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await reconcileCaseAfterDismiss(caseId);
             await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }
@@ -462,6 +464,7 @@ export const processInbound = task({
 
       if (humanDecision.action === "DISMISS") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        await reconcileCaseAfterDismiss(caseId);
         await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed", proposalId: gate.proposalId };
       }
@@ -519,6 +522,9 @@ export const processInbound = task({
             await db.updateProposal(adjustedGate.proposalId, {
               status: adjustResult.output.action === "DISMISS" ? "DISMISSED" : "WITHDRAWN",
             });
+            if (adjustResult.output.action === "DISMISS") {
+              await reconcileCaseAfterDismiss(caseId);
+            }
             await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
             return { status: adjustResult.output.action.toLowerCase(), proposalId: adjustedGate.proposalId };
           }

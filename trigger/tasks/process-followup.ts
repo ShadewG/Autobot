@@ -17,6 +17,7 @@ import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger } from "../lib/db";
+import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 
 async function waitForHumanDecision(
@@ -191,6 +192,7 @@ export const processFollowup = task({
 
       if (humanDecision.action !== "APPROVE") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        await reconcileCaseAfterDismiss(caseId);
         await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed", proposalId: gate.proposalId };
       }

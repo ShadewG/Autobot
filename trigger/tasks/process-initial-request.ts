@@ -18,6 +18,7 @@ import { scheduleFollowups } from "../steps/schedule-followups";
 import { commitState } from "../steps/commit-state";
 import { researchContext, emptyResearchContext } from "../steps/research-context";
 import db, { logger } from "../lib/db";
+import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
 
 const RESEARCH_INSTRUCTION_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
@@ -156,6 +157,7 @@ export const processInitialRequest = task({
 
           if (humanDecision.action === "DISMISS") {
             await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await reconcileCaseAfterDismiss(caseId);
             await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }
@@ -302,6 +304,7 @@ export const processInitialRequest = task({
 
       if (humanDecision.action === "DISMISS") {
         await db.updateProposal(draft.proposalId, { status: "DISMISSED" });
+        await reconcileCaseAfterDismiss(caseId);
         await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed", proposalId: draft.proposalId };
       }
@@ -355,6 +358,7 @@ export const processInitialRequest = task({
 
           if (adjustDecision.action === "DISMISS") {
             await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await reconcileCaseAfterDismiss(caseId);
             await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }

@@ -322,6 +322,8 @@ export const submitPortal = task({
       await db.updateCaseStatus(caseId, "sent", {
         substatus: `Portal submission completed (${statusText})`,
         send_date: caseData.send_date || new Date(),
+        requires_human: false,
+        pause_reason: null,
       });
 
       await db.updateCasePortalStatus(caseId, {
