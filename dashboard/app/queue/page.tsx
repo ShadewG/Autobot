@@ -20,7 +20,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { fetcher, proposalsAPI, type ProposalListItem, type ProposalsListResponse } from "@/lib/api";
+import { fetchAPI, fetcher, proposalsAPI, type ProposalListItem, type ProposalsListResponse } from "@/lib/api";
 import { cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
 import {
   CheckCircle,
@@ -39,6 +39,7 @@ import {
   MessageSquare,
   RefreshCw,
   Globe,
+  Search,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -88,11 +89,15 @@ function SentimentBadge({ sentiment }: { sentiment: string | null }) {
 function ProposalCard({
   proposal,
   onDecision,
+  onLookupContact,
   isProcessing,
+  isLookingUpContact,
 }: {
   proposal: ProposalListItem;
   onDecision: (id: number, action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string) => Promise<void>;
+  onLookupContact: (caseId: number) => Promise<void>;
   isProcessing: boolean;
+  isLookingUpContact: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showAdjust, setShowAdjust] = useState(false);
@@ -121,6 +126,7 @@ function ProposalCard({
     onDecision(proposal.id, 'WITHDRAW');
     setShowWithdraw(false);
   };
+  const handleLookupContact = () => onLookupContact(proposal.case_id);
 
   return (
     <Card className="mb-4">
@@ -267,6 +273,21 @@ function ProposalCard({
           </Button>
 
           <Button
+            onClick={handleLookupContact}
+            disabled={isProcessing || isLookingUpContact}
+            variant="outline"
+            size="sm"
+            className="gap-1"
+          >
+            {isLookingUpContact ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+            Research Contacts
+          </Button>
+
+          <Button
             onClick={handleDismiss}
             disabled={isProcessing}
             variant="ghost"
@@ -345,6 +366,7 @@ function ProposalCard({
 
 export default function QueuePage() {
   const [processingId, setProcessingId] = useState<number | null>(null);
+  const [researchingCaseId, setResearchingCaseId] = useState<number | null>(null);
 
   const { data, error, isLoading, mutate } = useSWR<ProposalsListResponse>(
     "/proposals",
@@ -372,6 +394,21 @@ export default function QueuePage() {
       // Could add toast notification here
     } finally {
       setProcessingId(null);
+    }
+  };
+
+  const handleLookupContact = async (caseId: number) => {
+    setResearchingCaseId(caseId);
+    try {
+      await fetchAPI(`/monitor/case/${caseId}/lookup-contact`, {
+        method: "POST",
+        body: JSON.stringify({ forceSearch: true }),
+      });
+      mutate();
+    } catch (err) {
+      console.error("Contact lookup failed:", err);
+    } finally {
+      setResearchingCaseId(null);
     }
   };
 
@@ -432,7 +469,9 @@ export default function QueuePage() {
               key={proposal.id}
               proposal={proposal}
               onDecision={handleDecision}
+              onLookupContact={handleLookupContact}
               isProcessing={processingId === proposal.id}
+              isLookingUpContact={researchingCaseId === proposal.case_id}
             />
           ))}
         </div>
