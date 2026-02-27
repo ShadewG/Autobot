@@ -271,8 +271,7 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
               <div>
                 <p className="text-sm text-muted-foreground">Amount</p>
                 <p className="font-medium text-lg">
-                  {request.fee_quote.currency === "USD" ? "$" : request.fee_quote.currency}
-                  {request.fee_quote.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  ${request.fee_quote.amount?.toLocaleString(undefined, { minimumFractionDigits: 2 }) ?? "0.00"}
                 </p>
               </div>
               <div>
@@ -298,37 +297,46 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
             {request.fee_quote.breakdown && request.fee_quote.breakdown.length > 0 && (
               <>
                 <Separator />
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Item</TableHead>
-                      <TableHead>Qty</TableHead>
-                      <TableHead>Rate</TableHead>
-                      <TableHead className="text-right">Subtotal</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {request.fee_quote.breakdown.map((item, i) => (
-                      <TableRow key={i}>
-                        <TableCell className="text-sm">
-                          {item.item}
-                          {item.description && (
-                            <span className="text-xs text-muted-foreground block">{item.description}</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {item.quantity ?? "—"} {item.unit_type?.toLowerCase() ?? ""}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {item.unit_rate != null ? `$${item.unit_rate.toFixed(2)}` : "—"}
-                        </TableCell>
-                        <TableCell className="text-sm text-right">
-                          ${item.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                        </TableCell>
-                      </TableRow>
+                {typeof request.fee_quote.breakdown[0] === "string" ? (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium">Breakdown</p>
+                    {(request.fee_quote.breakdown as unknown as string[]).map((line, i) => (
+                      <p key={i} className="text-sm text-muted-foreground">{line}</p>
                     ))}
-                  </TableBody>
-                </Table>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Item</TableHead>
+                        <TableHead>Qty</TableHead>
+                        <TableHead>Rate</TableHead>
+                        <TableHead className="text-right">Subtotal</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {request.fee_quote.breakdown.map((item, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-sm">
+                            {item.item}
+                            {item.description && (
+                              <span className="text-xs text-muted-foreground block">{item.description}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {item.quantity ?? "—"} {item.unit_type?.toLowerCase() ?? ""}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {item.unit_rate != null ? `$${item.unit_rate.toFixed(2)}` : "—"}
+                          </TableCell>
+                          <TableCell className="text-sm text-right">
+                            ${item.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </>
             )}
 
