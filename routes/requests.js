@@ -2207,7 +2207,7 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
-            const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+            const { wait: triggerWait } = require('@trigger.dev/sdk');
             await triggerWait.completeToken(proposal.waitpoint_token, {
                 action: 'APPROVE',
                 proposalId: proposalId
@@ -2291,7 +2291,7 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
-            const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+            const { wait: triggerWait } = require('@trigger.dev/sdk');
             await triggerWait.completeToken(proposal.waitpoint_token, {
                 action: 'ADJUST',
                 proposalId: proposalId,
@@ -2369,7 +2369,7 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
-            const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+            const { wait: triggerWait } = require('@trigger.dev/sdk');
             await triggerWait.completeToken(proposal.waitpoint_token, {
                 action: 'DISMISS',
                 proposalId: proposalId,
@@ -2563,7 +2563,7 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
                 [requestId]
             );
             if (tokenRows.rows.length > 0) {
-                const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+                const { wait: triggerWait } = require('@trigger.dev/sdk');
                 for (const row of tokenRows.rows) {
                     try {
                         await triggerWait.completeToken(row.waitpoint_token, {
