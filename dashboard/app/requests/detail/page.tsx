@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, Suspense, useMemo } from "react";
+import { useCallback, useEffect, useState, Suspense, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -281,16 +281,18 @@ function RequestDetailContent() {
   const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
 
+  const [pollingUntil, setPollingUntil] = useState<number>(0);
+  const refreshInterval = Date.now() < pollingUntil ? 3000 : 0;
+
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
-    fetcher
+    fetcher,
+    { refreshInterval }
   );
 
   // Set nextAction from data
   useEffect(() => {
-    if (data?.next_action_proposal) {
-      setNextAction(data.next_action_proposal);
-    }
+    setNextAction(data?.next_action_proposal || null);
   }, [data?.next_action_proposal]);
 
   // Keep edited draft in sync when pending_proposal changes
@@ -317,7 +319,7 @@ function RequestDetailContent() {
       const randomDelay = minDelay + Math.random() * (maxDelay - minDelay);
       const estimated = new Date(Date.now() + randomDelay);
       setScheduledSendAt(result?.scheduled_send_at || estimated.toISOString());
-      mutate();
+      optimisticClear();
     } finally {
       setIsApproving(false);
     }
@@ -391,7 +393,7 @@ function RequestDetailContent() {
         window.open(data.request.portal_url, "_blank");
       }
       await requestsAPI.resolveReview(id, action, instruction);
-      mutate();
+      optimisticClear();
     } catch (error: any) {
       console.error("Error resolving review:", error);
       alert(error.message || "Failed to resolve review. Please try again.");
@@ -416,7 +418,7 @@ function RequestDetailContent() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
-      mutate();
+      optimisticClear();
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -434,7 +436,7 @@ function RequestDetailContent() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
-      mutate();
+      optimisticClear();
     } catch (e: any) {
       alert(e.message);
     }
@@ -452,7 +454,7 @@ function RequestDetailContent() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
       setPendingAdjustModalOpen(false);
-      mutate();
+      optimisticClear();
     } catch (e: any) {
       alert(e.message);
     } finally {
@@ -540,8 +542,28 @@ function RequestDetailContent() {
   // Fetch agent runs for the Runs tab
   const { data: runsData, mutate: mutateRuns } = useSWR<{ runs: AgentRun[] }>(
     id ? `/requests/${id}/agent-runs` : null,
-    fetcher
+    fetcher,
+    { refreshInterval }
   );
+
+  const startPolling = useCallback(() => {
+    setPollingUntil(Date.now() + 30_000);
+  }, []);
+
+  const optimisticClear = useCallback(() => {
+    mutate(
+      (cur) => cur ? {
+        ...cur,
+        request: { ...cur.request, requires_human: false, pause_reason: null },
+        pending_proposal: null,
+        next_action_proposal: null,
+        review_state: 'PROCESSING',
+      } : cur,
+      { revalidate: true }
+    );
+    mutateRuns();
+    startPolling();
+  }, [mutate, mutateRuns, startPolling]);
 
   const handleGenerateInitialRequest = async () => {
     if (!id) return;
