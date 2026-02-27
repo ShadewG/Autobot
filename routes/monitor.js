@@ -553,6 +553,10 @@ async function processProposalDecision(proposalId, action, { instruction = null,
                 human_decision: humanDecision,
                 status: 'DECISION_RECEIVED'
             });
+            await db.query(
+                `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
+                [caseId]
+            );
             await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
             await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
@@ -577,6 +581,10 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
     });
+    await db.query(
+        `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
+        [caseId]
+    );
     await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
     let handle;

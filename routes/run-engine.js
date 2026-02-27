@@ -426,6 +426,10 @@ router.post('/proposals/:id/decision', async (req, res) => {
         human_decision: humanDecision,
         status: 'DECISION_RECEIVED'
       });
+      await db.query(
+        `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
+        [caseId]
+      );
 
       // Complete the waitpoint token via direct HTTP (SDK completeToken is unreliable
       // for tokens created inside running tasks — returns sporadic 500 errors)
@@ -582,6 +586,10 @@ router.post('/proposals/:id/decision', async (req, res) => {
       human_decision: humanDecision,
       status: 'DECISION_RECEIVED'
     });
+    await db.query(
+      `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
+      [caseId]
+    );
 
     let handle;
     try {
