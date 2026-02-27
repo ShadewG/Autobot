@@ -53,6 +53,17 @@ const NOTION_STATUS_MAP = {
     'id_state': 'ID State',
 };
 
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableNotionError(error) {
+    const status = Number(error?.status);
+    const message = String(error?.message || '');
+    if ([429, 500, 502, 503, 504].includes(status)) return true;
+    return /(rate limit|temporar|timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN)/i.test(message);
+}
+
 const POLICE_DEPARTMENT_FIELD_SPECS = [
     { name: 'Department Name' },
     { name: 'Address' },
@@ -90,6 +101,7 @@ class NotionService {
         this.databaseSchema = null;
         this.databaseSchemaFetchedAt = 0;
         this.submissionMemoryCache = new Map(); // pageId -> { data, fetchedAt }
+        this.statusSyncQueues = new Map(); // caseId -> { running, pending, promise }
         this.enableAINormalization = process.env.ENABLE_NOTION_AI_NORMALIZATION !== 'false';
     }
 
@@ -426,6 +438,26 @@ class NotionService {
             }
         }
         return null;
+    }
+
+    async resolveAssignedUserId(assignedPerson) {
+        if (!assignedPerson) return null;
+        const rawName = String(assignedPerson).trim();
+        if (!rawName) return null;
+
+        const nameMap = { 'Samuel Hylton': 'Sam' };
+        const localName = nameMap[rawName] || rawName;
+
+        // Preferred: explicit user.notion_name mapping from Settings.
+        let user = await db.getUserByNotionName(rawName);
+        if (!user && localName !== rawName) {
+            user = await db.getUserByNotionName(localName);
+        }
+        // Fallback: legacy local display-name mapping.
+        if (!user) {
+            user = await db.getUserByName(localName);
+        }
+        return user ? user.id : null;
     }
 
     enrichCaseFromNarrative(caseData) {
@@ -1409,12 +1441,25 @@ Look for a records division email, FOIA email, or general agency email that acce
                 return null;
             }
 
-            const response = await this.notion.pages.update({
-                page_id: pageId,
-                properties
-            });
-
-            return response;
+            const maxAttempts = 4;
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    const response = await this.notion.pages.update({
+                        page_id: pageId,
+                        properties
+                    });
+                    return response;
+                } catch (error) {
+                    const retryable = isRetryableNotionError(error);
+                    if (!retryable || attempt === maxAttempts) {
+                        throw error;
+                    }
+                    const delayMs = Math.min(4000, 300 * Math.pow(2, attempt - 1));
+                    console.warn(`[Notion] updatePage retry ${attempt}/${maxAttempts} for page ${pageId} in ${delayMs}ms: ${error.message}`);
+                    await sleep(delayMs);
+                }
+            }
+            return null;
         } catch (error) {
             console.error('Error updating Notion page:', error);
             throw error;
@@ -1494,12 +1539,11 @@ Look for a records division email, FOIA email, or general agency email that acce
                     // Resolve assigned person to user_id
                     if (notionCase.assigned_person) {
                         try {
-                            const nameMap = { 'Samuel Hylton': 'Sam' };
-                            const localName = nameMap[notionCase.assigned_person] || notionCase.assigned_person;
-                            const user = await db.getUserByName(localName);
-                            if (user) {
-                                notionCase.user_id = user.id;
-                                console.log(`Assigned case to user: ${user.name} (${user.email})`);
+                            const userId = await this.resolveAssignedUserId(notionCase.assigned_person);
+                            if (userId) {
+                                notionCase.user_id = userId;
+                                const user = await db.getUserById(userId);
+                                console.log(`Assigned case to user: ${user?.name || userId} (${user?.email || 'n/a'})`);
                             } else {
                                 console.warn(`No matching user for Notion assignee: ${notionCase.assigned_person}`);
                             }
@@ -1572,6 +1616,38 @@ Look for a records division email, FOIA email, or general agency email that acce
      * Update Notion page status based on our database changes
      */
     async syncStatusToNotion(caseId) {
+        const key = String(caseId);
+        let queueState = this.statusSyncQueues.get(key);
+        if (!queueState) {
+            queueState = { running: false, pending: false, promise: null };
+            this.statusSyncQueues.set(key, queueState);
+        }
+
+        queueState.pending = true;
+        if (queueState.running) {
+            return queueState.promise;
+        }
+
+        queueState.running = true;
+        queueState.promise = (async () => {
+            try {
+                while (queueState.pending) {
+                    queueState.pending = false;
+                    await this._syncStatusToNotion(caseId);
+                }
+            } finally {
+                queueState.running = false;
+                queueState.promise = null;
+                if (!queueState.pending) {
+                    this.statusSyncQueues.delete(key);
+                }
+            }
+        })();
+
+        return queueState.promise;
+    }
+
+    async _syncStatusToNotion(caseId) {
         try {
             const caseData = await db.getCaseById(caseId);
             if (!caseData) {
@@ -1683,12 +1759,15 @@ Look for a records division email, FOIA email, or general agency email that acce
             'portal_in_progress': 'Portal Submission',
             'portal_submission_failed': 'Portal Issue',
             'needs_phone_call': 'Needs Phone Call',
+            'cancelled': 'Completed',
             'pending': 'Ready to Send',
             'pending_fee_decision': 'Needs Human Approval',
             'id_state': 'ID State',
         };
 
-        return statusMap[internalStatus] || internalStatus;
+        if (statusMap[internalStatus]) return statusMap[internalStatus];
+        console.warn(`[Notion] No Live Status mapping for internal status "${internalStatus}"`);
+        return null;
     }
 
     /**
@@ -2177,13 +2256,11 @@ Look for a records division email, FOIA email, or general agency email that acce
             // Resolve assigned person to user_id
             if (notionCase.assigned_person) {
                 try {
-                    // Map Notion display names to local user names
-                    const nameMap = { 'Samuel Hylton': 'Sam' };
-                    const localName = nameMap[notionCase.assigned_person] || notionCase.assigned_person;
-                    const user = await db.getUserByName(localName);
-                    if (user) {
-                        notionCase.user_id = user.id;
-                        console.log(`Assigned case to user: ${user.name} (${user.email})`);
+                    const userId = await this.resolveAssignedUserId(notionCase.assigned_person);
+                    if (userId) {
+                        notionCase.user_id = userId;
+                        const user = await db.getUserById(userId);
+                        console.log(`Assigned case to user: ${user?.name || userId} (${user?.email || 'n/a'})`);
                     } else {
                         console.warn(`No matching user for Notion assignee: ${notionCase.assigned_person}`);
                     }
@@ -2378,8 +2455,9 @@ Look for a records division email, FOIA email, or general agency email that acce
         assignIfEmpty('additional_details', normalized.additional_details);
 
         if (normalized.records_requested?.length) {
-            if (!updated.requested_records || updated.requested_records.length === 0 ||
-                (Array.isArray(updated.requested_records) && updated.requested_records.length <= 2 && updated.requested_records.includes('Body cam footage'))) {
+            const current = Array.isArray(updated.requested_records) ? updated.requested_records : [];
+            // Upgrade if empty, or if only 1-2 generic items (AI normalization is more thorough)
+            if (current.length === 0 || (current.length <= 2 && normalized.records_requested.length > current.length)) {
                 updated.requested_records = normalized.records_requested;
             }
         }
