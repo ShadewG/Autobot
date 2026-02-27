@@ -80,6 +80,34 @@ export async function executeAction(
     };
   }
 
+  // If this proposal already has a queued/sent execution, treat retries as idempotent success.
+  // This prevents duplicate waiting runs from flipping a legitimately sent proposal to BLOCKED.
+  const existingExecution = await db.query(
+    `SELECT id, status, action_type, created_at
+     FROM executions
+     WHERE proposal_id = $1
+       AND status IN ('QUEUED', 'SENT')
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [proposalId]
+  );
+  if (existingExecution.rows.length > 0) {
+    const prior = existingExecution.rows[0];
+    logger.info("Skipping duplicate executeAction; proposal already has execution", {
+      caseId,
+      proposalId,
+      actionType,
+      existingExecutionId: prior.id,
+      existingExecutionStatus: prior.status,
+    });
+    await db.updateProposal(proposalId, { status: "EXECUTED", executedAt: new Date() });
+    await db.updateCaseStatus(caseId, "awaiting_response", { requires_human: false, pause_reason: null });
+    return {
+      actionExecuted: true,
+      executionResult: { action: "already_sent_for_proposal", executionId: prior.id },
+    };
+  }
+
   // OUTBOUND RATE LIMIT: max 1 outbound per case per cooldown period
   const OUTBOUND_ACTIONS = [
     "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
