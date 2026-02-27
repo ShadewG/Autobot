@@ -91,6 +91,7 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
   // Trigger can briefly return PENDING_VERSION during worker promotion windows.
   // Retry once with a new idempotency key to avoid leaving local runs parked in queued.
   if (!verify.started && verify.status === 'PENDING_VERSION') {
+    const originalPendingVersionRunId = handle.id;
     await sleep(3500);
     const retryOptions = {
       ...triggerOptions,
@@ -103,10 +104,16 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
     if (runId) {
       await mergeRunMetadata(runId, {
         pending_version_retry: true,
+        pending_version_original_run_id: originalPendingVersionRunId,
         pending_version_retry_trigger_run_id: retryHandle.id,
         pending_version_retry_status: verify.status,
         pending_version_retry_started: verify.started,
-        pending_version_retry_at: new Date().toISOString()
+        pending_version_retry_at: new Date().toISOString(),
+        // Keep canonical tracking fields aligned with the retry handle.
+        triggerRunId: retryHandle.id,
+        trigger_status_verified: verify.status,
+        trigger_started: verify.started,
+        trigger_verified_at: new Date().toISOString()
       });
     }
 
