@@ -105,6 +105,16 @@ export default function RequestsPage() {
     }
   };
 
+  const handleRepair = async (id: string) => {
+    try {
+      await requestsAPI.resetToLastInbound(id);
+      mutate();
+    } catch (err) {
+      console.error("Failed to repair case state:", err);
+      alert("Failed to repair and requeue case");
+    }
+  };
+
   // Split requests into 3 categories
   const { paused, waiting, scheduled } = useMemo(() => {
     if (!data?.requests) {
@@ -194,6 +204,7 @@ export default function RequestsPage() {
           onApprove={handleApprove}
           onAdjust={handleAdjust}
           onSnooze={handleSnooze}
+          onRepair={handleRepair}
         />
       )}
     </div>

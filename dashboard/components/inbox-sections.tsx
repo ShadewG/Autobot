@@ -24,6 +24,7 @@ interface InboxSectionsProps {
   onApprove: (id: string) => void;
   onAdjust: (id: string) => void;
   onSnooze: (id: string) => void;
+  onRepair: (id: string) => void;
 }
 
 export function InboxSections({
@@ -34,6 +35,7 @@ export function InboxSections({
   onApprove,
   onAdjust,
   onSnooze,
+  onRepair,
 }: InboxSectionsProps) {
   const [showCompleted, setShowCompleted] = useState(false);
   // Filter state
@@ -190,6 +192,7 @@ export function InboxSections({
             onApprove={onApprove}
             onAdjust={onAdjust}
             onSnooze={onSnooze}
+            onRepair={onRepair}
           />
         </CardContent>
       </Card>
@@ -203,7 +206,7 @@ export function InboxSections({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <RequestTable requests={filteredWaiting} variant="waiting" />
+          <RequestTable requests={filteredWaiting} variant="waiting" onRepair={onRepair} />
         </CardContent>
       </Card>
 
@@ -217,7 +220,7 @@ export function InboxSections({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <RequestTable requests={filteredScheduled} variant="scheduled" />
+            <RequestTable requests={filteredScheduled} variant="scheduled" onRepair={onRepair} />
           </CardContent>
         </Card>
       )}
@@ -242,7 +245,7 @@ export function InboxSections({
           </CardHeader>
           {showCompleted && (
             <CardContent>
-              <RequestTable requests={completed} variant="completed" />
+              <RequestTable requests={completed} variant="completed" onRepair={onRepair} />
             </CardContent>
           )}
         </Card>

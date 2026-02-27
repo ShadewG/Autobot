@@ -18,6 +18,7 @@ interface RequestTableProps {
   onApprove?: (id: string) => void;
   onAdjust?: (id: string) => void;
   onSnooze?: (id: string) => void;
+  onRepair?: (id: string) => void;
 }
 
 export function RequestTable({
@@ -26,6 +27,7 @@ export function RequestTable({
   onApprove,
   onAdjust,
   onSnooze,
+  onRepair,
 }: RequestTableProps) {
   if (requests.length === 0) {
     return (
@@ -72,6 +74,7 @@ export function RequestTable({
             onApprove={onApprove}
             onAdjust={onAdjust}
             onSnooze={onSnooze}
+            onRepair={onRepair}
           />
         ))}
       </TableBody>

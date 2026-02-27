@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { AtRiskBadge } from "./at-risk-badge";
 import type { RequestListItem } from "@/lib/types";
 import type { TableVariant } from "./request-table";
 import { formatRelativeTime, truncate, cn } from "@/lib/utils";
-import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle, CheckCircle2, XCircle, FileText, Loader2 } from "lucide-react";
+import { Eye, ArrowRight, DollarSign, AlertTriangle, HelpCircle, CheckCircle2, XCircle, FileText, Loader2, Wrench, ChevronDown, ChevronUp } from "lucide-react";
 
 interface RequestRowProps {
   request: RequestListItem;
@@ -18,6 +19,7 @@ interface RequestRowProps {
   onApprove?: (id: string) => void;
   onAdjust?: (id: string) => void;
   onSnooze?: (id: string) => void;
+  onRepair?: (id: string) => void;
 }
 
 // Format the due date with overdue severity
@@ -69,36 +71,101 @@ function formatDueWithSeverity(request: RequestListItem): {
   };
 }
 
-function formatActiveRun(request: RequestListItem): string | null {
-  // Use review_state for authoritative "applying decision" indicator
+function isRunActive(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return ["created", "queued", "processing", "waiting", "running"].includes(status.toLowerCase());
+}
+
+function formatRunAge(startedAt: string | null | undefined): string | null {
+  if (!startedAt) return null;
+  const started = new Date(startedAt).getTime();
+  if (Number.isNaN(started)) return null;
+  const mins = Math.floor((Date.now() - started) / (1000 * 60));
+  if (mins < 1) return "<1m";
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function deriveNowLine(request: RequestListItem): {
+  text: string;
+  tone: "blue" | "amber" | "green";
+  isRunning: boolean;
+} {
+  const runActive = isRunActive(request.active_run_status);
+  const runAge = formatRunAge(request.active_run_started_at);
+
   if (request.review_state === "DECISION_APPLYING") {
-    return "Applying decision...";
+    return {
+      text: runAge ? `Applying your decision (${runAge})` : "Applying your decision",
+      tone: "blue",
+      isRunning: true,
+    };
+  }
+  if (request.review_state === "PROCESSING" && runActive) {
+    return {
+      text: runAge ? `Agent working (${runAge})` : "Agent working",
+      tone: "blue",
+      isRunning: true,
+    };
+  }
+  if (request.review_state === "DECISION_REQUIRED" || request.requires_human) {
+    return {
+      text: "Decision required",
+      tone: "amber",
+      isRunning: false,
+    };
+  }
+  if (request.review_state === "WAITING_AGENCY") {
+    return {
+      text: "Waiting on agency response",
+      tone: "green",
+      isRunning: false,
+    };
   }
 
   const portalTaskStatus = String(request.active_portal_task_status || "").toLowerCase();
   if (portalTaskStatus === "pending" || portalTaskStatus === "in_progress") {
-    return "Running: processing portal submission";
+    return {
+      text: "Processing portal submission",
+      tone: "blue",
+      isRunning: true,
+    };
   }
 
-  if (!request.active_run_status) return null;
-  const status = request.active_run_status.toLowerCase();
-  if (!["created", "queued", "processing", "waiting", "running"].includes(status)) return null;
-
-  const trigger = (request.active_run_trigger_type || "").toLowerCase();
-  let activity = "working";
-  if (trigger.includes("human_review_resolution")) activity = "applying review decision";
-  else if (trigger.includes("human_review")) activity = "processing approval";
-  else if (trigger.includes("inbound")) activity = "processing inbound";
-  else if (trigger.includes("followup")) activity = "processing follow-up";
-  else if (trigger.includes("portal")) activity = "processing portal task";
-
-  if (status === "waiting") {
-    return request.requires_human
-      ? "Paused: awaiting human decision"
-      : "Paused: waiting for next step";
+  if (runActive) {
+    return {
+      text: runAge ? `Agent processing (${runAge})` : "Agent processing",
+      tone: "blue",
+      isRunning: true,
+    };
   }
-  if (status === "queued" || status === "created") return `Queued: ${activity}`;
-  return `Running: ${activity}`;
+
+  return {
+    text: "Monitoring case",
+    tone: "green",
+    isRunning: false,
+  };
+}
+
+function getStateMismatch(request: RequestListItem): string | null {
+  const runActive = isRunActive(request.active_run_status);
+  if ((request.review_state === "PROCESSING" || request.review_state === "DECISION_APPLYING") && request.requires_human) {
+    return "Marked as needs decision while actively processing";
+  }
+  if (request.review_state === "DECISION_REQUIRED" && runActive) {
+    return "Decision-required case also has an active run";
+  }
+  if (request.requires_human && !request.pause_reason && request.review_state === "DECISION_REQUIRED") {
+    return "Missing review reason";
+  }
+  return null;
+}
+
+function getReviewButtonLabel(request: RequestListItem): string {
+  if (request.pause_reason === "FEE_QUOTE") return "Review fee";
+  if (request.pause_reason === "DENIAL") return "Review denial";
+  if (request.pause_reason === "SCOPE") return "Review scope";
+  return "Review";
 }
 
 // Outcome badge for completed cases
@@ -137,8 +204,10 @@ export function RequestRow({
   onApprove,
   onAdjust,
   onSnooze,
+  onRepair,
 }: RequestRowProps) {
   const router = useRouter();
+  const [showDetails, setShowDetails] = useState(false);
   const isPaused = variant === "paused";
   const isCompleted = variant === "completed";
 
@@ -193,7 +262,12 @@ export function RequestRow({
   };
 
   const inboundSummary = getInboundSummary();
-  const activeRunSummary = formatActiveRun(request);
+  const nowLine = deriveNowLine(request);
+  const mismatch = getStateMismatch(request);
+  const reviewButtonLabel = getReviewButtonLabel(request);
+  const activityTime = request.last_activity_at
+    ? new Date(request.last_activity_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+    : null;
 
   return (
     <TableRow
@@ -226,11 +300,32 @@ export function RequestRow({
               {inboundSummary}
             </span>
           )}
-          {activeRunSummary && (
-            <span className="text-xs text-blue-300 flex items-center gap-1 font-medium">
+          <span className={cn(
+            "text-xs flex items-center gap-1 font-medium",
+            nowLine.tone === "blue" && "text-blue-300",
+            nowLine.tone === "amber" && "text-amber-300",
+            nowLine.tone === "green" && "text-emerald-300"
+          )}>
+            {nowLine.isRunning ? (
               <Loader2 className="h-3 w-3 animate-spin" />
-              {activeRunSummary}
+            ) : (
+              <CheckCircle2 className="h-3 w-3" />
+            )}
+            {nowLine.text}
+          </span>
+          {mismatch && (
+            <span className="text-xs text-red-300 flex items-center gap-1 font-medium">
+              <AlertTriangle className="h-3 w-3" />
+              {mismatch}
             </span>
+          )}
+          {showDetails && (
+            <div className="text-[11px] text-muted-foreground pt-1 space-y-0.5">
+              <p>Case status: {request.status.replace(/_/g, " ")}</p>
+              <p>Review state: {request.review_state || "IDLE"}</p>
+              {request.active_run_status && <p>Run: {request.active_run_status}</p>}
+              {activityTime && <p>Last activity: {activityTime}</p>}
+            </div>
           )}
         </div>
       </TableCell>
@@ -329,27 +424,49 @@ export function RequestRow({
 
       {/* Action - context-aware */}
       <TableCell onClick={(e) => e.stopPropagation()} className="text-right">
-        {isPaused ? (
+        <div className="flex items-center justify-end gap-1.5">
           <Button
-            size="sm"
-            variant="default"
-            className="h-7 px-3"
-            onClick={() => onApprove?.(request.id)}
-          >
-            Review
-            <ArrowRight className="h-3.5 w-3.5 ml-1" />
-          </Button>
-        ) : (
-          <Button
-            size="sm"
+            size="icon"
             variant="ghost"
-            className="h-7 px-3"
-            onClick={handleClick}
+            className="h-7 w-7"
+            onClick={() => setShowDetails((v) => !v)}
+            title={showDetails ? "Hide details" : "Show details"}
           >
-            <Eye className="h-3.5 w-3.5 mr-1" />
-            Open
+            {showDetails ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
           </Button>
-        )}
+          {mismatch && onRepair && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-xs text-amber-300 border-amber-700/50"
+              onClick={() => onRepair(request.id)}
+            >
+              <Wrench className="h-3.5 w-3.5 mr-1" />
+              Repair
+            </Button>
+          )}
+          {isPaused ? (
+            <Button
+              size="sm"
+              variant="default"
+              className="h-7 px-3"
+              onClick={() => onApprove?.(request.id)}
+            >
+              {reviewButtonLabel}
+              <ArrowRight className="h-3.5 w-3.5 ml-1" />
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-3"
+              onClick={handleClick}
+            >
+              <Eye className="h-3.5 w-3.5 mr-1" />
+              Open
+            </Button>
+          )}
+        </div>
       </TableCell>
     </TableRow>
   );
