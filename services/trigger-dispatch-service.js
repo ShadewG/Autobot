@@ -64,14 +64,10 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
   const source = context.source || 'app_dispatch';
   const triggerOptions = withStableIdempotency(options, taskId, runId, caseId);
 
-  // Trigger.dev v4 expects a queue identifier string in trigger options.
-  // Keep queue options as a string (e.g. "case-25169") to avoid schema validation errors.
-  if (triggerOptions.queue && typeof triggerOptions.queue !== 'string') {
-    if (typeof triggerOptions.queue.name === 'string') {
-      triggerOptions.queue = triggerOptions.queue.name;
-    } else {
-      delete triggerOptions.queue;
-    }
+  // Use task-level/default queueing only. Avoid per-trigger queue overrides.
+  // This prevents stale custom queue routing and keeps run scheduling predictable.
+  if (Object.prototype.hasOwnProperty.call(triggerOptions, 'queue')) {
+    delete triggerOptions.queue;
   }
 
   const handle = await tasks.trigger(taskId, payload, triggerOptions);
@@ -187,7 +183,6 @@ async function recoverStaleQueuedRuns({ maxAgeMinutes = 5, limit = 25, maxAttemp
     };
     const options = {
       ...originalOptions,
-      queue: originalOptions.queue || `case-${run.case_id}`,
       idempotencyKey: `${taskId}:recovery:${replacementRun.id}`,
       idempotencyKeyTTL: originalOptions.idempotencyKeyTTL || '1h'
     };
