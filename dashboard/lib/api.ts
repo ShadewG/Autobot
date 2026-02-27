@@ -289,6 +289,11 @@ export interface AgentRun {
   duration_seconds?: number;
   is_stuck?: boolean;
   error_message?: string;
+  status_detail?: string | null;
+  failure_category?: 'superseded' | 'error' | null;
+  trigger_status_verified?: string | null;
+  dispatch_source?: string | null;
+  trigger_started?: boolean | null;
   node_trace?: string[];
   trigger_run_id?: string;
   final_action?: string;

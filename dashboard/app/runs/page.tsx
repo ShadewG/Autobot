@@ -239,7 +239,7 @@ export default function RunsPage() {
           </button>
         </div>
       <div className="grid grid-cols-4 gap-4">
-        {(['running', 'completed', 'failed', 'gated'] as const).map((status) => {
+        {(['running', 'completed', 'failed', 'gated', 'cancelled'] as const).map((status) => {
           const count = statsRunsList.filter((r) => r.status === status).length;
           const config = STATUS_CONFIG[status];
           const Icon = config.icon;
@@ -337,8 +337,18 @@ export default function RunsPage() {
                         {duration !== null ? `${duration}s` : "—"}
                       </TableCell>
                       <TableCell>
-                        {run.error_message ? (
-                          <span className="text-xs text-red-400 truncate max-w-[200px] block">
+                        {run.failure_category === "superseded" ? (
+                          <div className="space-y-0.5">
+                            <span className="text-xs text-amber-400 block">
+                              Superseded by newer run
+                            </span>
+                            <span className="text-[11px] text-muted-foreground block truncate max-w-[220px]">
+                              {run.dispatch_source || "unknown source"}
+                              {run.trigger_status_verified ? ` • Trigger: ${run.trigger_status_verified}` : ""}
+                            </span>
+                          </div>
+                        ) : run.error_message ? (
+                          <span className="text-xs text-red-400 truncate max-w-[220px] block">
                             {run.error_message}
                           </span>
                         ) : run.final_action ? (
@@ -476,6 +486,24 @@ export default function RunsPage() {
                         View in Trigger.dev
                         <ExternalLink className="h-3 w-3" />
                       </a>
+                    </div>
+                  )}
+                  {selectedRun.dispatch_source && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Dispatch Source</p>
+                      <p className="text-sm">{selectedRun.dispatch_source}</p>
+                    </div>
+                  )}
+                  {selectedRun.trigger_status_verified && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Trigger Verify</p>
+                      <p className="text-sm">{selectedRun.trigger_status_verified}</p>
+                    </div>
+                  )}
+                  {selectedRun.status_detail && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Status Detail</p>
+                      <p className="text-sm">{selectedRun.status_detail}</p>
                     </div>
                   )}
                   <div>

@@ -2641,7 +2641,7 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             // Mark in-flight/queued runs as failed (superseded by reset).
             const failedRuns = await txQuery(
                 `UPDATE agent_runs
-                 SET status = 'failed',
+                 SET status = 'cancelled',
                      ended_at = NOW(),
                      error = COALESCE(error, 'superseded by reset_to_last_inbound')
                  WHERE case_id = $1

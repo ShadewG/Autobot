@@ -59,7 +59,10 @@ export const processFollowup = task({
 
     // Clear any stale agent_runs that would block the unique constraint
     await db.query(
-      `UPDATE agent_runs SET status = 'failed', error = 'superseded by new trigger.dev run'
+      `UPDATE agent_runs
+       SET status = 'cancelled',
+           ended_at = NOW(),
+           error = 'superseded by new trigger.dev run'
        WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
       [caseId]
     );

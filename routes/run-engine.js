@@ -1080,6 +1080,8 @@ router.get('/runs', async (req, res) => {
       'gated': 'gated',
       'paused': 'gated',
       'waiting': 'gated',
+      'cancelled': 'cancelled',
+      'canceled': 'cancelled',
       'skipped': 'completed'
     };
     return statusMap[dbStatus] || 'running';
@@ -1150,23 +1152,33 @@ router.get('/runs', async (req, res) => {
     const runs = result.rows.map(row => {
       const durationSeconds = row.duration_seconds ? Math.round(parseFloat(row.duration_seconds)) : null;
       const isStuck = row.status === 'running' && durationSeconds && durationSeconds > 120;
+      const errorMessage = row.error_message || null;
+      const isSuperseded = typeof errorMessage === 'string' && errorMessage.toLowerCase().startsWith('superseded by');
+      const uiStatus = isSuperseded ? 'cancelled' : mapRunStatus(row.status);
+      const statusDetail = isSuperseded ? 'Superseded by newer run' : null;
 
       return {
         id: String(row.id),
         case_id: String(row.case_id),
         trigger_type: row.trigger_type || 'unknown',
-        status: mapRunStatus(row.status),
+        status: uiStatus,
         started_at: row.started_at,
         completed_at: row.completed_at,
         duration_seconds: durationSeconds,
         is_stuck: isStuck,
-        error_message: row.error_message,
+        error_message: errorMessage,
+        status_detail: statusDetail,
+        failure_category: isSuperseded ? 'superseded' : (errorMessage ? 'error' : null),
+        trigger_status_verified: row.metadata?.trigger_status_verified || null,
+        dispatch_source: row.metadata?.source || null,
+        trigger_started: row.metadata?.trigger_started ?? null,
         final_action: row.final_action,
         case_name: row.case_name || row.subject_name,
         pause_reason: row.pause_reason,
         gated_reason: row.status === 'gated' ? 'Requires human approval' : null,
         node_trace: row.metadata?.nodeTrace || null,
         trigger_run_id: row.metadata?.triggerRunId || null,
+        metadata: row.metadata || null,
         // Proposal data for gated runs
         proposal_id: row.proposal_id ? String(row.proposal_id) : null,
         proposal: row.proposal_id ? {
