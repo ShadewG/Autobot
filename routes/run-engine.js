@@ -466,6 +466,28 @@ router.post('/proposals/:id/decision', async (req, res) => {
         status: action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED'
       });
       logger.info(`Legacy proposal ${action.toLowerCase()}ed`, { proposalId, action });
+
+      // Reconcile case state so it doesn't stay orphaned in a review status
+      const remaining = await db.query(
+        `SELECT 1 FROM proposals WHERE case_id = $1 AND status IN ('PENDING_APPROVAL','BLOCKED') LIMIT 1`,
+        [caseId]
+      );
+      if (remaining.rows.length === 0) {
+        const caseRow = await db.getCaseById(caseId);
+        if (caseRow?.requires_human) {
+          const REVIEW_STATUSES = ['needs_human_review','needs_phone_call','needs_contact_info','needs_human_fee_approval'];
+          if (REVIEW_STATUSES.includes(caseRow.status)) {
+            const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
+            const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
+            await db.updateCaseStatus(caseId, targetStatus, { requires_human: false, pause_reason: null });
+            logger.info('Reconciled case after legacy dismiss: cleared review state', { caseId, from: caseRow.status, to: targetStatus });
+          } else {
+            await db.updateCaseStatus(caseId, caseRow.status, { requires_human: false, pause_reason: null });
+            logger.info('Reconciled case after legacy dismiss: cleared stale flags', { caseId, status: caseRow.status });
+          }
+        }
+      }
+
       return res.json({
         success: true,
         message: `Proposal ${action.toLowerCase()}ed`,

@@ -285,6 +285,28 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         await db.logActivity('proposal_dismissed', `Proposal #${proposalId} (${proposal.action_type}) dismissed${reason ? ': ' + reason : ''}`, { case_id: caseId, user_id: userId || undefined });
         notify('info', `Proposal dismissed for case ${caseId}`, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action: 'DISMISS' });
+
+        // Reconcile case state so it doesn't stay orphaned in a review status
+        const remaining = await db.query(
+            `SELECT 1 FROM proposals WHERE case_id = $1 AND status IN ('PENDING_APPROVAL','BLOCKED') LIMIT 1`,
+            [caseId]
+        );
+        if (remaining.rows.length === 0) {
+            const caseRow = await db.getCaseById(caseId);
+            if (caseRow?.requires_human) {
+                const REVIEW_STATUSES = ['needs_human_review','needs_phone_call','needs_contact_info','needs_human_fee_approval'];
+                if (REVIEW_STATUSES.includes(caseRow.status)) {
+                    const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
+                    const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
+                    await db.updateCaseStatus(caseId, targetStatus, { requires_human: false, pause_reason: null });
+                    console.log(`[reconcile] Case ${caseId}: cleared review state ${caseRow.status} → ${targetStatus}`);
+                } else {
+                    await db.updateCaseStatus(caseId, caseRow.status, { requires_human: false, pause_reason: null });
+                    console.log(`[reconcile] Case ${caseId}: cleared stale flags (status: ${caseRow.status})`);
+                }
+            }
+        }
+
         return {
             success: true,
             message: 'Proposal dismissed',
