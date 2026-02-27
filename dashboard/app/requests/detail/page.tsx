@@ -71,6 +71,8 @@ import {
   Activity,
   ClipboardPaste,
   Phone,
+  Edit,
+  Trash2,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -78,6 +80,46 @@ import { AutopilotSelector } from "@/components/autopilot-selector";
 import { SafetyHints } from "@/components/safety-hints";
 import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
 import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
+
+const DISMISS_REASONS = [
+  "Wrong action",
+  "Already handled",
+  "Duplicate",
+  "Bad timing",
+  "Not needed",
+];
+
+function getActionExplanation(actionType: string | null, hasDraft: boolean, portalUrl?: string | null, agencyEmail?: string | null): string {
+  if (!actionType) return "Approve this proposal to execute it.";
+  const explanations: Record<string, string> = {
+    SEND_REBUTTAL: "Will send a rebuttal challenging the agency's denial, citing relevant statutes.",
+    SEND_APPEAL: "Will file a formal appeal of the agency's denial.",
+    SEND_FOLLOWUP: "Will send a follow-up email asking for a status update.",
+    SEND_INITIAL_REQUEST: "Will send the initial FOIA/public records request via email.",
+    SEND_CLARIFICATION: "Will respond to the agency's question or request for clarification.",
+    SEND_FEE_WAIVER_REQUEST: "Will request a fee waiver from the agency.",
+    NEGOTIATE_FEE: "Will send a fee negotiation response to the agency.",
+    ACCEPT_FEE: "Will accept the quoted fee and authorize payment.",
+    DECLINE_FEE: "Will decline the quoted fee.",
+    RESPOND_PARTIAL_APPROVAL: "Will respond to the agency's partial approval/release.",
+    SUBMIT_PORTAL: "Will submit the request through the agency's online portal.",
+    SEND_PDF_EMAIL: "Will email a PDF copy of the request to the agency.",
+    RESEARCH_AGENCY: "Will research the agency's contact information and procedures.",
+    REFORMULATE_REQUEST: "Will rewrite and resubmit a narrower/clearer request.",
+    CLOSE_CASE: "Will close this case.",
+    ESCALATE: "The system couldn't determine next steps. Review the reasoning and choose an action.",
+  };
+  let explanation = explanations[actionType] || `Will execute: ${actionType.replace(/_/g, " ").toLowerCase()}.`;
+  if (!hasDraft && actionType.startsWith("SEND")) {
+    explanation += " The AI will generate the draft before sending.";
+  }
+  if (actionType === "SUBMIT_PORTAL" && portalUrl) {
+    explanation += ` Target: ${portalUrl}`;
+  } else if (actionType.startsWith("SEND") && agencyEmail) {
+    explanation += ` To: ${agencyEmail}`;
+  }
+  return explanation;
+}
 
 // Gate icons and colors
 const GATE_DISPLAY: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
@@ -181,6 +223,10 @@ function RequestDetailContent() {
   const [isResolving, setIsResolving] = useState(false);
   const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
+  const [editedBody, setEditedBody] = useState<string>("");
+  const [editedSubject, setEditedSubject] = useState<string>("");
+  const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
+  const [isAdjustingPending, setIsAdjustingPending] = useState(false);
 
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
@@ -193,6 +239,12 @@ function RequestDetailContent() {
       setNextAction(data.next_action_proposal);
     }
   }, [data?.next_action_proposal]);
+
+  // Keep edited draft in sync when pending_proposal changes
+  useEffect(() => {
+    setEditedBody(data?.pending_proposal?.draft_body_text || "");
+    setEditedSubject(data?.pending_proposal?.draft_subject || "");
+  }, [data?.pending_proposal?.draft_body_text, data?.pending_proposal?.draft_subject]);
 
   // Get last inbound message
   const lastInboundMessage = useMemo(() => {
@@ -299,10 +351,15 @@ function RequestDetailContent() {
     if (!data?.pending_proposal) return;
     setIsApproving(true);
     try {
+      const body: Record<string, unknown> = { action: "APPROVE" };
+      // Include any edits the user made to the draft
+      if (editedBody && editedBody !== (data.pending_proposal.draft_body_text || "")) body.draft_body_text = editedBody;
+      if (editedSubject && editedSubject !== (data.pending_proposal.draft_subject || "")) body.draft_subject = editedSubject;
+
       const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "APPROVE" }),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
@@ -314,21 +371,39 @@ function RequestDetailContent() {
     }
   };
 
-  const handleDismissPending = async () => {
+  const handleDismissPending = async (reason: string) => {
     if (!data?.pending_proposal) return;
-    const dismissLabel = isEmailLikePendingAction ? "draft" : "proposal";
-    if (!confirm(`Dismiss this ${dismissLabel}? The AI will need to re-analyze.`)) return;
     try {
       const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "DISMISS" }),
+        body: JSON.stringify({ action: "DISMISS", dismiss_reason: reason }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
       mutate();
     } catch (e: any) {
       alert(e.message);
+    }
+  };
+
+  const handleAdjustPending = async (instruction: string) => {
+    if (!data?.pending_proposal) return;
+    setIsAdjustingPending(true);
+    try {
+      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ADJUST", instruction: instruction.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      setPendingAdjustModalOpen(false);
+      mutate();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setIsAdjustingPending(false);
     }
   };
 
@@ -1015,21 +1090,47 @@ function RequestDetailContent() {
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-3">
-                        {pending_proposal.draft_subject && (
-                          <p className="text-xs font-medium truncate">
-                            {pending_proposal.draft_subject}
-                          </p>
-                        )}
-                        {pending_proposal.draft_body_text && (
-                          <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-[inherit] line-clamp-6 overflow-hidden max-h-32">
-                            {pending_proposal.draft_body_text}
-                          </pre>
-                        )}
-                        {!pending_proposal.draft_subject && !pending_proposal.draft_body_text && (
+                        {/* Draft content — editable */}
+                        {(pending_proposal.draft_body_text || pending_proposal.draft_subject) ? (
+                          <div className="border rounded p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+                                {pending_proposal.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
+                                <span className="ml-2 text-[10px] text-muted-foreground font-normal normal-case">edit inline before approving</span>
+                              </span>
+                              {(editedBody !== (pending_proposal.draft_body_text || "") || editedSubject !== (pending_proposal.draft_subject || "")) && (
+                                <button
+                                  className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                                  onClick={() => {
+                                    setEditedBody(pending_proposal.draft_body_text || "");
+                                    setEditedSubject(pending_proposal.draft_subject || "");
+                                  }}
+                                >
+                                  <RotateCcw className="h-3 w-3" /> Reset to AI Draft
+                                </button>
+                              )}
+                            </div>
+                            {(pending_proposal.draft_subject || editedSubject) && (
+                              <input
+                                className="w-full bg-background border rounded px-2 py-1 text-xs font-[inherit]"
+                                value={editedSubject}
+                                onChange={(e) => setEditedSubject(e.target.value)}
+                                placeholder="Subject"
+                              />
+                            )}
+                            <textarea
+                              className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
+                              rows={12}
+                              value={editedBody}
+                              onChange={(e) => setEditedBody(e.target.value)}
+                            />
+                          </div>
+                        ) : (
                           <p className="text-xs text-muted-foreground">
                             No outbound message draft for this action. Approve to continue processing this proposal.
                           </p>
                         )}
+                        {/* Reasoning */}
                         {Array.isArray(pending_proposal.reasoning) && pending_proposal.reasoning.length > 0 && (
                           <ul className="text-xs text-muted-foreground space-y-1">
                             {formatReasoning(pending_proposal.reasoning, 5).map((r, i) => (
@@ -1040,30 +1141,65 @@ function RequestDetailContent() {
                             ))}
                           </ul>
                         )}
-                        <div className="flex gap-2 pt-1">
-                          <Button
-                            size="sm"
-                            className="flex-1"
-                            onClick={handleApprovePending}
-                            disabled={isApproving}
-                          >
-                            {isApproving ? (
-                              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                            ) : isEmailLikePendingAction ? (
-                              <Send className="h-3 w-3 mr-1.5" />
-                            ) : (
-                              <CheckCircle className="h-3 w-3 mr-1.5" />
-                            )}
-                            {pendingApproveLabel}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={handleDismissPending}
-                            disabled={isApproving}
-                          >
-                            Dismiss
-                          </Button>
+                        {/* Action explanation */}
+                        <p className="text-[10px] text-muted-foreground">
+                          {getActionExplanation(
+                            pending_proposal.action_type,
+                            !!(pending_proposal.draft_body_text),
+                            agency_summary?.portal_url
+                          )}
+                        </p>
+                        {/* Action buttons */}
+                        <div className="space-y-2 pt-1">
+                          <div className="flex gap-2">
+                            <Button
+                              size="sm"
+                              className="flex-1 bg-green-700 hover:bg-green-600 text-white"
+                              onClick={handleApprovePending}
+                              disabled={isApproving || isAdjustingPending}
+                            >
+                              {isApproving ? (
+                                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                              ) : isEmailLikePendingAction ? (
+                                <Send className="h-3 w-3 mr-1.5" />
+                              ) : (
+                                <CheckCircle className="h-3 w-3 mr-1.5" />
+                              )}
+                              {pendingApproveLabel}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setPendingAdjustModalOpen(true)}
+                              disabled={isApproving || isAdjustingPending}
+                            >
+                              <Edit className="h-3 w-3 mr-1" /> Adjust
+                            </Button>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="w-full"
+                                disabled={isApproving || isAdjustingPending}
+                              >
+                                <Trash2 className="h-3 w-3 mr-1" /> Dismiss
+                                <ChevronDown className="h-3 w-3 ml-1" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start">
+                              {DISMISS_REASONS.map((reason) => (
+                                <DropdownMenuItem
+                                  key={reason}
+                                  onClick={() => handleDismissPending(reason)}
+                                  className="text-xs"
+                                >
+                                  {reason}
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </div>
                       </CardContent>
                     </Card>
@@ -1418,6 +1554,15 @@ function RequestDetailContent() {
         onSubmit={handleRevise}
         constraints={request.constraints}
         isLoading={isRevising}
+      />
+
+      {/* Pending Proposal Adjust Modal */}
+      <AdjustModal
+        open={pendingAdjustModalOpen}
+        onOpenChange={setPendingAdjustModalOpen}
+        onSubmit={handleAdjustPending}
+        constraints={request.constraints}
+        isLoading={isAdjustingPending}
       />
 
       {/* Snooze Modal */}
