@@ -1,4 +1,4 @@
-import { task } from "@trigger.dev/sdk/v3";
+import { task } from "@trigger.dev/sdk";
 import db, { logger } from "../lib/db";
 
 // Same imports as process-inbound to test if they hang

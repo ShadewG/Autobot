@@ -7,7 +7,7 @@
  *       gate -> [wait for human?] -> execute -> schedule-followups -> commit
  */
 
-import { task, wait } from "@trigger.dev/sdk/v3";
+import { task, wait } from "@trigger.dev/sdk";
 import { loadContext } from "../steps/load-context";
 import { draftInitialRequest } from "../steps/draft-initial-request";
 import { draftResponse } from "../steps/draft-response";

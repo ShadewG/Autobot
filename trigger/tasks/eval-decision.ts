@@ -9,7 +9,7 @@
  * This is safe (mostly read-only), fast, and reflects real production behavior.
  */
 
-import { task } from "@trigger.dev/sdk/v3";
+import { task } from "@trigger.dev/sdk";
 import { generateObject } from "ai";
 import { z } from "zod";
 import db, { logger } from "../lib/db";

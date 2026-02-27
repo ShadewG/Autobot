@@ -82,6 +82,12 @@ function normalizePauseReason(
     if (v.includes("ID") || v.includes("IDENTITY") || v.includes("VERIF")) return "ID_REQUIRED";
     if (v.includes("SENSITIVE")) return "SENSITIVE";
     if (v.includes("CLOSE") || v.includes("COMPLETE") || v.includes("DONE")) return "CLOSE_ACTION";
+    if (v.includes("UNSPECIFIED") || v.includes("UNKNOWN")) {
+      const sub = (request?.substatus || "").toLowerCase();
+      if (sub.includes("fee") || sub.includes("cost") || sub.includes("deposit")) return "FEE_QUOTE";
+      if (sub.includes("denial") || sub.includes("denied") || sub.includes("reject")) return "DENIAL";
+      if (sub.includes("scope") || sub.includes("clarif") || sub.includes("narrow")) return "SCOPE";
+    }
 
     // Don't return SENSITIVE just for "REVIEW" - that's too generic
     if (!v.includes("REVIEW")) {
@@ -259,8 +265,8 @@ const UNKNOWN_GATE_CONFIG: GateConfig = {
   color: "text-yellow-300",
   bgColor: "bg-yellow-500/10",
   borderColor: "border-yellow-700/50",
-  title: "Unknown Gate",
-  getQuestion: () => "This request is paused but the gate type is unknown. What do you want to do?",
+  title: "Needs Review",
+  getQuestion: () => "This request is paused and needs a review decision. What do you want to do?",
   primaryAction: { label: "Proceed", description: "Resume processing this request." },
   secondaryAction: { label: "Negotiate", description: "Draft an adjustment to the current action." },
   overflowActions: [

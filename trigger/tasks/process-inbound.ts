@@ -7,7 +7,7 @@
  *       [draft -> safety-check -> gate] -> [wait for human?] -> execute -> commit
  */
 
-import { task, wait } from "@trigger.dev/sdk/v3";
+import { task, wait } from "@trigger.dev/sdk";
 import { loadContext } from "../steps/load-context";
 import { classifyInbound } from "../steps/classify-inbound";
 import { updateConstraints } from "../steps/update-constraints";

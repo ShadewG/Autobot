@@ -7,7 +7,7 @@
  * but with NO_RESPONSE classification (since there's no new message).
  */
 
-import { task, wait } from "@trigger.dev/sdk/v3";
+import { task, wait } from "@trigger.dev/sdk";
 import { loadContext } from "../steps/load-context";
 import { decideNextAction } from "../steps/decide-next-action";
 import { draftResponse } from "../steps/draft-response";

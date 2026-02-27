@@ -8,7 +8,7 @@
  * or update case status. Pure read + AI inference.
  */
 
-import { task } from "@trigger.dev/sdk/v3";
+import { task } from "@trigger.dev/sdk";
 import { loadContext } from "../steps/load-context";
 import { classifyMessageContent } from "../steps/classify-inbound";
 import { decideNextAction } from "../steps/decide-next-action";

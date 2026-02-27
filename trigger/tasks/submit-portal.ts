@@ -8,7 +8,7 @@
  * - Idempotency (skip if case already past submission)
  */
 
-import { task, logger } from "@trigger.dev/sdk/v3";
+import { task, logger } from "@trigger.dev/sdk";
 
 // Lazy-load heavy services (same pattern as lib/db.ts)
 function lazy<T>(loader: () => T): () => T {

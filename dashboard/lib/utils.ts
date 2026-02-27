@@ -93,6 +93,7 @@ export const PAUSE_REASON_LABELS: Record<string, string> = {
   ID_REQUIRED: 'ID Required',
   SENSITIVE: 'Sensitive',
   CLOSE_ACTION: 'Close Action',
+  UNSPECIFIED: 'Needs Review',
 };
 
 // Status display labels
