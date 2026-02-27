@@ -61,6 +61,13 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
   const source = context.source || 'app_dispatch';
   const triggerOptions = withStableIdempotency(options, taskId, runId, caseId);
 
+  // Enforce per-case concurrency: only one Trigger.dev task per case at a time
+  if (typeof triggerOptions.queue === 'string') {
+    triggerOptions.queue = { name: triggerOptions.queue, concurrencyLimit: 1 };
+  } else if (triggerOptions.queue?.name && !triggerOptions.queue.concurrencyLimit) {
+    triggerOptions.queue.concurrencyLimit = 1;
+  }
+
   const handle = await tasks.trigger(taskId, payload, triggerOptions);
 
   if (runId) {

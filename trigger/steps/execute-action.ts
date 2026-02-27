@@ -228,7 +228,7 @@ export async function executeAction(
       instructions: portalInstructions,
       portalTaskId: portalResult.taskId || null,
     }, {
-      queue: `case-${caseId}`,
+      queue: { name: `case-${caseId}`, concurrencyLimit: 1 } as any,
       idempotencyKey: `exec-portal:${caseId}:${proposalId}`,
       idempotencyKeyTTL: "1h",
     });
@@ -489,7 +489,7 @@ export async function executeAction(
     }
 
     case "CLOSE_CASE": {
-      await db.updateCaseStatus(caseId, "completed", { substatus: "Denial accepted", requires_human: false });
+      await db.updateCaseStatus(caseId, "completed", { substatus: "Denial accepted", requires_human: false, pause_reason: null });
       await db.updateCase(caseId, { outcome_type: "denial_accepted", outcome_recorded: true });
       await createExecutionRecord({
         caseId, proposalId, runId, executionKey, actionType: "CLOSE_CASE",

@@ -995,7 +995,7 @@ async function deterministicRouting(
         instructions: `Submit through portal at: ${effectiveUrl || "their website"}`,
         portalTaskId: task?.id || null,
       }, {
-        queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+        queue: { name: `case-${caseId}`, concurrencyLimit: 1 } as any,
         idempotencyKey: `portal-redirect:${caseId}:${Date.now()}`,
         idempotencyKeyTTL: "1h",
       });
@@ -1148,7 +1148,7 @@ export async function decideNextAction(
             instructions: `Submit through agency portal at: ${effectiveUrl || "their website"}`,
             portalTaskId: task?.id || null,
           }, {
-            queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+            queue: { name: `case-${caseId}`, concurrencyLimit: 1 } as any,
             idempotencyKey: `use-portal:${caseId}:${Date.now()}`,
             idempotencyKeyTTL: "1h",
           });
@@ -1405,7 +1405,7 @@ export async function decideNextAction(
                 instructions: ri || "Retry portal submission",
                 portalTaskId: task?.id || null,
               }, {
-                queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+                queue: { name: `case-${caseId}`, concurrencyLimit: 1 } as any,
                 idempotencyKey: `retry-portal:${caseId}:${Date.now()}`,
                 idempotencyKeyTTL: "1h",
               });

@@ -167,7 +167,7 @@ class CronService {
             try {
                 console.log('Running stuck portal & orphaned review sweep...');
                 const result = await this.sweepStuckPortalCases();
-                console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.followUpFixed} follow-up fixes`);
+                console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.followUpFixed} follow-up fixes, ${result.staleHumanFlagsCleared || 0} stale flags cleared`);
             } catch (error) {
                 console.error('Error in stuck portal sweep cron:', error);
             }
@@ -1220,7 +1220,45 @@ class CronService {
             console.error('Error in stuck decision retry sweep:', error.message);
         }
 
-        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried };
+        // Sweep 6: Clear stale requires_human flags
+        // Cases where requires_human=true but no active proposal and no active run exist.
+        // Only clear for non-review statuses (review statuses are handled by sweep 2 orphan triage).
+        let staleHumanFlagsCleared = 0;
+        try {
+            const staleResult = await db.query(`
+                UPDATE cases
+                SET requires_human = false,
+                    pause_reason = null,
+                    updated_at = NOW()
+                WHERE requires_human = true
+                  AND status NOT IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+                  AND status NOT IN ('completed', 'cancelled')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM proposals p
+                    WHERE p.case_id = cases.id
+                      AND p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM agent_runs ar
+                    WHERE ar.case_id = cases.id
+                      AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+                  )
+                RETURNING id, status
+            `);
+            staleHumanFlagsCleared = staleResult.rowCount || 0;
+            if (staleHumanFlagsCleared > 0) {
+                const caseIds = staleResult.rows.map(r => r.id);
+                console.log(`Cleared ${staleHumanFlagsCleared} stale requires_human flags: ${caseIds.join(', ')}`);
+                await db.logActivity('stale_human_flag_cleared',
+                    `Cleared stale requires_human on ${staleHumanFlagsCleared} cases: ${caseIds.join(', ')}`,
+                    { case_ids: caseIds }
+                );
+            }
+        } catch (error) {
+            console.error('Error in stale human flag sweep:', error);
+        }
+
+        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried, staleHumanFlagsCleared };
     }
 
     /**
