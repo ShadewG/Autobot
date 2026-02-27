@@ -193,6 +193,22 @@ class CronService {
                     await db.logActivity('stale_run_reaped', `Cleaned ${result.rowCount} stuck agent runs`, {
                         run_ids: result.rows.map(r => r.id)
                     });
+
+                    // Cancel corresponding Trigger.dev runs to release per-case queue locks
+                    const { runs } = require('@trigger.dev/sdk');
+                    for (const row of result.rows) {
+                        try {
+                            const meta = await db.query(
+                                `SELECT metadata->>'triggerRunId' as trigger_run_id FROM agent_runs WHERE id = $1`,
+                                [row.id]
+                            );
+                            const triggerRunId = meta.rows[0]?.trigger_run_id;
+                            if (triggerRunId) {
+                                await runs.cancel(triggerRunId);
+                                console.log(`[reaper] Cancelled Trigger.dev run ${triggerRunId} for agent_run ${row.id}`);
+                            }
+                        } catch (e) { /* best-effort */ }
+                    }
                 }
             } catch (error) {
                 console.error('Error in stale run reaper:', error);
@@ -283,6 +299,99 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Orphaned human-review recovery: case says "decision required" but has no actionable proposal.
+        // Auto-reprocesses from latest inbound up to 2 times/day before leaving it for human triage.
+        this.jobs.orphanReviewRecovery = new CronJob('*/5 * * * *', async () => {
+            try {
+                const candidates = await db.query(`
+                    SELECT c.id AS case_id, c.case_name, c.autopilot_mode,
+                           lm.id AS message_id
+                    FROM cases c
+                    LEFT JOIN LATERAL (
+                      SELECT m.id
+                      FROM messages m
+                      WHERE m.case_id = c.id AND m.direction = 'inbound'
+                      ORDER BY m.created_at DESC
+                      LIMIT 1
+                    ) lm ON TRUE
+                    WHERE c.status = 'needs_human_review'
+                      AND c.requires_human = true
+                      AND c.pause_reason = 'PENDING_APPROVAL'
+                      AND lm.id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM proposals p
+                        WHERE p.case_id = c.id
+                          AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM agent_runs ar
+                        WHERE ar.case_id = c.id
+                          AND ar.status IN ('created', 'queued', 'running', 'waiting', 'processing')
+                      )
+                      AND (
+                        SELECT COUNT(*)
+                        FROM activity_log al
+                        WHERE al.case_id = c.id
+                          AND al.event_type = 'orphan_review_auto_reprocess'
+                          AND al.created_at > NOW() - INTERVAL '24 hours'
+                      ) < 2
+                    ORDER BY c.updated_at ASC
+                    LIMIT 10
+                `);
+
+                let recovered = 0;
+                for (const row of candidates.rows) {
+                    try {
+                        const run = await db.createAgentRunFull({
+                            case_id: row.case_id,
+                            trigger_type: 'orphan_review_reprocess',
+                            message_id: row.message_id,
+                            status: 'queued',
+                            autopilot_mode: row.autopilot_mode || 'SUPERVISED',
+                            langgraph_thread_id: `orphan-review:${row.case_id}:msg-${row.message_id}:${Date.now()}`,
+                            metadata: { source: 'orphan_review_recovery' }
+                        });
+
+                        await triggerDispatch.triggerTask('process-inbound', {
+                            runId: run.id,
+                            caseId: row.case_id,
+                            messageId: row.message_id,
+                            autopilotMode: row.autopilot_mode || 'SUPERVISED',
+                            triggerType: 'ORPHAN_REVIEW_RECOVERY',
+                        }, {
+                            queue: `case-${row.case_id}`,
+                            idempotencyKey: `orphan-review-reprocess:${row.case_id}:${run.id}`,
+                            idempotencyKeyTTL: '1h',
+                        }, {
+                            runId: run.id,
+                            caseId: row.case_id,
+                            triggerType: 'orphan_review_reprocess',
+                            source: 'orphan_review_recovery',
+                            verifyMs: 8000,
+                            pollMs: 1200,
+                        });
+
+                        await db.logActivity('orphan_review_auto_reprocess',
+                            `Auto-reprocessed orphaned decision-required case from inbound #${row.message_id}`,
+                            { case_id: row.case_id, message_id: row.message_id, run_id: run.id }
+                        );
+                        recovered++;
+                    } catch (err) {
+                        await db.logActivity('orphan_review_reprocess_failed',
+                            `Auto-reprocess failed for orphaned decision-required case: ${err.message}`,
+                            { case_id: row.case_id, message_id: row.message_id, error: err.message }
+                        );
+                    }
+                }
+
+                if (recovered > 0) {
+                    console.log(`[orphan-review-recovery] Auto-reprocessed ${recovered} orphaned review case(s)`);
+                }
+            } catch (error) {
+                console.error('Error in orphaned review recovery:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
@@ -294,6 +403,7 @@ class CronService {
         console.log('✓ Loop breaker: Every 30 minutes');
         console.log('✓ Proposal dispatch recovery: Every 5 minutes');
         console.log('✓ Trigger dispatch recovery: Every 5 minutes');
+        console.log('✓ Orphan review recovery: Every 5 minutes');
     }
 
     /**
