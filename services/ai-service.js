@@ -266,17 +266,15 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 
         const styleInstruction = legalStyleInstructions[legalStyle] || legalStyleInstructions['standard'];
 
-        // Build detailed item descriptions
-        let itemDescriptions = '';
+        // Build emphasis items — these get extra weight but we ALWAYS request the full set
+        let emphasisNote = '';
         if (caseData.requested_records) {
-            itemDescriptions = '\n\nDETAILED FOOTAGE REQUESTS:\n';
             const records = Array.isArray(caseData.requested_records)
                 ? caseData.requested_records
                 : [caseData.requested_records];
-
-            records.forEach((item, index) => {
-                itemDescriptions += `\n${index + 1}. ${item}`;
-            });
+            if (records.length > 0) {
+                emphasisNote = `\n\n   SPECIAL EMPHASIS: This case has particularly important ${records.join(', ')} — highlight these in the request. But ALWAYS request the full standard set of records (body cams, dash cams, CCTV, 911 audio, interviews, reports, photos).`;
+            }
         }
 
         // State-specific guidance removed - using simple documentary style
@@ -320,13 +318,22 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    - Requester: ${requesterName}
 
 2. INCIDENT DETAILS:
-   ${incidentDescription}
-   ${itemDescriptions}
+   ${incidentDescription}${emphasisNote}
 
-3. DETAILED FOOTAGE REQUESTS:
-   ${caseData.officer_details ? `- Officers involved: ${caseData.officer_details}` : '- Request footage from all responding officers'}
-   ${caseData.incident_time ? `- Time range: ${caseData.incident_time}` : '- Include appropriate time buffers around incident'}
+3. RECORDS TO REQUEST (ALWAYS request ALL of these — this is the default for every case):
+   Priority 1 — Video/audio evidence (native digital format with original audio and metadata/timestamps):
+   a) Body-worn camera from ALL responding/assisting officers (30-min buffer before and after)
+   b) Dash/in-car camera from ALL responding vehicles (30-min buffer before and after)
+   c) Surveillance/CCTV collected from the scene and nearby locations
+   d) 911 call recordings and CAD/dispatch audio
+   e) Interview/interrogation room video and audio
+   ${caseData.officer_details ? `- Officers involved: ${caseData.officer_details}` : ''}
+   ${caseData.incident_time ? `- Time range: ${caseData.incident_time}` : ''}
    ${caseData.incident_location ? `- Location: ${caseData.incident_location}` : ''}
+
+   Priority 2 — Supporting documents:
+   f) Primary incident/offense report and arrest report
+   g) Scene/evidence photographs
 
 4. LEGAL STYLE: ${styleInstruction}
 
@@ -334,16 +341,12 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    Apply moderate enforcement approach - reference state deadlines and cite relevant cases
 
 6. DOCUMENTARY-FOCUSED INSTRUCTIONS:
-   - Emphasize VIDEO FOOTAGE as primary need
-   - Include officer names/badge numbers when provided
-   - Specify exact time ranges and camera angles
+   - VIDEO FOOTAGE is always the #1 priority — request ALL types listed above
    - Request native digital format with original audio
-   - Include only essential supporting documents (police report)
    - Use simple language, avoid "no responsive records" loopholes
    - Cite relevant state law and retention schedules briefly
-   - Mention non-commercial/public interest purpose
+   - Mention non-commercial/documentary purpose and reasonable cost agreement
    - Request preservation of footage
-   - Avoid requesting unnecessary administrative documents
    - Keep total request to 200-400 words
 
 7. CLOSING SIGNATURE (use exactly this info):
