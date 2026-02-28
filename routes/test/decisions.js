@@ -100,8 +100,18 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
             });
         }
 
+        const ESCALATION_STATUSES = new Set(['needs_human_review', 'needs_phone_call', 'pending_fee_decision', 'needs_rebuttal']);
+
         if (newStatus === 'portal_in_progress') {
             await transitionCaseRuntime(caseId, 'PORTAL_STARTED', { substatus });
+        } else if (newStatus === 'needs_human_fee_approval') {
+            await transitionCaseRuntime(caseId, 'FEE_QUOTE_RECEIVED', { substatus });
+        } else if (ESCALATION_STATUSES.has(newStatus)) {
+            await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+                targetStatus: newStatus,
+                substatus,
+                pauseReason: newStatus === 'pending_fee_decision' ? 'FEE_DECISION_NEEDED' : 'UNSPECIFIED',
+            });
         } else {
             await transitionCaseRuntime(caseId, 'CASE_RECONCILED', {
                 targetStatus: newStatus,

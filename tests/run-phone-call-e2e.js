@@ -223,7 +223,8 @@ async function main() {
                 caseStatusBackups.push({
                     id: origCase.id,
                     status: origCase.status,
-                    substatus: origCase.substatus || null
+                    substatus: origCase.substatus || null,
+                    pause_reason: origCase.pause_reason || null,
                 });
             }
         } catch (err) {
@@ -489,14 +490,32 @@ async function main() {
     // Restore original case statuses (the "complete" endpoint may have changed them)
     for (const backup of caseStatusBackups) {
         try {
-            const updateFields = { status: backup.status };
-            if (backup.substatus !== undefined) {
-                updateFields.substatus = backup.substatus;
+            const escalationStatuses = new Set(['needs_human_review', 'needs_phone_call', 'pending_fee_decision', 'needs_rebuttal']);
+            if (backup.status === 'portal_in_progress') {
+                await transitionCaseRuntime(backup.id, 'PORTAL_STARTED', {
+                    ...(backup.substatus ? { substatus: backup.substatus } : {}),
+                });
+            } else if (backup.status === 'responded') {
+                await transitionCaseRuntime(backup.id, 'CASE_RESPONDED', {
+                    ...(backup.substatus ? { substatus: backup.substatus } : {}),
+                    lastResponseDate: new Date().toISOString(),
+                });
+            } else if (backup.status === 'needs_human_fee_approval') {
+                await transitionCaseRuntime(backup.id, 'FEE_QUOTE_RECEIVED', {
+                    ...(backup.substatus ? { substatus: backup.substatus } : {}),
+                });
+            } else if (escalationStatuses.has(backup.status)) {
+                await transitionCaseRuntime(backup.id, 'CASE_ESCALATED', {
+                    targetStatus: backup.status,
+                    ...(backup.substatus ? { substatus: backup.substatus } : {}),
+                    pauseReason: backup.pause_reason || (backup.status === 'pending_fee_decision' ? 'FEE_DECISION_NEEDED' : 'UNSPECIFIED'),
+                });
+            } else {
+                await transitionCaseRuntime(backup.id, 'CASE_RECONCILED', {
+                    targetStatus: backup.status,
+                    ...(backup.substatus ? { substatus: backup.substatus } : {}),
+                });
             }
-            await transitionCaseRuntime(backup.id, 'CASE_RECONCILED', {
-                targetStatus: backup.status,
-                ...(backup.substatus ? { substatus: backup.substatus } : {}),
-            });
             logInfo(`Restored case #${backup.id} status to "${backup.status}"`);
         } catch (err) {
             logInfo(`Could not restore case #${backup.id}: ${err.message}`);
