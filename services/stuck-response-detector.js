@@ -62,7 +62,7 @@ class StuckResponseDetector {
                 // Flag for human review
                 await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                     substatus: 'Stuck response - auto-flagged by monitoring system',
-                    pauseReason: 'stuck_response',
+                    pauseReason: 'TIMED_OUT',
                     escalationReason: reason,
                 });
 

@@ -365,7 +365,7 @@ class FollowupScheduler {
     await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
       targetStatus: 'needs_phone_call',
       substatus: 'No email response after follow-ups',
-      pauseReason: 'followup_exhausted',
+      pauseReason: 'TIMED_OUT',
     });
 
     // Log activity

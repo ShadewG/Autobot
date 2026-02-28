@@ -440,7 +440,7 @@ router.post('/events', express.json(), async (req, res) => {
                         if (msg?.case_id) {
                             await transitionCaseRuntime(msg.case_id, 'CASE_ESCALATED', {
                                 substatus: `Email ${event.event}: ${event.reason || 'delivery failed'}`,
-                                pauseReason: 'email_delivery_failed',
+                                pauseReason: 'EMAIL_FAILED',
                             });
                         }
                     } catch (err) {
