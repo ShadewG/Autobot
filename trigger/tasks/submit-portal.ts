@@ -42,15 +42,20 @@ export const submitPortal = task({
     const { caseId, portalTaskId, agentRunId } = payload as any;
     if (!caseId) return;
     try {
+      const errorText = String(error || "");
+      const looksLikeTimeout =
+        /timeout|timed out|max duration|deadline exceeded|exceeded/i.test(errorText);
+
       // Cancel the orphaned Skyvern workflow so it doesn't keep running
       const caseRow = await db.query(
         `SELECT last_portal_run_id FROM cases WHERE id = $1`,
         [caseId]
       );
       const skyvernRunId = caseRow.rows[0]?.last_portal_run_id;
+      let cancelSucceeded = false;
       if (skyvernRunId) {
         const skyvern = getSkyvern();
-        await skyvern.cancelWorkflowRun(skyvernRunId);
+        cancelSucceeded = !!(await skyvern.cancelWorkflowRun(skyvernRunId));
       }
 
       if (portalTaskId) {
@@ -64,6 +69,25 @@ export const submitPortal = task({
         requires_human: true,
         substatus: "Portal submission timed out — manual submission needed",
       });
+      try {
+        await db.updateCasePortalStatus(caseId, {
+          last_portal_status: `Timed out or crashed: ${String(error).substring(0, 100)}`,
+          last_portal_status_at: new Date(),
+        });
+      } catch {}
+      await db.logActivity(
+        looksLikeTimeout ? "portal_hard_timeout" : "portal_task_crash",
+        looksLikeTimeout
+          ? `Portal hard timeout for case ${caseId}`
+          : `Portal task crash for case ${caseId}`,
+        {
+          case_id: caseId,
+          run_id: skyvernRunId || null,
+          cancel_attempted: !!skyvernRunId,
+          cancel_succeeded: cancelSucceeded,
+          error: errorText.substring(0, 500),
+        }
+      );
       await db.logActivity("portal_submission_failed", `Portal timed out for case ${caseId}`, {
         case_id: caseId, error: String(error).substring(0, 500),
       });
@@ -499,6 +523,12 @@ export const submitPortal = task({
         substatus: "Portal submission failed - requires human submission",
         requires_human: true,
       });
+      try {
+        await db.updateCasePortalStatus(caseId, {
+          last_portal_status: `Failed: ${error.message.substring(0, 100)}`,
+          last_portal_status_at: new Date(),
+        });
+      } catch {}
 
       try { await getNotion().syncStatusToNotion(caseId); } catch {}
 

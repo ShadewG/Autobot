@@ -310,6 +310,8 @@ export interface AgentRun {
   trigger_started?: boolean | null;
   node_trace?: string[];
   trigger_run_id?: string;
+  current_node?: string | null;
+  skyvern_task_url?: string | null;
   final_action?: string;
   pause_reason?: string;
   gated_reason?: string;

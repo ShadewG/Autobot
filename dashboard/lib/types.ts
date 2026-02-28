@@ -1,11 +1,21 @@
 // Derived review state — computed server-side from case + proposal + run
 export type ReviewState = 'DECISION_REQUIRED' | 'DECISION_APPLYING' | 'PROCESSING' | 'WAITING_AGENCY' | 'IDLE';
+export type ControlState = 'WORKING' | 'NEEDS_DECISION' | 'WAITING_AGENCY' | 'BLOCKED' | 'DONE' | 'OUT_OF_SYNC';
+
+export interface ControlMismatch {
+  code: string;
+  message: string;
+  severity: 'warning' | 'error';
+}
 
 export interface AgentRunSummary {
   id: string;
   status: string;
   trigger_type: string;
   started_at: string;
+  trigger_run_id?: string | null;
+  current_node?: string | null;
+  skyvern_task_url?: string | null;
 }
 
 // Due date information with context
@@ -46,6 +56,8 @@ export interface RequestListItem {
   active_portal_task_status?: string | null;
   active_portal_task_type?: string | null;
   review_state?: ReviewState;
+  control_state?: ControlState;
+  control_mismatches?: ControlMismatch[];
 }
 
 // Scope item with availability status
@@ -475,7 +487,7 @@ export interface PendingProposal {
 
 export interface AgentDecision {
   id: number;
-  reasoning: string;
+  reasoning: string | string[] | null;
   action_taken: string;
   confidence: number | null;
   trigger_type: string | null;
@@ -497,6 +509,8 @@ export interface RequestWorkspaceResponse {
   pending_proposal?: PendingProposal | null;
   portal_helper?: PortalHelper | null;
   review_state?: ReviewState;
+  control_state?: ControlState;
+  control_mismatches?: ControlMismatch[];
   active_run?: AgentRunSummary | null;
   agent_decisions?: AgentDecision[];
 }

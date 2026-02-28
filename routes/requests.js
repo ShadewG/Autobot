@@ -364,6 +364,82 @@ function isAtRisk(nextDueAt) {
 }
 
 /**
+ * Canonical case control state for UI.
+ * Read-only derivation: no state mutations.
+ */
+function resolveControlState({ caseData, reviewState, pendingProposal, activeRun, activePortalTaskStatus }) {
+    const caseStatus = String(caseData?.status || '').toLowerCase();
+    const runStatus = String(activeRun?.status || '').toLowerCase();
+    const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
+    const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
+    const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
+    const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(String(pendingProposal.status || '').toUpperCase()));
+
+    if (['completed', 'cancelled'].includes(caseStatus)) return 'DONE';
+
+    const mismatches = [];
+    if (reviewState === 'DECISION_REQUIRED' && hasActiveRun && runStatus !== 'waiting') {
+        mismatches.push('decision_required_with_active_execution');
+    }
+    if ((reviewState === 'PROCESSING' || reviewState === 'DECISION_APPLYING') && Boolean(caseData?.requires_human)) {
+        mismatches.push('processing_while_requires_human_true');
+    }
+    if (portalActive && !hasActiveRun) {
+        mismatches.push('portal_active_without_active_run');
+    }
+    if (reviewState === 'DECISION_REQUIRED' && !hasPendingProposal && runStatus !== 'waiting') {
+        mismatches.push('decision_required_without_pending_proposal');
+    }
+    if (mismatches.length > 0) return 'OUT_OF_SYNC';
+
+    if (reviewState === 'DECISION_REQUIRED') return 'NEEDS_DECISION';
+    if (reviewState === 'PROCESSING' || reviewState === 'DECISION_APPLYING' || hasActiveRun || portalActive) return 'WORKING';
+    if (reviewState === 'WAITING_AGENCY' || ['sent', 'awaiting_response', 'responded'].includes(caseStatus)) return 'WAITING_AGENCY';
+    if (caseStatus === 'error') return 'BLOCKED';
+    return 'BLOCKED';
+}
+
+function detectControlMismatches({ caseData, reviewState, pendingProposal, activeRun, activePortalTaskStatus }) {
+    const issues = [];
+    const runStatus = String(activeRun?.status || '').toLowerCase();
+    const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
+    const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
+    const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
+    const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(String(pendingProposal.status || '').toUpperCase()));
+
+    if ((reviewState === 'PROCESSING' || reviewState === 'DECISION_APPLYING') && Boolean(caseData?.requires_human)) {
+        issues.push({
+            code: 'processing_while_requires_human_true',
+            message: 'Case marked requires_human while processing',
+            severity: 'warning',
+        });
+    }
+    if (reviewState === 'DECISION_REQUIRED' && hasActiveRun && runStatus !== 'waiting') {
+        issues.push({
+            code: 'decision_required_with_active_execution',
+            message: 'Decision required while an execution run is active',
+            severity: 'warning',
+        });
+    }
+    if (reviewState === 'DECISION_REQUIRED' && !hasPendingProposal && runStatus !== 'waiting') {
+        issues.push({
+            code: 'decision_required_without_pending_proposal',
+            message: 'Decision required but no pending proposal found',
+            severity: 'warning',
+        });
+    }
+    if (portalActive && !hasActiveRun) {
+        issues.push({
+            code: 'portal_active_without_active_run',
+            message: 'Portal task marked active with no active run',
+            severity: 'warning',
+        });
+    }
+
+    return issues;
+}
+
+/**
  * Transform case data to RequestListItem format
  */
 function toRequestListItem(caseData) {
@@ -385,12 +461,33 @@ function toRequestListItem(caseData) {
             : null,
     });
 
+    const activeRun = caseData.active_run_status
+        ? { status: caseData.active_run_status }
+        : null;
+    const activeProposal = caseData.active_proposal_status
+        ? { status: caseData.active_proposal_status }
+        : null;
+
     // Use derived review_state as the UI source of truth so stale requires_human
     // flags in DB don't misclassify actively-processing cases in the queue.
     const effectiveRequiresHuman = review_state === 'DECISION_REQUIRED';
     const effectivePauseReason = effectiveRequiresHuman
         ? (caseData.pause_reason || null)
         : null;
+    const control_state = resolveControlState({
+        caseData,
+        reviewState: review_state,
+        pendingProposal: activeProposal,
+        activeRun,
+        activePortalTaskStatus: caseData.active_portal_task_status || null,
+    });
+    const control_mismatches = detectControlMismatches({
+        caseData,
+        reviewState: review_state,
+        pendingProposal: activeProposal,
+        activeRun,
+        activePortalTaskStatus: caseData.active_portal_task_status || null,
+    });
 
     return {
         id: String(caseData.id),
@@ -418,6 +515,8 @@ function toRequestListItem(caseData) {
         active_portal_task_status: caseData.active_portal_task_status || null,
         active_portal_task_type: caseData.active_portal_task_type || null,
         review_state,
+        control_state,
+        control_mismatches,
     };
 }
 
@@ -731,15 +830,21 @@ function toTimelineEvent(activity, analysisMap = {}) {
     // Extract meta from meta_jsonb if available
     const meta = activity.meta_jsonb || activity.metadata || {};
     const eventType = activity.event_type;
+    const category = mapTimelineCategory(eventType, meta);
 
     const event = {
         id: String(activity.id),
         timestamp: activity.created_at,
         type: mapTimelineType(eventType, meta),
         summary: activity.description || eventType,
-        category: mapTimelineCategory(eventType, meta),
+        category,
         raw_content: meta.raw_content || activity.metadata?.raw_content || null,
-        metadata: meta || null
+        metadata: {
+            event_type: eventType,
+            category,
+            ...(activity.message_id ? { message_id: activity.message_id } : {}),
+            ...(meta && typeof meta === 'object' ? meta : {})
+        }
     };
 
     // Add classification if present
@@ -767,6 +872,29 @@ function toTimelineEvent(activity, analysisMap = {}) {
     }
 
     return event;
+}
+
+function dedupeTimelineEvents(events = []) {
+    if (!Array.isArray(events) || events.length === 0) return [];
+    const deduped = [];
+    let prev = null;
+    for (const event of events) {
+        if (prev) {
+            const sameType = prev.type === event.type;
+            const sameSummary = prev.summary === event.summary;
+            const prevTs = new Date(prev.timestamp).getTime();
+            const currTs = new Date(event.timestamp).getTime();
+            const withinMinute = Number.isFinite(prevTs) && Number.isFinite(currTs) && Math.abs(prevTs - currTs) < 60_000;
+            if (sameType && sameSummary && withinMinute) {
+                prev.metadata = prev.metadata || {};
+                prev.metadata.merged_count = (prev.metadata.merged_count || 1) + 1;
+                continue;
+            }
+        }
+        deduped.push(event);
+        prev = event;
+    }
+    return deduped;
 }
 
 /**
@@ -1072,7 +1200,7 @@ router.get('/:id/workspace', async (req, res) => {
              LIMIT 50`,
             [requestId]
         );
-        const timelineEvents = activityResult.rows.map(a => toTimelineEvent(a, analysisMap));
+        const timelineEvents = dedupeTimelineEvents(activityResult.rows.map(a => toTimelineEvent(a, analysisMap)));
 
         // Build next action proposal from latest pending reply
         let nextActionProposal = null;
@@ -1308,13 +1436,31 @@ router.get('/:id/workspace', async (req, res) => {
 
         // Fetch active agent run for review_state
         const activeRunResult = await db.query(`
-            SELECT id, status, trigger_type, started_at
+            SELECT
+                id,
+                status,
+                trigger_type,
+                started_at,
+                metadata->>'triggerRunId' AS trigger_run_id,
+                metadata->>'trigger_run_id' AS trigger_run_id_legacy,
+                metadata->>'current_node' AS current_node,
+                COALESCE(
+                    metadata->>'skyvern_task_url',
+                    metadata->>'skyvernTaskUrl',
+                    metadata->>'portal_task_url',
+                    metadata->>'portalTaskUrl'
+                ) AS skyvern_task_url
             FROM agent_runs
             WHERE case_id = $1 AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
             ORDER BY started_at DESC NULLS LAST
             LIMIT 1
         `, [requestId]);
-        const activeRun = activeRunResult.rows[0] || null;
+        const activeRun = activeRunResult.rows[0]
+            ? {
+                ...activeRunResult.rows[0],
+                trigger_run_id: activeRunResult.rows[0].trigger_run_id || activeRunResult.rows[0].trigger_run_id_legacy || null
+            }
+            : null;
 
         // Compute derived review_state
         const review_state = resolveReviewState({
@@ -1322,6 +1468,31 @@ router.get('/:id/workspace', async (req, res) => {
             activeProposal: pendingProposal,
             activeRun,
         });
+        const control_mismatches = detectControlMismatches({
+            caseData: rawCaseData,
+            reviewState: review_state,
+            pendingProposal,
+            activeRun,
+            activePortalTaskStatus: caseData.active_portal_task_status || null,
+        });
+        const control_state = resolveControlState({
+            caseData: rawCaseData,
+            reviewState: review_state,
+            pendingProposal,
+            activeRun,
+            activePortalTaskStatus: caseData.active_portal_task_status || null,
+        });
+        if (control_mismatches.length > 0) {
+            logger.warn('[control-state-mismatch]', {
+                case_id: requestId,
+                review_state,
+                control_state,
+                mismatch_codes: control_mismatches.map((m) => m.code),
+                active_run_status: activeRun?.status || null,
+                active_portal_task_status: caseData.active_portal_task_status || null,
+                requires_human: Boolean(rawCaseData?.requires_human),
+            });
+        }
 
         const requestDetail = toRequestDetail(caseData);
         if (resolvedAgencyName) {
@@ -1348,6 +1519,8 @@ router.get('/:id/workspace', async (req, res) => {
             pending_proposal: pendingProposal,
             portal_helper: portalHelper,
             review_state,
+            control_state,
+            control_mismatches,
             active_run: activeRun,
             agent_decisions: agentDecisions,
         });
@@ -2426,9 +2599,16 @@ router.get('/:id/agent-runs', async (req, res) => {
             // Preserve queue/waiting states for live status UI.
             const statusMap = { paused: 'waiting' };
             const displayStatus = statusMap[run.status] || run.status;
+            const md = run.metadata || {};
             const nodeTraceFromMetadata = Array.isArray(run.metadata?.node_trace)
                 ? run.metadata.node_trace
                 : (typeof run.metadata?.current_node === 'string' ? [run.metadata.current_node] : []);
+            const skyvernTaskUrl =
+                md.skyvern_task_url ||
+                md.skyvernTaskUrl ||
+                md.portal_task_url ||
+                md.portalTaskUrl ||
+                null;
             return {
             id: String(run.id),
             case_id: String(run.case_id),
@@ -2445,7 +2625,9 @@ router.get('/:id/agent-runs', async (req, res) => {
             gated_reason: run.metadata?.gated_reason || null,
             lock_acquired: run.lock_acquired,
             node_trace: nodeTraceFromMetadata,
+            current_node: typeof md.current_node === 'string' ? md.current_node : null,
             trigger_run_id: run.metadata?.trigger_run_id || run.metadata?.triggerRunId || null,
+            skyvern_task_url: skyvernTaskUrl,
             proposal: run.proposal_id ? {
                 id: run.proposal_id,
                 action_type: run.proposal_action_type,
@@ -2454,7 +2636,7 @@ router.get('/:id/agent-runs', async (req, res) => {
                     ? run.proposal_content.substring(0, 200)
                     : null
             } : null,
-            metadata: run.metadata || {}
+            metadata: md
         };
         });
 
@@ -2947,8 +3129,66 @@ router.post('/:id/invoke-agent', async (req, res) => {
 router.post('/:id/reset-to-last-inbound', async (req, res) => {
     const requestId = parseInt(req.params.id, 10);
     const log = logger.forCase(requestId);
+    const lockToken = crypto.randomUUID();
+    const lockTtlSeconds = 90;
+    let resetLockAcquired = false;
 
     try {
+        const lockResult = await db.query(
+            `INSERT INTO case_operation_locks (
+                case_id,
+                operation,
+                lock_token,
+                holder_run_id,
+                holder_metadata,
+                acquired_at,
+                expires_at
+            )
+            VALUES ($1, 'reset_to_last_inbound', $2, NULL, $3::jsonb, NOW(), NOW() + ($4::text || ' seconds')::interval)
+            ON CONFLICT (case_id, operation)
+            DO UPDATE SET
+                lock_token = EXCLUDED.lock_token,
+                holder_run_id = NULL,
+                holder_metadata = EXCLUDED.holder_metadata,
+                acquired_at = NOW(),
+                expires_at = NOW() + ($4::text || ' seconds')::interval
+            WHERE case_operation_locks.expires_at < NOW()
+            RETURNING case_id, operation, lock_token, holder_run_id, holder_metadata, expires_at`,
+            [
+                requestId,
+                lockToken,
+                JSON.stringify({
+                    source: 'requests_reset_to_last_inbound',
+                    requested_at: new Date().toISOString(),
+                    requester_ip: req.ip || null,
+                }),
+                String(lockTtlSeconds),
+            ]
+        );
+
+        if (lockResult.rows[0]?.lock_token !== lockToken) {
+            const existingLock = await db.query(
+                `SELECT case_id, operation, holder_run_id, holder_metadata, expires_at
+                 FROM case_operation_locks
+                 WHERE case_id = $1
+                   AND operation = 'reset_to_last_inbound'
+                 LIMIT 1`,
+                [requestId]
+            );
+            const currentLock = existingLock.rows[0] || null;
+            return res.status(409).json({
+                success: false,
+                error: 'Reset already in progress for this case',
+                lock: currentLock ? {
+                    operation: currentLock.operation,
+                    holder_run_id: currentLock.holder_run_id,
+                    holder_metadata: currentLock.holder_metadata || null,
+                    expires_at: currentLock.expires_at,
+                } : null,
+            });
+        }
+        resetLockAcquired = true;
+
         const caseData = await db.getCaseById(requestId);
         if (!caseData) {
             return res.status(404).json({
@@ -3099,6 +3339,16 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
             langgraph_thread_id: `reset:${requestId}:msg-${latestInbound.id}:${Date.now()}`
         });
+        await db.query(
+            `UPDATE case_operation_locks
+             SET holder_run_id = $3,
+                 holder_metadata = COALESCE(holder_metadata, '{}'::jsonb)
+                   || jsonb_build_object('holder_run_id', $3::int)
+             WHERE case_id = $1
+               AND operation = 'reset_to_last_inbound'
+               AND lock_token = $2`,
+            [requestId, lockToken, replayRun.id]
+        );
 
         const { handle } = await triggerDispatch.triggerTask('process-inbound', {
             runId: replayRun.id,
@@ -3130,6 +3380,20 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
             success: false,
             error: error.message
         });
+    } finally {
+        if (resetLockAcquired) {
+            try {
+                await db.query(
+                    `DELETE FROM case_operation_locks
+                     WHERE case_id = $1
+                       AND operation = 'reset_to_last_inbound'
+                       AND lock_token = $2`,
+                    [requestId, lockToken]
+                );
+            } catch (releaseErr) {
+                log.warn(`Failed to release reset lock: ${releaseErr.message}`);
+            }
+        }
     }
 });
 

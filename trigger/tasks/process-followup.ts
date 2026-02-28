@@ -58,22 +58,60 @@ export const processFollowup = task({
   run: async (payload: FollowupPayload) => {
     const { caseId, followupScheduleId } = payload;
 
-    // Clear any stale agent_runs that would block the unique constraint
-    await db.query(
-      `UPDATE agent_runs
-       SET status = 'cancelled',
-           ended_at = NOW(),
-           error = 'superseded by new trigger.dev run'
-       WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
-      [caseId]
-    );
+    // Claim pre-flight agent_run row (preserves triggerRunId in metadata) or create new
+    const ACTIVE_STATUSES = "('created', 'queued', 'running', 'processing', 'waiting')";
+    let runId: number;
 
-    // Create agent_run record in DB (provides FK for proposals)
-    const agentRun = await db.createAgentRun(caseId, "SCHEDULED_FOLLOWUP", {
-      followupScheduleId,
-      source: "trigger.dev",
-    });
-    const runId = agentRun.id;
+    if (payload.runId) {
+      const claimed = await db.query(
+        `UPDATE agent_runs SET status = 'running', started_at = NOW()
+         WHERE id = $1 AND case_id = $2 AND status IN ('created', 'queued')
+         RETURNING id`,
+        [payload.runId, caseId]
+      );
+      if (claimed.rowCount > 0) {
+        runId = payload.runId;
+        await db.query(
+          `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+           WHERE case_id = $1 AND id != $2 AND status IN ${ACTIVE_STATUSES}`,
+          [caseId, runId]
+        );
+      } else {
+        const existing = await db.query(
+          `SELECT id FROM agent_runs WHERE id = $1 AND case_id = $2
+           AND status IN ('running', 'processing', 'waiting')`,
+          [payload.runId, caseId]
+        );
+        if (existing.rowCount > 0) {
+          runId = payload.runId;
+          await db.query(
+            `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+             WHERE case_id = $1 AND id != $2 AND status IN ${ACTIVE_STATUSES}`,
+            [caseId, runId]
+          );
+        } else {
+          await db.query(
+            `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+             WHERE case_id = $1 AND status IN ${ACTIVE_STATUSES}`,
+            [caseId]
+          );
+          const agentRun = await db.createAgentRun(caseId, "SCHEDULED_FOLLOWUP", {
+            followupScheduleId, source: "trigger.dev",
+          });
+          runId = agentRun.id;
+        }
+      }
+    } else {
+      await db.query(
+        `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+         WHERE case_id = $1 AND status IN ${ACTIVE_STATUSES}`,
+        [caseId]
+      );
+      const agentRun = await db.createAgentRun(caseId, "SCHEDULED_FOLLOWUP", {
+        followupScheduleId, source: "trigger.dev",
+      });
+      runId = agentRun.id;
+    }
     const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
       try {
         await db.updateAgentRunNodeProgress(runId, step);

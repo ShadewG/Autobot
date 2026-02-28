@@ -1305,7 +1305,62 @@ class CronService {
             console.error('Error in stale human flag sweep:', error);
         }
 
-        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried, staleHumanFlagsCleared };
+        // Sweep 7: portal_tasks stuck IN_PROGRESS >30min with no active portal run
+        let stuckPortalTasksCleaned = 0;
+        try {
+            const stuckTasks = await db.query(`
+                SELECT pt.id, pt.case_id FROM portal_tasks pt
+                WHERE pt.status = 'IN_PROGRESS'
+                  AND pt.updated_at < NOW() - INTERVAL '30 minutes'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM agent_runs ar
+                    WHERE ar.case_id = pt.case_id
+                      AND ar.trigger_type IN ('submit_portal', 'portal_submit')
+                      AND ar.status IN ('created', 'queued', 'running', 'processing', 'waiting')
+                  )
+            `);
+            for (const pt of stuckTasks.rows) {
+                const updateResult = await db.query(
+                    `UPDATE portal_tasks SET status = 'FAILED', completed_at = NOW(),
+                     completion_notes = 'Auto-failed: stuck IN_PROGRESS >30min with no active run'
+                     WHERE id = $1 AND status = 'IN_PROGRESS'`,
+                    [pt.id]
+                );
+                if (updateResult.rowCount > 0) {
+                    stuckPortalTasksCleaned++;
+                    console.log(`Auto-failed stuck portal_task ${pt.id} for case ${pt.case_id}`);
+
+                    // Keep case state consistent with the failed portal task.
+                    await db.updateCaseStatus(pt.case_id, "needs_human_review", {
+                        requires_human: true,
+                        substatus: "Portal automation task was stuck and auto-failed",
+                    });
+                    try {
+                        await db.updateCasePortalStatus(pt.case_id, {
+                            last_portal_status: "Auto-failed: portal task stuck IN_PROGRESS >30min (no active run)",
+                            last_portal_status_at: new Date(),
+                        });
+                    } catch (portalStatusErr) {
+                        console.error(`Failed to update portal status for case ${pt.case_id}:`, portalStatusErr.message);
+                    }
+                    await db.logActivity(
+                        'stuck_portal_task_auto_failed',
+                        `Auto-failed stuck portal task #${pt.id} and marked case ${pt.case_id} for human review`,
+                        { case_id: pt.case_id, portal_task_id: pt.id }
+                    );
+                }
+            }
+            if (stuckPortalTasksCleaned > 0) {
+                await db.logActivity('stuck_portal_tasks_cleaned',
+                    `Auto-failed ${stuckPortalTasksCleaned} stuck portal_tasks`,
+                    { count: stuckPortalTasksCleaned }
+                );
+            }
+        } catch (error) {
+            console.error('Error in stuck portal_tasks sweep:', error);
+        }
+
+        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried, staleHumanFlagsCleared, stuckPortalTasksCleaned };
     }
 
     /**

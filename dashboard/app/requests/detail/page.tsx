@@ -262,6 +262,24 @@ function buildTriggerRunUrl(triggerRunId?: string | null): string | null {
   return `https://cloud.trigger.dev/orgs/frontwind-llc-27ae/projects/autobot-Z-SQ/env/prod/runs/${triggerRunId}`;
 }
 
+function getControlStateDisplay(controlState?: string | null) {
+  const key = String(controlState || "").toUpperCase();
+  switch (key) {
+    case "WORKING":
+      return { label: "Working", className: "border-blue-700/50 bg-blue-500/10 text-blue-300", icon: Loader2 };
+    case "NEEDS_DECISION":
+      return { label: "Needs Your Decision", className: "border-amber-700/50 bg-amber-500/10 text-amber-300", icon: Clock };
+    case "WAITING_AGENCY":
+      return { label: "Waiting on Agency", className: "border-emerald-700/50 bg-emerald-500/10 text-emerald-300", icon: CheckCircle };
+    case "DONE":
+      return { label: "Done", className: "border-emerald-700/50 bg-emerald-500/10 text-emerald-300", icon: CheckCircle };
+    case "OUT_OF_SYNC":
+      return { label: "Out of Sync", className: "border-red-700/50 bg-red-500/10 text-red-300", icon: AlertTriangle };
+    default:
+      return { label: "Blocked", className: "border-yellow-700/50 bg-yellow-500/10 text-yellow-300", icon: AlertTriangle };
+  }
+}
+
 function normalizeDecisionReasoning(reasoning: string | string[] | null | undefined): string {
   if (Array.isArray(reasoning)) {
     return reasoning.filter(Boolean).join("\n");
@@ -378,6 +396,9 @@ function RequestDetailContent() {
   const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
   const [conversationTab, setConversationTab] = useState<string>("all");
   const [optimisticMessages, setOptimisticMessages] = useState<Array<ThreadMessage & { _sending: true }>>([]);
+  const [guideInstruction, setGuideInstruction] = useState("");
+  const [isGuidingAI, setIsGuidingAI] = useState(false);
+  const [isTakingOver, setIsTakingOver] = useState(false);
 
   const [pollingUntil, setPollingUntil] = useState<number>(0);
   const refreshInterval = Date.now() < pollingUntil ? 3000 : 0;
@@ -929,6 +950,61 @@ function RequestDetailContent() {
     }
   };
 
+  const handleTakeOverNow = async () => {
+    if (!id) return;
+    setIsTakingOver(true);
+    try {
+      await requestsAPI.update(id, {
+        autopilot_mode: "MANUAL",
+        requires_human: true,
+      });
+      mutate();
+      mutateRuns();
+      toast.success("Automation paused. Case switched to MANUAL mode.");
+    } catch (error: any) {
+      console.error("Error taking over case:", error);
+      toast.error(error.message || "Failed to take over case");
+    } finally {
+      setIsTakingOver(false);
+    }
+  };
+
+  const handleGuideAI = async () => {
+    if (!id || !guideInstruction.trim()) return;
+    setIsGuidingAI(true);
+    try {
+      let handled = false;
+      try {
+        const reviewResult = await requestsAPI.resolveReview(id, "custom", guideInstruction.trim());
+        if (reviewResult?.success) handled = true;
+      } catch {
+        // Fallback below.
+      }
+
+      if (!handled && nextAction?.id) {
+        const revised = await requestsAPI.revise(id, guideInstruction.trim(), nextAction.id);
+        if (revised?.success !== false) handled = true;
+      }
+
+      if (!handled) {
+        await requestsAPI.resetToLastInbound(id);
+        handled = true;
+      }
+
+      if (handled) {
+        setGuideInstruction("");
+        mutate();
+        mutateRuns();
+        toast.success("Guidance submitted. AI is generating the next step.");
+      }
+    } catch (error: any) {
+      console.error("Error guiding AI:", error);
+      toast.error(error.message || "Failed to guide AI");
+    } finally {
+      setIsGuidingAI(false);
+    }
+  };
+
   // Get unprocessed inbound messages
   const unprocessedInboundMessages = useMemo(() => {
     if (!data?.thread_messages) return [];
@@ -1122,6 +1198,8 @@ function RequestDetailContent() {
     pending_proposal,
     portal_helper,
     review_state,
+    control_state,
+    control_mismatches = [],
     active_run,
     case_agencies = [],
     agency_candidates = [],
@@ -1205,6 +1283,8 @@ function RequestDetailContent() {
   };
 
   const pauseContext = getPauseContext();
+  const controlDisplay = getControlStateDisplay(control_state);
+  const ControlStateIcon = controlDisplay.icon;
   const hasAgencyDetailLink = Boolean(agency_summary?.id && /^\d+$/.test(String(agency_summary.id)));
   const submittedAtDisplay = request.submitted_at || thread_messages.find((m) => m.direction === "OUTBOUND")?.timestamp || null;
   const lastInboundAtDisplay = request.last_inbound_at || lastInboundMessage?.timestamp || null;
@@ -1230,14 +1310,6 @@ function RequestDetailContent() {
             </h1>
             <p className="text-sm text-muted-foreground">{request.agency_name}</p>
           </div>
-
-          {/* Autopilot Mode Selector */}
-          <AutopilotSelector
-            requestId={request.id}
-            currentMode={request.autopilot_mode}
-            onModeChange={() => mutate()}
-            compact
-          />
 
           {/* Run Dropdown */}
           <DropdownMenu>
@@ -1427,7 +1499,7 @@ function RequestDetailContent() {
               </Badge>
             </div>
           )}
-          {request.last_portal_task_url && (
+          {isAdmin && request.last_portal_task_url && (
             <a
               href={request.last_portal_task_url}
               target="_blank"
@@ -1493,6 +1565,89 @@ function RequestDetailContent() {
             <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
               <Clock className="h-3 w-3 text-muted-foreground" />
               <span className="text-xs text-muted-foreground">Idle: no active run</span>
+            </div>
+          )}
+        </div>
+
+        {/* Case Control Center */}
+        <div className="border rounded-md p-3 space-y-3 mb-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Case Control Center</p>
+              <p className="text-xs text-muted-foreground">Use this panel to control automation, guide AI, or recover state.</p>
+            </div>
+            <div className={cn("flex items-center gap-1.5 rounded border px-2 py-1", controlDisplay.className)}>
+              <ControlStateIcon className={cn("h-3 w-3", control_state === "WORKING" && "animate-spin")} />
+              <span className="text-xs font-medium">{controlDisplay.label}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Automation Policy</p>
+              <AutopilotSelector
+                requestId={request.id}
+                currentMode={request.autopilot_mode}
+                onModeChange={() => mutate()}
+                compact
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={handleTakeOverNow}
+                disabled={isTakingOver}
+              >
+                {isTakingOver ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 mr-1.5" />}
+                Take Over Now
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Guide AI</p>
+              <textarea
+                className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y min-h-[76px]"
+                value={guideInstruction}
+                onChange={(e) => setGuideInstruction(e.target.value)}
+                placeholder="Tell AI exactly what to do next..."
+              />
+              <Button
+                size="sm"
+                className="w-full"
+                onClick={handleGuideAI}
+                disabled={isGuidingAI || !guideInstruction.trim()}
+              >
+                {isGuidingAI ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Bot className="h-3.5 w-3.5 mr-1.5" />}
+                Run With Guidance
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Recovery</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                onClick={handleResetToLastInbound}
+                disabled={!lastInboundMessage || isResettingCase}
+              >
+                {isResettingCase ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+                Fix Automatically
+              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                Rebuilds run/proposal state from the latest inbound message when the case drifts.
+              </p>
+            </div>
+          </div>
+
+          {control_mismatches.length > 0 && (
+            <div className="rounded border border-red-700/50 bg-red-500/10 px-2 py-1.5">
+              <p className="text-[10px] uppercase tracking-wide text-red-300 mb-1">State mismatch detected</p>
+              <ul className="text-xs text-red-200 space-y-0.5">
+                {control_mismatches.map((issue) => (
+                  <li key={issue.code}>- {issue.message}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>
@@ -2376,7 +2531,7 @@ function RequestDetailContent() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            {run.trigger_run_id && (
+                            {isAdmin && run.trigger_run_id && (
                               <a
                                 href={buildTriggerRunUrl(run.trigger_run_id) || "#"}
                                 target="_blank"
@@ -2398,7 +2553,10 @@ function RequestDetailContent() {
                                 Skyvern
                               </a>
                             )}
-                            {!run.trigger_run_id && !run.skyvern_task_url && (
+                            {!isAdmin && (
+                              <span className="text-xs text-muted-foreground">admin only</span>
+                            )}
+                            {isAdmin && !run.trigger_run_id && !run.skyvern_task_url && (
                               <span className="text-xs text-muted-foreground">-</span>
                             )}
                           </div>
