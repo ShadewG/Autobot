@@ -45,6 +45,25 @@ class DatabaseService {
         }
     }
 
+    _isTriggerCallsite() {
+        const stack = new Error().stack || '';
+        return stack.includes('/trigger/');
+    }
+
+    _assertNoLegacyCaseMutation(opName, context = {}) {
+        const strict = process.env.CASE_RUNTIME_STRICT === '1';
+        const details = Object.entries(context)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(' ');
+        const msg = `[case-runtime-guard] Legacy ${opName} called from Trigger path. ${details}`.trim();
+        console.warn(msg);
+        if (strict) {
+            const err = new Error(`${msg}. Use caseRuntime.transitionCaseRuntime instead.`);
+            err.code = 'CASE_RUNTIME_STRICT_VIOLATION';
+            throw err;
+        }
+    }
+
     /**
      * Run a callback inside a single-connection transaction.
      * The callback receives a `query(text, params)` function bound to the transaction client.
@@ -234,13 +253,17 @@ class DatabaseService {
     }
 
     async updateCaseStatus(caseId, status, additionalFields = {}) {
-        if (typeof additionalFields.substatus === 'string') {
-            additionalFields.substatus = additionalFields.substatus.substring(0, 100);
+        const { __allowLegacyFromTrigger = false, __source = null, ...effectiveFields } = additionalFields || {};
+        if (__source !== 'case_runtime' && this._isTriggerCallsite() && !__allowLegacyFromTrigger) {
+            this._assertNoLegacyCaseMutation('updateCaseStatus', { caseId, status });
         }
-        if (HUMAN_REVIEW_CASE_STATUSES.includes(status) && additionalFields.requires_human === undefined) {
-            additionalFields.requires_human = true;
+        if (typeof effectiveFields.substatus === 'string') {
+            effectiveFields.substatus = effectiveFields.substatus.substring(0, 100);
         }
-        const updateFields = { status, updated_at: new Date(), ...additionalFields };
+        if (HUMAN_REVIEW_CASE_STATUSES.includes(status) && effectiveFields.requires_human === undefined) {
+            effectiveFields.requires_human = true;
+        }
+        const updateFields = { status, updated_at: new Date(), ...effectiveFields };
         const setClause = Object.keys(updateFields).map((key, i) => `${key} = $${i + 2}`).join(', ');
         const values = [caseId, ...Object.values(updateFields)];
 
@@ -304,7 +327,7 @@ class DatabaseService {
             emitDataUpdate('case_update', {
                 case_id: caseId,
                 status,
-                substatus: additionalFields.substatus || null,
+                substatus: effectiveFields.substatus || null,
                 agency_name: updatedCase.agency_name,
                 case_name: updatedCase.case_name
             });
@@ -1878,6 +1901,8 @@ class DatabaseService {
         if (!updates || Object.keys(updates).length === 0) {
             return await this.getProposalById(proposalId);
         }
+        const isTriggerCall = this._isTriggerCallsite();
+        const allowLegacyCaseMutation = updates.__allowLegacyCaseMutation === true;
 
         // Convert camelCase to snake_case for DB
         const fieldMap = {
@@ -1891,7 +1916,7 @@ class DatabaseService {
         };
 
         const entries = Object.entries(updates)
-            .filter(([key]) => key !== 'updated_at')
+            .filter(([key]) => key !== 'updated_at' && !key.startsWith('__'))
             .map(([key, value]) => {
                 const dbKey = fieldMap[key] || key;
                 return [dbKey, value];
@@ -1923,11 +1948,18 @@ class DatabaseService {
                 proposal = dismissed.rows[0] || proposal;
             } else if (caseRow
                 && !HUMAN_REVIEW_CASE_STATUSES.includes(caseRow.status)
-                && !CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status)) {
+                && !CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status)
+                && !(isTriggerCall && !allowLegacyCaseMutation)) {
                 await this.updateCaseStatus(proposal.case_id, 'needs_human_review', {
                     requires_human: true,
                     pause_reason: proposal.pause_reason || 'PENDING_APPROVAL',
                     substatus: `Proposal #${proposal.id} pending review`
+                });
+            } else if (isTriggerCall && !allowLegacyCaseMutation) {
+                this._assertNoLegacyCaseMutation('updateProposal->updateCaseStatus side effect', {
+                    proposalId: proposal.id,
+                    caseId: proposal.case_id,
+                    proposalStatus: proposal.status
                 });
             }
         }
