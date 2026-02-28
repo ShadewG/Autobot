@@ -64,6 +64,16 @@ export function NavLinks() {
         })}
       </nav>
       <div className="flex items-center gap-3 text-xs">
+        {process.env.NEXT_PUBLIC_FOIA_RESEARCHER_URL && (
+          <a
+            href={process.env.NEXT_PUBLIC_FOIA_RESEARCHER_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="uppercase tracking-wider text-blue-400 hover:text-blue-300 transition-colors"
+          >
+            RESEARCHER
+          </a>
+        )}
         {isAdmin && (
           <button
             onClick={() => setViewAll(!viewAll)}

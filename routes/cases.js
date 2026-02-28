@@ -5,9 +5,11 @@
  *
  * Routes:
  * - POST /cases/import-notion - Import a case from a Notion page URL
+ * - POST /cases/import-direct - Import a case directly from FOIA Researcher
  */
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
@@ -209,6 +211,194 @@ router.post('/import-notion', async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+});
+
+/**
+ * POST /cases/import-direct
+ *
+ * Import a case directly from FOIA Researcher (or any service with a valid service key).
+ * Creates one case with the primary agency, then adds remaining agencies via case_agencies.
+ *
+ * Auth: X-Service-Key header checked against FOIA_SERVICE_KEY env var.
+ *
+ * Body: { source, source_article_id, source_article_url, case_name, subject_name,
+ *         incident_date, incident_location, state, additional_details,
+ *         requests: [{ agency_name, agency_email, portal_url, portal_provider,
+ *                      requested_records, involvement_summary }] }
+ */
+router.post('/import-direct', async (req, res) => {
+  // --- Auth: constant-time comparison against FOIA_SERVICE_KEY ---
+  const serviceKey = process.env.FOIA_SERVICE_KEY;
+  if (!serviceKey) {
+    return res.status(503).json({ success: false, error: 'Service key not configured' });
+  }
+  const provided = req.headers['x-service-key'] || '';
+  try {
+    const a = Buffer.from(String(provided));
+    const b = Buffer.from(serviceKey);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).json({ success: false, error: 'Invalid service key' });
+    }
+  } catch {
+    return res.status(401).json({ success: false, error: 'Invalid service key' });
+  }
+
+  const {
+    source = 'foia_researcher',
+    source_article_id,
+    source_article_url,
+    case_name,
+    subject_name,
+    incident_date,
+    incident_location,
+    state,
+    additional_details,
+    requests = [],
+  } = req.body || {};
+
+  // --- Validation ---
+  if (!case_name) return res.status(400).json({ success: false, error: 'case_name is required' });
+  if (!subject_name) return res.status(400).json({ success: false, error: 'subject_name is required' });
+  if (!requests.length) return res.status(400).json({ success: false, error: 'At least one request/agency is required' });
+
+  try {
+    // Normalize state to 2-letter uppercase
+    const normalizedState = state ? state.trim().toUpperCase().slice(0, 2) : null;
+
+    // Parse incident_date to ISO YYYY-MM-DD
+    let parsedDate = null;
+    if (incident_date) {
+      const d = new Date(incident_date);
+      if (!isNaN(d.getTime())) parsedDate = d.toISOString().split('T')[0];
+    }
+
+    // Synthetic notion_page_id for dedup: one case per source article
+    const syntheticId = source_article_id ? `foia-${source_article_id}` : null;
+
+    // --- Dedup check ---
+    if (syntheticId) {
+      const existing = await db.getCaseByNotionId(syntheticId);
+      if (existing) {
+        return res.json({
+          success: true,
+          message: 'Case already exists (dedup)',
+          case_id: existing.id,
+          case_name: existing.case_name,
+          agencies_added: 0,
+          agencies_skipped: 0,
+          agencies: [],
+          skipped: [],
+        });
+      }
+    }
+
+    // Partition agencies: usable (have email or portal) vs skipped
+    const usable = [];
+    const skipped = [];
+    for (const r of requests) {
+      if (!r.agency_name) continue;
+      if (!r.agency_email && !r.portal_url) {
+        skipped.push({ agency_name: r.agency_name, reason: 'no_contact_info' });
+      } else {
+        usable.push(r);
+      }
+    }
+
+    if (usable.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No agencies with contact info (email or portal)',
+        skipped,
+      });
+    }
+
+    // Primary agency = first usable
+    const primary = usable[0];
+    const recordsText = Array.isArray(primary.requested_records)
+      ? primary.requested_records.join(', ')
+      : primary.requested_records || null;
+
+    const newCase = await db.createCase({
+      notion_page_id: syntheticId,
+      case_name,
+      subject_name,
+      agency_name: primary.agency_name,
+      agency_email: primary.agency_email || null,
+      state: normalizedState,
+      incident_date: parsedDate,
+      incident_location: incident_location || null,
+      requested_records: recordsText,
+      additional_details: [
+        additional_details,
+        source_article_url ? `Source: ${source_article_url}` : null,
+        primary.involvement_summary ? `Primary agency role: ${primary.involvement_summary}` : null,
+      ].filter(Boolean).join('\n'),
+      status: 'ready_to_send',
+      portal_url: primary.portal_url || null,
+      portal_provider: primary.portal_provider || null,
+      tags: source_article_id ? [`source:${source}`] : [],
+    });
+
+    // Add primary to case_agencies
+    const agencies = [];
+    const primaryAgency = await db.addCaseAgency(newCase.id, {
+      agency_name: primary.agency_name,
+      agency_email: primary.agency_email || null,
+      portal_url: primary.portal_url || null,
+      portal_provider: primary.portal_provider || null,
+      is_primary: true,
+      added_source: source,
+      status: 'pending',
+      notes: primary.involvement_summary || null,
+    });
+    agencies.push({ agency_name: primary.agency_name, is_primary: true, status: 'pending', id: primaryAgency.id });
+
+    // Add remaining usable agencies
+    for (let i = 1; i < usable.length; i++) {
+      const r = usable[i];
+      const ca = await db.addCaseAgency(newCase.id, {
+        agency_name: r.agency_name,
+        agency_email: r.agency_email || null,
+        portal_url: r.portal_url || null,
+        portal_provider: r.portal_provider || null,
+        is_primary: false,
+        added_source: source,
+        status: 'pending',
+        notes: r.involvement_summary || null,
+      });
+      agencies.push({ agency_name: r.agency_name, is_primary: false, status: 'pending', id: ca.id });
+    }
+
+    await db.logActivity('case_imported_direct', `Imported case "${case_name}" from ${source}`, {
+      case_id: newCase.id,
+      source,
+      source_article_id,
+      agencies_added: agencies.length,
+      agencies_skipped: skipped.length,
+    });
+
+    logger.info('Case imported directly', {
+      caseId: newCase.id,
+      caseName: case_name,
+      source,
+      agenciesAdded: agencies.length,
+      agenciesSkipped: skipped.length,
+    });
+
+    res.status(201).json({
+      success: true,
+      case_id: newCase.id,
+      case_name: newCase.case_name,
+      agencies_added: agencies.length,
+      agencies_skipped: skipped.length,
+      agencies,
+      skipped,
+    });
+
+  } catch (error) {
+    logger.error('Error importing case directly', { error: error.message, source, case_name });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
