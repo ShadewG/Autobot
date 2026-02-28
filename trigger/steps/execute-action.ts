@@ -143,8 +143,7 @@ export async function executeAction(
       existingExecutionId: prior.id,
       existingExecutionStatus: prior.status,
     });
-    await db.updateProposal(proposalId, { status: "EXECUTED", executedAt: new Date() });
-    await db.updateCaseStatus(caseId, "awaiting_response", { requires_human: false, pause_reason: null });
+    await caseRuntime.transitionCaseRuntime(caseId, "EMAIL_SENT", { proposalId });
     return {
       actionExecuted: true,
       executionResult: { action: "already_sent_for_proposal", executionId: prior.id },
