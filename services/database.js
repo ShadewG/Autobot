@@ -452,12 +452,13 @@ class DatabaseService {
     // Email Threads
     async createEmailThread(threadData) {
         const query = `
-            INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status, case_agency_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (case_id) DO UPDATE SET
               thread_id = COALESCE(EXCLUDED.thread_id, email_threads.thread_id),
               subject = COALESCE(EXCLUDED.subject, email_threads.subject),
               agency_email = COALESCE(EXCLUDED.agency_email, email_threads.agency_email),
+              case_agency_id = COALESCE(email_threads.case_agency_id, EXCLUDED.case_agency_id),
               updated_at = NOW()
             RETURNING *
         `;
@@ -467,7 +468,8 @@ class DatabaseService {
             threadData.subject,
             threadData.agency_email,
             threadData.initial_message_id,
-            threadData.status || 'active'
+            threadData.status || 'active',
+            threadData.case_agency_id || null
         ];
         const result = await this.query(query, values);
         return result.rows[0];
@@ -501,9 +503,9 @@ class DatabaseService {
                 from_email, to_email, cc_emails, subject, body_text, body_html,
                 has_attachments, attachment_count, message_type, portal_notification,
                 portal_notification_type, portal_notification_provider, sent_at, received_at,
-                summary
+                summary, metadata
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             ON CONFLICT (message_id) DO NOTHING
             RETURNING *
         `;
@@ -527,7 +529,8 @@ class DatabaseService {
             messageData.portal_notification_provider || null,
             messageData.sent_at || null,
             messageData.received_at || null,
-            messageData.summary || null
+            messageData.summary || null,
+            messageData.metadata || null
         ];
         const result = await this.query(query, values);
         if (result.rows.length > 0) {
@@ -1073,6 +1076,14 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async getUserByNotionName(notionName) {
+        const result = await this.query(
+            'SELECT * FROM users WHERE LOWER(notion_name) = LOWER($1) AND active = true ORDER BY id ASC LIMIT 1',
+            [notionName]
+        );
+        return result.rows[0];
+    }
+
     async getUserByHandle(handle) {
         const result = await this.query('SELECT * FROM users WHERE email_handle = $1', [handle]);
         return result.rows[0];
@@ -1092,7 +1103,7 @@ class DatabaseService {
     }
 
     async updateUser(id, updates) {
-        const allowed = ['name', 'email_handle', 'active', 'default_autopilot_mode', 'signature_name', 'signature_title', 'signature_phone', 'signature_organization', 'address_street', 'address_street2', 'address_city', 'address_state', 'address_zip'];
+        const allowed = ['name', 'email_handle', 'active', 'default_autopilot_mode', 'notion_name', 'signature_name', 'signature_title', 'signature_phone', 'signature_organization', 'address_street', 'address_street2', 'address_city', 'address_state', 'address_zip'];
         const entries = Object.entries(updates).filter(([key]) => allowed.includes(key));
         if (entries.length === 0) return this.getUserById(id);
 

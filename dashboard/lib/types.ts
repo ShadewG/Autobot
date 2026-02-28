@@ -157,6 +157,7 @@ export interface AIAudit {
 // Thread Message for conversation view
 export interface ThreadMessage {
   id: number;          // Numeric ID for API calls
+  case_agency_id?: number | null;
   direction: 'INBOUND' | 'OUTBOUND';
   channel: 'EMAIL' | 'PORTAL' | 'MAIL' | 'CALL';
   from_email: string;

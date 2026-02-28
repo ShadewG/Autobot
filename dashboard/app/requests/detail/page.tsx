@@ -288,6 +288,10 @@ function normalizeAgencyKey(name?: string | null): string[] {
 }
 
 function messageMatchesAgency(message: RequestWorkspaceResponse["thread_messages"][number], agency: CaseAgency): boolean {
+  if (message.case_agency_id && Number(message.case_agency_id) === Number(agency.id)) {
+    return true;
+  }
+
   const agencyEmails = parseEmailList(agency.agency_email);
   const from = String(message.from_email || "").trim().toLowerCase();
   const to = String(message.to_email || "").trim().toLowerCase();

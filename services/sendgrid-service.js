@@ -259,6 +259,66 @@ class SendGridService {
         return match ? match[1] : emailString;
     }
 
+    parseEmailList(value) {
+        if (!value) return [];
+        return String(value)
+            .split(/[,\s;]+/)
+            .map((part) => part.trim().toLowerCase())
+            .filter((part) => part.includes('@'));
+    }
+
+    emailDomain(email) {
+        if (!email || !String(email).includes('@')) return null;
+        return String(email).split('@').pop().trim().toLowerCase();
+    }
+
+    normalizeAgencyTokens(name) {
+        if (!name) return [];
+        return String(name)
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter((token) => token.length >= 4 && !['police', 'department', 'office', 'county', 'city', 'records'].includes(token));
+    }
+
+    async resolveCaseAgencyForMessage(caseId, { fromEmail = null, toEmail = null, subject = '', text = '' } = {}) {
+        try {
+            const agencies = await db.getCaseAgencies(caseId, false);
+            if (!agencies || agencies.length === 0) return null;
+            if (agencies.length === 1) return agencies[0];
+
+            const from = String(fromEmail || '').trim().toLowerCase();
+            const to = String(toEmail || '').trim().toLowerCase();
+            const fromDomain = this.emailDomain(from);
+            const toDomain = this.emailDomain(to);
+
+            const byExactEmail = agencies.find((agency) => {
+                const emails = this.parseEmailList(agency.agency_email);
+                return emails.includes(from) || emails.includes(to);
+            });
+            if (byExactEmail) return byExactEmail;
+
+            const byDomain = agencies.find((agency) => {
+                const domains = this.parseEmailList(agency.agency_email)
+                    .map((email) => this.emailDomain(email))
+                    .filter(Boolean);
+                return domains.includes(fromDomain) || domains.includes(toDomain);
+            });
+            if (byDomain) return byDomain;
+
+            const searchableText = `${subject || ''}\n${text || ''}`.toLowerCase();
+            const byNameHint = agencies.find((agency) =>
+                this.normalizeAgencyTokens(agency.agency_name).some((token) => searchableText.includes(token))
+            );
+            if (byNameHint) return byNameHint;
+
+            return agencies.find((agency) => agency.is_primary) || agencies[0];
+        } catch (error) {
+            console.warn(`Failed to resolve case agency for case ${caseId}:`, error.message);
+            return null;
+        }
+    }
+
     normalizeHeaders(rawHeaders) {
         if (!rawHeaders) {
             return {};
@@ -400,6 +460,14 @@ class SendGridService {
                 return { matched: false };
             }
 
+            // Resolve best agency within the case for multi-agency attribution.
+            const matchedCaseAgency = await this.resolveCaseAgencyForMessage(caseData.id, {
+                fromEmail,
+                toEmail,
+                subject: inboundData.subject,
+                text: inboundData.text || inboundData.body_text || ''
+            });
+
             // --- Post-match: Extract and store request number if missing ---
             if (caseData && !caseData.portal_request_number) {
                 const bodyText = inboundData.text || inboundData.body_text || '';
@@ -434,8 +502,11 @@ class SendGridService {
                     subject: inboundData.subject,
                     agency_email: fromEmail,
                     initial_message_id: messageId,
-                    status: 'active'
+                    status: 'active',
+                    case_agency_id: matchedCaseAgency?.id || null
                 });
+            } else if (!thread.case_agency_id && matchedCaseAgency?.id) {
+                await db.updateThread(thread.id, { case_agency_id: matchedCaseAgency.id });
             }
 
             let messageAlreadyExists = false;
@@ -456,7 +527,11 @@ class SendGridService {
                     has_attachments: (inboundData.attachments && inboundData.attachments.length > 0),
                     attachment_count: inboundData.attachments?.length || 0,
                     message_type: 'response',
-                    received_at: new Date()
+                    received_at: new Date(),
+                    metadata: {
+                        case_agency_id: matchedCaseAgency?.id || null,
+                        agency_match_method: matchedCaseAgency ? 'case_agency' : 'none'
+                    }
                 });
             } catch (error) {
                 if (error.code === '23505') {
@@ -1755,14 +1830,29 @@ class SendGridService {
             let thread = await db.getThreadByCaseId(messageData.case_id);
 
             if (!thread) {
+                const matchedCaseAgency = await this.resolveCaseAgencyForMessage(messageData.case_id, {
+                    toEmail: messageData.to_email,
+                    subject: messageData.subject,
+                    text: messageData.body_text
+                });
                 thread = await db.createEmailThread({
                     case_id: messageData.case_id,
                     thread_id: messageData.thread_id,
                     subject: messageData.subject,
                     agency_email: messageData.to_email,
                     initial_message_id: messageData.message_id,
-                    status: 'active'
+                    status: 'active',
+                    case_agency_id: matchedCaseAgency?.id || null
                 });
+            } else if (!thread.case_agency_id) {
+                const matchedCaseAgency = await this.resolveCaseAgencyForMessage(messageData.case_id, {
+                    toEmail: messageData.to_email,
+                    subject: messageData.subject,
+                    text: messageData.body_text
+                });
+                if (matchedCaseAgency?.id) {
+                    await db.updateThread(thread.id, { case_agency_id: matchedCaseAgency.id });
+                }
             }
 
             // Create message record — use per-case user email if available
@@ -1779,7 +1869,11 @@ class SendGridService {
                 body_text: messageData.body_text,
                 body_html: messageData.body_html,
                 message_type: messageData.message_type,
-                sent_at: new Date()
+                sent_at: new Date(),
+                metadata: {
+                    case_agency_id: thread.case_agency_id || null,
+                    agency_match_method: thread.case_agency_id ? 'thread_case_agency' : 'none'
+                }
             });
 
             // Update thread
