@@ -1516,22 +1516,7 @@ function RequestDetailContent() {
               <Loader2 className="h-3 w-3 animate-spin text-blue-400" />
               <span className="text-xs font-medium text-blue-300">Running: processing portal submission</span>
             </div>
-          ) : waitingRun ? (
-            <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
-              <Clock className="h-3 w-3 text-amber-400" />
-              <span className="text-xs font-medium text-amber-300">Paused: awaiting human decision</span>
-            </div>
-          ) : isPaused ? (
-            <div className="flex items-center gap-1.5 rounded border border-amber-700/50 bg-amber-500/10 px-2 py-1">
-              <Clock className="h-3 w-3 text-amber-400" />
-              <span className="text-xs text-amber-300">Paused: decision required</span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
-              <Clock className="h-3 w-3 text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">Idle: no active run</span>
-            </div>
-          )}
+          ) : null}
           <Separator orientation="vertical" className="h-3" />
           <AutopilotSelector
             requestId={request.id}
