@@ -27,6 +27,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('combined'));
 
+// Serve portal screenshots from local disk
+app.use('/api/screenshots', express.static('/data/screenshots'));
+
 // Serve Next.js dashboard static files
 const dashboardPath = path.join(__dirname, 'dashboard', 'out');
 app.use(express.static(dashboardPath));

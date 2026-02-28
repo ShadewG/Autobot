@@ -69,6 +69,37 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Delete screenshot files older than 7 days — runs daily at 1 AM
+        this.jobs.screenshotCleanup = new CronJob('0 1 * * *', async () => {
+            try {
+                const fs = require('fs');
+                const path = require('path');
+                const screenshotDir = '/data/screenshots';
+                if (!fs.existsSync(screenshotDir)) return;
+                const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                const caseDirs = fs.readdirSync(screenshotDir);
+                let deleted = 0;
+                for (const dir of caseDirs) {
+                    const dirPath = path.join(screenshotDir, dir);
+                    if (!fs.statSync(dirPath).isDirectory()) continue;
+                    const files = fs.readdirSync(dirPath);
+                    for (const file of files) {
+                        const filePath = path.join(dirPath, file);
+                        if (fs.statSync(filePath).mtimeMs < cutoff) {
+                            fs.unlinkSync(filePath);
+                            deleted++;
+                        }
+                    }
+                    if (fs.readdirSync(dirPath).length === 0) {
+                        fs.rmdirSync(dirPath);
+                    }
+                }
+                if (deleted > 0) console.log(`Screenshot cleanup: deleted ${deleted} files`);
+            } catch (error) {
+                console.error('Error in screenshot cleanup cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         // Health check / keep-alive every 5 minutes
         this.jobs.healthCheck = new CronJob('*/5 * * * *', async () => {
             try {

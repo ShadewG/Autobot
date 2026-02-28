@@ -1946,23 +1946,25 @@ class PortalAgentServiceSkyvern {
                                 }
                             );
 
-                            // Download from Skyvern and persist to our own storage
-                            const storageService = require('./storage-service');
-                            if (storageService.isConfigured() && logRow?.id) {
+                            // Download from Skyvern and persist to local disk
+                            if (logRow?.id) {
+                                const screenshotDir = `/data/screenshots/${caseId}`;
                                 try {
+                                    const fs = require('fs');
+                                    fs.mkdirSync(screenshotDir, { recursive: true });
                                     const imgResp = await axios.get(newScreenshots[i], { responseType: 'arraybuffer', timeout: 10000 });
-                                    const buffer = Buffer.from(imgResp.data);
                                     const filename = `screenshot_${screenshotIndex + i}_${Date.now()}.png`;
-                                    const { storageUrl } = await storageService.upload(caseId, `portal_${workflowRunId}`, filename, buffer, 'image/png');
+                                    fs.writeFileSync(`${screenshotDir}/${filename}`, Buffer.from(imgResp.data));
+                                    const persistentUrl = `/api/screenshots/${caseId}/${filename}`;
                                     await database.query(
                                         `UPDATE activity_log SET metadata = metadata || $1::jsonb WHERE id = $2`,
-                                        [JSON.stringify({ persistent_url: storageUrl }), logRow.id]
+                                        [JSON.stringify({ persistent_url: persistentUrl }), logRow.id]
                                     );
                                     // Update live screenshot on the case with persistent URL
                                     if (i === newScreenshots.length - 1) {
                                         await database.query(
                                             'UPDATE cases SET last_portal_screenshot_url = $1 WHERE id = $2',
-                                            [storageUrl, caseId]
+                                            [persistentUrl, caseId]
                                         );
                                     }
                                 } catch (persistErr) {
