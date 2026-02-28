@@ -9,6 +9,12 @@ import {
   AlertTriangle,
   CheckSquare,
   Globe,
+  Wrench,
+  Phone,
+  Bot,
+  Clock,
+  HelpCircle,
+  Mail,
 } from "lucide-react";
 import type { PauseReason } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -63,18 +69,71 @@ const GATE_CONFIG: Record<PauseReason, GateConfig> = {
     bgColor: "bg-green-500/15",
     textColor: "text-green-300",
   },
-};
-
-// Fallback for portal failures or unknown gates
-const PORTAL_FAILURE_CONFIG: GateConfig = {
-  label: "Portal Issue",
-  icon: <Globe className="h-3.5 w-3.5" />,
-  bgColor: "bg-cyan-500/15",
-  textColor: "text-cyan-300",
+  // Runtime-generated reasons
+  proposal_pending: {
+    label: "Proposal Pending",
+    icon: <Clock className="h-3.5 w-3.5" />,
+    bgColor: "bg-sky-500/15",
+    textColor: "text-sky-300",
+  },
+  execution_blocked: {
+    label: "Execution Blocked",
+    icon: <AlertTriangle className="h-3.5 w-3.5" />,
+    bgColor: "bg-orange-500/15",
+    textColor: "text-orange-300",
+  },
+  email_send_failed: {
+    label: "Email Failed",
+    icon: <Mail className="h-3.5 w-3.5" />,
+    bgColor: "bg-red-500/15",
+    textColor: "text-red-300",
+  },
+  portal_failed: {
+    label: "Portal Failed",
+    icon: <Wrench className="h-3.5 w-3.5" />,
+    bgColor: "bg-red-500/15",
+    textColor: "text-red-300",
+  },
+  portal_timed_out: {
+    label: "Portal Timeout",
+    icon: <Globe className="h-3.5 w-3.5" />,
+    bgColor: "bg-orange-500/15",
+    textColor: "text-orange-300",
+  },
+  escalated: {
+    label: "Escalated",
+    icon: <Phone className="h-3.5 w-3.5" />,
+    bgColor: "bg-yellow-500/15",
+    textColor: "text-yellow-300",
+  },
+  agent_run_failed: {
+    label: "Agent Error",
+    icon: <Bot className="h-3.5 w-3.5" />,
+    bgColor: "bg-red-500/15",
+    textColor: "text-red-300",
+  },
+  stuck_portal_task: {
+    label: "Portal Stuck",
+    icon: <Wrench className="h-3.5 w-3.5" />,
+    bgColor: "bg-orange-500/15",
+    textColor: "text-orange-300",
+  },
+  portal_stuck: {
+    label: "Portal Stuck",
+    icon: <Wrench className="h-3.5 w-3.5" />,
+    bgColor: "bg-orange-500/15",
+    textColor: "text-orange-300",
+  },
+  UNSPECIFIED: {
+    label: "Needs Review",
+    icon: <HelpCircle className="h-3.5 w-3.5" />,
+    bgColor: "bg-slate-500/15",
+    textColor: "text-slate-300",
+  },
 };
 
 export function GateChip({ reason, costAmount, className }: GateChipProps) {
-  const config = GATE_CONFIG[reason] || PORTAL_FAILURE_CONFIG;
+  const config = GATE_CONFIG[reason] || GATE_CONFIG.UNSPECIFIED;
 
   // For fee quotes, show the amount if available
   const label =
@@ -99,7 +158,7 @@ export function GateChip({ reason, costAmount, className }: GateChipProps) {
   );
 }
 
-// Gate type labels for filters
+// Gate type labels for filters — includes all pause reasons
 export const GATE_TYPE_LABELS: Record<PauseReason, string> = {
   FEE_QUOTE: "Fee Quote",
   DENIAL: "Denial",
@@ -107,4 +166,14 @@ export const GATE_TYPE_LABELS: Record<PauseReason, string> = {
   ID_REQUIRED: "ID Required",
   SENSITIVE: "Sensitive",
   CLOSE_ACTION: "Close Action",
+  proposal_pending: "Proposal Pending",
+  execution_blocked: "Execution Blocked",
+  email_send_failed: "Email Failed",
+  portal_failed: "Portal Failed",
+  portal_timed_out: "Portal Timeout",
+  escalated: "Escalated",
+  agent_run_failed: "Agent Error",
+  stuck_portal_task: "Portal Stuck",
+  portal_stuck: "Portal Stuck",
+  UNSPECIFIED: "Needs Review",
 };

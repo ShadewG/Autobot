@@ -93,8 +93,59 @@ export const PAUSE_REASON_LABELS: Record<string, string> = {
   ID_REQUIRED: 'ID Required',
   SENSITIVE: 'Sensitive',
   CLOSE_ACTION: 'Close Action',
+  proposal_pending: 'Proposal Pending',
+  execution_blocked: 'Execution Blocked',
+  email_send_failed: 'Email Failed',
+  portal_failed: 'Portal Failed',
+  portal_timed_out: 'Portal Timeout',
+  escalated: 'Escalated',
+  agent_run_failed: 'Agent Error',
+  stuck_portal_task: 'Portal Stuck',
+  portal_stuck: 'Portal Stuck',
   UNSPECIFIED: 'Needs Review',
 };
+
+// Format "no response" age + SLA deadline info
+export function formatNoResponseAge(
+  lastActivityAt: string | null | undefined,
+  statutoryDueAt: string | null | undefined
+): string {
+  const parts: string[] = [];
+
+  if (lastActivityAt) {
+    const d = new Date(lastActivityAt);
+    if (!isNaN(d.getTime())) {
+      const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+      parts.push(`No response (${days}d)`);
+    } else {
+      parts.push('No response');
+    }
+  } else {
+    parts.push('No response');
+  }
+
+  if (statutoryDueAt) {
+    const due = new Date(statutoryDueAt);
+    if (!isNaN(due.getTime())) {
+      const diffMs = due.getTime() - Date.now();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) {
+        parts.push(`${Math.abs(diffDays)}d overdue`);
+      } else {
+        parts.push(`${diffDays}d to deadline`);
+      }
+    }
+  }
+
+  return parts.join(' · ');
+}
+
+// Check if agency name looks unresolved/generic
+export function isUnknownAgency(request: { state: string | null | undefined; agency_name: string }): boolean {
+  if (!request.state || request.state === '—' || request.state.trim() === '') return true;
+  const generic = /^(Police|Fire|City|County|Sheriff|School|Water|Transit)\s+(Department|District|Board|Authority)$/i;
+  return generic.test(request.agency_name.trim());
+}
 
 // Status display labels
 export const STATUS_LABELS: Record<string, string> = {

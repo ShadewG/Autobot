@@ -311,7 +311,18 @@ export type PauseReason =
   | 'DENIAL'
   | 'ID_REQUIRED'
   | 'SENSITIVE'
-  | 'CLOSE_ACTION';
+  | 'CLOSE_ACTION'
+  // Runtime-generated reasons
+  | 'proposal_pending'
+  | 'execution_blocked'
+  | 'email_send_failed'
+  | 'portal_failed'
+  | 'portal_timed_out'
+  | 'escalated'
+  | 'agent_run_failed'
+  | 'stuck_portal_task'
+  | 'portal_stuck'
+  | 'UNSPECIFIED';
 
 export type ReviewReason =
   | 'PORTAL_FAILED'
