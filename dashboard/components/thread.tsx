@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ThreadMessage } from "@/lib/types";
 import { formatDateTime, cn } from "@/lib/utils";
-import { Mail, Globe, Phone, Truck, FileText, FileCode } from "lucide-react";
+import { Mail, Globe, Phone, Truck, FileText, FileCode, Loader2 } from "lucide-react";
 
 const channelIcons: Record<string, React.ReactNode> = {
   EMAIL: <Mail className="h-3 w-3" />,
@@ -91,6 +91,14 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
         <p className="text-xs font-semibold mb-1.5">{message.subject}</p>
         <p className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{displayBody}</p>
       </div>
+
+      {/* Sending indicator for optimistic messages */}
+      {(message as any)._sending && (
+        <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-1 animate-pulse">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Sending...
+        </div>
+      )}
 
       {/* Attachments */}
       {message.attachments.length > 0 && (

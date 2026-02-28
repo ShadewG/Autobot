@@ -6,6 +6,7 @@ import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -48,6 +49,7 @@ import type {
   AgentDecision,
   CaseAgency,
   AgencyCandidate,
+  ThreadMessage,
 } from "@/lib/types";
 import { formatDate, cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
 import {
@@ -91,6 +93,8 @@ import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
 import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
 import { CaseInfoTab } from "@/components/case-info-tab";
 import { PortalLiveView } from "@/components/portal-live-view";
+import { useAuth } from "@/components/auth-provider";
+import { toast } from "sonner";
 
 const DISMISS_REASONS = [
   "Wrong action",
@@ -253,6 +257,30 @@ function formatLiveRunLabel(run: AgentRun | null): string | null {
   return null;
 }
 
+function buildTriggerRunUrl(triggerRunId?: string | null): string | null {
+  if (!triggerRunId) return null;
+  return `https://cloud.trigger.dev/orgs/frontwind-llc-27ae/projects/autobot-Z-SQ/env/prod/runs/${triggerRunId}`;
+}
+
+function normalizeDecisionReasoning(reasoning: string | string[] | null | undefined): string {
+  if (Array.isArray(reasoning)) {
+    return reasoning.filter(Boolean).join("\n");
+  }
+  if (!reasoning) return "";
+  const trimmed = String(reasoning).trim();
+  if (!trimmed) return "";
+  if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean).join("\n");
+      if (parsed && typeof parsed === "object") return JSON.stringify(parsed, null, 2);
+    } catch {
+      // fall through to raw string
+    }
+  }
+  return trimmed;
+}
+
 function formatAgencyNotes(notes?: string | null): string | null {
   if (!notes) return null;
   const trimmed = String(notes).trim();
@@ -321,6 +349,8 @@ function messageMatchesAgency(message: RequestWorkspaceResponse["thread_messages
 function RequestDetailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
+  const isAdmin = !!user?.is_admin;
   const id = searchParams.get("id");
 
   const [nextAction, setNextAction] = useState<NextAction | null>(null);
@@ -339,8 +369,15 @@ function RequestDetailContent() {
   const [isManualSubmitting, setIsManualSubmitting] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
+  const [agencyStartLoadingId, setAgencyStartLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
+  const [candidateStartLoadingName, setCandidateStartLoadingName] = useState<string | null>(null);
+  const [manualAgencyName, setManualAgencyName] = useState("");
+  const [manualAgencyEmail, setManualAgencyEmail] = useState("");
+  const [manualAgencyPortalUrl, setManualAgencyPortalUrl] = useState("");
+  const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
   const [conversationTab, setConversationTab] = useState<string>("all");
+  const [optimisticMessages, setOptimisticMessages] = useState<Array<ThreadMessage & { _sending: true }>>([]);
 
   const [pollingUntil, setPollingUntil] = useState<number>(0);
   const refreshInterval = Date.now() < pollingUntil ? 3000 : 0;
@@ -479,9 +516,31 @@ function RequestDetailContent() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+
+      // Add optimistic message for email-like actions
+      const emailActions = ["SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_CLARIFICATION", "SEND_REBUTTAL", "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL"];
+      const actionType = data.pending_proposal.action_type || "";
+      if (emailActions.includes(actionType) && (editedBody || data.pending_proposal.draft_body_text)) {
+        setOptimisticMessages(prev => [...prev, {
+          id: -Date.now(),
+          direction: 'OUTBOUND' as const,
+          channel: 'EMAIL' as const,
+          from_email: '',
+          to_email: data.request.agency_email || '',
+          subject: editedSubject || data.pending_proposal!.draft_subject || '',
+          body: editedBody || data.pending_proposal!.draft_body_text || '',
+          sent_at: new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+          attachments: [],
+          _sending: true as const,
+        }]);
+        toast.success("Email sent");
+      } else {
+        toast.success("Approved");
+      }
       optimisticClear();
     } catch (e: any) {
-      alert(e.message);
+      toast.error(e.message);
     } finally {
       setIsApproving(false);
     }
@@ -498,8 +557,9 @@ function RequestDetailContent() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
       optimisticClear();
+      toast.success("Proposal dismissed");
     } catch (e: any) {
-      alert(e.message);
+      toast.error(e.message);
     }
   };
 
@@ -516,8 +576,9 @@ function RequestDetailContent() {
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
       setPendingAdjustModalOpen(false);
       optimisticClear();
+      toast.success("Adjusting draft...");
     } catch (e: any) {
-      alert(e.message);
+      toast.error(e.message);
     } finally {
       setIsAdjustingPending(false);
     }
@@ -541,8 +602,9 @@ function RequestDetailContent() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
       optimisticClear();
+      toast.success("Marked as submitted");
     } catch (e: any) {
-      alert(e.message);
+      toast.error(e.message);
     } finally {
       setIsManualSubmitting(false);
     }
@@ -578,28 +640,116 @@ function RequestDetailContent() {
     }
   };
 
-  const handleAddCandidateAgency = async (candidate: AgencyCandidate) => {
-    if (!id || !candidate?.name) return;
-    setCandidateActionLoadingName(candidate.name);
+  const handleStartRequestForAgency = async (caseAgencyId: number) => {
+    if (!id) return;
+    const caseId = parseInt(id, 10);
+    const caseAgency = data?.case_agencies?.find((ca) => Number(ca.id) === Number(caseAgencyId));
+    if (!caseAgency) {
+      alert("Agency not found on this case");
+      return;
+    }
+
+    setAgencyStartLoadingId(caseAgencyId);
     try {
-      const res = await fetch(`/api/cases/${id}/agencies`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agency_name: candidate.name,
-          agency_email: candidate.agency_email || undefined,
-          portal_url: candidate.portal_url || undefined,
-          notes: candidate.reason || undefined,
-          added_source: candidate.source || "research_candidate",
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok || !json.success) throw new Error(json.error || "Failed to add agency candidate");
+      if (!caseAgency.is_primary) {
+        const setPrimaryRes = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/set-primary`, { method: "POST" });
+        const setPrimaryJson = await setPrimaryRes.json();
+        if (!setPrimaryRes.ok || !setPrimaryJson.success) {
+          throw new Error(setPrimaryJson.error || "Failed to set primary agency");
+        }
+      }
+
+      const runResult = await casesAPI.runInitial(caseId, { autopilotMode: "SUPERVISED" });
+      if (!runResult.success) {
+        throw new Error("Failed to queue request processing");
+      }
+
       mutate();
+      mutateRuns();
+      startPolling();
+    } catch (e: any) {
+      alert(e.message || "Failed to start request for agency");
+    } finally {
+      setAgencyStartLoadingId(null);
+    }
+  };
+
+  const createCaseAgency = async (agency: {
+    agency_name: string;
+    agency_email?: string;
+    portal_url?: string;
+    notes?: string;
+    added_source?: string;
+  }) => {
+    if (!id) throw new Error("Missing case id");
+    const res = await fetch(`/api/cases/${id}/agencies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(agency),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || "Failed to add agency");
+    }
+    return json.case_agency as CaseAgency;
+  };
+
+  const handleAddCandidateAgency = async (candidate: AgencyCandidate, startAfterAdd = false) => {
+    if (!id || !candidate?.name) return;
+    if (startAfterAdd) {
+      setCandidateStartLoadingName(candidate.name);
+    } else {
+      setCandidateActionLoadingName(candidate.name);
+    }
+    try {
+      const caseAgency = await createCaseAgency({
+        agency_name: candidate.name,
+        agency_email: candidate.agency_email || undefined,
+        portal_url: candidate.portal_url || undefined,
+        notes: candidate.reason || undefined,
+        added_source: candidate.source || "research_candidate",
+      });
+      if (startAfterAdd && caseAgency?.id) {
+        await handleStartRequestForAgency(caseAgency.id);
+      } else {
+        mutate();
+      }
     } catch (e: any) {
       alert(e.message || "Failed to add agency candidate");
     } finally {
       setCandidateActionLoadingName(null);
+      setCandidateStartLoadingName(null);
+    }
+  };
+
+  const handleAddManualAgency = async (startAfterAdd = false) => {
+    if (!manualAgencyName.trim()) {
+      alert("Agency name is required");
+      return;
+    }
+
+    setIsManualAgencySubmitting(true);
+    try {
+      const caseAgency = await createCaseAgency({
+        agency_name: manualAgencyName.trim(),
+        agency_email: manualAgencyEmail.trim() || undefined,
+        portal_url: manualAgencyPortalUrl.trim() || undefined,
+        added_source: "manual",
+      });
+
+      setManualAgencyName("");
+      setManualAgencyEmail("");
+      setManualAgencyPortalUrl("");
+
+      if (startAfterAdd && caseAgency?.id) {
+        await handleStartRequestForAgency(caseAgency.id);
+      } else {
+        mutate();
+      }
+    } catch (e: any) {
+      alert(e.message || "Failed to add agency");
+    } finally {
+      setIsManualAgencySubmitting(false);
     }
   };
 
@@ -790,6 +940,11 @@ function RequestDetailContent() {
     const list = runsData?.runs || [];
     return list.find((r) => ["running", "queued", "created", "processing"].includes(String(r.status).toLowerCase())) || null;
   }, [runsData?.runs]);
+  const activeWorkspaceRun = useMemo(() => {
+    const status = String((data as any)?.active_run?.status || "").toLowerCase();
+    if (!status) return null;
+    return ["running", "queued", "created", "processing", "waiting"].includes(status) ? (data as any).active_run : null;
+  }, [data]);
   const liveRunLabel = useMemo(() => formatLiveRunLabel(liveRun), [liveRun]);
   const portalTaskActive = useMemo(() => {
     const status = String(data?.request?.active_portal_task_status || "").toUpperCase();
@@ -802,6 +957,14 @@ function RequestDetailContent() {
     const list = runsData?.runs || [];
     return list.find((r) => String(r.status).toLowerCase() === "waiting") || null;
   }, [runsData?.runs]);
+  const hasExecutionInFlight = useMemo(() => {
+    const workspaceStatus = String(activeWorkspaceRun?.status || "").toLowerCase();
+    return Boolean(
+      liveRun ||
+      portalTaskActive ||
+      ["running", "queued", "created", "processing"].includes(workspaceStatus)
+    );
+  }, [liveRun, portalTaskActive, activeWorkspaceRun]);
 
   const handleRevise = async (instruction: string) => {
     if (!id) return;
@@ -888,11 +1051,33 @@ function RequestDetailContent() {
     }
   }, [conversationBuckets, conversationTab]);
 
+  // Auto-clear optimistic messages when real messages arrive
+  useEffect(() => {
+    if (optimisticMessages.length === 0) return;
+    setOptimisticMessages(prev => prev.filter(opt => {
+      const hasReal = _threadMessages.some(m =>
+        m.direction === 'OUTBOUND' &&
+        m.id > 0 &&
+        new Date(m.sent_at).getTime() >= new Date(opt.sent_at).getTime() - 5000
+      );
+      return !hasReal;
+    }));
+  }, [_threadMessages]);
+
+  // Safety net: clear optimistic messages after 120s
+  useEffect(() => {
+    if (optimisticMessages.length === 0) return;
+    const timer = setTimeout(() => setOptimisticMessages([]), 120_000);
+    return () => clearTimeout(timer);
+  }, [optimisticMessages.length]);
+
   const visibleThreadMessages = useMemo(() => {
     const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
-    if (!selected || conversationTab === "all") return _threadMessages;
-    return _threadMessages.filter((message) => selected.messageIds.has(message.id));
-  }, [_threadMessages, conversationBuckets, conversationTab]);
+    const real = (!selected || conversationTab === "all")
+      ? _threadMessages
+      : _threadMessages.filter((message) => selected.messageIds.has(message.id));
+    return [...real, ...optimisticMessages];
+  }, [_threadMessages, conversationBuckets, conversationTab, optimisticMessages]);
 
   if (!id) {
     return (
@@ -979,15 +1164,27 @@ function RequestDetailContent() {
     !request.pause_reason ||
     (pauseReasonValue === "PENDING_APPROVAL" && Boolean(waitingRun));
 
-  // Use server-derived review_state when available, fall back to legacy heuristic
-  const isPaused = review_state
-    ? review_state === 'DECISION_REQUIRED'
+  const decisionRequired = review_state
+    ? review_state === "DECISION_REQUIRED"
     : (Boolean(request.pause_reason) ||
-       request.requires_human ||
-       request.status?.toUpperCase() === "PAUSED" ||
-       request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
-       request.status?.toLowerCase().includes("needs_human"));
+      request.requires_human ||
+      request.status?.toUpperCase() === "PAUSED" ||
+      request.status?.toUpperCase() === "NEEDS_HUMAN_REVIEW" ||
+      request.status?.toLowerCase().includes("needs_human"));
+  // Guardrail: never show decision-required UI while execution is actively running.
+  const isPaused = decisionRequired && !hasExecutionInFlight;
   const isDecisionApplying = review_state === 'DECISION_APPLYING';
+  const nextExpectedEvent = useMemo(() => {
+    if (hasExecutionInFlight) {
+      if (portalTaskActive) return "Portal automation in progress";
+      const node = liveRun?.current_node || activeWorkspaceRun?.current_node;
+      return node ? `Processing: ${String(node).replace(/_/g, " ")}` : "Processing active run";
+    }
+    if (isPaused) return "Waiting for your decision";
+    if (String(request.status || "").toUpperCase() === "AWAITING_RESPONSE") return "Waiting for agency reply";
+    if (String(request.status || "").toUpperCase() === "RECEIVED_RESPONSE") return "Inbound received, awaiting processing";
+    return "Idle";
+  }, [hasExecutionInFlight, portalTaskActive, liveRun?.current_node, activeWorkspaceRun?.current_node, isPaused, request.status]);
 
   const gateDisplay = request.pause_reason
     ? (GATE_DISPLAY[request.pause_reason] || FALLBACK_GATE_DISPLAY)
@@ -1195,6 +1392,10 @@ function RequestDetailContent() {
 
         {/* Case Status Panel */}
         <div className="flex items-center gap-4 text-xs mb-2">
+          <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
+            <span className="text-muted-foreground">Next:</span>
+            <span className="font-medium">{nextExpectedEvent}</span>
+          </div>
           <div className="flex items-center gap-1.5">
             <span className="text-muted-foreground">Status:</span>
             <Badge variant="outline" className="font-medium">
@@ -1212,7 +1413,7 @@ function RequestDetailContent() {
               </span>
             </div>
           )}
-          {request.requires_human && !isPausedStatus && (
+          {request.requires_human && !isPausedStatus && !hasExecutionInFlight && (
             <div className="flex items-center gap-1.5">
               <UserCheck className="h-3 w-3 text-amber-500" />
               <span className="text-amber-400 font-medium">Requires Human</span>
@@ -1234,6 +1435,16 @@ function RequestDetailContent() {
               className="flex items-center gap-1.5 text-orange-400 hover:underline text-xs"
             >
               <ExternalLink className="h-3 w-3" /> Skyvern Run
+            </a>
+          )}
+          {isAdmin && (liveRun?.trigger_run_id || activeWorkspaceRun?.trigger_run_id) && (
+            <a
+              href={buildTriggerRunUrl(liveRun?.trigger_run_id || activeWorkspaceRun?.trigger_run_id) || "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 text-blue-400 hover:underline text-xs"
+            >
+              <ExternalLink className="h-3 w-3" /> Trigger Run
             </a>
           )}
           {request.last_portal_status && (
@@ -1313,6 +1524,40 @@ function RequestDetailContent() {
             statutoryDueAt={request.statutory_due_at}
           />
         </div>
+
+        {isAdmin && (
+          <div className="mt-2 flex items-center gap-3 flex-wrap text-[11px] text-muted-foreground">
+            <span className="font-medium text-foreground">Admin Debug:</span>
+            {activeWorkspaceRun?.id && (
+              <span>
+                Active run #{activeWorkspaceRun.id} ({activeWorkspaceRun.status})
+              </span>
+            )}
+            {activeWorkspaceRun?.current_node && (
+              <span>Node: {String(activeWorkspaceRun.current_node)}</span>
+            )}
+            {activeWorkspaceRun?.trigger_run_id && (
+              <a
+                href={buildTriggerRunUrl(activeWorkspaceRun.trigger_run_id) || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:underline"
+              >
+                Open Trigger.dev
+              </a>
+            )}
+            {(activeWorkspaceRun?.skyvern_task_url || request.last_portal_task_url) && (
+              <a
+                href={activeWorkspaceRun?.skyvern_task_url || request.last_portal_task_url || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-orange-400 hover:underline"
+              >
+                Open Skyvern
+              </a>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Content - Different layout for paused vs not paused */}
@@ -2055,11 +2300,13 @@ function RequestDetailContent() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Run ID</TableHead>
+                      <TableHead>Case</TableHead>
                       <TableHead>Trigger</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Started</TableHead>
                       <TableHead>Completed</TableHead>
-                      <TableHead>Node Trace</TableHead>
+                      <TableHead>Current Step</TableHead>
+                      <TableHead>Links</TableHead>
                       <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -2072,6 +2319,9 @@ function RequestDetailContent() {
                       >
                         <TableCell className="font-mono text-sm">
                           {String(run.id).slice(0, 8)}...
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          #{run.case_id}
                         </TableCell>
                         <TableCell>
                           <Badge variant="outline">{run.trigger_type}</Badge>
@@ -2103,7 +2353,11 @@ function RequestDetailContent() {
                           {run.completed_at ? formatDate(run.completed_at) : '-'}
                         </TableCell>
                         <TableCell>
-                          {run.node_trace && run.node_trace.length > 0 ? (
+                          {run.current_node ? (
+                            <Badge variant="secondary" className="text-xs">
+                              {String(run.current_node).replace(/_/g, " ")}
+                            </Badge>
+                          ) : run.node_trace && run.node_trace.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
                               {run.node_trace.slice(0, 3).map((node, i) => (
                                 <Badge key={i} variant="secondary" className="text-xs">
@@ -2121,13 +2375,44 @@ function RequestDetailContent() {
                           )}
                         </TableCell>
                         <TableCell>
+                          <div className="flex items-center gap-2">
+                            {run.trigger_run_id && (
+                              <a
+                                href={buildTriggerRunUrl(run.trigger_run_id) || "#"}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-400 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Trigger
+                              </a>
+                            )}
+                            {isAdmin && run.skyvern_task_url && (
+                              <a
+                                href={run.skyvern_task_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-orange-400 hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Skyvern
+                              </a>
+                            )}
+                            {!run.trigger_run_id && !run.skyvern_task_url && (
+                              <span className="text-xs text-muted-foreground">-</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
                           <Button
                             variant="ghost"
                             size="sm"
                             title="Re-run this execution"
                             onClick={async (e) => {
                               e.stopPropagation();
-                              const confirmed = window.confirm(`Re-run ${String(run.id).slice(0, 8)} now?`);
+                              const confirmed = window.confirm(
+                                `Replay run ${String(run.id).slice(0, 8)} for case #${run.case_id}?\n\nThis queues a new run and can alter queue state.`
+                              );
                               if (!confirmed) return;
                               try {
                                 const result = await requestsAPI.replayAgentRun(id!, run.id);
@@ -2192,7 +2477,8 @@ function RequestDetailContent() {
                       id: `decision-${decision.id}`,
                       type: decision.action_taken || "DECISION",
                       timestamp: decision.created_at,
-                      summary: decision.reasoning,
+                      summary: normalizeDecisionReasoning(decision.reasoning),
+                      raw_reasoning: decision.reasoning,
                       confidence: decision.confidence,
                       outcome: decision.outcome,
                       trigger_type: decision.trigger_type,
@@ -2201,7 +2487,8 @@ function RequestDetailContent() {
                       id: event.id,
                       type: event.type,
                       timestamp: event.timestamp,
-                      summary: event.summary,
+                      summary: event.summary || "Decision event",
+                      raw_reasoning: event.ai_audit || event.metadata || null,
                       confidence: event.ai_audit?.confidence,
                       outcome: null,
                       trigger_type: null,
@@ -2214,7 +2501,9 @@ function RequestDetailContent() {
                           {formatDate(entry.timestamp)}
                         </span>
                       </div>
-                      <p className="text-sm font-medium mb-2 whitespace-pre-wrap">{Array.isArray(entry.summary) ? entry.summary.join("\n") : entry.summary}</p>
+                      <p className="text-sm font-medium mb-2 whitespace-pre-wrap">
+                        {entry.summary || "No summary recorded"}
+                      </p>
                       <div className="bg-muted rounded p-3 text-sm space-y-2">
                         {typeof entry.confidence === "number" && (
                           <p className="text-xs text-muted-foreground">
@@ -2226,6 +2515,16 @@ function RequestDetailContent() {
                         )}
                         {entry.outcome && (
                           <p className="text-xs text-muted-foreground">Outcome: {entry.outcome}</p>
+                        )}
+                        {entry.raw_reasoning && (
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-muted-foreground">Full decision details</summary>
+                            <pre className="mt-2 whitespace-pre-wrap bg-background/60 border rounded p-2 text-[11px]">
+                              {typeof entry.raw_reasoning === "string"
+                                ? entry.raw_reasoning
+                                : JSON.stringify(entry.raw_reasoning, null, 2)}
+                            </pre>
+                          </details>
                         )}
                       </div>
                     </div>
@@ -2301,6 +2600,44 @@ function RequestDetailContent() {
               <CardTitle>Case Agencies ({case_agencies.length})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="rounded border p-3">
+                <p className="text-sm font-medium mb-2">Add Agency</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <Input
+                    value={manualAgencyName}
+                    onChange={(e) => setManualAgencyName(e.target.value)}
+                    placeholder="Agency name"
+                  />
+                  <Input
+                    value={manualAgencyEmail}
+                    onChange={(e) => setManualAgencyEmail(e.target.value)}
+                    placeholder="Email (optional)"
+                  />
+                  <Input
+                    value={manualAgencyPortalUrl}
+                    onChange={(e) => setManualAgencyPortalUrl(e.target.value)}
+                    placeholder="Portal URL (optional)"
+                  />
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={isManualAgencySubmitting || !manualAgencyName.trim()}
+                    onClick={() => handleAddManualAgency(false)}
+                  >
+                    {isManualAgencySubmitting ? "Adding..." : "Add Agency"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={isManualAgencySubmitting || !manualAgencyName.trim()}
+                    onClick={() => handleAddManualAgency(true)}
+                  >
+                    {isManualAgencySubmitting ? "Starting..." : "Add & Start"}
+                  </Button>
+                </div>
+              </div>
+
               {case_agencies.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No linked case agencies yet.</p>
               ) : (
@@ -2335,6 +2672,13 @@ function RequestDetailContent() {
                           onClick={() => handleResearchAgency(ca.id)}
                         >
                           {agencyActionLoadingId === ca.id ? "Researching..." : "Research"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={agencyStartLoadingId === ca.id || ca.id <= 0}
+                          onClick={() => handleStartRequestForAgency(ca.id)}
+                        >
+                          {agencyStartLoadingId === ca.id ? "Starting..." : "Start Request"}
                         </Button>
                       </div>
                     </div>
@@ -2371,10 +2715,25 @@ function RequestDetailContent() {
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!candidate.name || candidateActionLoadingName === candidate.name}
+                        disabled={
+                          !candidate.name ||
+                          candidateActionLoadingName === candidate.name ||
+                          candidateStartLoadingName === candidate.name
+                        }
                         onClick={() => handleAddCandidateAgency(candidate)}
                       >
                         {candidateActionLoadingName === candidate.name ? "Adding..." : "Add To Case"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={
+                          !candidate.name ||
+                          candidateActionLoadingName === candidate.name ||
+                          candidateStartLoadingName === candidate.name
+                        }
+                        onClick={() => handleAddCandidateAgency(candidate, true)}
+                      >
+                        {candidateStartLoadingName === candidate.name ? "Starting..." : "Add & Start"}
                       </Button>
                     </div>
                   </div>
