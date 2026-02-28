@@ -174,12 +174,13 @@ class FollowUpService {
 
         console.log(`🔎 Running pre-follow-up contact research for case ${caseData.id}`);
 
-        // Try pd-contact service first (faster, more accurate)
+        // Contact lookup is owned by pd-contact (Firecrawl-backed).
         let research = null;
         try {
             const pdResult = await pdContactService.lookupContact(
                 caseData.agency_name,
-                caseData.state || caseData.incident_location
+                caseData.state || caseData.incident_location,
+                { forceSearch: true }
             );
             if (pdResult && (pdResult.portal_url || pdResult.contact_email)) {
                 research = {
@@ -194,11 +195,6 @@ class FollowUpService {
             }
         } catch (err) {
             console.log(`pd-contact failed for case ${caseData.id}: ${err.message}`);
-        }
-
-        // Fall back to GPT web search if pd-contact returned nothing
-        if (!research) {
-            research = await aiService.researchAlternateContacts(caseData);
         }
 
         if (!research) {

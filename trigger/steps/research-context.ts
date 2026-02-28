@@ -9,7 +9,7 @@
 import { generateObject } from "ai";
 import { researchModel, researchOptions } from "../lib/ai";
 import { researchContextSchema } from "../lib/schemas";
-import db, { aiService, logger } from "../lib/db";
+import db, { aiService, logger, pdContactService } from "../lib/db";
 import type { ResearchContext, ResearchLevel, Classification, ReferralContact } from "../lib/types";
 import { createHash } from "node:crypto";
 
@@ -205,26 +205,16 @@ export async function researchContext(
     // Timeout budget: check if we've been running too long (180s of 300s limit)
     const taskStartTime = Date.now();
 
-    // Fetch inbound message body for context (helps AI research find the right agency)
-    let inboundMessageBody: string | null = null;
-    if (messageId) {
-      try {
-        const msg = await db.getMessageById(messageId);
-        if (msg?.body_text) {
-          inboundMessageBody = msg.body_text.substring(0, 2000);
-        }
-      } catch (e: any) {
-        logger.warn("Failed to fetch inbound message for research", { caseId, messageId, error: e.message });
-      }
-    }
-
-    // === LIGHT: alternate contacts + portal verification ===
+    // === LIGHT: contact lookup via pd-contact (Firecrawl-backed) ===
     let contactResult: any = null;
     try {
-      // Pass inbound message body so AI can see referral info
-      contactResult = await aiService.researchAlternateContacts(caseData, inboundMessageBody);
+      contactResult = await pdContactService.lookupContact(
+        caseData?.agency_name,
+        caseData?.state || caseData?.incident_location,
+        { forceSearch: true }
+      );
     } catch (e: any) {
-      logger.warn("researchAlternateContacts failed", { caseId, error: e.message });
+      logger.warn("pd-contact lookup failed", { caseId, error: e.message });
     }
 
     const result: ResearchContext = {
