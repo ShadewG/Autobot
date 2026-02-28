@@ -4,7 +4,7 @@ const aiService = require('./ai-service');
 const notificationService = require('./notification-service');
 const actionValidator = require('./action-validator');
 const logger = require('./logger');
-const { transitionCaseRuntime } = require('./case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
@@ -18,6 +18,31 @@ function getEmailQueue() {
         ({ emailQueue: emailQueueInstance } = require('../queues/email-queue'));
     }
     return emailQueueInstance;
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+    const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await transitionCaseRuntime(caseId, event, context);
+        } catch (error) {
+            lastError = error;
+            const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+            if (!isLockError || attempt === attempts) {
+                throw error;
+            }
+            await sleep(baseDelayMs * attempt);
+        }
+    }
+
+    throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
 }
 
 /**
@@ -891,22 +916,34 @@ Then analyze the situation and decide what action to take.`
     async updateCaseStatus({ case_id, status, substatus = null }) {
         console.log(`      🔄 Updating case ${case_id} status: ${status}`);
 
-        const ESCALATION_STATUSES = ['needs_human_review', 'needs_rebuttal', 'pending_fee_decision'];
+        const ESCALATION_STATUSES = ['needs_human_review', 'needs_rebuttal', 'pending_fee_decision', 'needs_human_fee_approval'];
         if (ESCALATION_STATUSES.includes(status)) {
-            await transitionCaseRuntime(case_id, 'CASE_ESCALATED', {
+            await transitionCaseRuntimeWithRetry(case_id, 'CASE_ESCALATED', {
                 targetStatus: status,
                 substatus,
-                pauseReason: 'UNSPECIFIED',
+                pauseReason: status === 'needs_human_fee_approval' ? 'FEE_QUOTE' : 'UNSPECIFIED',
             });
         } else if (status === 'completed') {
-            await transitionCaseRuntime(case_id, 'CASE_COMPLETED', { substatus });
+            await transitionCaseRuntimeWithRetry(case_id, 'CASE_COMPLETED', { substatus });
         } else if (status === 'sent') {
-            await transitionCaseRuntime(case_id, 'CASE_SENT', {
-                sendDate: new Date().toISOString(),
+            const currentCase = await db.getCaseById(case_id);
+            let sendDate = new Date().toISOString();
+            if (currentCase?.send_date) {
+                try {
+                    sendDate = new Date(currentCase.send_date).toISOString();
+                } catch (_) {}
+            }
+            await transitionCaseRuntimeWithRetry(case_id, 'CASE_SENT', {
+                sendDate,
+                substatus,
+            });
+        } else if (status === 'responded') {
+            await transitionCaseRuntimeWithRetry(case_id, 'CASE_RESPONDED', {
+                lastResponseDate: new Date().toISOString(),
                 substatus,
             });
         } else {
-            await transitionCaseRuntime(case_id, 'CASE_RECONCILED', {
+            await transitionCaseRuntimeWithRetry(case_id, 'CASE_RECONCILED', {
                 targetStatus: status,
                 substatus,
             });
@@ -932,7 +969,7 @@ Then analyze the situation and decide what action to take.`
         `, [case_id, reason, urgency, suggested_action]);
 
         // Update case status
-        await transitionCaseRuntime(case_id, 'CASE_ESCALATED', {
+        await transitionCaseRuntimeWithRetry(case_id, 'CASE_ESCALATED', {
             escalationReason: reason,
             pauseReason: 'UNSPECIFIED',
         });

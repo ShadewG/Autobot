@@ -4,7 +4,7 @@ const notionService = require('./notion-service');
 const aiService = require('./ai-service');
 const crypto = require('crypto');
 const { extractUrls } = require('../utils/contact-utils');
-const { transitionCaseRuntime } = require('./case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const {
     PORTAL_PROVIDERS,
     PORTAL_EMAIL_DOMAINS,
@@ -580,7 +580,7 @@ class SendGridService {
             await db.updateThread(thread.id, threadUpdate);
 
             // Update case
-            await transitionCaseRuntime(caseData.id, 'CASE_RESPONDED', {
+            await transitionCaseRuntimeWithRetry(caseData.id, 'CASE_RESPONDED', {
                 lastResponseDate: new Date().toISOString(),
             });
 
@@ -647,7 +647,7 @@ class SendGridService {
                     })
                 });
 
-                await transitionCaseRuntime(caseData.id, 'PORTAL_STARTED', {
+                await transitionCaseRuntimeWithRetry(caseData.id, 'PORTAL_STARTED', {
                     substatus: 'Confirmation link received - retrying portal submission',
                 });
 
@@ -1737,7 +1737,7 @@ class SendGridService {
         let updatedCase;
 
         try {
-            await transitionCaseRuntime(caseData.id, 'FEE_QUOTE_RECEIVED', {
+            await transitionCaseRuntimeWithRetry(caseData.id, 'FEE_QUOTE_RECEIVED', {
                 substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
                 feeQuoteAmount: amount,
                 feeQuoteCurrency: feeQuote.currency,
@@ -1746,7 +1746,7 @@ class SendGridService {
         } catch (error) {
             if (error.code === '42703' && error.message.includes('last_fee_quote')) {
                 console.warn('Fee columns missing in database; storing status without fee metadata.');
-                await transitionCaseRuntime(caseData.id, 'FEE_QUOTE_RECEIVED', {
+                await transitionCaseRuntimeWithRetry(caseData.id, 'FEE_QUOTE_RECEIVED', {
                     substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
                 });
             } else {
@@ -2065,6 +2065,31 @@ class SendGridService {
 
         return signature === expectedSignature;
     }
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+    const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await transitionCaseRuntime(caseId, event, context);
+        } catch (error) {
+            lastError = error;
+            const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+            if (!isLockError || attempt === attempts) {
+                throw error;
+            }
+            await sleep(baseDelayMs * attempt);
+        }
+    }
+
+    throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
 }
 
 module.exports = new SendGridService();

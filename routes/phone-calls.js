@@ -9,7 +9,32 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { transitionCaseRuntime } = require('../services/case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+    const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await transitionCaseRuntime(caseId, event, context);
+        } catch (error) {
+            lastError = error;
+            const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+            if (!isLockError || attempt === attempts) {
+                throw error;
+            }
+            await sleep(baseDelayMs * attempt);
+        }
+    }
+
+    throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
+}
 
 /**
  * GET /phone-calls
@@ -319,12 +344,12 @@ router.post('/:id/complete', async (req, res) => {
 
         // Update case status based on outcome
         if (outcome === 'resolved') {
-            await transitionCaseRuntime(task.case_id, 'CASE_RESPONDED', {
+            await transitionCaseRuntimeWithRetry(task.case_id, 'CASE_RESPONDED', {
                 substatus: 'Resolved via phone call',
                 lastResponseDate: new Date().toISOString(),
             });
         } else if (outcome === 'connected' || outcome === 'transferred') {
-            await transitionCaseRuntime(task.case_id, 'CASE_RECONCILED', {
+            await transitionCaseRuntimeWithRetry(task.case_id, 'CASE_RECONCILED', {
                 targetStatus: 'awaiting_response',
                 substatus: `Phone call: ${outcome}${notes ? ' — ' + notes.substring(0, 100) : ''}`,
             });

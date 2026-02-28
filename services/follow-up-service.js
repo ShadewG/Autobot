@@ -4,7 +4,7 @@ const aiService = require('./ai-service');
 const { emailQueue } = require('../queues/email-queue');
 const notionService = require('./notion-service');
 const pdContactService = require('./pd-contact-service');
-const { transitionCaseRuntime } = require('./case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const {
     normalizePortalUrl,
     detectPortalProviderByUrl,
@@ -17,6 +17,31 @@ const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.TESTING_MODE === 'true') return true;
     return true;
 })();
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+    const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await transitionCaseRuntime(caseId, event, context);
+        } catch (error) {
+            lastError = error;
+            const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+            if (!isLockError || attempt === attempts) {
+                throw error;
+            }
+            await sleep(baseDelayMs * attempt);
+        }
+    }
+
+    throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
+}
 
 class FollowUpService {
     constructor() {
@@ -148,7 +173,7 @@ class FollowUpService {
             });
 
             // Update case status
-            await transitionCaseRuntime(caseData.id, 'CASE_RECONCILED', {
+            await transitionCaseRuntimeWithRetry(caseData.id, 'CASE_RECONCILED', {
                 targetStatus: 'awaiting_response',
                 daysOverdue: this.calculateDaysOverdue(caseData.deadline_date),
             });
@@ -269,7 +294,7 @@ class FollowUpService {
                 const daysOverdue = this.calculateDaysOverdue(caseData.deadline_date);
 
                 // Update case
-                await transitionCaseRuntime(caseData.id, 'CASE_RECONCILED', {
+                await transitionCaseRuntimeWithRetry(caseData.id, 'CASE_RECONCILED', {
                     targetStatus: 'awaiting_response',
                     daysOverdue: daysOverdue,
                 });
