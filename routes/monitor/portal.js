@@ -7,6 +7,7 @@ const {
     isSupportedPortalUrl,
     notify
 } = require('./_helpers');
+const { transitionCaseRuntime } = require('../../services/case-runtime');
 
 /**
  * POST /api/monitor/case/:id/trigger-portal
@@ -68,12 +69,12 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
         });
 
         // Clear review flags so case leaves the queue
-        await db.updateCaseStatus(caseId, 'portal_in_progress', {
+        await transitionCaseRuntime(caseId, 'PORTAL_STARTED', {
             substatus: 'Monitor-triggered portal submission queued',
-            requires_human: false,
-            pause_reason: null,
-            last_portal_status: 'Portal submission queued (monitor trigger)',
-            last_portal_status_at: new Date()
+            portalMetadata: {
+                last_portal_status: 'Portal submission queued (monitor trigger)',
+                last_portal_status_at: new Date().toISOString(),
+            },
         });
 
         // Dismiss pending proposals — human chose portal retry

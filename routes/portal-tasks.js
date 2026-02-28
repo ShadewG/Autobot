@@ -20,6 +20,7 @@ const {
 } = require('../services/executor-adapter');
 const db = require('../services/database');
 const logger = require('../services/logger');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 
 /**
  * GET /portal-tasks
@@ -180,9 +181,8 @@ router.post('/:id/complete', async (req, res) => {
     }
 
     // Update case status
-    await db.updateCaseStatus(task.case_id, 'awaiting_response', {
-      requires_human: false,
-      pause_reason: null
+    await transitionCaseRuntime(task.case_id, 'CASE_RECONCILED', {
+      targetStatus: 'awaiting_response',
     });
 
     logger.info('Portal task completed', {

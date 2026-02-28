@@ -16,6 +16,7 @@ const {
 } = require('./queue-config');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 const { isValidEmail } = require('../utils/contact-utils');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 
 // Feature flag for Run Engine (Phase 3) - new auditability layer
 const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
@@ -136,8 +137,8 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 result = await sendgridService.sendFOIARequest(caseId, content, subject, toEmail, instantReply || false);
 
                 // Update case status
-                await db.updateCaseStatus(caseId, 'sent', {
-                    send_date: new Date()
+                await transitionCaseRuntime(caseId, 'CASE_SENT', {
+                    sendDate: new Date().toISOString(),
                 });
 
                 // Update Notion
@@ -247,7 +248,7 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 // Update case status
                 const sendCaseData = await db.getCaseById(caseId);
                 if (sendCaseData) {
-                    await db.updateCaseStatus(caseId, 'awaiting_response');
+                    await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
                     await notionService.syncStatusToNotion(caseId);
                     await discordService.notifyRequestSent(sendCaseData, 'email');
                 }
@@ -688,9 +689,9 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                     const recordingUrl = portalResult.recording_url || taskUrl || null;
                     const portalRunId = portalResult.runId || portalResult.taskId || null;
 
-                    await db.updateCaseStatus(caseId, 'sent', {
+                    await transitionCaseRuntime(caseId, 'CASE_SENT', {
+                        sendDate: new Date().toISOString(),
                         substatus: `Portal submission completed (${submissionStatus})`,
-                        send_date: new Date()
                     });
                     await db.updateCasePortalStatus(caseId, {
                         portal_url: portalUrl,
@@ -798,8 +799,9 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
             if (portalUrl && !contactEmail) {
                 console.log(`🚫 Case ${caseId} has portal_url but portal failed and no email — needs human review`);
                 const portalErrMsg = (portalError?.message || 'Unknown error or unsupported domain').substring(0, 80);
-                await db.updateCaseStatus(caseId, 'needs_human_review', {
-                    substatus: `Portal failed: ${portalErrMsg}`.substring(0, 100)
+                await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+                    substatus: `Portal failed: ${portalErrMsg}`.substring(0, 100),
+                    pauseReason: 'PORTAL_FAILED',
                 });
                 await notionService.syncStatusToNotion(caseId);
                 await db.logActivity('portal_requires_human', `Portal submission failed for case ${caseId}, no email fallback`, {
@@ -825,8 +827,9 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
 
             if (!contactEmail) {
                 console.warn(`❌ No valid email contact for case ${caseId}. Marking for human review.`);
-                await db.updateCaseStatus(caseId, 'needs_human_review', {
-                    substatus: 'No valid portal or email contact detected'
+                await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+                    substatus: 'No valid portal or email contact detected',
+                    pauseReason: 'UNSPECIFIED',
                 });
                 await notionService.syncStatusToNotion(caseId);
                 await db.logActivity('contact_missing', 'No portal/email contact available. Pending human review.', {
@@ -990,10 +993,12 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
 
         // Mark case as portal in progress if not already sent
         if (caseData.status !== 'sent') {
-            await db.updateCaseStatus(caseId, 'portal_in_progress', {
+            await transitionCaseRuntime(caseId, 'PORTAL_STARTED', {
                 substatus: 'Agency requested portal submission',
-                last_portal_status: 'Portal submission queued',
-                last_portal_status_at: new Date()
+                portalMetadata: {
+                    last_portal_status: 'Portal submission queued',
+                    last_portal_status_at: new Date().toISOString(),
+                },
             });
         }
 
@@ -1026,11 +1031,18 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
         const engineUsed = result.engine || 'skyvern';
         const statusText = result.status || 'submitted';
         const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
-        const sendDate = caseData.send_date || new Date();
+        let sendDateISO;
+        try {
+            sendDateISO = caseData.send_date
+                ? new Date(caseData.send_date).toISOString()
+                : new Date().toISOString();
+        } catch {
+            sendDateISO = new Date().toISOString();
+        }
 
-        await db.updateCaseStatus(caseId, 'sent', {
+        await transitionCaseRuntime(caseId, 'CASE_SENT', {
+            sendDate: sendDateISO,
             substatus: `Portal submission completed (${statusText})`,
-            send_date: sendDate
         });
 
         await db.updateCasePortalStatus(caseId, {
@@ -1078,9 +1090,9 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
         });
         // Safety net: ensure case is flagged for human review + create proposal
         try {
-            await db.updateCaseStatus(caseId, 'needs_human_review', {
+            await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
                 substatus: 'Portal submission failed - requires human submission',
-                requires_human: true
+                pauseReason: 'PORTAL_FAILED',
             });
             const caseData = await db.getCaseById(caseId);
             const caseName = caseData?.case_name || `Case ${caseId}`;
