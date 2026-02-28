@@ -1252,7 +1252,7 @@ function RequestDetailContent() {
   // Guardrail: never show decision-required UI while execution is actively running.
   const isPaused = decisionRequired && !hasExecutionInFlight;
   const isDecisionApplying = review_state === 'DECISION_APPLYING';
-  const nextExpectedEvent = useMemo(() => {
+  const nextExpectedEvent = (() => {
     if (hasExecutionInFlight) {
       if (portalTaskActive) return "Portal automation in progress";
       const node = liveRun?.current_node || activeWorkspaceRun?.current_node;
@@ -1262,7 +1262,7 @@ function RequestDetailContent() {
     if (String(request.status || "").toUpperCase() === "AWAITING_RESPONSE") return "Waiting for agency reply";
     if (String(request.status || "").toUpperCase() === "RECEIVED_RESPONSE") return "Inbound received, awaiting processing";
     return "Idle";
-  }, [hasExecutionInFlight, portalTaskActive, liveRun?.current_node, activeWorkspaceRun?.current_node, isPaused, request.status]);
+  })();
 
   const gateDisplay = request.pause_reason
     ? (GATE_DISPLAY[request.pause_reason] || FALLBACK_GATE_DISPLAY)
