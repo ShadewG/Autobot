@@ -4,6 +4,7 @@ const notionService = require('./notion-service');
 const aiService = require('./ai-service');
 const crypto = require('crypto');
 const { extractUrls } = require('../utils/contact-utils');
+const { transitionCaseRuntime } = require('./case-runtime');
 const {
     PORTAL_PROVIDERS,
     PORTAL_EMAIL_DOMAINS,
@@ -579,8 +580,8 @@ class SendGridService {
             await db.updateThread(thread.id, threadUpdate);
 
             // Update case
-            await db.updateCaseStatus(caseData.id, 'responded', {
-                last_response_date: new Date()
+            await transitionCaseRuntime(caseData.id, 'CASE_RESPONDED', {
+                lastResponseDate: new Date().toISOString(),
             });
 
             // Portal notification detection
@@ -646,8 +647,8 @@ class SendGridService {
                     })
                 });
 
-                await db.updateCaseStatus(caseData.id, 'portal_in_progress', {
-                    substatus: 'Confirmation link received - retrying portal submission'
+                await transitionCaseRuntime(caseData.id, 'PORTAL_STARTED', {
+                    substatus: 'Confirmation link received - retrying portal submission',
                 });
 
                 caseData.portal_url = confirmationUrl;
@@ -1734,26 +1735,25 @@ class SendGridService {
         }
 
         let updatedCase;
-        const statusFields = {
-            substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
-            last_fee_quote_amount: amount,
-            last_fee_quote_currency: feeQuote.currency,
-            last_fee_quote_at: new Date()
-        };
 
         try {
-            updatedCase = await db.updateCaseStatus(caseData.id, 'needs_human_fee_approval', statusFields);
+            await transitionCaseRuntime(caseData.id, 'FEE_QUOTE_RECEIVED', {
+                substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
+                feeQuoteAmount: amount,
+                feeQuoteCurrency: feeQuote.currency,
+                feeQuoteAt: new Date().toISOString(),
+            });
         } catch (error) {
             if (error.code === '42703' && error.message.includes('last_fee_quote')) {
                 console.warn('Fee columns missing in database; storing status without fee metadata.');
-                const fallbackFields = {
-                    substatus: statusFields.substatus
-                };
-                updatedCase = await db.updateCaseStatus(caseData.id, 'needs_human_fee_approval', fallbackFields);
+                await transitionCaseRuntime(caseData.id, 'FEE_QUOTE_RECEIVED', {
+                    substatus: `Fee quoted: $${amount.toFixed(2)} (recommendation: ${recommendedAction})`,
+                });
             } else {
                 throw error;
             }
         }
+        updatedCase = await db.getCaseById(caseData.id);
 
         await notionService.syncStatusToNotion(caseData.id);
 

@@ -4,6 +4,7 @@ const aiService = require('./ai-service');
 const notificationService = require('./notification-service');
 const actionValidator = require('./action-validator');
 const logger = require('./logger');
+const { transitionCaseRuntime } = require('./case-runtime');
 
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
@@ -890,9 +891,26 @@ Then analyze the situation and decide what action to take.`
     async updateCaseStatus({ case_id, status, substatus = null }) {
         console.log(`      🔄 Updating case ${case_id} status: ${status}`);
 
-        await db.updateCaseStatus(case_id, status, {
-            substatus: substatus
-        });
+        const ESCALATION_STATUSES = ['needs_human_review', 'needs_rebuttal', 'pending_fee_decision'];
+        if (ESCALATION_STATUSES.includes(status)) {
+            await transitionCaseRuntime(case_id, 'CASE_ESCALATED', {
+                targetStatus: status,
+                substatus,
+                pauseReason: 'UNSPECIFIED',
+            });
+        } else if (status === 'completed') {
+            await transitionCaseRuntime(case_id, 'CASE_COMPLETED', { substatus });
+        } else if (status === 'sent') {
+            await transitionCaseRuntime(case_id, 'CASE_SENT', {
+                sendDate: new Date().toISOString(),
+                substatus,
+            });
+        } else {
+            await transitionCaseRuntime(case_id, 'CASE_RECONCILED', {
+                targetStatus: status,
+                substatus,
+            });
+        }
 
         return {
             success: true,
@@ -914,8 +932,9 @@ Then analyze the situation and decide what action to take.`
         `, [case_id, reason, urgency, suggested_action]);
 
         // Update case status
-        await db.updateCaseStatus(case_id, 'needs_human_review', {
-            escalation_reason: reason
+        await transitionCaseRuntime(case_id, 'CASE_ESCALATED', {
+            escalationReason: reason,
+            pauseReason: 'UNSPECIFIED',
         });
 
         // Log activity

@@ -4,6 +4,7 @@ const aiService = require('./ai-service');
 const { emailQueue } = require('../queues/email-queue');
 const notionService = require('./notion-service');
 const pdContactService = require('./pd-contact-service');
+const { transitionCaseRuntime } = require('./case-runtime');
 const {
     normalizePortalUrl,
     detectPortalProviderByUrl,
@@ -147,8 +148,9 @@ class FollowUpService {
             });
 
             // Update case status
-            await db.updateCaseStatus(caseData.id, 'awaiting_response', {
-                days_overdue: this.calculateDaysOverdue(caseData.deadline_date)
+            await transitionCaseRuntime(caseData.id, 'CASE_RECONCILED', {
+                targetStatus: 'awaiting_response',
+                daysOverdue: this.calculateDaysOverdue(caseData.deadline_date),
             });
 
             // Update Notion
@@ -267,8 +269,9 @@ class FollowUpService {
                 const daysOverdue = this.calculateDaysOverdue(caseData.deadline_date);
 
                 // Update case
-                await db.updateCaseStatus(caseData.id, 'awaiting_response', {
-                    days_overdue: daysOverdue
+                await transitionCaseRuntime(caseData.id, 'CASE_RECONCILED', {
+                    targetStatus: 'awaiting_response',
+                    daysOverdue: daysOverdue,
                 });
 
                 // Update Notion

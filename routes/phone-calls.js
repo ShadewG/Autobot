@@ -9,6 +9,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 
 /**
  * GET /phone-calls
@@ -318,12 +319,14 @@ router.post('/:id/complete', async (req, res) => {
 
         // Update case status based on outcome
         if (outcome === 'resolved') {
-            await db.updateCaseStatus(task.case_id, 'responded', {
-                substatus: 'Resolved via phone call'
+            await transitionCaseRuntime(task.case_id, 'CASE_RESPONDED', {
+                substatus: 'Resolved via phone call',
+                lastResponseDate: new Date().toISOString(),
             });
         } else if (outcome === 'connected' || outcome === 'transferred') {
-            await db.updateCaseStatus(task.case_id, 'awaiting_response', {
-                substatus: `Phone call: ${outcome}${notes ? ' — ' + notes.substring(0, 100) : ''}`
+            await transitionCaseRuntime(task.case_id, 'CASE_RECONCILED', {
+                targetStatus: 'awaiting_response',
+                substatus: `Phone call: ${outcome}${notes ? ' — ' + notes.substring(0, 100) : ''}`,
             });
         } else if (outcome === 'wrong_number') {
             // Clear the bad phone number
