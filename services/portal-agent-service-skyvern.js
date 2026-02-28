@@ -29,6 +29,8 @@ class PortalAgentServiceSkyvern {
         this.workflowBrowserSessionId = process.env.SKYVERN_BROWSER_SESSION_ID || null;
         this.workflowBrowserAddress = process.env.SKYVERN_BROWSER_ADDRESS || null;
         this.workflowHttpTimeout = parseInt(process.env.SKYVERN_HTTP_TIMEOUT_MS || '120000', 10);
+        this.workflowSoftTimeoutMs = parseInt(process.env.SKYVERN_WORKFLOW_SOFT_TIMEOUT_MS || '840000', 10); // 14m
+        this.workflowCancelTimeoutMs = parseInt(process.env.SKYVERN_CANCEL_TIMEOUT_MS || '8000', 10); // 8s best-effort cancel
         this.skyvernAppBaseUrl = process.env.SKYVERN_APP_BASE_URL || 'https://app.skyvern.com';
         this.emailHelper = new EmailVerificationHelper({
             inboxAddress: process.env.REQUESTS_INBOX || 'requests@foib-request.com'
@@ -707,7 +709,7 @@ class PortalAgentServiceSkyvern {
      * Cancel a running Skyvern workflow/task run.
      * Uses POST /v1/runs/{run_id}/cancel — works for both task and workflow runs.
      */
-    async cancelWorkflowRun(workflowRunId) {
+    async cancelWorkflowRun(workflowRunId, { timeoutMs } = {}) {
         if (!workflowRunId) return false;
         try {
             await axios.post(
@@ -715,7 +717,7 @@ class PortalAgentServiceSkyvern {
                 {},
                 {
                     headers: { 'x-api-key': this.apiKey },
-                    timeout: 10000,
+                    timeout: timeoutMs || 10000,
                 }
             );
             console.log(`🛑 Cancelled Skyvern run ${workflowRunId}`);
@@ -723,6 +725,34 @@ class PortalAgentServiceSkyvern {
         } catch (err) {
             console.warn(`⚠️ Failed to cancel Skyvern run ${workflowRunId}: ${err.message}`);
             return false;
+        }
+    }
+
+    async _cancelWorkflowRunWithTimeout(workflowRunId) {
+        if (!workflowRunId) {
+            return { attempted: false, cancelled: false, reason: 'missing_run_id' };
+        }
+        const cancelTimeoutMs = Number.isFinite(this.workflowCancelTimeoutMs) && this.workflowCancelTimeoutMs > 0
+            ? this.workflowCancelTimeoutMs
+            : 8000;
+
+        try {
+            let safetyTimer;
+            const cancelled = !!(await Promise.race([
+                this.cancelWorkflowRun(workflowRunId, { timeoutMs: cancelTimeoutMs }),
+                new Promise((resolve) => {
+                    safetyTimer = setTimeout(() => resolve(false), cancelTimeoutMs + 250);
+                })
+            ]));
+            clearTimeout(safetyTimer);
+            return { attempted: true, cancelled, timeout_ms: cancelTimeoutMs };
+        } catch (err) {
+            return {
+                attempted: true,
+                cancelled: false,
+                timeout_ms: cancelTimeoutMs,
+                error: err?.message || 'cancel_failed'
+            };
         }
     }
 
@@ -1196,6 +1226,22 @@ class PortalAgentServiceSkyvern {
                     });
                 }
                 const timeoutReason = `Polling timeout — check Skyvern run${workflowRunLink ? ': ' + workflowRunLink : ''}`;
+                const cancelState = await this._cancelWorkflowRunWithTimeout(workflowRunId);
+
+                await database.logActivity(
+                    'portal_soft_timeout',
+                    `Portal run soft-timed out for case ${caseData.id}`,
+                    {
+                        case_id: caseData.id || null,
+                        portal_url: portalUrl,
+                        run_id: workflowRunId,
+                        task_url: workflowRunLink || null,
+                        cancel_attempted: !!cancelState.attempted,
+                        cancel_succeeded: !!cancelState.cancelled,
+                        cancel_timeout_ms: cancelState.timeout_ms || null,
+                        cancel_error: cancelState.error || null
+                    }
+                );
 
                 // Record timeout memory before any early returns
                 try {
@@ -1892,17 +1938,28 @@ class PortalAgentServiceSkyvern {
         if (!workflowRunId) {
             return null;
         }
-        const maxPolls = parseInt(process.env.SKYVERN_WORKFLOW_MAX_POLLS || '480', 10);
+        const configuredMaxPolls = parseInt(process.env.SKYVERN_WORKFLOW_MAX_POLLS || '480', 10);
         const pollIntervalMs = parseInt(process.env.SKYVERN_WORKFLOW_POLL_INTERVAL_MS || '5000', 10);
+        const softTimeoutMs = Number.isFinite(this.workflowSoftTimeoutMs) && this.workflowSoftTimeoutMs > 0
+            ? this.workflowSoftTimeoutMs
+            : 840000;
+        const maxPollsByTimeout = Math.max(1, Math.ceil(softTimeoutMs / Math.max(1, pollIntervalMs)));
+        const maxPolls = Math.max(1, Math.min(configuredMaxPolls, maxPollsByTimeout));
         // Correct endpoint: /api/v1/workflows/{workflowId}/runs/{runId}
         const statusUrl = `${this.baseUrl}/workflows/${this.workflowId}/runs/${workflowRunId}`;
 
         console.log(`⏳ Polling workflow run ${workflowRunId} for completion...`);
         let lastScreenshotUrl = null;
         let screenshotIndex = 0; // tracks how many screenshots we've already logged
+        const startedAt = Date.now();
 
         for (let poll = 0; poll < maxPolls; poll++) {
             await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+            const elapsed = Date.now() - startedAt;
+            if (elapsed >= softTimeoutMs) {
+                console.warn(`⚠️ Workflow run soft timeout reached (${Math.round(softTimeoutMs / 1000)}s).`);
+                return null;
+            }
             try {
                 const statusResponse = await axios.get(statusUrl, {
                     headers: {
