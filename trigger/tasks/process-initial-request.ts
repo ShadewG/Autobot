@@ -61,22 +61,60 @@ export const processInitialRequest = task({
   run: async (payload: InitialRequestPayload) => {
     const { caseId, autopilotMode, triggerType, reviewInstruction, originalActionType, originalProposalId } = payload;
 
-    // Clear any stale agent_runs that would block the unique constraint
-    await db.query(
-      `UPDATE agent_runs
-       SET status = 'cancelled',
-           ended_at = NOW(),
-           error = 'superseded by new trigger.dev run'
-       WHERE case_id = $1 AND status IN ('created', 'queued', 'running')`,
-      [caseId]
-    );
+    // Claim pre-flight agent_run row (preserves triggerRunId in metadata) or create new
+    const ACTIVE_STATUSES = "('created', 'queued', 'running', 'processing', 'waiting')";
+    let runId: number;
 
-    // Create agent_run record in DB (provides FK for proposals)
-    const agentRun = await db.createAgentRun(caseId, "INITIAL_REQUEST", {
-      autopilotMode,
-      source: "trigger.dev",
-    });
-    const runId = agentRun.id;
+    if (payload.runId) {
+      const claimed = await db.query(
+        `UPDATE agent_runs SET status = 'running', started_at = NOW()
+         WHERE id = $1 AND case_id = $2 AND status IN ('created', 'queued')
+         RETURNING id`,
+        [payload.runId, caseId]
+      );
+      if (claimed.rowCount > 0) {
+        runId = payload.runId;
+        await db.query(
+          `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+           WHERE case_id = $1 AND id != $2 AND status IN ${ACTIVE_STATUSES}`,
+          [caseId, runId]
+        );
+      } else {
+        const existing = await db.query(
+          `SELECT id FROM agent_runs WHERE id = $1 AND case_id = $2
+           AND status IN ('running', 'processing', 'waiting')`,
+          [payload.runId, caseId]
+        );
+        if (existing.rowCount > 0) {
+          runId = payload.runId;
+          await db.query(
+            `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+             WHERE case_id = $1 AND id != $2 AND status IN ${ACTIVE_STATUSES}`,
+            [caseId, runId]
+          );
+        } else {
+          await db.query(
+            `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+             WHERE case_id = $1 AND status IN ${ACTIVE_STATUSES}`,
+            [caseId]
+          );
+          const agentRun = await db.createAgentRun(caseId, "INITIAL_REQUEST", {
+            autopilotMode, source: "trigger.dev",
+          });
+          runId = agentRun.id;
+        }
+      }
+    } else {
+      await db.query(
+        `UPDATE agent_runs SET status = 'cancelled', ended_at = NOW(), error = 'superseded'
+         WHERE case_id = $1 AND status IN ${ACTIVE_STATUSES}`,
+        [caseId]
+      );
+      const agentRun = await db.createAgentRun(caseId, "INITIAL_REQUEST", {
+        autopilotMode, source: "trigger.dev",
+      });
+      runId = agentRun.id;
+    }
     const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
       try {
         await db.updateAgentRunNodeProgress(runId, step);
@@ -288,17 +326,58 @@ export const processInitialRequest = task({
       }
       logger.info("Human decision received for initial request", { caseId, action: humanDecision.action });
 
-      // Validate proposal is still actionable.
-      // If proposal was DISMISSED externally (e.g. resolve-review), exit cleanly.
+      // Compare-and-swap: validate proposal is still actionable.
       const currentProposal = await db.getProposalById(draft.proposalId);
-      if (currentProposal?.status === "DISMISSED") {
+      if (!currentProposal) {
+        const recentReset = await db.query(
+          `SELECT id, created_at
+           FROM activity_log
+           WHERE case_id = $1
+             AND event_type = 'case_reset_to_last_inbound'
+             AND created_at > NOW() - INTERVAL '20 minutes'
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [caseId]
+        );
+        const missingReason = recentReset.rows.length > 0
+          ? "proposal_missing_after_reset"
+          : "proposal_missing_unexpected";
+        logger.warn("Proposal row missing at gate compare-and-swap, exiting cleanly", {
+          caseId,
+          proposalId: draft.proposalId,
+          missingReason,
+          resetEventId: recentReset.rows[0]?.id || null,
+        });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return { status: missingReason, proposalId: draft.proposalId };
+      }
+      if (currentProposal.status === "DISMISSED") {
         logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: draft.proposalId });
         await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
         return { status: "dismissed_externally", proposalId: draft.proposalId };
       }
-      if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
+      const nonActionableStatuses = new Set([
+        "WITHDRAWN",
+        "EXPIRED",
+        "EXECUTED",
+        "CANCELLED",
+        "CANCELED",
+      ]);
+      if (nonActionableStatuses.has(currentProposal.status)) {
+        logger.info("Proposal is no longer actionable, exiting cleanly", {
+          caseId,
+          proposalId: draft.proposalId,
+          proposalStatus: currentProposal.status,
+        });
+        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        return {
+          status: `proposal_not_actionable_${String(currentProposal.status || "").toLowerCase()}`,
+          proposalId: draft.proposalId,
+        };
+      }
+      if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal.status)) {
         throw new Error(
-          `Proposal ${draft.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
+          `Proposal ${draft.proposalId} is ${currentProposal.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
         );
       }
 
