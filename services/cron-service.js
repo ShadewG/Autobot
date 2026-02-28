@@ -1345,10 +1345,30 @@ class CronService {
                     stuckPortalTasksCleaned++;
                     console.log(`Auto-failed stuck portal_task ${pt.id} for case ${pt.case_id}`);
 
+                    try {
+                        await db.upsertProposal({
+                            proposalKey: `${pt.case_id}:stuck_portal_task:${pt.id}:SUBMIT_PORTAL`,
+                            caseId: pt.case_id,
+                            actionType: 'SUBMIT_PORTAL',
+                            reasoning: [
+                                `Portal task #${pt.id} was stuck IN_PROGRESS for over 30 minutes with no active submit-portal run.`,
+                                'Review and approve to retry portal submission or switch to manual handling.'
+                            ],
+                            confidence: 0,
+                            requiresHuman: true,
+                            canAutoExecute: false,
+                            draftSubject: `Portal retry recommended for case ${pt.case_id}`,
+                            draftBodyText: `Portal task #${pt.id} was auto-failed after being stuck in IN_PROGRESS for more than 30 minutes with no active run.\n\nApprove to retry portal submission, or choose manual fallback.`,
+                            status: 'PENDING_APPROVAL'
+                        });
+                    } catch (proposalErr) {
+                        console.error(`Failed to create stuck portal retry proposal for case ${pt.case_id}:`, proposalErr.message);
+                    }
+
                     // Keep case state consistent with the failed portal task.
                     await db.updateCaseStatus(pt.case_id, "needs_human_review", {
                         requires_human: true,
-                        substatus: "Portal automation task was stuck and auto-failed",
+                        substatus: "Portal automation task was stuck and auto-failed (retry proposal created)",
                     });
                     try {
                         await db.updateCasePortalStatus(pt.case_id, {

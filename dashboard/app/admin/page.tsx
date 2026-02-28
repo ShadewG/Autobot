@@ -69,6 +69,19 @@ interface Overview {
   cases: { total_cases: number; active_cases: number; needs_review: number; id_state_cases: number };
   status_breakdown: { status: string; count: number }[];
   recent_activity: ActivityEntry[];
+  operational?: {
+    portal_hard_timeout_total_1h: number;
+    portal_soft_timeout_total_1h: number;
+    process_inbound_superseded_total_1h: number;
+    thresholds: {
+      portal_hard_timeout_total_1h: number;
+      process_inbound_superseded_total_1h: number;
+    };
+    alerts: {
+      portal_hard_timeout: boolean;
+      process_inbound_superseded: boolean;
+    };
+  };
 }
 
 interface AdminCase {
@@ -89,17 +102,20 @@ const apiBase = process.env.NEXT_PUBLIC_API_URL || "/api";
 // ── Overview Tab ──────────────────────────────────────────────
 
 function OverviewTab() {
-  const { data, isLoading } = useSWR<{ success: boolean } & Overview>(
+  const { data, isLoading, error } = useSWR<{ success: boolean } & Overview>(
     `${apiBase}/admin/overview`,
     fetcher,
     { refreshInterval: 30000 }
   );
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return <div className="flex items-center gap-2 text-xs text-muted-foreground py-8"><Loader2 className="h-3 w-3 animate-spin" /> Loading...</div>;
   }
+  if (error || !data) {
+    return <div className="text-xs text-destructive py-8">Failed to load admin overview.</div>;
+  }
 
-  const { users, cases, status_breakdown, recent_activity } = data;
+  const { users, cases, status_breakdown, recent_activity, operational } = data;
 
   return (
     <div className="space-y-6">
@@ -128,6 +144,60 @@ function OverviewTab() {
         </CardContent>
       </Card>
 
+      {/* Operational Alerts */}
+      {operational && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4" /> Operational Alerts (1h)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs">
+            <div className="flex items-center justify-between p-2 rounded bg-muted/40">
+              <span>Portal hard timeouts</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono">
+                  {operational.portal_hard_timeout_total_1h} / {operational.thresholds.portal_hard_timeout_total_1h}
+                </span>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] h-4",
+                    operational.alerts.portal_hard_timeout
+                      ? "text-red-400 border-red-400/30"
+                      : "text-emerald-400 border-emerald-400/30"
+                  )}
+                >
+                  {operational.alerts.portal_hard_timeout ? "ALERT" : "OK"}
+                </Badge>
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-2 rounded bg-muted/40">
+              <span>Process-inbound superseded runs</span>
+              <div className="flex items-center gap-2">
+                <span className="font-mono">
+                  {operational.process_inbound_superseded_total_1h} / {operational.thresholds.process_inbound_superseded_total_1h}
+                </span>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px] h-4",
+                    operational.alerts.process_inbound_superseded
+                      ? "text-red-400 border-red-400/30"
+                      : "text-emerald-400 border-emerald-400/30"
+                  )}
+                >
+                  {operational.alerts.process_inbound_superseded ? "ALERT" : "OK"}
+                </Badge>
+              </div>
+            </div>
+            <div className="text-muted-foreground">
+              Soft portal timeouts (1h): <span className="font-mono">{operational.portal_soft_timeout_total_1h}</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Recent Activity */}
       <Card>
         <CardHeader className="pb-3">
@@ -144,7 +214,7 @@ function OverviewTab() {
 // ── Users Tab ─────────────────────────────────────────────────
 
 function UsersTab() {
-  const { data, isLoading, mutate } = useSWR<{ success: boolean; users: AdminUser[] }>(
+  const { data, isLoading, error, mutate } = useSWR<{ success: boolean; users: AdminUser[] }>(
     `${apiBase}/admin/users`,
     fetcher
   );
@@ -187,8 +257,11 @@ function UsersTab() {
     setNewPassword("");
   };
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return <div className="flex items-center gap-2 text-xs text-muted-foreground py-8"><Loader2 className="h-3 w-3 animate-spin" /> Loading...</div>;
+  }
+  if (error || !data) {
+    return <div className="text-xs text-destructive py-8">Failed to load users.</div>;
   }
 
   return (
@@ -378,11 +451,14 @@ function ActivityTab() {
   const url = filterUserId
     ? `${apiBase}/admin/activity?limit=200&user_id=${filterUserId}`
     : `${apiBase}/admin/activity?limit=200`;
-  const { data, isLoading } = useSWR<{ success: boolean; activity: ActivityEntry[] }>(url, fetcher, { refreshInterval: 15000 });
+  const { data, isLoading, error } = useSWR<{ success: boolean; activity: ActivityEntry[] }>(url, fetcher, { refreshInterval: 15000 });
   const { data: usersData } = useSWR<{ success: boolean; users: AdminUser[] }>(`${apiBase}/admin/users`, fetcher);
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return <div className="flex items-center gap-2 text-xs text-muted-foreground py-8"><Loader2 className="h-3 w-3 animate-spin" /> Loading...</div>;
+  }
+  if (error || !data) {
+    return <div className="text-xs text-destructive py-8">Failed to load activity log.</div>;
   }
 
   return (
@@ -412,11 +488,14 @@ function CasesTab() {
   const url = filterUserId
     ? `${apiBase}/admin/cases?limit=100&user_id=${filterUserId}`
     : `${apiBase}/admin/cases?limit=100`;
-  const { data, isLoading } = useSWR<{ success: boolean; cases: AdminCase[] }>(url, fetcher);
+  const { data, isLoading, error } = useSWR<{ success: boolean; cases: AdminCase[] }>(url, fetcher);
   const { data: usersData } = useSWR<{ success: boolean; users: AdminUser[] }>(`${apiBase}/admin/users`, fetcher);
 
-  if (isLoading || !data) {
+  if (isLoading) {
     return <div className="flex items-center gap-2 text-xs text-muted-foreground py-8"><Loader2 className="h-3 w-3 animate-spin" /> Loading...</div>;
+  }
+  if (error || !data) {
+    return <div className="text-xs text-destructive py-8">Failed to load cases.</div>;
   }
 
   return (

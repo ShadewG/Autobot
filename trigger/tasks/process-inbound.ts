@@ -63,6 +63,7 @@ export const processInbound = task({
     if (!caseId) return;
     try {
       await caseRuntime.transitionCaseRuntime(caseId, "RUN_FAILED", {
+        runId: Number.isFinite(Number((payload as any).runId)) ? Number((payload as any).runId) : undefined,
         error: String(error).substring(0, 500),
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
       });

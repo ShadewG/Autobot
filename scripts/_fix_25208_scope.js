@@ -55,7 +55,7 @@ async function main() {
            scope_items_jsonb = $2,
            updated_at = NOW()
        WHERE id = $3`,
-      [JSON.stringify(FULL_SCOPE), JSON.stringify(SCOPE_ITEMS_JSONB), CASE_ID]
+      [FULL_SCOPE, JSON.stringify(SCOPE_ITEMS_JSONB), CASE_ID]
     );
 
     // Verify

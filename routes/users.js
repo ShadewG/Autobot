@@ -169,6 +169,9 @@ router.patch('/:id', express.json(), async (req, res) => {
             }
             updates.default_autopilot_mode = mode;
         }
+        if (req.body.notion_name !== undefined) {
+            updates.notion_name = req.body.notion_name.trim() || null;
+        }
 
         const updated = await db.updateUser(id, updates);
         res.json({ success: true, user: updated });

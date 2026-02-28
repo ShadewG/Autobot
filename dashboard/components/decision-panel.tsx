@@ -278,7 +278,7 @@ const UNKNOWN_GATE_CONFIG: GateConfig = {
   isSupported: true,
 };
 
-const GATE_CONFIGS: Record<PauseReason, GateConfig> = {
+const GATE_CONFIGS: Partial<Record<PauseReason, GateConfig>> = {
   FEE_QUOTE: {
     icon: <DollarSign className="h-5 w-5" />,
     color: "text-amber-300",

@@ -164,7 +164,9 @@ async function _getRequesterInfo(caseData) {
         name: user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Samuel Hylton',
         email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
         phone: user?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702',
-        organization: user?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team',
+        organization: user
+            ? (user.signature_organization ?? '')
+            : (process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team'),
         title: user?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher',
         address: user?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
         addressLine2: user?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',

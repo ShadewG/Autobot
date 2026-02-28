@@ -28,7 +28,7 @@ const STATUS_CONFIG: Record<RequestStatus, { label: string; variant: "default" |
   ID_STATE: { label: "ID State", variant: "secondary" },
 };
 
-const PAUSE_ICON: Record<PauseReason, React.ComponentType<{ className?: string }>> = {
+const PAUSE_ICON: Partial<Record<PauseReason, React.ComponentType<{ className?: string }>>> = {
   FEE_QUOTE: DollarSign,
   SCOPE: Scale,
   DENIAL: Ban,

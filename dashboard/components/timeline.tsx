@@ -212,6 +212,8 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm">{event.summary}</span>
+          <Badge variant="outline" className="text-[10px]">{event.type}</Badge>
+          <Badge variant="secondary" className="text-[10px]">{event.category || "STATUS"}</Badge>
           {mergedCount && mergedCount > 1 && (
             <Badge variant="outline" className="text-[10px]">
               <Layers className="h-2.5 w-2.5 mr-1" />
@@ -346,6 +348,9 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
               <pre className="bg-muted rounded p-2 text-xs overflow-auto max-h-48">
                 {JSON.stringify(event.metadata, null, 2)}
               </pre>
+            )}
+            {!event.raw_content && !event.ai_audit && !event.metadata && (
+              <div className="text-xs text-muted-foreground">No extra details captured for this event.</div>
             )}
           </div>
         )}

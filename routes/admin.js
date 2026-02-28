@@ -31,7 +31,7 @@ router.use(requireAdmin);
  */
 router.get('/overview', async (req, res) => {
     try {
-        const [usersResult, casesResult, statusResult, recentActivity] = await Promise.all([
+        const [usersResult, casesResult, statusResult, recentActivity, portalMetricsResult, supersededMetricsResult] = await Promise.all([
             db.query(`
                 SELECT
                     COUNT(*) FILTER (WHERE active = true)::int AS active_users,
@@ -77,7 +77,36 @@ router.get('/overview', async (req, res) => {
                 ORDER BY al.created_at DESC
                 LIMIT 10
             `),
+            db.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE event_type = 'portal_hard_timeout')::int AS portal_hard_timeout_total_1h,
+                    COUNT(*) FILTER (WHERE event_type = 'portal_soft_timeout')::int AS portal_soft_timeout_total_1h
+                FROM activity_log
+                WHERE created_at > NOW() - INTERVAL '1 hour'
+            `),
+            db.query(`
+                SELECT COUNT(*)::int AS process_inbound_superseded_total_1h
+                FROM agent_runs
+                WHERE status = 'cancelled'
+                  AND error = 'superseded'
+                  AND LOWER(COALESCE(trigger_type, '')) IN (
+                    'inbound_message',
+                    'orphan_review_reprocess',
+                    'resume_retry'
+                  )
+                  AND COALESCE(ended_at, started_at) > NOW() - INTERVAL '1 hour'
+            `),
         ]);
+
+        const portalHardThresholdRaw = parseInt(process.env.PORTAL_HARD_TIMEOUT_ALERT_THRESHOLD || '0', 10);
+        const supersededThresholdRaw = parseInt(process.env.PROCESS_INBOUND_SUPERSEDED_ALERT_THRESHOLD || '5', 10);
+        const portalHardThreshold = Number.isFinite(portalHardThresholdRaw) ? portalHardThresholdRaw : 0;
+        const supersededThreshold = Number.isFinite(supersededThresholdRaw) ? supersededThresholdRaw : 5;
+        const portalMetrics = portalMetricsResult.rows[0] || {};
+        const supersededMetrics = supersededMetricsResult.rows[0] || {};
+        const portalHardTimeoutTotal1h = parseInt(portalMetrics.portal_hard_timeout_total_1h || 0, 10);
+        const portalSoftTimeoutTotal1h = parseInt(portalMetrics.portal_soft_timeout_total_1h || 0, 10);
+        const processInboundSupersededTotal1h = parseInt(supersededMetrics.process_inbound_superseded_total_1h || 0, 10);
 
         res.json({
             success: true,
@@ -85,6 +114,19 @@ router.get('/overview', async (req, res) => {
             cases: casesResult.rows[0],
             status_breakdown: statusResult.rows,
             recent_activity: recentActivity.rows,
+            operational: {
+                portal_hard_timeout_total_1h: portalHardTimeoutTotal1h,
+                portal_soft_timeout_total_1h: portalSoftTimeoutTotal1h,
+                process_inbound_superseded_total_1h: processInboundSupersededTotal1h,
+                thresholds: {
+                    portal_hard_timeout_total_1h: portalHardThreshold,
+                    process_inbound_superseded_total_1h: supersededThreshold,
+                },
+                alerts: {
+                    portal_hard_timeout: portalHardTimeoutTotal1h > portalHardThreshold,
+                    process_inbound_superseded: processInboundSupersededTotal1h > supersededThreshold,
+                },
+            },
         });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });

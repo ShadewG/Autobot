@@ -16,6 +16,7 @@ interface User {
   id: number;
   name: string;
   email_handle: string;
+  notion_name: string | null;
   default_autopilot_mode: string | null;
   signature_name: string | null;
   signature_title: string | null;
@@ -31,6 +32,7 @@ interface User {
 function UserSettings({ user }: { user: User }) {
   const [form, setForm] = useState({
     default_autopilot_mode: user.default_autopilot_mode || "SUPERVISED",
+    notion_name: user.notion_name || "",
     signature_name: user.signature_name || user.name || "",
     signature_title: user.signature_title || "",
     signature_organization: user.signature_organization || "",
@@ -49,6 +51,7 @@ function UserSettings({ user }: { user: User }) {
   useEffect(() => {
     setForm({
       default_autopilot_mode: user.default_autopilot_mode || "SUPERVISED",
+      notion_name: user.notion_name || "",
       signature_name: user.signature_name || user.name || "",
       signature_title: user.signature_title || "",
       signature_organization: user.signature_organization || "",
@@ -141,6 +144,27 @@ function UserSettings({ user }: { user: User }) {
           <p className="text-xs text-muted-foreground mt-1.5">
             This is your default. Individual agencies can override it.
           </p>
+        </div>
+
+        <Separator />
+
+        {/* Notion mapping */} 
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+            Notion Mapping
+          </p>
+          <div className="space-y-1">
+            <Label className="text-xs">Notion Assigned Name</Label>
+            <Input
+              value={form.notion_name}
+              onChange={(e) => set("notion_name", e.target.value)}
+              placeholder="e.g. Samuel Hylton"
+              className="h-8 text-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              Used to link Notion assignees to your account during case import/sync.
+            </p>
+          </div>
         </div>
 
         <Separator />

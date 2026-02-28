@@ -10,7 +10,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 
-const pauseIcons: Record<PauseReason, React.ReactNode> = {
+const pauseIcons: Partial<Record<PauseReason, React.ReactNode>> = {
   FEE_QUOTE: <DollarSign className="h-3 w-3" />,
   SCOPE: <FileQuestion className="h-3 w-3" />,
   DENIAL: <XCircle className="h-3 w-3" />,
