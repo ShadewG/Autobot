@@ -9,6 +9,7 @@ const agencyNotionSync = require('./agency-notion-sync');
 const pdContactService = require('./pd-contact-service');
 const triggerDispatch = require('./trigger-dispatch-service');
 const discordService = require('./discord-service');
+const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 
 // Feature flag: Use new Run Engine follow-up scheduler
 const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false';
@@ -277,10 +278,19 @@ class CronService {
                     const caseData = await db.getCaseById(row.case_id);
                     if (!caseData || caseData.pause_reason === 'LOOP_DETECTED') continue;
 
-                    await db.updateCaseStatus(row.case_id, 'needs_human_review', {
-                        substatus: `Circuit breaker: ${row.fail_count} failed runs in 24h`,
-                        pause_reason: 'LOOP_DETECTED'
-                    });
+                    try {
+                        await transitionCaseRuntime(row.case_id, 'CASE_ESCALATED', {
+                            substatus: `Circuit breaker: ${row.fail_count} failed runs in 24h`,
+                            pauseReason: 'LOOP_DETECTED',
+                        });
+                    } catch (err) {
+                        if (err.name === 'CaseLockContention') {
+                            console.warn(`[loop-breaker] Case ${row.case_id} locked — skipping`);
+                            continue;
+                        }
+                        console.error(`[loop-breaker] Error flagging case ${row.case_id}:`, err.message);
+                        continue;
+                    }
                     console.log(`[loop-breaker] Case ${row.case_id} flagged: ${row.fail_count} failed runs in 24h`);
                     await db.logActivity('loop_detected', `Circuit breaker tripped: ${row.fail_count} failed runs in 24h`, {
                         case_id: row.case_id, fail_count: row.fail_count
@@ -636,8 +646,9 @@ class CronService {
                             status: 'PENDING_APPROVAL'
                         });
 
-                        await db.updateCaseStatus(caseData.id, 'needs_human_review', {
-                            substatus: `Deadline passed + contact info changed (${daysOverdue}d overdue)`
+                        await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                            substatus: `Deadline passed + contact info changed (${daysOverdue}d overdue)`,
+                            pauseReason: 'deadline_contact_changed',
                         });
 
                         contactUpdates++;
@@ -669,8 +680,10 @@ class CronService {
                             .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
                             .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
 
-                        await db.updateCaseStatus(caseData.id, 'needs_phone_call', {
-                            substatus: `Deadline passed ${daysOverdue}d ago — no response`
+                        await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                            targetStatus: 'needs_phone_call',
+                            substatus: `Deadline passed ${daysOverdue}d ago — no response`,
+                            pauseReason: 'deadline_phone_call',
                         });
 
                         phoneCalls++;
@@ -693,8 +706,9 @@ class CronService {
                             status: 'PENDING_APPROVAL'
                         });
 
-                        await db.updateCaseStatus(caseData.id, 'needs_human_review', {
-                            substatus: `Deadline passed ${daysOverdue}d ago — ${caseData.portal_url ? 'portal case' : 'no contact info'}`
+                        await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                            substatus: `Deadline passed ${daysOverdue}d ago — ${caseData.portal_url ? 'portal case' : 'no contact info'}`,
+                            pauseReason: 'deadline_no_contact',
                         });
 
                         humanReviews++;
@@ -779,8 +793,10 @@ class CronService {
                     draftBodyText: `Agency quoted a fee${feeAmount > 0 ? ' of $' + feeAmount.toFixed(2) : ''}. ${daysOverdue} days past deadline.`,
                     status: 'PENDING_APPROVAL'
                 });
-                await db.updateCaseStatus(caseData.id, 'pending_fee_decision', {
-                    substatus: `Fee quoted${feeAmount > 0 ? ': $' + feeAmount.toFixed(2) : ''} (${daysOverdue}d overdue)`
+                await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                    targetStatus: 'pending_fee_decision',
+                    substatus: `Fee quoted${feeAmount > 0 ? ': $' + feeAmount.toFixed(2) : ''} (${daysOverdue}d overdue)`,
+                    pauseReason: 'fee_decision_needed',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → ${actionType} (AI detected fee_request)`);
                 return 'proposal';
@@ -803,8 +819,9 @@ class CronService {
                     draftBodyText: `Agency asked for clarification. Key points: ${(analysis.key_points || []).join('; ') || 'See analysis'}`,
                     status: 'PENDING_APPROVAL'
                 });
-                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: `Agency asked for clarification (${daysOverdue}d overdue)`
+                await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                    substatus: `Agency asked for clarification (${daysOverdue}d overdue)`,
+                    pauseReason: 'clarification_needed',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → SEND_CLARIFICATION (AI detected ${intent})`);
                 return 'proposal';
@@ -812,8 +829,8 @@ class CronService {
 
             case 'records_ready':
             case 'delivery': {
-                await db.updateCaseStatus(caseData.id, 'completed', {
-                    substatus: `Records available (detected by AI, ${daysOverdue}d overdue)`
+                await transitionCaseRuntime(caseData.id, 'CASE_COMPLETED', {
+                    substatus: `Records available (detected by AI, ${daysOverdue}d overdue)`,
                 });
                 await db.logActivity('case_completed_by_ai',
                     `Case ${caseData.case_name} marked completed — AI detected ${intent}`,
@@ -839,8 +856,10 @@ class CronService {
                     draftBodyText: `Agency denied the request. Key points: ${(analysis.key_points || []).join('; ') || 'See analysis'}`,
                     status: 'PENDING_APPROVAL'
                 });
-                await db.updateCaseStatus(caseData.id, 'needs_rebuttal', {
-                    substatus: `Denial received (${daysOverdue}d overdue)`
+                await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                    targetStatus: 'needs_rebuttal',
+                    substatus: `Denial received (${daysOverdue}d overdue)`,
+                    pauseReason: 'denial_rebuttal_needed',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → SEND_REBUTTAL (AI detected denial)`);
                 return 'proposal';
@@ -862,8 +881,9 @@ class CronService {
                     draftBodyText: `Agency redirected to portal.\n${caseData.portal_url ? 'Portal URL: ' + caseData.portal_url : 'No portal URL on file — needs research.'}`,
                     status: 'PENDING_APPROVAL'
                 });
-                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
-                    substatus: `Portal redirect (${daysOverdue}d overdue)`
+                await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                    substatus: `Portal redirect (${daysOverdue}d overdue)`,
+                    pauseReason: 'portal_redirect',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → SUBMIT_PORTAL (AI detected portal_redirect)`);
                 return 'proposal';
@@ -909,9 +929,8 @@ class CronService {
                         } catch (_) { portalError = caseData.last_portal_details.substring(0, 200); }
                     }
 
-                    await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                    await transitionCaseRuntime(caseData.id, 'PORTAL_STUCK', {
                         substatus: `Portal timed out (>30 min): ${portalError}`.substring(0, 100),
-                        requires_human: true
                     });
 
                     // Create proposal with full error context
@@ -1197,9 +1216,9 @@ class CronService {
                              WHERE id = $1`,
                             [proposal.id]
                         );
-                        await db.updateCaseStatus(proposal.case_id, 'needs_human_review', {
-                            substatus: `Approved proposal #${proposal.id} failed to execute after ${retryCount} retries`,
-                            requires_human: true
+                        await transitionCaseRuntime(proposal.case_id, 'CASE_ESCALATED', {
+                            substatus: `Approved proposal #${proposal.id} failed after ${retryCount} retries`,
+                            pauseReason: 'execution_retry_exhausted',
                         });
                         await db.logActivity('execution_retry_exhausted',
                             `Proposal #${proposal.id} (${proposal.action_type}) failed to execute after ${retryCount} retries`,
@@ -1335,13 +1354,22 @@ class CronService {
                   )
             `);
             for (const pt of stuckTasks.rows) {
-                const updateResult = await db.query(
-                    `UPDATE portal_tasks SET status = 'FAILED', completed_at = NOW(),
-                     completion_notes = 'Auto-failed: stuck IN_PROGRESS >30min with no active run'
-                     WHERE id = $1 AND status = 'IN_PROGRESS'`,
+                // CAS pre-check: skip if already transitioned by another writer
+                const casCheck = await db.query(
+                    `SELECT id FROM portal_tasks WHERE id = $1 AND status = 'IN_PROGRESS'`,
                     [pt.id]
                 );
-                if (updateResult.rowCount > 0) {
+                if (casCheck.rowCount === 0) continue;
+
+                try {
+                    await transitionCaseRuntime(pt.case_id, 'STUCK_PORTAL_TASK_FAILED', {
+                        portalTaskId: pt.id,
+                        error: 'Auto-failed: stuck IN_PROGRESS >30min with no active run',
+                        portalMetadata: {
+                            last_portal_status: 'Auto-failed: portal task stuck IN_PROGRESS >30min (no active run)',
+                            last_portal_status_at: new Date(),
+                        },
+                    });
                     stuckPortalTasksCleaned++;
                     console.log(`Auto-failed stuck portal_task ${pt.id} for case ${pt.case_id}`);
 
@@ -1365,24 +1393,17 @@ class CronService {
                         console.error(`Failed to create stuck portal retry proposal for case ${pt.case_id}:`, proposalErr.message);
                     }
 
-                    // Keep case state consistent with the failed portal task.
-                    await db.updateCaseStatus(pt.case_id, "needs_human_review", {
-                        requires_human: true,
-                        substatus: "Portal automation task was stuck and auto-failed (retry proposal created)",
-                    });
-                    try {
-                        await db.updateCasePortalStatus(pt.case_id, {
-                            last_portal_status: "Auto-failed: portal task stuck IN_PROGRESS >30min (no active run)",
-                            last_portal_status_at: new Date(),
-                        });
-                    } catch (portalStatusErr) {
-                        console.error(`Failed to update portal status for case ${pt.case_id}:`, portalStatusErr.message);
-                    }
                     await db.logActivity(
                         'stuck_portal_task_auto_failed',
                         `Auto-failed stuck portal task #${pt.id} and marked case ${pt.case_id} for human review`,
                         { case_id: pt.case_id, portal_task_id: pt.id }
                     );
+                } catch (err) {
+                    if (err.name === 'CaseLockContention') {
+                        console.warn(`Case ${pt.case_id} locked during stuck portal task cleanup — skipping`);
+                        continue;
+                    }
+                    console.error(`Error cleaning stuck portal_task ${pt.id} for case ${pt.case_id}:`, err.message);
                 }
             }
             if (stuckPortalTasksCleaned > 0) {
