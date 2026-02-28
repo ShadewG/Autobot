@@ -823,7 +823,9 @@ class PortalAgentServiceSkyvern {
         // sent to REQUESTS_INBOX don't route to cases properly.
         const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
         const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
-        const ownerOrg = caseOwner?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team';
+        const ownerOrg = caseOwner
+            ? (caseOwner.signature_organization ?? '')
+            : (process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team');
         const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
 
         return {
@@ -1932,7 +1934,7 @@ class PortalAgentServiceSkyvern {
                     const newScreenshots = data.screenshot_urls.slice(screenshotIndex);
                     for (let i = 0; i < newScreenshots.length; i++) {
                         try {
-                            await database.logActivity(
+                            const logRow = await database.logActivity(
                                 'portal_screenshot',
                                 `Portal screenshot #${screenshotIndex + i + 1}`,
                                 {
@@ -1943,6 +1945,30 @@ class PortalAgentServiceSkyvern {
                                     skyvern_status: status
                                 }
                             );
+
+                            // Download from Skyvern and persist to our own storage
+                            const storageService = require('./storage-service');
+                            if (storageService.isConfigured() && logRow?.id) {
+                                try {
+                                    const imgResp = await axios.get(newScreenshots[i], { responseType: 'arraybuffer', timeout: 10000 });
+                                    const buffer = Buffer.from(imgResp.data);
+                                    const filename = `screenshot_${screenshotIndex + i}_${Date.now()}.png`;
+                                    const { storageUrl } = await storageService.upload(caseId, `portal_${workflowRunId}`, filename, buffer, 'image/png');
+                                    await database.query(
+                                        `UPDATE activity_log SET metadata = metadata || $1::jsonb WHERE id = $2`,
+                                        [JSON.stringify({ persistent_url: storageUrl }), logRow.id]
+                                    );
+                                    // Update live screenshot on the case with persistent URL
+                                    if (i === newScreenshots.length - 1) {
+                                        await database.query(
+                                            'UPDATE cases SET last_portal_screenshot_url = $1 WHERE id = $2',
+                                            [storageUrl, caseId]
+                                        );
+                                    }
+                                } catch (persistErr) {
+                                    console.warn(`   Screenshot persist failed: ${persistErr.message}`);
+                                }
+                            }
                         } catch (logErr) {
                             console.warn(`   Screenshot log failed: ${logErr.message}`);
                         }

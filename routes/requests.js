@@ -531,6 +531,10 @@ function toThreadMessage(message, attachments = []) {
     const cleanedBody = cleanEmailBody(rawBody);
     const timestamp = message.sent_at || message.received_at || message.created_at;
 
+    const meta = message.metadata || {};
+    const caseAgencyIdRaw = meta.case_agency_id;
+    const caseAgencyId = Number.isFinite(Number(caseAgencyIdRaw)) ? Number(caseAgencyIdRaw) : null;
+
     return {
         id: message.id,  // Numeric ID for API calls
         direction: message.direction === 'outbound' ? 'OUTBOUND' : 'INBOUND',
@@ -543,6 +547,7 @@ function toThreadMessage(message, attachments = []) {
         sent_at: timestamp,
         timestamp: timestamp,  // Alias for convenience
         processed_at: message.processed_at || null,  // When this message was processed by the agent
+        case_agency_id: caseAgencyId,
         attachments: attachments
     };
 }
@@ -1249,7 +1254,9 @@ router.get('/:id/workspace', async (req, res) => {
             const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
             const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
             const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
-            const ownerOrg = caseOwner?.signature_organization || process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team';
+            const ownerOrg = caseOwner
+                ? (caseOwner.signature_organization ?? '')
+                : (process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team');
             const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
 
             const rawRecords = caseData.requested_records;
@@ -1399,7 +1406,8 @@ router.get('/:id/portal-screenshots', async (req, res) => {
         }
 
         const result = await db.query(
-            `SELECT id, metadata->>'url' AS url, metadata->>'run_id' AS run_id,
+            `SELECT id, COALESCE(metadata->>'persistent_url', metadata->>'url') AS url,
+                    metadata->>'run_id' AS run_id,
                     (metadata->>'sequence_index')::int AS sequence_index,
                     metadata->>'skyvern_status' AS skyvern_status,
                     created_at AS captured_at
