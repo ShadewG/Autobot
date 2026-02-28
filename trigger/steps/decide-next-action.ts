@@ -8,7 +8,7 @@
 import { generateObject } from "ai";
 import { decisionModel, decisionOptions } from "../lib/ai";
 import { decisionSchema, type DecisionOutput } from "../lib/schemas";
-import db, { logger } from "../lib/db";
+import db, { logger, caseRuntime } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
 import { hasAutomatablePortal } from "../lib/portal-utils";
@@ -106,7 +106,7 @@ function buildAllowedActions(params: {
     // Fee quotes should use fee actions primarily
     return base.filter(a =>
       ["ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE", "SEND_FEE_WAIVER_REQUEST",
-       "SEND_REBUTTAL", "ESCALATE", "NONE"].includes(a)
+       "SEND_REBUTTAL", "REFORMULATE_REQUEST", "ESCALATE", "NONE"].includes(a)
     );
   }
 
@@ -153,9 +153,14 @@ async function preComputeDecisionContext(
     db.getMessagesByCaseId(caseId),
     db.getLatestResponseAnalysis(caseId),
     db.query(
-      `SELECT action_type, reasoning, human_decision, created_at FROM proposals
-       WHERE case_id = $1 AND status = 'DISMISSED'
-       ORDER BY created_at DESC LIMIT 5`,
+      `SELECT action_type, reasoning, human_decision, created_at
+       FROM proposals
+       WHERE case_id = $1
+         AND status = 'DISMISSED'
+         AND COALESCE(human_decision->>'action', '') = 'DISMISS'
+         AND NOT (COALESCE(human_decision, '{}'::jsonb) ? 'auto_dismiss_reason')
+       ORDER BY created_at DESC
+       LIMIT 5`,
       [caseId]
     ).then((r: any) => r.rows),
     db.query(
@@ -757,6 +762,79 @@ function shouldPrioritizeBodycamCustodianResearch(
   return is911Scoped && formGate && !mentionsBodycamHandling && (bodycamSignal || wrongAgencyTo911Signal);
 }
 
+function isPoliceReportOnlyScope(requestedRecords: any): boolean {
+  const raw = Array.isArray(requestedRecords)
+    ? requestedRecords
+    : (requestedRecords ? [requestedRecords] : []);
+  const terms = raw
+    .map((r: any) => String(r || "").toLowerCase().trim())
+    .filter(Boolean);
+  if (terms.length === 0) return false;
+
+  const policeReportPattern = /(police|incident|offense|offence|arrest)\s*(report|narrative)/i;
+  const clearlyNotPoliceReport = /(body.?cam|video|audio|911|dispatch|cad|radio|dash.?cam|surveillance|forensic|autopsy|photos?)/i;
+
+  return terms.every((t) => policeReportPattern.test(t) && !clearlyNotPoliceReport.test(t));
+}
+
+type HighFeeNarrowingPath = "same_chain" | "new_request_required" | "unknown";
+
+function inferHighFeeNarrowingPath(text: string): HighFeeNarrowingPath {
+  const t = String(text || "").toLowerCase();
+  if (!t.trim()) return "unknown";
+
+  const requiresNewRequest = [
+    /\b(new|separate|another)\s+request\b/,
+    /\bsubmit\b[^.!?]{0,80}\bnew\s+request\b/,
+    /\bmust\b[^.!?]{0,120}\b(new|separate)\s+request\b/,
+    /\bcannot\b[^.!?]{0,80}\bnarrow\b[^.!?]{0,80}\b(current|existing)\s+request\b/,
+    /\bwill\s+not\b[^.!?]{0,120}\b(modify|change|revise|narrow)\b[^.!?]{0,80}\b(current|existing)\s+request\b/,
+    /\bclose\b[^.!?]{0,80}\b(request|case)\b[^.!?]{0,120}\b(new|separate)\s+request\b/,
+  ].some((re) => re.test(t));
+
+  if (requiresNewRequest) return "new_request_required";
+
+  const allowsSameChainNarrowing = [
+    /\bnarrow\b[^.!?]{0,80}\b(this|current|existing)\s+request\b/,
+    /\bif\s+you\s+narrow\b/,
+    /\bupdate\b[^.!?]{0,80}\brequest\b[^.!?]{0,80}\b(scope|parameters)\b/,
+    /\bwithin\b[^.!?]{0,40}\b(this|current|existing)\s+request\b/,
+    /\breduce\b[^.!?]{0,80}\bscope\b[^.!?]{0,80}\b(current|existing)\s+request\b/,
+  ].some((re) => re.test(t));
+
+  if (allowsSameChainNarrowing) return "same_chain";
+  return "unknown";
+}
+
+async function detectHighFeeNarrowingPath(
+  caseId: number,
+  inlineKeyPoints?: string[]
+): Promise<HighFeeNarrowingPath> {
+  const [latestAnalysis, latestInbound] = await Promise.all([
+    db.getLatestResponseAnalysis(caseId),
+    db.query(
+      `SELECT subject, body_text, body_html
+       FROM messages
+       WHERE case_id = $1
+         AND direction = 'inbound'
+       ORDER BY COALESCE(received_at, created_at) DESC
+       LIMIT 1`,
+      [caseId]
+    ).then((r: any) => r.rows[0] || null),
+  ]);
+
+  const contextText = [
+    ...(Array.isArray(inlineKeyPoints) ? inlineKeyPoints : []),
+    ...(Array.isArray(latestAnalysis?.key_points) ? latestAnalysis.key_points : []),
+    JSON.stringify(latestAnalysis?.full_analysis_json || {}),
+    latestInbound?.subject || "",
+    latestInbound?.body_text || "",
+    latestInbound?.body_html || "",
+  ].join(" ");
+
+  return inferHighFeeNarrowingPath(contextText);
+}
+
 function buildHumanDirectivesSection(
   dismissedProposals?: any[],
   humanDirectives?: any[],
@@ -953,7 +1031,10 @@ ${threadSummary || "No thread messages available."}
 ### Fee Routing
 - Fee <= $100 in AUTO mode → ACCEPT_FEE (auto-execute)
 - Fee $100-$500 → ACCEPT_FEE (requires human)
-- Fee > $500 → NEGOTIATE_FEE (requires human)
+- Fee > $500:
+  - If agency allows narrowing in the same request chain → REFORMULATE_REQUEST
+  - If agency explicitly requires a brand-new request to narrow scope → DECLINE_FEE (then open new narrow request)
+  - Otherwise → NEGOTIATE_FEE (requires human)
 - If agency also denied records in same message → SEND_REBUTTAL first, handle fee later
 - If fee seems excessive for the request → SEND_FEE_WAIVER_REQUEST (requires human)
 
@@ -1080,7 +1161,7 @@ async function validateDecision(
   // FEE_QUOTE must use a fee-handling action — SEND_CLARIFICATION and SEND_FOLLOWUP are not appropriate
   // (deterministic routing handles null-fee edge cases correctly via the fee sanity check and unansweredQ logic)
   if (classification === "FEE_QUOTE" && (aiDecisionResult.action === "SEND_CLARIFICATION" || aiDecisionResult.action === "SEND_FOLLOWUP")) {
-    return { valid: false, reason: "FEE_QUOTE classification must use a fee action (ACCEPT_FEE, NEGOTIATE_FEE, SEND_FEE_WAIVER_REQUEST), not SEND_CLARIFICATION/SEND_FOLLOWUP" };
+    return { valid: false, reason: "FEE_QUOTE classification must use a fee action (ACCEPT_FEE, NEGOTIATE_FEE, DECLINE_FEE, SEND_FEE_WAIVER_REQUEST, REFORMULATE_REQUEST), not SEND_CLARIFICATION/SEND_FOLLOWUP" };
   }
 
   // DENIAL with a known specific subtype should not use SEND_CLARIFICATION (only not_reasonably_described warrants it)
@@ -1128,11 +1209,31 @@ async function validateDecision(
 
   const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
   if (classification === "FEE_QUOTE" && fee != null && isFinite(fee) && fee >= 0) {
-    if (fee > FEE_NEGOTIATE_THRESHOLD && aiDecisionResult.action !== "NEGOTIATE_FEE") {
-      return {
-        valid: false,
-        reason: `Fee $${fee} exceeds negotiate threshold $${FEE_NEGOTIATE_THRESHOLD}; must negotiate`,
-      };
+    if (fee > FEE_NEGOTIATE_THRESHOLD) {
+      const caseData = await db.getCaseById(caseId);
+      const policeReportOnly = isPoliceReportOnlyScope(caseData?.requested_records);
+      const narrowingPath = await detectHighFeeNarrowingPath(caseId, inlineKeyPoints);
+      if (!policeReportOnly) {
+        if (narrowingPath === "new_request_required") {
+          if (aiDecisionResult.action !== "DECLINE_FEE" && aiDecisionResult.action !== "REFORMULATE_REQUEST") {
+            return {
+              valid: false,
+              reason: `Fee $${fee} is high and agency requires a new request to narrow; must DECLINE_FEE or REFORMULATE_REQUEST with explicit new-request instructions`,
+            };
+          }
+        } else if (aiDecisionResult.action !== "REFORMULATE_REQUEST") {
+          return {
+            valid: false,
+            reason: `Fee $${fee} is high; must narrow scope first via REFORMULATE_REQUEST when same-chain narrowing is possible or unknown`,
+          };
+        }
+      }
+      if (policeReportOnly && aiDecisionResult.action !== "NEGOTIATE_FEE" && aiDecisionResult.action !== "SEND_FEE_WAIVER_REQUEST") {
+        return {
+          valid: false,
+          reason: `Fee $${fee} is high but request is already police-report-only; must NEGOTIATE_FEE or SEND_FEE_WAIVER_REQUEST`,
+        };
+      }
     }
 
     if (
@@ -1168,9 +1269,14 @@ async function aiDecision(params: {
       db.getMessagesByCaseId(params.caseId),
       db.getLatestResponseAnalysis(params.caseId),
       db.query(
-        `SELECT action_type, reasoning, human_decision, created_at FROM proposals
-         WHERE case_id = $1 AND status = 'DISMISSED'
-         ORDER BY created_at DESC LIMIT 5`,
+        `SELECT action_type, reasoning, human_decision, created_at
+         FROM proposals
+         WHERE case_id = $1
+           AND status = 'DISMISSED'
+           AND COALESCE(human_decision->>'action', '') = 'DISMISS'
+           AND NOT (COALESCE(human_decision, '{}'::jsonb) ? 'auto_dismiss_reason')
+         ORDER BY created_at DESC
+         LIMIT 5`,
         [params.caseId]
       ).then((r: any) => r.rows),
       // Fetch recent human decisions from activity log (review resolutions, instructions)
@@ -1376,9 +1482,36 @@ async function deterministicRouting(
         reasoning: [...reasoning, "Fee within acceptable range, gating for review"],
       });
     }
+    const policeReportOnly = isPoliceReportOnlyScope(caseData?.requested_records);
+    const narrowingPath = await detectHighFeeNarrowingPath(caseId, inlineKeyPoints);
+    if (!policeReportOnly) {
+      if (narrowingPath === "new_request_required") {
+        return decision("DECLINE_FEE", {
+          pauseReason: "FEE_QUOTE",
+          adjustmentInstruction: "Decline the current high-fee request and immediately open a new, narrowly scoped request limited to only the primary incident/arrest police report.",
+          reasoning: [
+            ...reasoning,
+            `Fee exceeds $${FEE_NEGOTIATE_THRESHOLD}`,
+            "Agency indicates narrowing must be done via a brand-new request",
+            "Choosing decline + new narrow request path",
+          ],
+        });
+      }
+      return decision("REFORMULATE_REQUEST", {
+        pauseReason: "FEE_QUOTE",
+        adjustmentInstruction: "Narrow scope in this same request chain to only the primary police incident/arrest report; if agency confirms that requires a separate request, then proceed by declining this invoice and opening that new narrow request.",
+        reasoning: [
+          ...reasoning,
+          `Fee exceeds $${FEE_NEGOTIATE_THRESHOLD}; narrowing to police report-only request`,
+          narrowingPath === "same_chain"
+            ? "Agency language indicates same-chain narrowing is allowed"
+            : "No explicit same-chain block detected; attempting in-chain narrowing first",
+        ],
+      });
+    }
     return decision("NEGOTIATE_FEE", {
       pauseReason: "FEE_QUOTE",
-      reasoning: [...reasoning, `Fee exceeds $${FEE_NEGOTIATE_THRESHOLD}, recommending negotiation`],
+      reasoning: [...reasoning, `Fee exceeds $${FEE_NEGOTIATE_THRESHOLD} even for police-report-only scope; recommending negotiation/waiver`],
     });
   }
 
@@ -1406,20 +1539,8 @@ async function deterministicRouting(
         }
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Already researched - reformulating request"] });
       case "wrong_agency": {
-        // Atomic WRONG_AGENCY handling: cancel portal tasks, dismiss proposals, add constraint
-        await Promise.all([
-          db.query(
-            `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
-             WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-            [caseId]
-          ),
-          db.query(
-            `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-             WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
-             AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
-            [caseId]
-          ),
-        ]);
+        // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
         const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
         if (!currentConstraints.includes("WRONG_AGENCY")) {
           await db.updateCase(caseId, {
@@ -1588,19 +1709,7 @@ async function deterministicRouting(
 
   // WRONG_AGENCY — cancel in-flight work, add constraint, then research
   if (classification === "WRONG_AGENCY") {
-    await Promise.all([
-      db.query(
-        `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
-         WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-        [caseId]
-      ),
-      db.query(
-        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
-         AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
-        [caseId]
-      ),
-    ]);
+    await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
     const caseData = await db.getCaseById(caseId);
     const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
     if (!currentConstraints.includes("WRONG_AGENCY")) {
@@ -1738,20 +1847,8 @@ export async function decideNextAction(
         return noAction([...reasoning, "Acknowledgment received, waiting"]);
       }
       if (suggestedAction === "find_correct_agency") {
-        // Cancel in-flight portal work + add WRONG_AGENCY constraint
-        await Promise.all([
-          db.query(
-            `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
-             WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-            [caseId]
-          ),
-          db.query(
-            `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-             WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
-             AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
-            [caseId]
-          ),
-        ]);
+        // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
         const wrongAgencyCaseData = await db.getCaseById(caseId);
         const waConstraints = wrongAgencyCaseData?.constraints_jsonb || wrongAgencyCaseData?.constraints || [];
         if (!waConstraints.includes("WRONG_AGENCY")) {

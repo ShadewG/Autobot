@@ -13,6 +13,7 @@ import db, {
   generateExecutionKey,
   createExecutionRecord,
   EXECUTION_MODE,
+  caseRuntime,
 } from "../lib/db";
 import type { ActionType, ExecutionResult } from "../lib/types";
 import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/portal-utils";
@@ -39,24 +40,12 @@ async function applyClassificationSideEffects(
   // Only fire for explicit WRONG_AGENCY classification — not for RESEARCH_AGENCY from other reasons
   // (e.g., no_records denial, bodycam custodian research) which should NOT cancel portal tasks.
   if (classification === "WRONG_AGENCY") {
+    // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
+    await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
+
     const caseData = await db.getCaseById(caseId);
     const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
-
-    await Promise.all([
-      db.query(
-        `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW()
-         WHERE case_id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-        [caseId]
-      ),
-      db.query(
-        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
-         WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'PENDING_PORTAL')
-         AND action_type IN ('SUBMIT_PORTAL', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
-        [caseId]
-      ),
-    ]);
-
-    if (classification === "WRONG_AGENCY" && !currentConstraints.includes("WRONG_AGENCY")) {
+    if (!currentConstraints.includes("WRONG_AGENCY")) {
       await db.updateCase(caseId, {
         constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
       });
@@ -182,10 +171,9 @@ export async function executeAction(
       );
       if (recent.rows.length > 0) {
         logger.warn("Outbound rate limit hit", { caseId, proposalId, actionType, cooldownHours });
-        await db.updateProposal(proposalId, { status: "BLOCKED", execution_key: null });
-        await db.updateCaseStatus(caseId, "needs_human_review", {
-          requires_human: true,
-          substatus: `Rate limit: already sent within ${cooldownHours}h. Approve to override.`,
+        await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_BLOCKED", {
+          proposalId,
+          error: `Rate limit: already sent within ${cooldownHours}h. Approve to override.`,
         });
         return {
           actionExecuted: false,
@@ -272,7 +260,10 @@ export async function executeAction(
       bodyText: isFollowup && requestNumber ? portalInstructions : originalBodyText,
       bodyHtml: originalBodyHtml,
     });
-    await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
+    await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_TASK_CREATED", {
+      proposalId,
+      portalTaskId: portalResult.portalTaskId,
+    });
 
     // Don't trigger submit-portal from within this task — child tasks get stuck
     // in PENDING_VERSION during deploys. Instead, the Railway cron sweep picks up
@@ -326,7 +317,10 @@ export async function executeAction(
         const portalResult = await portalExecutor.createPortalTask({
           caseId, caseData, proposalId, runId, actionType, subject, bodyText, bodyHtml,
         });
-        await db.updateProposal(proposalId, { status: "PENDING_PORTAL" });
+        await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_TASK_CREATED", {
+          proposalId,
+          portalTaskId: portalResult.portalTaskId,
+        });
         return { actionExecuted: false, executionResult: { action: "portal_task_created", ...portalResult } };
       }
 
@@ -353,11 +347,11 @@ export async function executeAction(
       });
 
       if (!emailResult || emailResult.success !== true) {
-        await db.updateProposal(proposalId, { status: "BLOCKED", execution_key: null });
-        await db.updateCaseStatus(caseId, "needs_human_review", {
-          requires_human: true,
-          pause_reason: "EMAIL_FAILED",
-          substatus: `Email send failed: ${emailResult?.error || "unknown"}`.substring(0, 100),
+        // Release execution claim so proposal can be retried
+        await db.updateProposal(proposalId, { execution_key: null });
+        await caseRuntime.transitionCaseRuntime(caseId, "EMAIL_FAILED", {
+          proposalId,
+          error: `Email send failed: ${emailResult?.error || "unknown"}`.substring(0, 100),
         });
         return { actionExecuted: false, executionResult: { action: "email_failed" } };
       }
@@ -371,11 +365,13 @@ export async function executeAction(
         providerPayload: { to: targetEmail, subject, jobId: emailResult.jobId, delayMinutes },
       });
 
+      // Store emailJobId separately (not part of the runtime event)
       await db.updateProposal(proposalId, {
-        status: "EXECUTED",
-        executedAt: new Date(),
         emailJobId: emailResult.jobId || `dry_run_${executionKey}`,
       });
+
+      // Atomically mark proposal EXECUTED + case awaiting_response
+      await caseRuntime.transitionCaseRuntime(caseId, "EMAIL_SENT", { proposalId });
 
       // Log fee events
       if (["ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE"].includes(resolvedActionType) && !emailResult.dryRun) {
@@ -393,7 +389,6 @@ export async function executeAction(
         await db.upsertFollowUpSchedule(caseId, { nextFollowupDate: nextDate, lastFollowupSentAt: new Date() });
       }
 
-      await db.updateCaseStatus(caseId, "awaiting_response", { requires_human: false, pause_reason: null });
       break;
     }
 
@@ -418,7 +413,7 @@ export async function executeAction(
         } catch (e: any) { /* non-fatal */ }
       }
       executionResult = { action: "escalated", escalationId: escalation.id };
-      await db.updateProposal(proposalId, { status: "EXECUTED", executedAt: new Date() });
+      await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
       break;
     }
 
@@ -427,7 +422,35 @@ export async function executeAction(
         caseId, proposalId, runId, executionKey, actionType: "RESEARCH_AGENCY",
         status: "SENT", provider: "none", providerPayload: { reason: "Agency research complete" },
       });
-      await db.updateProposal(proposalId, { status: "EXECUTED", executedAt: new Date() });
+      await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
+
+      const ensureResearchHandoffProposal = async (
+        handoffKey: string,
+        handoffReason: string,
+        body: string
+      ) => {
+        try {
+          await db.upsertProposal({
+            proposalKey: `${caseId}:research:handoff:${handoffKey}`,
+            caseId,
+            runId: runId || null,
+            actionType: "RESEARCH_AGENCY",
+            draftSubject: `Research handoff needed - case ${caseId}`,
+            draftBodyText: body,
+            reasoning: [handoffReason],
+            confidence: 0.4,
+            requiresHuman: true,
+            canAutoExecute: false,
+            status: "PENDING_APPROVAL",
+          });
+        } catch (proposalErr: any) {
+          logger.warn("Failed to create research handoff proposal", {
+            caseId,
+            handoffKey,
+            error: proposalErr?.message || String(proposalErr),
+          });
+        }
+      };
 
       // Auto-create follow-up proposal for new agency
       let contactResult = researchContactResult || null;
@@ -447,6 +470,11 @@ export async function executeAction(
 
       const suggestedAgency = brief?.suggested_agencies?.[0] || null;
       if (!suggestedAgency?.name) {
+        await ensureResearchHandoffProposal(
+          "no-suggested-agency",
+          "Research completed but no clear target agency was identified.",
+          "Research completed but no suggested agency was identified. Review the latest inbound and research notes, then choose an agency or add contact details before retrying."
+        );
         await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
         executionResult = { action: "research_complete", followup: "none" };
         break;
@@ -465,6 +493,11 @@ export async function executeAction(
       } catch (e: any) { /* non-fatal */ }
 
       if (!newEmail && !newPortalUrl) {
+        await ensureResearchHandoffProposal(
+          "no-contact-info",
+          `Research identified ${suggestedAgency.name} but did not produce contact info.`,
+          `Research identified ${suggestedAgency.name}, but no email or portal URL was found. Please add contact info or choose a different agency, then retry.`
+        );
         await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
         executionResult = { action: "research_complete", followup: "no_contact_info" };
         break;
@@ -482,6 +515,11 @@ export async function executeAction(
           notes: suggestedAgency.reason || brief?.summary || null,
         });
       } catch (e: any) {
+        await ensureResearchHandoffProposal(
+          "add-agency-failed",
+          `Research identified ${suggestedAgency.name} but adding case agency failed.`,
+          `Research identified ${suggestedAgency.name}, but saving it to the case failed (${e?.message || "unknown error"}). Please add the agency manually and continue.`
+        );
         await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
         executionResult = { action: "research_complete", followup: "add_agency_failed" };
         break;
@@ -491,6 +529,11 @@ export async function executeAction(
       try {
         foiaResult = await aiService.generateFOIARequest({ ...caseData, agency_name: suggestedAgency.name });
       } catch (e: any) {
+        await ensureResearchHandoffProposal(
+          "foia-generation-failed",
+          `Research identified ${suggestedAgency.name} but FOIA draft generation failed.`,
+          `Research identified ${suggestedAgency.name}, but draft generation failed (${e?.message || "unknown error"}). Please draft manually or retry generation.`
+        );
         await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
         executionResult = { action: "research_complete", followup: "foia_generation_failed" };
         break;
@@ -533,14 +576,17 @@ export async function executeAction(
     }
 
     case "CLOSE_CASE": {
-      await db.updateCaseStatus(caseId, "completed", { substatus: "Denial accepted", requires_human: false, pause_reason: null });
+      // Mark proposal EXECUTED first, then complete case (which dismisses remaining active proposals)
+      await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", {
+        substatus: "denial_accepted",
+      });
       await db.updateCase(caseId, { outcome_type: "denial_accepted", outcome_recorded: true });
       await createExecutionRecord({
         caseId, proposalId, runId, executionKey, actionType: "CLOSE_CASE",
         status: "SENT", provider: "none", providerPayload: { reason: "Denial accepted" },
       });
       executionResult = { action: "case_closed", reason: "denial_accepted" };
-      await db.updateProposal(proposalId, { status: "EXECUTED", executedAt: new Date() });
       break;
     }
 
@@ -550,7 +596,7 @@ export async function executeAction(
         status: "SKIPPED", provider: "none", providerPayload: { reason: "No action required" },
       });
       executionResult = { action: "none" };
-      await db.updateProposal(proposalId, { status: "EXECUTED", executedAt: new Date() });
+      await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
       break;
     }
 

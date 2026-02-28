@@ -157,7 +157,7 @@ async function applyMutations(txQuery, caseId, mutations) {
     ));
   }
 
-  // --- proposals_dismiss_portal: dismiss only portal-type proposals ---
+  // --- proposals_dismiss_portal: dismiss portal-type and outbound proposals (for wrong_agency) ---
   if (mutations.proposals_dismiss_portal) {
     const reason = mutations.proposals_dismiss_portal.reason || 'auto_dismissed';
     promises.push(txQuery(
@@ -166,7 +166,7 @@ async function applyMutations(txQuery, caseId, mutations) {
            human_decision = COALESCE(human_decision, '{}'::jsonb)
              || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
        WHERE case_id = $1 AND status = ANY($3::text[])
-         AND action_type IN ('SUBMIT_PORTAL', 'PORTAL_SUBMISSION')`,
+         AND action_type IN ('SUBMIT_PORTAL', 'PORTAL_SUBMISSION', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
       [caseId, reason, ACTIVE_PROPOSAL_STATUSES]
     ));
   }

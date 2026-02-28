@@ -8,7 +8,7 @@
  * - Human gate path: returns waitpoint token ID for pause
  */
 
-import db, { logger } from "../lib/db";
+import db, { logger, caseRuntime } from "../lib/db";
 import type { ActionType, ProposalRecord } from "../lib/types";
 
 function generateProposalKey(
@@ -116,20 +116,20 @@ export async function createProposalAndGate(
   // HUMAN GATE PATH — generate opaque token ID
   const tokenId = crypto.randomUUID();
 
-  // Store token ID on proposal and reset status for the new gate
-  // (upsert ON CONFLICT preserves EXECUTED status; we need PENDING_APPROVAL for the compare-and-swap)
-  // Also clear execution_key so claimProposalExecution can re-claim it
+  // Store token ID on proposal and clear execution fields for the new gate
+  // (upsert ON CONFLICT preserves EXECUTED status; we need to re-claim it)
+  // Status is set to PENDING_APPROVAL by the runtime via PROPOSAL_GATED
   await db.updateProposal(proposal.id, {
     waitpoint_token: tokenId,
-    status: "PENDING_APPROVAL",
     executionKey: null,
     executed_at: null,
   });
 
-  // Update case status to needs_human_review
-  await db.updateCaseStatus(caseId, "needs_human_review", {
-    requires_human: true,
-    pause_reason: pauseReason || "PENDING_APPROVAL",
+  // Atomically update case + proposal status via the runtime
+  await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_GATED", {
+    proposalId: proposal.id,
+    runId,
+    pauseReason: pauseReason || "PENDING_APPROVAL",
   });
 
   return {

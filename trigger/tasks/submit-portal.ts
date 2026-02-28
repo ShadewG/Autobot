@@ -344,12 +344,14 @@ export const submitPortal = task({
 
     // ── Mark case as portal in progress ──
     if (caseData.status !== "sent") {
-      await db.updateCaseStatus(caseId, "portal_in_progress", {
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_STARTED", {
+        portalTaskId: portalTaskId || undefined,
+        runId: agentRunId || undefined,
         substatus: "Agency requested portal submission",
-        requires_human: false,
-        pause_reason: null,
-        last_portal_status: "Portal submission started",
-        last_portal_status_at: new Date(),
+        portalMetadata: {
+          last_portal_status: "Portal submission started",
+          last_portal_status_at: new Date(),
+        },
       });
     }
 
@@ -424,50 +426,39 @@ export const submitPortal = task({
         return result;
       }
 
-      // ── Success: update everything ──
+      // ── Success: update everything atomically via the runtime ──
       const engineUsed = result.engine || "skyvern";
       const statusText = result.status || "submitted";
       const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
 
-      await db.updateCaseStatus(caseId, "sent", {
-        substatus: `Portal submission completed (${statusText})`,
-        send_date: caseData.send_date || new Date(),
-        requires_human: false,
-        pause_reason: null,
-      });
-
-      await db.updateCasePortalStatus(caseId, {
-        portal_url: targetUrl,
-        portal_provider: provider || caseData.portal_provider || "Auto-detected",
-        last_portal_status: `Submission completed (${statusText})`,
-        last_portal_status_at: new Date(),
-        last_portal_engine: engineUsed,
-        last_portal_run_id: result.taskId || result.runId || null,
-        last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
-        last_portal_task_url: taskUrl,
-        last_portal_recording_url: result.recording_url || taskUrl,
-        last_portal_account_email: result.accountEmail || caseData.last_portal_account_email || null,
-      });
-
-      // Mark portal_task as completed
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'COMPLETED', completed_at = NOW(),
-           completion_notes = $2 WHERE id = $1`,
-          [portalTaskId, `Submitted via ${engineUsed}`]
-        );
-      }
-
-      // Update linked proposal
+      // Resolve linked proposal for the runtime
       const linkedProposal = portalTaskId
         ? await db.query(`SELECT proposal_id FROM portal_tasks WHERE id = $1`, [portalTaskId])
         : null;
-      if (linkedProposal?.rows[0]?.proposal_id) {
-        await db.updateProposal(linkedProposal.rows[0].proposal_id, {
-          status: "EXECUTED",
-          executedAt: new Date(),
-        });
-      }
+
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_COMPLETED", {
+        portalTaskId: portalTaskId || undefined,
+        runId: agentRunId || undefined,
+        proposalId: linkedProposal?.rows[0]?.proposal_id || undefined,
+        sendDate: caseData.send_date || new Date().toISOString(),
+        confirmationNumber: result.confirmationNumber,
+        portalMetadata: {
+          last_portal_status: `Submission completed (${statusText})`,
+          last_portal_status_at: new Date(),
+          last_portal_engine: engineUsed,
+          last_portal_run_id: result.taskId || result.runId || null,
+          last_portal_details: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
+          last_portal_task_url: taskUrl,
+          last_portal_recording_url: result.recording_url || taskUrl,
+          last_portal_account_email: result.accountEmail || caseData.last_portal_account_email || null,
+        },
+      });
+
+      // Portal-specific fields not part of the runtime (portal_url, portal_provider)
+      await db.updateCasePortalStatus(caseId, {
+        portal_url: targetUrl,
+        portal_provider: provider || caseData.portal_provider || "Auto-detected",
+      });
 
       try { await getNotion().syncStatusToNotion(caseId); } catch {}
       try { await getDiscord().notifyPortalSubmission(caseData, { success: true, portalUrl: targetUrl, steps: result.steps || 0 }); } catch {}
