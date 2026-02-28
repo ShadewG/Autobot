@@ -1594,7 +1594,7 @@ function RequestDetailContent() {
               {/* Expanded content */}
               {controlCenterOpen && (
                 <div className="px-3 pb-3 pt-1 space-y-3 border-t">
-                  <div className={cn("grid grid-cols-1 gap-3", !pending_proposal && needsRepair ? "md:grid-cols-3" : !pending_proposal || needsRepair ? "md:grid-cols-2" : "")}>
+                  <div className={cn("grid grid-cols-1 gap-3", needsRepair ? "md:grid-cols-3" : "md:grid-cols-2")}>
                     {/* Automation Policy — always shown */}
                     <div className="space-y-2">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Automation Policy</p>
@@ -1616,27 +1616,25 @@ function RequestDetailContent() {
                       </Button>
                     </div>
 
-                    {/* Guide AI — hidden when proposal exists */}
-                    {!pending_proposal && (
-                      <div className="space-y-2">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Guide AI</p>
-                        <textarea
-                          className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y min-h-[76px]"
-                          value={guideInstruction}
-                          onChange={(e) => setGuideInstruction(e.target.value)}
-                          placeholder="Tell AI exactly what to do next..."
-                        />
-                        <Button
-                          size="sm"
-                          className="w-full"
-                          onClick={handleGuideAI}
-                          disabled={isGuidingAI || !guideInstruction.trim()}
-                        >
-                          {isGuidingAI ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Bot className="h-3.5 w-3.5 mr-1.5" />}
-                          Run With Guidance
-                        </Button>
-                      </div>
-                    )}
+                    {/* Guide AI — always available */}
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Guide AI</p>
+                      <textarea
+                        className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y min-h-[76px]"
+                        value={guideInstruction}
+                        onChange={(e) => setGuideInstruction(e.target.value)}
+                        placeholder="Tell AI exactly what to do next..."
+                      />
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        onClick={handleGuideAI}
+                        disabled={isGuidingAI || !guideInstruction.trim()}
+                      >
+                        {isGuidingAI ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Bot className="h-3.5 w-3.5 mr-1.5" />}
+                        Run With Guidance
+                      </Button>
+                    </div>
 
                     {/* Recovery — only shown when needed */}
                     {needsRepair && (
