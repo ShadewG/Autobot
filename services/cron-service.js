@@ -8,6 +8,7 @@ const stuckResponseDetector = require('./stuck-response-detector');
 const agencyNotionSync = require('./agency-notion-sync');
 const pdContactService = require('./pd-contact-service');
 const triggerDispatch = require('./trigger-dispatch-service');
+const discordService = require('./discord-service');
 
 // Feature flag: Use new Run Engine follow-up scheduler
 const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false';
@@ -15,6 +16,10 @@ const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false
 class CronService {
     constructor() {
         this.jobs = {};
+        this.lastOperationalAlert = {
+            portalHardTimeout: null,
+            processInboundSuperseded: null,
+        };
     }
 
     /**
@@ -109,6 +114,15 @@ class CronService {
                 }
             } catch (error) {
                 console.error('Error in health check cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
+        // Operational alerting: check key failure/supersede counters in a rolling 1h window.
+        this.jobs.operationalAlerts = new CronJob('*/15 * * * *', async () => {
+            try {
+                await this.checkOperationalAlerts();
+            } catch (error) {
+                console.error('Error in operational alert check:', error);
             }
         }, null, true, 'America/New_York');
 
@@ -441,6 +455,7 @@ class CronService {
         console.log('✓ Notion sync: Every 15 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
+        console.log('✓ Operational alerts: Every 15 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
         console.log('✓ Agency sync: Every hour + on startup');
         console.log('✓ Deadline escalation sweep: Daily at 10 AM');
@@ -1503,9 +1518,106 @@ class CronService {
             followUpEngine: followUpEngine,
             cleanup: this.jobs.cleanup?.running || false,
             healthCheck: this.jobs.healthCheck?.running || false,
+            operationalAlerts: this.jobs.operationalAlerts?.running || false,
             stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false,
             deadlineEscalationSweep: this.jobs.deadlineEscalationSweep?.running || false
         };
+    }
+
+    /**
+     * Check operational counters and emit threshold-based alerts.
+     * Defaults:
+     * - portal_hard_timeout_total > 0 in 1h window
+     * - process_inbound_superseded_total > 5 in 1h window
+     */
+    async checkOperationalAlerts() {
+        const portalThresholdRaw = parseInt(process.env.PORTAL_HARD_TIMEOUT_ALERT_THRESHOLD || '0', 10);
+        const supersededThresholdRaw = parseInt(process.env.PROCESS_INBOUND_SUPERSEDED_ALERT_THRESHOLD || '5', 10);
+        const portalThreshold = Number.isFinite(portalThresholdRaw) ? portalThresholdRaw : 0;
+        const supersededThreshold = Number.isFinite(supersededThresholdRaw) ? supersededThresholdRaw : 5;
+
+        const [portalResult, supersededResult] = await Promise.all([
+            db.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE event_type = 'portal_hard_timeout')::int AS portal_hard_timeout_total,
+                    COUNT(*) FILTER (WHERE event_type = 'portal_soft_timeout')::int AS portal_soft_timeout_total
+                FROM activity_log
+                WHERE created_at > NOW() - INTERVAL '1 hour'
+            `),
+            db.query(`
+                SELECT COUNT(*)::int AS process_inbound_superseded_total
+                FROM agent_runs
+                WHERE status = 'cancelled'
+                  AND (error = 'superseded' OR error LIKE 'deduped to active%')
+                  AND COALESCE(ended_at, started_at) > NOW() - INTERVAL '1 hour'
+            `),
+        ]);
+
+        const portalHardTimeoutTotal = parseInt(portalResult.rows[0]?.portal_hard_timeout_total || 0, 10);
+        const portalSoftTimeoutTotal = parseInt(portalResult.rows[0]?.portal_soft_timeout_total || 0, 10);
+        const processInboundSupersededTotal = parseInt(
+            supersededResult.rows[0]?.process_inbound_superseded_total || 0,
+            10
+        );
+
+        const windowHour = new Date();
+        const hourBucket = `${windowHour.getUTCFullYear()}-${windowHour.getUTCMonth() + 1}-${windowHour.getUTCDate()}-${windowHour.getUTCHours()}`;
+
+        if (portalHardTimeoutTotal > portalThreshold) {
+            const dedupeKey = `${hourBucket}:${portalHardTimeoutTotal}`;
+            if (this.lastOperationalAlert.portalHardTimeout !== dedupeKey) {
+                this.lastOperationalAlert.portalHardTimeout = dedupeKey;
+                await db.logActivity(
+                    'operational_alert',
+                    `portal_hard_timeout_total=${portalHardTimeoutTotal} exceeded threshold ${portalThreshold} in last 1h`,
+                    {
+                        metric: 'portal_hard_timeout_total',
+                        value: portalHardTimeoutTotal,
+                        threshold: portalThreshold,
+                        window: '1h',
+                        soft_timeouts_in_window: portalSoftTimeoutTotal,
+                    }
+                );
+                await discordService.notify({
+                    title: 'Operational Alert: Portal Hard Timeouts',
+                    description: `Last 1h hard timeouts: ${portalHardTimeoutTotal} (threshold ${portalThreshold})`,
+                    color: 0xf56565,
+                    fields: [
+                        { name: 'Metric', value: 'portal_hard_timeout_total', inline: true },
+                        { name: 'Value', value: `${portalHardTimeoutTotal}`, inline: true },
+                        { name: 'Threshold', value: `>${portalThreshold}`, inline: true },
+                        { name: 'Soft Timeouts (1h)', value: `${portalSoftTimeoutTotal}`, inline: true },
+                    ],
+                });
+            }
+        }
+
+        if (processInboundSupersededTotal > supersededThreshold) {
+            const dedupeKey = `${hourBucket}:${processInboundSupersededTotal}`;
+            if (this.lastOperationalAlert.processInboundSuperseded !== dedupeKey) {
+                this.lastOperationalAlert.processInboundSuperseded = dedupeKey;
+                await db.logActivity(
+                    'operational_alert',
+                    `process_inbound_superseded_total=${processInboundSupersededTotal} exceeded threshold ${supersededThreshold} in last 1h`,
+                    {
+                        metric: 'process_inbound_superseded_total',
+                        value: processInboundSupersededTotal,
+                        threshold: supersededThreshold,
+                        window: '1h',
+                    }
+                );
+                await discordService.notify({
+                    title: 'Operational Alert: Process-Inbound Superseded',
+                    description: `Last 1h superseded runs: ${processInboundSupersededTotal} (threshold ${supersededThreshold})`,
+                    color: 0xed8936,
+                    fields: [
+                        { name: 'Metric', value: 'process_inbound_superseded_total', inline: true },
+                        { name: 'Value', value: `${processInboundSupersededTotal}`, inline: true },
+                        { name: 'Threshold', value: `>${supersededThreshold}`, inline: true },
+                    ],
+                });
+            }
+        }
     }
 }
 

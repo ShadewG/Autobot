@@ -1260,6 +1260,32 @@ router.get('/live-overview', async (req, res) => {
             ${userId || unownedOnly ? `WHERE EXISTS (SELECT 1 FROM email_threads t2 JOIN cases c2 ON t2.case_id = c2.id WHERE t2.id = m.thread_id ${userId ? `AND c2.user_id = ${userId}` : 'AND c2.user_id IS NULL'})` : ''}
         `);
 
+        const [portalTimeoutMetricsResult, supersededMetricsResult] = await Promise.all([
+            db.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE event_type = 'portal_hard_timeout')::int AS portal_hard_timeout_total_1h,
+                    COUNT(*) FILTER (WHERE event_type = 'portal_soft_timeout')::int AS portal_soft_timeout_total_1h
+                FROM activity_log
+                WHERE created_at > NOW() - INTERVAL '1 hour'
+            `),
+            db.query(`
+                SELECT COUNT(*)::int AS process_inbound_superseded_total_1h
+                FROM agent_runs
+                WHERE status = 'cancelled'
+                  AND (error = 'superseded' OR error LIKE 'deduped to active%')
+                  AND COALESCE(ended_at, started_at) > NOW() - INTERVAL '1 hour'
+            `),
+        ]);
+        const portalHardThresholdRaw = parseInt(process.env.PORTAL_HARD_TIMEOUT_ALERT_THRESHOLD || '0', 10);
+        const supersededThresholdRaw = parseInt(process.env.PROCESS_INBOUND_SUPERSEDED_ALERT_THRESHOLD || '5', 10);
+        const portalHardThreshold = Number.isFinite(portalHardThresholdRaw) ? portalHardThresholdRaw : 0;
+        const supersededThreshold = Number.isFinite(supersededThresholdRaw) ? supersededThresholdRaw : 5;
+        const portalMetrics = portalTimeoutMetricsResult.rows[0] || {};
+        const supersededMetrics = supersededMetricsResult.rows[0] || {};
+        const portalHardTimeoutTotal1h = parseInt(portalMetrics.portal_hard_timeout_total_1h || 0, 10);
+        const portalSoftTimeoutTotal1h = parseInt(portalMetrics.portal_soft_timeout_total_1h || 0, 10);
+        const processInboundSupersededTotal1h = parseInt(supersededMetrics.process_inbound_superseded_total_1h || 0, 10);
+
         const pendingApprovalsResult = await db.query(`
             SELECT
                 p.id,
@@ -1524,7 +1550,24 @@ router.get('/live-overview', async (req, res) => {
                 pending_approvals_total: pendingApprovalsResult.rows.length,
                 active_runs_total: activeRunsResult.rows.length,
                 stuck_runs_total: stuckRunsResult.rows.length,
-                human_review_total: humanReviewResult.rows.length
+                human_review_total: humanReviewResult.rows.length,
+                portal_hard_timeout_total_1h: portalHardTimeoutTotal1h,
+                portal_soft_timeout_total_1h: portalSoftTimeoutTotal1h,
+                process_inbound_superseded_total_1h: processInboundSupersededTotal1h
+            },
+            alerts: {
+                portal_hard_timeout: {
+                    metric: 'portal_hard_timeout_total_1h',
+                    value: portalHardTimeoutTotal1h,
+                    threshold: portalHardThreshold,
+                    triggered: portalHardTimeoutTotal1h > portalHardThreshold
+                },
+                process_inbound_superseded: {
+                    metric: 'process_inbound_superseded_total_1h',
+                    value: processInboundSupersededTotal1h,
+                    threshold: supersededThreshold,
+                    triggered: processInboundSupersededTotal1h > supersededThreshold
+                }
             },
             pending_approvals: pendingApprovalsWithAttachments,
             active_runs: activeRunsResult.rows,
