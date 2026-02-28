@@ -18,7 +18,7 @@ import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
-import db, { logger, attachmentProcessor } from "../lib/db";
+import db, { logger, attachmentProcessor, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { HumanDecision, InboundPayload, ResearchContext } from "../lib/types";
 
@@ -62,8 +62,8 @@ export const processInbound = task({
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      await caseRuntime.transitionCaseRuntime(caseId, "RUN_FAILED", {
+        error: String(error).substring(0, 500),
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
       });
       await db.logActivity("agent_run_failed", `Process-inbound failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
@@ -209,12 +209,12 @@ export const processInbound = task({
         // Wait for human to approve the adjusted draft
         if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
           await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: adjustedGate.proposalId });
-          await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
+          await waitRun(caseId, runId);
           const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
           if (!result.ok) {
             await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
-            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            await completeRun(caseId, runId);
             return { status: "timed_out", proposalId: adjustedGate.proposalId };
           }
 
@@ -222,7 +222,7 @@ export const processInbound = task({
           if (humanDecision.action === "DISMISS") {
             await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
             await reconcileCaseAfterDismiss(caseId);
-            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            await completeRun(caseId, runId);
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }
 
@@ -230,7 +230,7 @@ export const processInbound = task({
             await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
             await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
             await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
-            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            await completeRun(caseId, runId);
             return { status: "withdrawn", proposalId: adjustedGate.proposalId };
           }
 
@@ -244,7 +244,7 @@ export const processInbound = task({
               status: "DISMISSED",
               human_decision: { action: "ADJUST", instruction: humanDecision.instruction, decidedAt: new Date().toISOString() },
             });
-            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            await completeRun(caseId, runId);
             return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
           }
 
@@ -271,7 +271,7 @@ export const processInbound = task({
           );
         }
 
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "completed", action: originalActionType, adjusted: true };
       } catch (err: any) {
         logger.error("Adjustment fast-path failed", { caseId, error: err.message });
@@ -395,7 +395,7 @@ export const processInbound = task({
           `${noneDecisions} consecutive NONE decisions in 24h — escalated to human review`,
           { case_id: caseId }
         );
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
       }
 
@@ -404,7 +404,7 @@ export const processInbound = task({
         caseId, runId, decision.actionType, decision.reasoning,
         classification.confidence, "INBOUND_MESSAGE", false, null
       );
-      await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+      await completeRun(caseId, runId);
       return { status: "completed", action: "none", reasoning: decision.reasoning };
     }
 
@@ -462,7 +462,7 @@ export const processInbound = task({
     // Step 8: If human gate, wait for approval
     if (gate.shouldWait && gate.waitpointTokenId) {
       await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
-      await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
+      await waitRun(caseId, runId);
       logger.info("Waiting for human decision", {
         caseId, proposalId: gate.proposalId, tokenId: gate.waitpointTokenId,
       });
@@ -481,7 +481,7 @@ export const processInbound = task({
         await db.updateCaseStatus(caseId, "needs_human_review", {
           requires_human: true, pause_reason: "TIMED_OUT",
         });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
@@ -517,12 +517,12 @@ export const processInbound = task({
           missingReason,
           resetEventId: recentReset.rows[0]?.id || null,
         });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: missingReason, proposalId: gate.proposalId };
       }
       if (currentProposal.status === "DISMISSED") {
         logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: gate.proposalId });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "dismissed_externally", proposalId: gate.proposalId };
       }
       const nonActionableStatuses = new Set([
@@ -538,7 +538,7 @@ export const processInbound = task({
           proposalId: gate.proposalId,
           proposalStatus: currentProposal.status,
         });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return {
           status: `proposal_not_actionable_${String(currentProposal.status || "").toLowerCase()}`,
           proposalId: gate.proposalId,
@@ -553,7 +553,7 @@ export const processInbound = task({
       if (humanDecision.action === "DISMISS") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
         await reconcileCaseAfterDismiss(caseId);
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "dismissed", proposalId: gate.proposalId };
       }
 
@@ -561,7 +561,7 @@ export const processInbound = task({
         await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "withdrawn", proposalId: gate.proposalId };
       }
 
@@ -602,7 +602,7 @@ export const processInbound = task({
 
           if (!adjustResult.ok) {
             await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
-            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            await completeRun(caseId, runId);
             return { status: "timed_out", proposalId: adjustedGate.proposalId };
           }
 
@@ -613,7 +613,7 @@ export const processInbound = task({
             if (adjustResult.output.action === "DISMISS") {
               await reconcileCaseAfterDismiss(caseId);
             }
-            await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+            await completeRun(caseId, runId);
             return { status: adjustResult.output.action.toLowerCase(), proposalId: adjustedGate.proposalId };
           }
 
@@ -630,7 +630,7 @@ export const processInbound = task({
             classification.confidence, "INBOUND_MESSAGE",
             adjustedExecution.actionExecuted, adjustedExecution.executionResult
           );
-          await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+          await completeRun(caseId, runId);
           return { status: "completed", proposalId: adjustedGate.proposalId };
         }
       }
@@ -654,7 +654,7 @@ export const processInbound = task({
       execution.actionExecuted, execution.executionResult
     );
 
-    await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+    await completeRun(caseId, runId);
     return {
       status: "completed",
       proposalId: gate.proposalId,

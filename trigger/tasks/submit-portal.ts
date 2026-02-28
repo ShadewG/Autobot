@@ -20,6 +20,7 @@ function lazy<T>(loader: () => T): () => T {
 }
 
 const getDb = lazy(() => require("../../services/database"));
+const getCaseRuntime = lazy(() => require("../../services/case-runtime"));
 const getSkyvern = lazy(() => require("../../services/portal-agent-service-skyvern"));
 const getNotion = lazy(() => require("../../services/notion-service"));
 const getDiscord = lazy(() => require("../../services/discord-service"));
@@ -58,23 +59,18 @@ export const submitPortal = task({
         cancelSucceeded = !!(await skyvern.cancelWorkflowRun(skyvernRunId));
       }
 
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW(),
-           completion_notes = $2 WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-          [portalTaskId, `Timed out or crashed: ${String(error).substring(0, 200)}`]
-        );
-      }
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      // Atomically update case, portal_task, and agent_run via the runtime
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_TIMED_OUT", {
+        portalTaskId: portalTaskId || undefined,
+        runId: agentRunId || undefined,
+        error: `Trigger.dev task crashed: ${errorText.substring(0, 200)}`,
         substatus: "Portal submission timed out — manual submission needed",
-      });
-      try {
-        await db.updateCasePortalStatus(caseId, {
-          last_portal_status: `Timed out or crashed: ${String(error).substring(0, 100)}`,
+        portalMetadata: {
+          last_portal_status: `Timed out or crashed: ${errorText.substring(0, 100)}`,
           last_portal_status_at: new Date(),
-        });
-      } catch {}
+        },
+      });
+
       await db.logActivity(
         looksLikeTimeout ? "portal_hard_timeout" : "portal_task_crash",
         looksLikeTimeout
@@ -91,13 +87,6 @@ export const submitPortal = task({
       await db.logActivity("portal_submission_failed", `Portal timed out for case ${caseId}`, {
         case_id: caseId, error: String(error).substring(0, 500),
       });
-      // Close the tracking agent_run
-      if (agentRunId) {
-        await db.query(
-          `UPDATE agent_runs SET status = 'failed', ended_at = NOW(), error = $2 WHERE id = $1 AND status IN ('created', 'queued', 'running', 'processing')`,
-          [agentRunId, `Trigger.dev task crashed: ${String(error).substring(0, 200)}`]
-        );
-      }
     } catch {}
   },
 
@@ -509,31 +498,19 @@ export const submitPortal = task({
         instructions,
       });
 
-      // Mark portal_task as failed
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'CANCELLED', completed_at = NOW(),
-           completion_notes = $2 WHERE id = $1`,
-          [portalTaskId, `Failed: ${error.message}`.substring(0, 500)]
-        );
-      }
-
-      // Flag case for human review
-      await db.updateCaseStatus(caseId, "needs_human_review", {
+      // Atomically update case, portal_task, and agent_run via the runtime
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_FAILED", {
+        portalTaskId: portalTaskId || undefined,
+        runId: agentRunId || undefined,
+        error: error.message?.substring(0, 500),
         substatus: "Portal submission failed - requires human submission",
-        requires_human: true,
-      });
-      try {
-        await db.updateCasePortalStatus(caseId, {
-          last_portal_status: `Failed: ${error.message.substring(0, 100)}`,
+        portalMetadata: {
+          last_portal_status: `Failed: ${error.message?.substring(0, 100)}`,
           last_portal_status_at: new Date(),
-        });
-      } catch {}
-
-      try { await getNotion().syncStatusToNotion(caseId); } catch {}
+        },
+      });
 
       // Don't re-throw — we've handled the failure. Retrying Skyvern is expensive.
-      await closeAgentRun("failed", error.message);
       return { success: false, error: error.message };
     }
   },

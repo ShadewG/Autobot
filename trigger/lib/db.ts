@@ -38,3 +38,17 @@ export function createExecutionRecord(...args: any[]) {
 }
 
 export const EXECUTION_MODE = "LIVE";
+
+// ---------------------------------------------------------------------------
+// Case runtime convenience wrappers
+// ---------------------------------------------------------------------------
+
+/** Mark agent run as completed via the case runtime state machine. */
+export function completeRun(caseId: number, runId: number) {
+  return caseRuntime.transitionCaseRuntime(caseId, "RUN_COMPLETED", { runId });
+}
+
+/** Mark agent run as waiting via the case runtime state machine. */
+export function waitRun(caseId: number, runId: number) {
+  return caseRuntime.transitionCaseRuntime(caseId, "RUN_WAITING", { runId });
+}

@@ -16,7 +16,7 @@ import { createProposalAndGate } from "../steps/gate-or-execute";
 import { executeAction } from "../steps/execute-action";
 import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
-import db, { logger } from "../lib/db";
+import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 
@@ -45,8 +45,8 @@ export const processFollowup = task({
     const { caseId } = payload as any;
     if (!caseId) return;
     try {
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      await caseRuntime.transitionCaseRuntime(caseId, "RUN_FAILED", {
+        error: String(error).substring(0, 500),
         substatus: `Agent run failed: ${String(error).substring(0, 200)}`,
       });
       await db.logActivity("agent_run_failed", `Process-followup failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
@@ -147,7 +147,7 @@ export const processFollowup = task({
         caseId, runId, decision.actionType, decision.reasoning,
         1.0, "SCHEDULED_FOLLOWUP", false, null
       );
-      await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+      await completeRun(caseId, runId);
       return { status: "completed", action: "none" };
     }
 
@@ -191,12 +191,12 @@ export const processFollowup = task({
     // Step 6: Wait if needed
     if (gate.shouldWait && gate.waitpointTokenId) {
       await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
-      await db.query("UPDATE agent_runs SET status = 'waiting' WHERE id = $1", [runId]);
+      await waitRun(caseId, runId);
       const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
 
       if (!result.ok) {
         await db.updateProposal(gate.proposalId, { status: "EXPIRED" });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
@@ -205,7 +205,7 @@ export const processFollowup = task({
       const currentProposal = await db.getProposalById(gate.proposalId);
       if (currentProposal?.status === "DISMISSED") {
         logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: gate.proposalId });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "dismissed_externally", proposalId: gate.proposalId };
       }
       if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
@@ -224,14 +224,14 @@ export const processFollowup = task({
         await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
         await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "withdrawn", proposalId: gate.proposalId };
       }
 
       if (humanDecision.action !== "APPROVE") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
         await reconcileCaseAfterDismiss(caseId);
-        await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+        await completeRun(caseId, runId);
         return { status: "dismissed", proposalId: gate.proposalId };
       }
     }
@@ -250,7 +250,7 @@ export const processFollowup = task({
       1.0, "SCHEDULED_FOLLOWUP", execution.actionExecuted, execution.executionResult
     );
 
-    await db.query("UPDATE agent_runs SET status = 'completed', ended_at = NOW() WHERE id = $1", [runId]);
+    await completeRun(caseId, runId);
     return {
       status: "completed",
       proposalId: gate.proposalId,
