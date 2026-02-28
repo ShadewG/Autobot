@@ -944,7 +944,22 @@ function RequestDetailContent() {
   const lastInboundAtDisplay = request.last_inbound_at || lastInboundMessage?.timestamp || null;
   const agentDecisions: AgentDecision[] = data.agent_decisions || [];
   const activeCaseAgencies = case_agencies.filter((ca) => ca.is_active !== false);
-  const shouldShowConversationTabs = activeCaseAgencies.length > 1;
+  const conversationAgencies = useMemo(() => {
+    const dedup = new Map<string, CaseAgency>();
+    for (const agency of activeCaseAgencies) {
+      const key = `${String(agency.agency_name || "").trim().toLowerCase()}|${String(agency.agency_email || "").trim().toLowerCase()}|${String(agency.portal_url || "").trim().toLowerCase()}`;
+      const existing = dedup.get(key);
+      if (!existing) {
+        dedup.set(key, agency);
+        continue;
+      }
+      if (!existing.is_primary && agency.is_primary) {
+        dedup.set(key, agency);
+      }
+    }
+    return Array.from(dedup.values());
+  }, [activeCaseAgencies]);
+  const shouldShowConversationTabs = conversationAgencies.length > 1;
 
   const conversationBuckets = useMemo(() => {
     const allIds = new Set(thread_messages.map((m) => m.id));
@@ -954,7 +969,7 @@ function RequestDetailContent() {
     if (!shouldShowConversationTabs) return buckets;
 
     const matchedMessageIds = new Set<number>();
-    for (const agency of activeCaseAgencies) {
+    for (const agency of conversationAgencies) {
       const messageIds = new Set<number>();
       for (const message of thread_messages) {
         if (messageMatchesAgency(message, agency)) {
@@ -977,7 +992,7 @@ function RequestDetailContent() {
       buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
     }
     return buckets;
-  }, [thread_messages, activeCaseAgencies, shouldShowConversationTabs]);
+  }, [thread_messages, conversationAgencies, shouldShowConversationTabs]);
 
   useEffect(() => {
     if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
