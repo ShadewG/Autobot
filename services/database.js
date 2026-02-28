@@ -1598,7 +1598,9 @@ class DatabaseService {
             const allowInboundProposal =
                 !!proposalData.triggerMessageId
                 && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
-            if (caseRow && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status) && !allowInboundProposal) {
+            const isSystemSweepProposal =
+                proposalData.proposalKey && proposalData.proposalKey.includes(':deadline_sweep:');
+            if (caseRow && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status) && !allowInboundProposal && !isSystemSweepProposal) {
                 console.warn(
                     `[DB] Auto-dismissing proposal for case ${proposalData.caseId} in status ${caseRow.status}`
                 );
