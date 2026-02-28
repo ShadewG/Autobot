@@ -147,7 +147,7 @@ class AIService {
                             content: userPrompt
                         }
                     ],
-                    reasoning_effort: 'low',  // Low reasoning to save tokens for actual content
+                    reasoning_effort: 'medium',
                     verbosity: 'medium',
                     max_completion_tokens: 4000  // Increased to ensure we get content after reasoning
                 });
@@ -1015,7 +1015,7 @@ Return ONLY the email body text.`;
 
             const bodyText = await this.callAI(
                 `${responseHandlingPrompts.followUpSystemPrompt}\n\n${prompt}`,
-                { effort: 'low' }
+                { effort: 'medium' }
             );
 
             // Normalize output format: always return { subject, body_text, body_html }
@@ -1127,7 +1127,7 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
         try {
             const bodyText = await this.callAI(
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
-                { effort: 'low' }
+                { effort: 'medium' }
             );
 
             // Normalize output format: always return { subject, body_text, body_html }
@@ -1310,7 +1310,7 @@ Return ONLY valid JSON.`;
         try {
             const response = await this.openai.responses.create({
                 model: 'gpt-5.2-2025-12-11',
-                reasoning: { effort: 'low' },
+                reasoning: { effort: 'medium' },
                 input: prompt
             });
 
@@ -1673,7 +1673,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
         try {
             const bodyText = await this.callAI(
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
-                { effort: 'low' }
+                { effort: 'medium' }
             );
             const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
 
@@ -1780,7 +1780,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
         try {
             const bodyText = await this.callAI(
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
-                { effort: 'low' }
+                { effort: 'medium' }
             );
             const subject = `RE: Fee Acceptance - ${caseData.subject_name || caseData.case_name || 'Records Request'}`;
 
