@@ -384,7 +384,6 @@ function RequestDetailContent() {
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
   const [manualSubmitOpen, setManualSubmitOpen] = useState(false);
-  const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [isManualSubmitting, setIsManualSubmitting] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
@@ -397,9 +396,8 @@ function RequestDetailContent() {
   const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
   const [conversationTab, setConversationTab] = useState<string>("all");
   const [optimisticMessages, setOptimisticMessages] = useState<Array<ThreadMessage & { _sending: true }>>([]);
-  const [guideInstruction, setGuideInstruction] = useState("");
+  const [guideModalOpen, setGuideModalOpen] = useState(false);
   const [isGuidingAI, setIsGuidingAI] = useState(false);
-  const [isTakingOver, setIsTakingOver] = useState(false);
 
   const [pollingUntil, setPollingUntil] = useState<number>(0);
   const refreshInterval = Date.now() < pollingUntil ? 3000 : 0;
@@ -951,39 +949,20 @@ function RequestDetailContent() {
     }
   };
 
-  const handleTakeOverNow = async () => {
-    if (!id) return;
-    setIsTakingOver(true);
-    try {
-      await requestsAPI.update(id, {
-        autopilot_mode: "MANUAL",
-        requires_human: true,
-      });
-      mutate();
-      mutateRuns();
-      toast.success("Automation paused. Case switched to MANUAL mode.");
-    } catch (error: any) {
-      console.error("Error taking over case:", error);
-      toast.error(error.message || "Failed to take over case");
-    } finally {
-      setIsTakingOver(false);
-    }
-  };
-
-  const handleGuideAI = async () => {
-    if (!id || !guideInstruction.trim()) return;
+  const handleGuideAI = async (instruction: string) => {
+    if (!id || !instruction.trim()) return;
     setIsGuidingAI(true);
     try {
       let handled = false;
       try {
-        const reviewResult = await requestsAPI.resolveReview(id, "custom", guideInstruction.trim());
+        const reviewResult = await requestsAPI.resolveReview(id, "custom", instruction.trim());
         if (reviewResult?.success) handled = true;
       } catch {
         // Fallback below.
       }
 
       if (!handled && nextAction?.id) {
-        const revised = await requestsAPI.revise(id, guideInstruction.trim(), nextAction.id);
+        const revised = await requestsAPI.revise(id, instruction.trim(), nextAction.id);
         if (revised?.success !== false) handled = true;
       }
 
@@ -993,7 +972,7 @@ function RequestDetailContent() {
       }
 
       if (handled) {
-        setGuideInstruction("");
+        setGuideModalOpen(false);
         mutate();
         mutateRuns();
         toast.success("Guidance submitted. AI is generating the next step.");
@@ -1147,14 +1126,6 @@ function RequestDetailContent() {
     const timer = setTimeout(() => setOptimisticMessages([]), 120_000);
     return () => clearTimeout(timer);
   }, [optimisticMessages.length]);
-
-  // Auto-open Control Center when mismatches detected
-  useEffect(() => {
-    const mismatches = data?.control_mismatches || [];
-    if (mismatches.length > 0 || data?.control_state === 'OUT_OF_SYNC') {
-      setControlCenterOpen(true);
-    }
-  }, [data?.control_mismatches?.length, data?.control_state]);
 
   const visibleThreadMessages = useMemo(() => {
     const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
@@ -1561,117 +1532,43 @@ function RequestDetailContent() {
               <span className="text-xs text-muted-foreground">Idle: no active run</span>
             </div>
           )}
+          <Separator orientation="vertical" className="h-3" />
+          <AutopilotSelector
+            requestId={request.id}
+            currentMode={request.autopilot_mode}
+            onModeChange={() => mutate()}
+            compact
+          />
+          <div className={cn("flex items-center gap-1 rounded border px-1.5 py-0.5", controlDisplay.className)}>
+            <ControlStateIcon className={cn("h-3 w-3", control_state === "WORKING" && "animate-spin")} />
+            <span className="text-[10px] font-medium">{controlDisplay.label}</span>
+          </div>
         </div>
 
-        {/* Case Control Center — collapsible */}
-        {(() => {
-          const needsRepair = control_state === 'OUT_OF_SYNC' || control_mismatches.length > 0;
-          return (
-            <div className="border rounded-md mb-2">
-              {/* Collapsed header bar — always visible */}
-              <button
-                type="button"
-                className="flex items-center justify-between w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors"
-                onClick={() => setControlCenterOpen((v) => !v)}
-              >
-                <div className="flex items-center gap-2">
-                  {controlCenterOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Case Control Center</span>
-                  <div className={cn("flex items-center gap-1.5 rounded border px-2 py-0.5", controlDisplay.className)}>
-                    <ControlStateIcon className={cn("h-3 w-3", control_state === "WORKING" && "animate-spin")} />
-                    <span className="text-xs font-medium">{controlDisplay.label}</span>
-                  </div>
-                  {needsRepair && (
-                    <div className="flex items-center gap-1 rounded border border-red-700/50 bg-red-500/10 px-2 py-0.5">
-                      <AlertTriangle className="h-3 w-3 text-red-400" />
-                      <span className="text-[10px] font-medium text-red-300">Needs repair</span>
-                    </div>
-                  )}
-                </div>
-                <span className="text-[10px] text-muted-foreground">Mode: {request.autopilot_mode || "SUPERVISED"}</span>
-              </button>
-
-              {/* Expanded content */}
-              {controlCenterOpen && (
-                <div className="px-3 pb-3 pt-1 space-y-3 border-t">
-                  <div className={cn("grid grid-cols-1 gap-3", needsRepair ? "md:grid-cols-3" : "md:grid-cols-2")}>
-                    {/* Automation Policy — always shown */}
-                    <div className="space-y-2">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Automation Policy</p>
-                      <AutopilotSelector
-                        requestId={request.id}
-                        currentMode={request.autopilot_mode}
-                        onModeChange={() => mutate()}
-                        compact
-                      />
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full"
-                        onClick={handleTakeOverNow}
-                        disabled={isTakingOver}
-                      >
-                        {isTakingOver ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 mr-1.5" />}
-                        Take Over Now
-                      </Button>
-                    </div>
-
-                    {/* Guide AI — always available */}
-                    <div className="space-y-2">
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Guide AI</p>
-                      <textarea
-                        className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y min-h-[76px]"
-                        value={guideInstruction}
-                        onChange={(e) => setGuideInstruction(e.target.value)}
-                        placeholder="Tell AI exactly what to do next..."
-                      />
-                      <Button
-                        size="sm"
-                        className="w-full"
-                        onClick={handleGuideAI}
-                        disabled={isGuidingAI || !guideInstruction.trim()}
-                      >
-                        {isGuidingAI ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Bot className="h-3.5 w-3.5 mr-1.5" />}
-                        Run With Guidance
-                      </Button>
-                    </div>
-
-                    {/* Recovery — only shown when needed */}
-                    {needsRepair && (
-                      <div className="space-y-2">
-                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Recovery</p>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full"
-                          onClick={handleResetToLastInbound}
-                          disabled={!lastInboundMessage || isResettingCase}
-                        >
-                          {isResettingCase ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
-                          Fix Automatically
-                        </Button>
-                        <p className="text-[11px] text-muted-foreground">
-                          Rebuilds run/proposal state from the latest inbound message when the case drifts.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {control_mismatches.length > 0 && (
-                    <div className="rounded border border-red-700/50 bg-red-500/10 px-2 py-1.5">
-                      <p className="text-[10px] uppercase tracking-wide text-red-300 mb-1">State mismatch detected</p>
-                      <ul className="text-xs text-red-200 space-y-0.5">
-                        {control_mismatches.map((issue) => (
-                          <li key={issue.code}>- {issue.message}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
+        {/* Mismatch warning banner — only when OUT_OF_SYNC or mismatches present */}
+        {(control_state === 'OUT_OF_SYNC' || control_mismatches.length > 0) && (
+          <div className="flex items-center gap-3 px-3 py-2 rounded-md border border-red-700/50 bg-red-500/10 mb-2">
+            <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-medium text-red-300">State mismatch detected</span>
+              {control_mismatches.length > 0 && (
+                <span className="text-xs text-red-200 ml-1.5">
+                  — {control_mismatches.map(i => i.message).join("; ")}
+                </span>
               )}
             </div>
-          );
-        })()}
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-red-700/50 text-red-300 hover:bg-red-700/20 shrink-0"
+              onClick={handleResetToLastInbound}
+              disabled={!lastInboundMessage || isResettingCase}
+            >
+              {isResettingCase ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
+              Fix
+            </Button>
+          </div>
+        )}
 
         {/* Status after approval */}
         {proposalState !== "PENDING" && (
@@ -2215,6 +2112,23 @@ function RequestDetailContent() {
                   />
                   )}
 
+                  {/* Guide AI — shown when no proposal exists */}
+                  {!pending_proposal && (
+                    <Card>
+                      <CardContent className="pt-4 pb-3">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          onClick={() => setGuideModalOpen(true)}
+                        >
+                          <Bot className="h-3.5 w-3.5 mr-1.5" />
+                          Guide AI
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  )}
+
                   {/* Copilot info below decision panel for context */}
                   <CopilotPanel
                     request={request}
@@ -2426,6 +2340,22 @@ function RequestDetailContent() {
                     portalTaskUrl={request.last_portal_task_url}
                     isLive={false}
                   />
+                )}
+                {/* Guide AI — shown when no proposal exists */}
+                {!pending_proposal && (
+                  <Card className="mb-4">
+                    <CardContent className="pt-4 pb-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => setGuideModalOpen(true)}
+                      >
+                        <Bot className="h-3.5 w-3.5 mr-1.5" />
+                        Guide AI
+                      </Button>
+                    </CardContent>
+                  </Card>
                 )}
                 <Card className="h-full">
                   <CardHeader className="pb-3">
@@ -2939,6 +2869,15 @@ function RequestDetailContent() {
         onSubmit={handleAdjustPending}
         constraints={request.constraints}
         isLoading={isAdjustingPending}
+      />
+
+      {/* Guide AI Modal — reuses AdjustModal with guide handler */}
+      <AdjustModal
+        open={guideModalOpen}
+        onOpenChange={setGuideModalOpen}
+        onSubmit={handleGuideAI}
+        constraints={request.constraints}
+        isLoading={isGuidingAI}
       />
 
       {/* Snooze Modal */}
