@@ -384,6 +384,7 @@ function RequestDetailContent() {
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
   const [manualSubmitOpen, setManualSubmitOpen] = useState(false);
+  const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [isManualSubmitting, setIsManualSubmitting] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
@@ -1147,6 +1148,14 @@ function RequestDetailContent() {
     return () => clearTimeout(timer);
   }, [optimisticMessages.length]);
 
+  // Auto-open Control Center when mismatches detected
+  useEffect(() => {
+    const mismatches = data?.control_mismatches || [];
+    if (mismatches.length > 0 || data?.control_state === 'OUT_OF_SYNC') {
+      setControlCenterOpen(true);
+    }
+  }, [data?.control_mismatches?.length, data?.control_state]);
+
   const visibleThreadMessages = useMemo(() => {
     const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
     const real = (!selected || conversationTab === "all")
@@ -1368,21 +1377,6 @@ function RequestDetailContent() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleResetToLastInbound}
-            disabled={!lastInboundMessage || isResettingCase || isInvokingAgent || isGeneratingInitial || isRunningFollowup || isRunningInbound}
-            title={lastInboundMessage ? "Reset run/proposal state and reprocess from latest inbound" : "No inbound message available to repair from"}
-          >
-            {isResettingCase ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-            ) : (
-              <RotateCcw className="h-4 w-4 mr-1" />
-            )}
-            Repair
-          </Button>
-
           {/* See in Notion button */}
           {request.notion_url && (
             <Button
@@ -1569,88 +1563,117 @@ function RequestDetailContent() {
           )}
         </div>
 
-        {/* Case Control Center */}
-        <div className="border rounded-md p-3 space-y-3 mb-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Case Control Center</p>
-              <p className="text-xs text-muted-foreground">Use this panel to control automation, guide AI, or recover state.</p>
-            </div>
-            <div className={cn("flex items-center gap-1.5 rounded border px-2 py-1", controlDisplay.className)}>
-              <ControlStateIcon className={cn("h-3 w-3", control_state === "WORKING" && "animate-spin")} />
-              <span className="text-xs font-medium">{controlDisplay.label}</span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Automation Policy</p>
-              <AutopilotSelector
-                requestId={request.id}
-                currentMode={request.autopilot_mode}
-                onModeChange={() => mutate()}
-                compact
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full"
-                onClick={handleTakeOverNow}
-                disabled={isTakingOver}
+        {/* Case Control Center — collapsible */}
+        {(() => {
+          const needsRepair = control_state === 'OUT_OF_SYNC' || control_mismatches.length > 0;
+          return (
+            <div className="border rounded-md mb-2">
+              {/* Collapsed header bar — always visible */}
+              <button
+                type="button"
+                className="flex items-center justify-between w-full px-3 py-2 text-left hover:bg-muted/30 transition-colors"
+                onClick={() => setControlCenterOpen((v) => !v)}
               >
-                {isTakingOver ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 mr-1.5" />}
-                Take Over Now
-              </Button>
-            </div>
+                <div className="flex items-center gap-2">
+                  {controlCenterOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                  <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Case Control Center</span>
+                  <div className={cn("flex items-center gap-1.5 rounded border px-2 py-0.5", controlDisplay.className)}>
+                    <ControlStateIcon className={cn("h-3 w-3", control_state === "WORKING" && "animate-spin")} />
+                    <span className="text-xs font-medium">{controlDisplay.label}</span>
+                  </div>
+                  {needsRepair && (
+                    <div className="flex items-center gap-1 rounded border border-red-700/50 bg-red-500/10 px-2 py-0.5">
+                      <AlertTriangle className="h-3 w-3 text-red-400" />
+                      <span className="text-[10px] font-medium text-red-300">Needs repair</span>
+                    </div>
+                  )}
+                </div>
+                <span className="text-[10px] text-muted-foreground">Mode: {request.autopilot_mode || "SUPERVISED"}</span>
+              </button>
 
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Guide AI</p>
-              <textarea
-                className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y min-h-[76px]"
-                value={guideInstruction}
-                onChange={(e) => setGuideInstruction(e.target.value)}
-                placeholder="Tell AI exactly what to do next..."
-              />
-              <Button
-                size="sm"
-                className="w-full"
-                onClick={handleGuideAI}
-                disabled={isGuidingAI || !guideInstruction.trim()}
-              >
-                {isGuidingAI ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Bot className="h-3.5 w-3.5 mr-1.5" />}
-                Run With Guidance
-              </Button>
-            </div>
+              {/* Expanded content */}
+              {controlCenterOpen && (
+                <div className="px-3 pb-3 pt-1 space-y-3 border-t">
+                  <div className={cn("grid grid-cols-1 gap-3", !pending_proposal && needsRepair ? "md:grid-cols-3" : !pending_proposal || needsRepair ? "md:grid-cols-2" : "")}>
+                    {/* Automation Policy — always shown */}
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Automation Policy</p>
+                      <AutopilotSelector
+                        requestId={request.id}
+                        currentMode={request.autopilot_mode}
+                        onModeChange={() => mutate()}
+                        compact
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={handleTakeOverNow}
+                        disabled={isTakingOver}
+                      >
+                        {isTakingOver ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 mr-1.5" />}
+                        Take Over Now
+                      </Button>
+                    </div>
 
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Recovery</p>
-              <Button
-                size="sm"
-                variant="outline"
-                className="w-full"
-                onClick={handleResetToLastInbound}
-                disabled={!lastInboundMessage || isResettingCase}
-              >
-                {isResettingCase ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
-                Fix Automatically
-              </Button>
-              <p className="text-[11px] text-muted-foreground">
-                Rebuilds run/proposal state from the latest inbound message when the case drifts.
-              </p>
-            </div>
-          </div>
+                    {/* Guide AI — hidden when proposal exists */}
+                    {!pending_proposal && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Guide AI</p>
+                        <textarea
+                          className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y min-h-[76px]"
+                          value={guideInstruction}
+                          onChange={(e) => setGuideInstruction(e.target.value)}
+                          placeholder="Tell AI exactly what to do next..."
+                        />
+                        <Button
+                          size="sm"
+                          className="w-full"
+                          onClick={handleGuideAI}
+                          disabled={isGuidingAI || !guideInstruction.trim()}
+                        >
+                          {isGuidingAI ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Bot className="h-3.5 w-3.5 mr-1.5" />}
+                          Run With Guidance
+                        </Button>
+                      </div>
+                    )}
 
-          {control_mismatches.length > 0 && (
-            <div className="rounded border border-red-700/50 bg-red-500/10 px-2 py-1.5">
-              <p className="text-[10px] uppercase tracking-wide text-red-300 mb-1">State mismatch detected</p>
-              <ul className="text-xs text-red-200 space-y-0.5">
-                {control_mismatches.map((issue) => (
-                  <li key={issue.code}>- {issue.message}</li>
-                ))}
-              </ul>
+                    {/* Recovery — only shown when needed */}
+                    {needsRepair && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Recovery</p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full"
+                          onClick={handleResetToLastInbound}
+                          disabled={!lastInboundMessage || isResettingCase}
+                        >
+                          {isResettingCase ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1.5" />}
+                          Fix Automatically
+                        </Button>
+                        <p className="text-[11px] text-muted-foreground">
+                          Rebuilds run/proposal state from the latest inbound message when the case drifts.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  {control_mismatches.length > 0 && (
+                    <div className="rounded border border-red-700/50 bg-red-500/10 px-2 py-1.5">
+                      <p className="text-[10px] uppercase tracking-wide text-red-300 mb-1">State mismatch detected</p>
+                      <ul className="text-xs text-red-200 space-y-0.5">
+                        {control_mismatches.map((issue) => (
+                          <li key={issue.code}>- {issue.message}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          );
+        })()}
 
         {/* Status after approval */}
         {proposalState !== "PENDING" && (
