@@ -941,6 +941,7 @@ function RequestDetailContent() {
     case_agencies = [],
     agency_candidates = [],
   } = data;
+  const pendingAgencyCandidatesCount = agency_candidates.length;
 
   const pendingActionType = pending_proposal?.action_type || "";
   const isEmailLikePendingAction = [
@@ -1368,6 +1369,12 @@ function RequestDetailContent() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {!shouldShowConversationTabs && pendingAgencyCandidatesCount > 0 && (
+                      <div className="rounded border border-amber-700/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
+                        {pendingAgencyCandidatesCount} suggested agenc{pendingAgencyCandidatesCount === 1 ? "y" : "ies"} not yet added to case.
+                        Add them in the <span className="font-medium">Agency</span> tab to split conversation by agency.
+                      </div>
+                    )}
                     {shouldShowConversationTabs && (
                       <ScrollArea className="w-full whitespace-nowrap">
                         <div className="flex items-center gap-1 pb-1">
@@ -1832,6 +1839,12 @@ function RequestDetailContent() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {!shouldShowConversationTabs && pendingAgencyCandidatesCount > 0 && (
+                      <div className="rounded border border-amber-700/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
+                        {pendingAgencyCandidatesCount} suggested agenc{pendingAgencyCandidatesCount === 1 ? "y" : "ies"} not yet added to case.
+                        Add them in the <span className="font-medium">Agency</span> tab to split conversation by agency.
+                      </div>
+                    )}
                     {shouldShowConversationTabs && (
                       <ScrollArea className="w-full whitespace-nowrap">
                         <div className="flex items-center gap-1 pb-1">
@@ -1952,6 +1965,12 @@ function RequestDetailContent() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  {!shouldShowConversationTabs && pendingAgencyCandidatesCount > 0 && (
+                    <div className="rounded border border-amber-700/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
+                      {pendingAgencyCandidatesCount} suggested agenc{pendingAgencyCandidatesCount === 1 ? "y" : "ies"} not yet added to case.
+                      Add them in the <span className="font-medium">Agency</span> tab to split conversation by agency.
+                    </div>
+                  )}
                   {shouldShowConversationTabs && (
                     <ScrollArea className="w-full whitespace-nowrap">
                       <div className="flex items-center gap-1 pb-1">
