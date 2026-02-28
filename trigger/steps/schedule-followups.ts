@@ -63,9 +63,8 @@ export async function scheduleFollowups(
     lastFollowupSentAt: null,
   });
 
-  // Update case status
+  // Set send/deadline dates (status already set by EMAIL_SENT runtime event)
   await db.updateCase(caseId, {
-    status: "awaiting_response",
     send_date: sendDate,
     deadline_date: deadlineDate,
   });
