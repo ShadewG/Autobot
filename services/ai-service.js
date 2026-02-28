@@ -77,6 +77,32 @@ class AIService {
     }
 
     /**
+     * Replace common AI placeholder patterns with actual requester info.
+     * Some models output [Your Name], [Your Phone], etc. despite being told
+     * the real values — this catches and fixes those.
+     */
+    sanitizeSignaturePlaceholders(text, userSignature) {
+        if (!text) return text;
+        const name = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const title = userSignature?.title || 'Documentary Researcher, Dr Insanity';
+        const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+
+        let result = text;
+        // Replace name placeholders
+        result = result.replace(/\[Your (?:Full )?Name\]/gi, name);
+        // Replace title/organization placeholders
+        result = result.replace(/\[Your (?:Title|Organization)\]/gi, title);
+        // Replace phone placeholders
+        result = result.replace(/\[Your Phone(?: Number)?\]/gi, phone);
+        // Remove lines with remaining bracketed placeholders for email/address
+        // (system prompt says DO NOT include these)
+        result = result.replace(/^.*\[Your (?:Email|E-?mail Address|Mailing Address|Address)(?:\s*\(optional\))?\].*$/gmi, '');
+        // Clean up any trailing blank lines left by removals
+        result = result.replace(/\n{3,}/g, '\n\n');
+        return result.trim();
+    }
+
+    /**
      * Generate a FOIA request from case data
      */
     async generateFOIARequest(caseData) {
@@ -126,7 +152,7 @@ class AIService {
                     max_completion_tokens: 4000  // Increased to ensure we get content after reasoning
                 });
 
-                const requestText = response.choices[0].message.content;
+                let requestText = response.choices[0].message.content;
 
                 // Log for debugging
                 console.log('GPT-5 response:', {
@@ -140,6 +166,9 @@ class AIService {
                 if (!requestText || requestText.trim().length === 0) {
                     throw new Error('GPT-5 returned empty content');
                 }
+
+                // Fix AI placeholder patterns ([Your Name], etc.)
+                requestText = this.sanitizeSignaturePlaceholders(requestText, userSignature);
 
                 // Store generated request with strategy info
                 const modelUsed = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
@@ -202,7 +231,9 @@ class AIService {
             ]
         });
 
-        const requestText = response.content[0].text;
+        const requestText = this.sanitizeSignaturePlaceholders(
+            response.content[0].text, userSignature
+        );
 
         await db.createGeneratedRequest({
             case_id: caseData.id,
@@ -349,9 +380,10 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    - Request preservation of footage
    - Keep total request to 200-400 words
 
-7. CLOSING SIGNATURE (use exactly this info):
+7. CLOSING SIGNATURE — use EXACTLY these values, do NOT use placeholders like [Your Name]:
 ${signatureBlock}
 
+DO NOT include email addresses or mailing addresses in the closing.
 Generate ONLY the email body following the structure. Do NOT add a subject line.`;
     }
 
