@@ -43,7 +43,24 @@ router.get('/overview', async (req, res) => {
                 SELECT
                     COUNT(*)::int AS total_cases,
                     COUNT(*) FILTER (WHERE status NOT IN ('completed', 'cancelled'))::int AS active_cases,
-                    COUNT(*) FILTER (WHERE requires_human = true)::int AS needs_review,
+                    (
+                        SELECT COUNT(*)::int FROM proposals p
+                        JOIN cases c2 ON c2.id = p.case_id
+                        WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                          AND (c2.notion_page_id IS NULL OR c2.notion_page_id NOT LIKE 'test-%')
+                    ) + (
+                        SELECT COUNT(*)::int FROM cases c
+                        WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+                          AND NOT EXISTS (
+                              SELECT 1 FROM proposals p WHERE p.case_id = c.id
+                              AND (p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                                  OR (p.status = 'DECISION_RECEIVED'
+                                      AND EXISTS (SELECT 1 FROM agent_runs ar
+                                                  WHERE ar.case_id = c.id
+                                                  AND ar.status IN ('created','queued','processing','running','waiting'))))
+                          )
+                          AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+                    ) AS needs_review,
                     COUNT(*) FILTER (WHERE status = 'id_state')::int AS id_state_cases
                 FROM cases
             `),
@@ -85,7 +102,23 @@ router.get('/users', async (req, res) => {
                 u.created_at, u.updated_at,
                 COUNT(c.id)::int AS total_cases,
                 COUNT(c.id) FILTER (WHERE c.status NOT IN ('completed', 'cancelled'))::int AS active_cases,
-                COUNT(c.id) FILTER (WHERE c.requires_human = true)::int AS needs_review,
+                (
+                    SELECT COUNT(*)::int FROM proposals p2
+                    JOIN cases c2 ON c2.id = p2.case_id
+                    WHERE c2.user_id = u.id AND p2.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                ) + (
+                    SELECT COUNT(*)::int FROM cases c3
+                    WHERE c3.user_id = u.id
+                      AND c3.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+                      AND NOT EXISTS (
+                          SELECT 1 FROM proposals p3 WHERE p3.case_id = c3.id
+                          AND (p3.status IN ('PENDING_APPROVAL', 'BLOCKED')
+                              OR (p3.status = 'DECISION_RECEIVED'
+                                  AND EXISTS (SELECT 1 FROM agent_runs ar
+                                              WHERE ar.case_id = c3.id
+                                              AND ar.status IN ('created','queued','processing','running','waiting'))))
+                      )
+                ) AS needs_review,
                 MAX(al.created_at) AS last_activity_at,
                 MAX(al.description) FILTER (WHERE al.created_at = (
                     SELECT MAX(a2.created_at) FROM activity_log a2 WHERE a2.user_id = u.id::text
