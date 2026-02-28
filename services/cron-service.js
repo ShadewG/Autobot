@@ -289,8 +289,9 @@ class CronService {
                       AND p.waitpoint_token IS NULL
                       AND p.updated_at < NOW() - INTERVAL '5 minutes'
                       AND NOT EXISTS (
-                          SELECT 1 FROM execution_records er
-                          WHERE er.proposal_id = p.id
+                          SELECT 1 FROM agent_runs ar
+                          WHERE ar.case_id = p.case_id
+                            AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
                       )
                     RETURNING p.id, p.case_id, p.action_type
                 `);

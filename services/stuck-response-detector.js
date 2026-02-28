@@ -44,19 +44,19 @@ class StuckResponseDetector {
                 console.log(`  Case ${caseData.id}: ${caseData.case_name}`);
                 console.log(`    Stuck for: ${Math.round(caseData.hours_stuck)} hours`);
 
-                // Check if there's an analysis record - if not, the analysis queue definitely failed
-                const analysisCheck = await db.query(
-                    `SELECT id FROM analyses
+                // Check if there's an agent run - if not, processing was never triggered
+                const runCheck = await db.query(
+                    `SELECT id FROM agent_runs
                      WHERE case_id = $1
                      ORDER BY created_at DESC
                      LIMIT 1`,
                     [caseData.id]
                 );
 
-                const hasAnalysis = analysisCheck.rows.length > 0;
-                const reason = hasAnalysis
+                const hasRun = runCheck.rows.length > 0;
+                const reason = hasRun
                     ? `Response received but stuck in processing for ${Math.round(caseData.hours_stuck)} hours`
-                    : `Analysis queue failed - no analysis record found after ${Math.round(caseData.hours_stuck)} hours`;
+                    : `Processing never triggered - no agent run found after ${Math.round(caseData.hours_stuck)} hours`;
 
                 // Flag for human review
                 await db.updateCaseStatus(caseData.id, 'needs_human_review', {
