@@ -108,7 +108,10 @@ async function triggerTask(taskId, payload, options = {}, context = {}) {
   const processInboundIdentity = resolveProcessInboundIdentity(payload, context);
 
   // Dedupe process-inbound dispatches for the same case/message/trigger while one is active.
-  if (taskId === 'process-inbound') {
+  // Resets and explicit replacements bypass dedupe — they intentionally supersede prior runs.
+  const DEDUPE_BYPASS_TRIGGERS = new Set(['reset_to_last_inbound', 'orphan_case_reset']);
+  const skipDedupe = context.skipDedupe === true || DEDUPE_BYPASS_TRIGGERS.has(processInboundIdentity.triggerType);
+  if (taskId === 'process-inbound' && !skipDedupe) {
     const activeEquivalent = await findActiveEquivalentProcessInboundRun({
       caseId: processInboundIdentity.caseId,
       messageId: processInboundIdentity.messageId,
