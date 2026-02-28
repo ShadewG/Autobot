@@ -826,6 +826,74 @@ function RequestDetailContent() {
     mutate();
   };
 
+  // Hooks that depend on data must be called unconditionally (before early returns).
+  // Use safe defaults so they're no-ops when data hasn't loaded yet.
+  const _threadMessages = data?.thread_messages || [];
+  const _caseAgencies: CaseAgency[] = (data as any)?.case_agencies || [];
+  const _activeCaseAgencies = _caseAgencies.filter((ca: CaseAgency) => ca.is_active !== false);
+
+  const conversationAgencies = useMemo(() => {
+    const dedup = new Map<string, CaseAgency>();
+    for (const agency of _activeCaseAgencies) {
+      const key = `${String(agency.agency_name || "").trim().toLowerCase()}|${String(agency.agency_email || "").trim().toLowerCase()}|${String(agency.portal_url || "").trim().toLowerCase()}`;
+      const existing = dedup.get(key);
+      if (!existing) {
+        dedup.set(key, agency);
+        continue;
+      }
+      if (!existing.is_primary && agency.is_primary) {
+        dedup.set(key, agency);
+      }
+    }
+    return Array.from(dedup.values());
+  }, [_activeCaseAgencies]);
+  const shouldShowConversationTabs = conversationAgencies.length > 1;
+
+  const conversationBuckets = useMemo(() => {
+    const allIds = new Set(_threadMessages.map((m) => m.id));
+    const buckets: Array<{ id: string; label: string; count: number; messageIds: Set<number> }> = [
+      { id: "all", label: "All", count: _threadMessages.length, messageIds: allIds },
+    ];
+    if (!shouldShowConversationTabs) return buckets;
+
+    const matchedMessageIds = new Set<number>();
+    for (const agency of conversationAgencies) {
+      const messageIds = new Set<number>();
+      for (const message of _threadMessages) {
+        if (messageMatchesAgency(message, agency)) {
+          messageIds.add(message.id);
+          matchedMessageIds.add(message.id);
+        }
+      }
+      buckets.push({
+        id: `agency-${agency.id}`,
+        label: agency.agency_name || `Agency ${agency.id}`,
+        count: messageIds.size,
+        messageIds,
+      });
+    }
+
+    const otherIds = new Set(
+      _threadMessages.filter((m) => !matchedMessageIds.has(m.id)).map((m) => m.id)
+    );
+    if (otherIds.size > 0) {
+      buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
+    }
+    return buckets;
+  }, [_threadMessages, conversationAgencies, shouldShowConversationTabs]);
+
+  useEffect(() => {
+    if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
+      setConversationTab("all");
+    }
+  }, [conversationBuckets, conversationTab]);
+
+  const visibleThreadMessages = useMemo(() => {
+    const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
+    if (!selected || conversationTab === "all") return _threadMessages;
+    return _threadMessages.filter((message) => selected.messageIds.has(message.id));
+  }, [_threadMessages, conversationBuckets, conversationTab]);
+
   if (!id) {
     return (
       <div className="text-center py-8">
@@ -943,68 +1011,6 @@ function RequestDetailContent() {
   const submittedAtDisplay = request.submitted_at || thread_messages.find((m) => m.direction === "OUTBOUND")?.timestamp || null;
   const lastInboundAtDisplay = request.last_inbound_at || lastInboundMessage?.timestamp || null;
   const agentDecisions: AgentDecision[] = data.agent_decisions || [];
-  const activeCaseAgencies = case_agencies.filter((ca) => ca.is_active !== false);
-  const conversationAgencies = useMemo(() => {
-    const dedup = new Map<string, CaseAgency>();
-    for (const agency of activeCaseAgencies) {
-      const key = `${String(agency.agency_name || "").trim().toLowerCase()}|${String(agency.agency_email || "").trim().toLowerCase()}|${String(agency.portal_url || "").trim().toLowerCase()}`;
-      const existing = dedup.get(key);
-      if (!existing) {
-        dedup.set(key, agency);
-        continue;
-      }
-      if (!existing.is_primary && agency.is_primary) {
-        dedup.set(key, agency);
-      }
-    }
-    return Array.from(dedup.values());
-  }, [activeCaseAgencies]);
-  const shouldShowConversationTabs = conversationAgencies.length > 1;
-
-  const conversationBuckets = useMemo(() => {
-    const allIds = new Set(thread_messages.map((m) => m.id));
-    const buckets: Array<{ id: string; label: string; count: number; messageIds: Set<number> }> = [
-      { id: "all", label: "All", count: thread_messages.length, messageIds: allIds },
-    ];
-    if (!shouldShowConversationTabs) return buckets;
-
-    const matchedMessageIds = new Set<number>();
-    for (const agency of conversationAgencies) {
-      const messageIds = new Set<number>();
-      for (const message of thread_messages) {
-        if (messageMatchesAgency(message, agency)) {
-          messageIds.add(message.id);
-          matchedMessageIds.add(message.id);
-        }
-      }
-      buckets.push({
-        id: `agency-${agency.id}`,
-        label: agency.agency_name || `Agency ${agency.id}`,
-        count: messageIds.size,
-        messageIds,
-      });
-    }
-
-    const otherIds = new Set(
-      thread_messages.filter((m) => !matchedMessageIds.has(m.id)).map((m) => m.id)
-    );
-    if (otherIds.size > 0) {
-      buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
-    }
-    return buckets;
-  }, [thread_messages, conversationAgencies, shouldShowConversationTabs]);
-
-  useEffect(() => {
-    if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
-      setConversationTab("all");
-    }
-  }, [conversationBuckets, conversationTab]);
-
-  const visibleThreadMessages = useMemo(() => {
-    const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
-    if (!selected || conversationTab === "all") return thread_messages;
-    return thread_messages.filter((message) => selected.messageIds.has(message.id));
-  }, [thread_messages, conversationBuckets, conversationTab]);
 
   return (
     <div className="space-y-4">
