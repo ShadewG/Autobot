@@ -153,7 +153,7 @@ export const submitPortal = task({
       });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: `Portal circuit breaker: ${failCount} failures in ${FAILURE_WINDOW_HOURS}h`,
-        pauseReason: "portal_aborted",
+        pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
         error: "Circuit breaker triggered",
       });
@@ -180,7 +180,7 @@ export const submitPortal = task({
       });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: `Portal hard limit: ${todayRuns} today (max ${MAX_PORTAL_RUNS_PER_DAY}), ${totalRuns} total (max ${MAX_PORTAL_RUNS_TOTAL})`,
-        pauseReason: "portal_aborted",
+        pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
         error: "Hard rate limit hit",
       });
@@ -217,7 +217,7 @@ export const submitPortal = task({
       });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: "No online portal available (paper form required)",
-        pauseReason: "portal_aborted",
+        pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
         error: "Provider marked paper-only (no online portal)",
       });
@@ -267,7 +267,7 @@ export const submitPortal = task({
       logger.warn("Portal submission skipped — missing portal URL", { caseId });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: "No portal URL available for submission",
-        pauseReason: "portal_aborted",
+        pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
         error: "Missing portal URL",
       });
@@ -289,7 +289,7 @@ export const submitPortal = task({
         });
         await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
           substatus: `Portal account ${portalAccount.account_status} — manual login needed`,
-          pauseReason: "portal_aborted",
+          pauseReason: "PORTAL_ABORTED",
           portalTaskId: portalTaskId || undefined,
           error: `Portal account blocked: ${portalAccount.account_status}`,
         });
@@ -378,7 +378,7 @@ export const submitPortal = task({
           }
           await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
             substatus: `Portal requires manual handling: ${result.status}`,
-            pauseReason: "portal_aborted",
+            pauseReason: "PORTAL_ABORTED",
             portalTaskId: portalTaskId || undefined,
             error: `Alternative path: ${result.status}`,
           });
@@ -395,7 +395,7 @@ export const submitPortal = task({
         if (caseData.status === "portal_in_progress") {
           await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
             substatus: `Portal skipped: ${result.reason}`,
-            pauseReason: "portal_aborted",
+            pauseReason: "PORTAL_ABORTED",
             portalTaskId: portalTaskId || undefined,
             error: `Skyvern dedup skip: ${result.reason || "already handled"}`,
           });

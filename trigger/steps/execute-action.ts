@@ -476,7 +476,7 @@ export async function executeAction(
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",
-          pauseReason: "research_handoff",
+          pauseReason: "RESEARCH_HANDOFF",
         });
         executionResult = { action: "research_complete", followup: "none" };
         break;
@@ -502,7 +502,7 @@ export async function executeAction(
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",
-          pauseReason: "research_handoff",
+          pauseReason: "RESEARCH_HANDOFF",
         });
         executionResult = { action: "research_complete", followup: "no_contact_info" };
         break;
@@ -527,7 +527,7 @@ export async function executeAction(
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",
-          pauseReason: "research_handoff",
+          pauseReason: "RESEARCH_HANDOFF",
         });
         executionResult = { action: "research_complete", followup: "add_agency_failed" };
         break;
@@ -544,7 +544,7 @@ export async function executeAction(
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",
-          pauseReason: "research_handoff",
+          pauseReason: "RESEARCH_HANDOFF",
         });
         executionResult = { action: "research_complete", followup: "foia_generation_failed" };
         break;
@@ -569,7 +569,7 @@ export async function executeAction(
       } catch (e: any) {
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",
-          pauseReason: "research_handoff",
+          pauseReason: "RESEARCH_HANDOFF",
         });
         executionResult = { action: "research_complete", followup: "proposal_creation_failed" };
         break;
@@ -577,7 +577,7 @@ export async function executeAction(
 
       await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
         substatus: "research_followup_proposed",
-        pauseReason: "research_handoff",
+        pauseReason: "RESEARCH_HANDOFF",
       });
       await db.logActivity("research_followup_proposed", `Research complete - proposed ${followupActionType} to ${suggestedAgency.name}`, {
         caseId, proposalId, newAgency: suggestedAgency.name, actionType: followupActionType,
