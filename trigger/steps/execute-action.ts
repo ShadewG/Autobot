@@ -474,7 +474,10 @@ export async function executeAction(
           "Research completed but no clear target agency was identified.",
           "Research completed but no suggested agency was identified. Review the latest inbound and research notes, then choose an agency or add contact details before retrying."
         );
-        await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus: "agency_research_complete",
+          pauseReason: "research_handoff",
+        });
         executionResult = { action: "research_complete", followup: "none" };
         break;
       }
@@ -497,7 +500,10 @@ export async function executeAction(
           `Research identified ${suggestedAgency.name} but did not produce contact info.`,
           `Research identified ${suggestedAgency.name}, but no email or portal URL was found. Please add contact info or choose a different agency, then retry.`
         );
-        await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus: "agency_research_complete",
+          pauseReason: "research_handoff",
+        });
         executionResult = { action: "research_complete", followup: "no_contact_info" };
         break;
       }
@@ -519,7 +525,10 @@ export async function executeAction(
           `Research identified ${suggestedAgency.name} but adding case agency failed.`,
           `Research identified ${suggestedAgency.name}, but saving it to the case failed (${e?.message || "unknown error"}). Please add the agency manually and continue.`
         );
-        await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus: "agency_research_complete",
+          pauseReason: "research_handoff",
+        });
         executionResult = { action: "research_complete", followup: "add_agency_failed" };
         break;
       }
@@ -533,7 +542,10 @@ export async function executeAction(
           `Research identified ${suggestedAgency.name} but FOIA draft generation failed.`,
           `Research identified ${suggestedAgency.name}, but draft generation failed (${e?.message || "unknown error"}). Please draft manually or retry generation.`
         );
-        await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus: "agency_research_complete",
+          pauseReason: "research_handoff",
+        });
         executionResult = { action: "research_complete", followup: "foia_generation_failed" };
         break;
       }
@@ -555,12 +567,18 @@ export async function executeAction(
           status: "PENDING_APPROVAL",
         });
       } catch (e: any) {
-        await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "agency_research_complete", requires_human: true });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus: "agency_research_complete",
+          pauseReason: "research_handoff",
+        });
         executionResult = { action: "research_complete", followup: "proposal_creation_failed" };
         break;
       }
 
-      await db.updateCaseStatus(caseId, "needs_human_review", { substatus: "research_followup_proposed", requires_human: true });
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+        substatus: "research_followup_proposed",
+        pauseReason: "research_handoff",
+      });
       await db.logActivity("research_followup_proposed", `Research complete - proposed ${followupActionType} to ${suggestedAgency.name}`, {
         caseId, proposalId, newAgency: suggestedAgency.name, actionType: followupActionType,
       });

@@ -388,9 +388,9 @@ export const processInbound = task({
         logger.warn("Decision spin detected: 3+ NONE decisions in 24h — escalating to human review", {
           caseId, noneDecisions,
         });
-        await db.updateCaseStatus(caseId, "needs_human_review", {
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: `Decision spin: ${noneDecisions} NONE decisions in 24h`,
-          pause_reason: "LOOP_DETECTED",
+          pauseReason: "LOOP_DETECTED",
         });
         await db.logActivity("decision_spin_detected",
           `${noneDecisions} consecutive NONE decisions in 24h — escalated to human review`,
@@ -479,8 +479,8 @@ export const processInbound = task({
           suggestedAction: "Review stale proposal and decide",
         });
         await db.updateProposal(gate.proposalId, { status: "EXPIRED" });
-        await db.updateCaseStatus(caseId, "needs_human_review", {
-          requires_human: true, pause_reason: "TIMED_OUT",
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          pauseReason: "TIMED_OUT",
         });
         await completeRun(caseId, runId);
         return { status: "timed_out", proposalId: gate.proposalId };

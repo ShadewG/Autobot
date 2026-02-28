@@ -268,10 +268,9 @@ export const processInitialRequest = task({
       logger.warn("process-initial-request aborted: case has existing denial", {
         caseId, denialSubtype: denial.denial_subtype, bodyPreview: denial.body_preview,
       });
-      await db.updateCaseStatus(caseId, "needs_human_review", {
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
         substatus: `Cannot send new initial request: agency already denied (${denial.denial_subtype || "general denial"}). Review correspondence and decide next step.`,
-        requires_human: true,
-        pause_reason: "DENIAL",
+        pauseReason: "DENIAL",
       });
       await completeRun(caseId, runId);
       return { status: "aborted", reason: "existing_denial", denialSubtype: denial.denial_subtype };
@@ -298,8 +297,8 @@ export const processInitialRequest = task({
       await waitRun(caseId, runId);
       const tokenId = crypto.randomUUID();
       await db.updateProposal(draft.proposalId, { waitpoint_token: tokenId });
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true, pause_reason: "INITIAL_REQUEST",
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+        pauseReason: "INITIAL_REQUEST",
       });
 
       logger.info("Waiting for human approval of initial request", {

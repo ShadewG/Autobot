@@ -151,16 +151,12 @@ export const submitPortal = task({
       logger.warn("Circuit breaker: too many recent portal failures", {
         caseId, failCount, threshold: MAX_RECENT_FAILURES,
       });
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: `Portal circuit breaker: ${failCount} failures in ${FAILURE_WINDOW_HOURS}h`,
+        pauseReason: "portal_aborted",
+        portalTaskId: portalTaskId || undefined,
+        error: "Circuit breaker triggered",
       });
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Circuit breaker triggered' WHERE id = $1`,
-          [portalTaskId]
-        );
-      }
       await closeAgentRun("failed", "Circuit breaker triggered");
       return { success: false, skipped: true, reason: "circuit_breaker" };
     }
@@ -182,16 +178,12 @@ export const submitPortal = task({
         caseId, todayRuns, totalRuns,
         dailyLimit: MAX_PORTAL_RUNS_PER_DAY, totalLimit: MAX_PORTAL_RUNS_TOTAL,
       });
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: `Portal hard limit: ${todayRuns} today (max ${MAX_PORTAL_RUNS_PER_DAY}), ${totalRuns} total (max ${MAX_PORTAL_RUNS_TOTAL})`,
+        pauseReason: "portal_aborted",
+        portalTaskId: portalTaskId || undefined,
+        error: "Hard rate limit hit",
       });
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Hard rate limit hit' WHERE id = $1`,
-          [portalTaskId]
-        );
-      }
       await closeAgentRun("failed", "Hard rate limit");
       return { success: false, skipped: true, reason: "hard_rate_limit" };
     }
@@ -223,16 +215,12 @@ export const submitPortal = task({
         caseId,
         provider: provider || caseData.portal_provider || null,
       });
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: "No online portal available (paper form required)",
+        pauseReason: "portal_aborted",
+        portalTaskId: portalTaskId || undefined,
+        error: "Provider marked paper-only (no online portal)",
       });
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Provider marked paper-only (no online portal)' WHERE id = $1`,
-          [portalTaskId]
-        );
-      }
       await closeAgentRun("failed", "Provider is paper-only");
       return { success: false, skipped: true, reason: "provider_paper_only" };
     }
@@ -277,16 +265,12 @@ export const submitPortal = task({
     const targetUrl = portalUrl || caseData.portal_url;
     if (!targetUrl) {
       logger.warn("Portal submission skipped — missing portal URL", { caseId });
-      await db.updateCaseStatus(caseId, "needs_human_review", {
-        requires_human: true,
+      await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: "No portal URL available for submission",
+        pauseReason: "portal_aborted",
+        portalTaskId: portalTaskId || undefined,
+        error: "Missing portal URL",
       });
-      if (portalTaskId) {
-        await db.query(
-          `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = 'Missing portal URL' WHERE id = $1`,
-          [portalTaskId]
-        );
-      }
       await closeAgentRun("failed", "Missing portal URL");
       return { success: false, skipped: true, reason: "invalid_portal_url" };
     }
@@ -303,16 +287,12 @@ export const submitPortal = task({
           accountStatus: portalAccount.account_status,
           accountEmail: portalAccount.email,
         });
-        await db.updateCaseStatus(caseId, "needs_human_review", {
-          requires_human: true,
+        await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
           substatus: `Portal account ${portalAccount.account_status} — manual login needed`,
+          pauseReason: "portal_aborted",
+          portalTaskId: portalTaskId || undefined,
+          error: `Portal account blocked: ${portalAccount.account_status}`,
         });
-        if (portalTaskId) {
-          await db.query(
-            `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = $2 WHERE id = $1`,
-            [portalTaskId, `Portal account blocked: ${portalAccount.account_status}`]
-          );
-        }
         await closeAgentRun("failed", `Portal account ${portalAccount.account_status}`);
         return { success: false, skipped: true, reason: `portal_account_${portalAccount.account_status}` };
       }
@@ -396,16 +376,12 @@ export const submitPortal = task({
               error: providerErr?.message,
             });
           }
-          await db.updateCaseStatus(caseId, "needs_human_review", {
-            requires_human: true,
+          await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
             substatus: `Portal requires manual handling: ${result.status}`,
+            pauseReason: "portal_aborted",
+            portalTaskId: portalTaskId || undefined,
+            error: `Alternative path: ${result.status}`,
           });
-          if (portalTaskId) {
-            await db.query(
-              `UPDATE portal_tasks SET status = 'CANCELLED', completion_notes = $2 WHERE id = $1 AND status IN ('PENDING', 'IN_PROGRESS')`,
-              [portalTaskId, `Alternative path: ${result.status}`]
-            );
-          }
           await closeAgentRun("failed", `Alternative path: ${result.status}`);
           return result;
         }
@@ -417,11 +393,15 @@ export const submitPortal = task({
         logger.info("Portal submission was a dedup skip", { caseId, reason: result.reason });
         // Reset status from portal_in_progress if it was set
         if (caseData.status === "portal_in_progress") {
-          await db.updateCaseStatus(caseId, "needs_human_review", {
+          await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
             substatus: `Portal skipped: ${result.reason}`,
+            pauseReason: "portal_aborted",
+            portalTaskId: portalTaskId || undefined,
+            error: `Skyvern dedup skip: ${result.reason || "already handled"}`,
           });
+        } else {
+          await cancelPortalTask(`Skyvern dedup skip: ${result.reason || "already handled"}`);
         }
-        await cancelPortalTask(`Skyvern dedup skip: ${result.reason || "already handled"}`);
         await closeAgentRun("completed");
         return result;
       }
