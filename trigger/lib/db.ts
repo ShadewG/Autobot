@@ -21,6 +21,7 @@ export const aiService: any = lazyProxy(() => require("../../services/ai-service
 export const decisionMemory: any = lazyProxy(() => require("../../services/decision-memory-service"));
 export const logger: any = lazyProxy(() => require("../../services/logger"));
 
+export const caseRuntime: any = lazyProxy(() => require("../../services/case-runtime"));
 export const attachmentProcessor: any = lazyProxy(() => require("../../services/attachment-processor"));
 export const emailExecutor: any = lazyProxy(() => require("../../services/executor-adapter").emailExecutor);
 export const portalExecutor: any = lazyProxy(() => require("../../services/executor-adapter").portalExecutor);
