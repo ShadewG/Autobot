@@ -19,7 +19,7 @@ router.post('/login', async (req, res) => {
 
         // Match by name (case-insensitive) — small team, names are unique
         const result = await db.query(
-            'SELECT id, name, password_hash, is_admin FROM users WHERE LOWER(name) = LOWER($1) AND active = true',
+            'SELECT id, name, email, password_hash, is_admin FROM users WHERE LOWER(name) = LOWER($1) AND active = true',
             [name.trim()]
         );
         const user = result.rows[0];
@@ -42,7 +42,7 @@ router.post('/login', async (req, res) => {
             secure: process.env.NODE_ENV === 'production',
         });
 
-        res.json({ success: true, user: { id: user.id, name: user.name, is_admin: !!user.is_admin } });
+        res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, is_admin: !!user.is_admin } });
     } catch (error) {
         console.error('Login error:', error);
         res.status(500).json({ success: false, error: 'Login failed' });
@@ -65,7 +65,7 @@ router.get('/me', async (req, res) => {
             return res.status(401).json({ success: false, error: 'Not authenticated' });
         }
 
-        res.json({ success: true, user: { id: user.id, name: user.name, is_admin: !!user.is_admin } });
+        res.json({ success: true, user: { id: user.id, name: user.name, email: user.email, is_admin: !!user.is_admin } });
     } catch (error) {
         console.error('Auth check error:', error);
         res.status(500).json({ success: false, error: 'Auth check failed' });

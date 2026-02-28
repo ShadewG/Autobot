@@ -78,7 +78,7 @@ export function NavLinks() {
         )}
         {user && (
           <>
-            <span className="text-muted-foreground">{user.name}</span>
+            <span className="text-muted-foreground">{user.email}</span>
             <button
               onClick={logout}
               className="text-muted-foreground hover:text-foreground transition-colors uppercase tracking-wider"
