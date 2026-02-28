@@ -3061,6 +3061,48 @@ function RequestDetailContent() {
   );
 }
 
+/**
+ * When arriving via ?notion_page_id=..., poll until the case exists
+ * (created asynchronously by the Notion webhook) then redirect to normal view.
+ */
+function NotionWaiter() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const notionPageId = searchParams.get("notion_page_id");
+
+  useEffect(() => {
+    if (!notionPageId) return;
+    let cancelled = false;
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api'}/cases/by-notion/${notionPageId}`);
+        const json = await res.json();
+        if (!cancelled && json.success && json.case_id) {
+          clearInterval(poll);
+          router.replace(`/requests/detail?id=${json.case_id}`);
+        }
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => { cancelled = true; clearInterval(poll); };
+  }, [notionPageId, router]);
+
+  return (
+    <div className="flex flex-col items-center justify-center py-24 gap-3">
+      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">Waiting for case to import from Notion...</p>
+    </div>
+  );
+}
+
+function DetailRouter() {
+  const searchParams = useSearchParams();
+  const hasId = searchParams.has("id");
+  const hasNotionPageId = searchParams.has("notion_page_id");
+
+  if (!hasId && hasNotionPageId) return <NotionWaiter />;
+  return <RequestDetailContent />;
+}
+
 export default function RequestDetailPage() {
   return (
     <Suspense fallback={
@@ -3068,7 +3110,7 @@ export default function RequestDetailPage() {
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     }>
-      <RequestDetailContent />
+      <DetailRouter />
     </Suspense>
   );
 }

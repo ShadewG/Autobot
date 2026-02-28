@@ -403,6 +403,33 @@ router.post('/import-direct', async (req, res) => {
 });
 
 /**
+ * GET /cases/by-notion/:pageId
+ *
+ * Look up a case by Notion page ID. Returns { success, case_id } so the
+ * Researcher frontend can poll until the webhook-created case exists.
+ * Tries both hyphenated and stripped ID formats.
+ */
+router.get('/by-notion/:pageId', async (req, res) => {
+  try {
+    const raw = req.params.pageId.replace(/-/g, '');
+    const hyphenated = raw.length === 32
+      ? `${raw.slice(0,8)}-${raw.slice(8,12)}-${raw.slice(12,16)}-${raw.slice(16,20)}-${raw.slice(20)}`
+      : raw;
+
+    let existing = await db.getCaseByNotionId(hyphenated);
+    if (!existing) existing = await db.getCaseByNotionId(raw);
+
+    if (existing) {
+      return res.json({ success: true, case_id: existing.id });
+    }
+    res.json({ success: false });
+  } catch (error) {
+    logger.error('Error looking up case by Notion ID', { pageId: req.params.pageId, error: error.message });
+    res.json({ success: false });
+  }
+});
+
+/**
  * GET /cases/:id
  *
  * Get a case by ID.
