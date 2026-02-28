@@ -228,8 +228,8 @@ export const processInbound = task({
           }
 
           if (humanDecision.action === "WITHDRAW") {
-            await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
-            await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+            await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: adjustedGate.proposalId });
+            await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
             await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
             await completeRun(caseId, runId);
             return { status: "withdrawn", proposalId: adjustedGate.proposalId };
@@ -559,8 +559,8 @@ export const processInbound = task({
       }
 
       if (humanDecision.action === "WITHDRAW") {
-        await db.updateProposal(gate.proposalId, { status: "WITHDRAWN" });
-        await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+        await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: gate.proposalId });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
         await completeRun(caseId, runId);
         return { status: "withdrawn", proposalId: gate.proposalId };

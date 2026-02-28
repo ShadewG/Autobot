@@ -6,7 +6,7 @@
  * sets the case status to an appropriate non-review status.
  */
 
-import db, { logger } from "./db";
+import db, { logger, caseRuntime } from "./db";
 
 const REVIEW_STATUSES = [
   "needs_human_review",
@@ -33,13 +33,13 @@ export async function reconcileCaseAfterDismiss(caseId: number): Promise<void> {
       [caseId]
     );
     const targetStatus = hasInbound.rows.length > 0 ? "responded" : "awaiting_response";
-    await db.updateCaseStatus(caseId, targetStatus, { requires_human: false, pause_reason: null });
+    await caseRuntime.transitionCaseRuntime(caseId, "CASE_RECONCILED", { targetStatus });
     logger.info("Reconciled case after dismiss: cleared review state", {
       caseId, from: caseRow.status, to: targetStatus,
     });
   } else {
     // Status is already non-review (responded, awaiting_response, etc.) — just clear flags
-    await db.updateCaseStatus(caseId, caseRow.status, { requires_human: false, pause_reason: null });
+    await caseRuntime.transitionCaseRuntime(caseId, "CASE_RECONCILED", { targetStatus: caseRow.status });
     logger.info("Reconciled case after dismiss: cleared stale flags", {
       caseId, status: caseRow.status,
     });

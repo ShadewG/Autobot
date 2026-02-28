@@ -211,8 +211,8 @@ export const processInitialRequest = task({
           }
 
           if (humanDecision.action === "WITHDRAW") {
-            await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
-            await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+            await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: adjustedGate.proposalId });
+            await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
             await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
             await completeRun(caseId, runId);
             return { status: "withdrawn", proposalId: adjustedGate.proposalId };
@@ -390,8 +390,8 @@ export const processInitialRequest = task({
       }
 
       if (humanDecision.action === "WITHDRAW") {
-        await db.updateProposal(draft.proposalId, { status: "WITHDRAWN" });
-        await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+        await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: draft.proposalId });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
         await completeRun(caseId, runId);
         return { status: "withdrawn", proposalId: draft.proposalId };
       }
@@ -453,8 +453,8 @@ export const processInitialRequest = task({
           }
 
           if (adjustDecision.action === "WITHDRAW") {
-            await db.updateProposal(adjustedGate.proposalId, { status: "WITHDRAWN" });
-            await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+            await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: adjustedGate.proposalId });
+            await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
             await completeRun(caseId, runId);
             return { status: "withdrawn", proposalId: adjustedGate.proposalId };
           }

@@ -1313,9 +1313,8 @@ async function deterministicRouting(
   const topConstraints = caseDataForConstraints?.constraints_jsonb || caseDataForConstraints?.constraints || [];
   const CITIZEN_CONSTRAINTS_TOP = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
   if (CITIZEN_CONSTRAINTS_TOP.some((c: string) => topConstraints.includes(c))) {
-    await db.updateCaseStatus(caseId, "id_state", {
+    await caseRuntime.transitionCaseRuntime(caseId, "CASE_ID_STATE", {
       substatus: "Citizenship/residency restriction — requires in-state identity",
-      requires_human: true,
     });
     logger.info("Marked case as ID State due to citizenship restriction", { caseId, classification });
     return noAction(["Citizenship/residency restriction — marked as ID State for human handling"]);
@@ -1540,21 +1539,21 @@ async function deterministicRouting(
 
   // RECORDS_READY
   if (classification === "RECORDS_READY") {
-    await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
+    await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", { substatus: "records_received" });
     await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
     return noAction(["Records ready - case completed"]);
   }
 
   // ACKNOWLEDGMENT
   if (classification === "ACKNOWLEDGMENT") {
-    await db.updateCaseStatus(caseId, "awaiting_response");
+    await caseRuntime.transitionCaseRuntime(caseId, "ACKNOWLEDGMENT_RECEIVED", {});
     return noAction(["Acknowledgment received - status reset to awaiting_response"]);
   }
 
   // PORTAL_REDIRECT
   if (classification === "PORTAL_REDIRECT") {
     await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-    await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "portal_redirect" });
+    await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
     try {
       const caseData = await db.getCaseById(caseId);
       const effectiveUrl = portalUrl || caseData?.portal_url;
@@ -1593,7 +1592,7 @@ async function deterministicRouting(
 
   // PARTIAL_DELIVERY
   if (classification === "PARTIAL_DELIVERY") {
-    await db.updateCaseStatus(caseId, "awaiting_response");
+    await caseRuntime.transitionCaseRuntime(caseId, "PARTIAL_DELIVERY_RECEIVED", {});
     return noAction(["Partial delivery - waiting for remainder"]);
   }
 
@@ -1686,7 +1685,7 @@ export async function decideNextAction(
       // Handle suggested actions for no-response cases
       if (suggestedAction === "use_portal") {
         await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-        await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "portal_required" });
+        await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_required" });
         try {
           const caseData = await db.getCaseById(caseId);
           const effectiveUrl = portalUrl || caseData?.portal_url;
@@ -1706,7 +1705,7 @@ export async function decideNextAction(
         return noAction([...reasoning, "Portal redirect - task created, cron will dispatch"]);
       }
       if (suggestedAction === "download") {
-        await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", { substatus: "records_received" });
         await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
         return noAction([...reasoning, "Records ready for download"]);
       }
@@ -1974,7 +1973,7 @@ export async function decideNextAction(
         retry_portal: async () => {
           const caseData = await db.getCaseById(caseId);
           if (caseData?.portal_url && hasAutomatablePortal(caseData.portal_url, caseData.portal_provider)) {
-            await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "Portal retry", requires_human: false });
+            await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "Portal retry" });
             try {
               const task = await createPortalTask({
                 caseId,
@@ -2063,7 +2062,7 @@ export async function decideNextAction(
         case "DISMISS":
           return noAction(["Human dismissed proposal"]);
         case "WITHDRAW":
-          await db.updateCaseStatus(caseId, "cancelled", { substatus: "withdrawn_by_user" });
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
           await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
           return noAction(["Request withdrawn by user"]);
         default:
@@ -2100,20 +2099,20 @@ export async function decideNextAction(
       // Special handling for classifications with side effects that happen at decision time
       // RECORDS_READY and ACKNOWLEDGMENT status updates
       if (classification === "RECORDS_READY") {
-        await db.updateCaseStatus(caseId, "completed", { substatus: "records_received" });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", { substatus: "records_received" });
         await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
       }
       if (classification === "ACKNOWLEDGMENT") {
-        await db.updateCaseStatus(caseId, "awaiting_response");
+        await caseRuntime.transitionCaseRuntime(caseId, "ACKNOWLEDGMENT_RECEIVED", {});
       }
       if (classification === "PARTIAL_DELIVERY") {
-        await db.updateCaseStatus(caseId, "awaiting_response");
+        await caseRuntime.transitionCaseRuntime(caseId, "PARTIAL_DELIVERY_RECEIVED", {});
       }
 
       // PORTAL_REDIRECT: create portal task (this side effect must stay at decision time)
       if (classification === "PORTAL_REDIRECT") {
         await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
-        await db.updateCaseStatus(caseId, "portal_in_progress", { substatus: "portal_redirect" });
+        await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
         const effectiveUrl = portalUrl || preComputed.caseData?.portal_url;
         if (!effectiveUrl) {
           logger.warn("PORTAL_REDIRECT: no effective portal URL, skipping portal task (v2)", { caseId });
@@ -2139,9 +2138,8 @@ export async function decideNextAction(
       // Citizenship/residency restriction: mark as ID State
       const CITIZEN_CONSTRAINTS = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
       if (constraints.some(c => CITIZEN_CONSTRAINTS.includes(c))) {
-        await db.updateCaseStatus(caseId, "id_state", {
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ID_STATE", {
           substatus: "Citizenship/residency restriction — requires in-state identity",
-          requires_human: true,
         });
         return noAction(["Citizenship/residency restriction — marked as ID State for human handling (v2)"]);
       }
