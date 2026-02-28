@@ -648,7 +648,7 @@ class CronService {
 
                         await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                             substatus: `Deadline passed + contact info changed (${daysOverdue}d overdue)`,
-                            pauseReason: 'deadline_contact_changed',
+                            pauseReason: 'DEADLINE_CONTACT_CHANGED',
                         });
 
                         contactUpdates++;
@@ -683,7 +683,7 @@ class CronService {
                         await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                             targetStatus: 'needs_phone_call',
                             substatus: `Deadline passed ${daysOverdue}d ago — no response`,
-                            pauseReason: 'deadline_phone_call',
+                            pauseReason: 'DEADLINE_PHONE_CALL',
                         });
 
                         phoneCalls++;
@@ -708,7 +708,7 @@ class CronService {
 
                         await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                             substatus: `Deadline passed ${daysOverdue}d ago — ${caseData.portal_url ? 'portal case' : 'no contact info'}`,
-                            pauseReason: 'deadline_no_contact',
+                            pauseReason: 'DEADLINE_NO_CONTACT',
                         });
 
                         humanReviews++;
@@ -796,7 +796,7 @@ class CronService {
                 await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                     targetStatus: 'pending_fee_decision',
                     substatus: `Fee quoted${feeAmount > 0 ? ': $' + feeAmount.toFixed(2) : ''} (${daysOverdue}d overdue)`,
-                    pauseReason: 'fee_decision_needed',
+                    pauseReason: 'FEE_DECISION_NEEDED',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → ${actionType} (AI detected fee_request)`);
                 return 'proposal';
@@ -821,7 +821,7 @@ class CronService {
                 });
                 await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                     substatus: `Agency asked for clarification (${daysOverdue}d overdue)`,
-                    pauseReason: 'clarification_needed',
+                    pauseReason: 'CLARIFICATION_NEEDED',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → SEND_CLARIFICATION (AI detected ${intent})`);
                 return 'proposal';
@@ -859,7 +859,7 @@ class CronService {
                 await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                     targetStatus: 'needs_rebuttal',
                     substatus: `Denial received (${daysOverdue}d overdue)`,
-                    pauseReason: 'denial_rebuttal_needed',
+                    pauseReason: 'DENIAL_REBUTTAL_NEEDED',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → SEND_REBUTTAL (AI detected denial)`);
                 return 'proposal';
@@ -883,7 +883,7 @@ class CronService {
                 });
                 await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                     substatus: `Portal redirect (${daysOverdue}d overdue)`,
-                    pauseReason: 'portal_redirect',
+                    pauseReason: 'PORTAL_REDIRECT',
                 });
                 console.log(`Deadline sweep: case ${caseData.id} → SUBMIT_PORTAL (AI detected portal_redirect)`);
                 return 'proposal';
@@ -1218,7 +1218,7 @@ class CronService {
                         );
                         await transitionCaseRuntime(proposal.case_id, 'CASE_ESCALATED', {
                             substatus: `Approved proposal #${proposal.id} failed after ${retryCount} retries`,
-                            pauseReason: 'execution_retry_exhausted',
+                            pauseReason: 'EXECUTION_RETRY_EXHAUSTED',
                         });
                         await db.logActivity('execution_retry_exhausted',
                             `Proposal #${proposal.id} (${proposal.action_type}) failed to execute after ${retryCount} retries`,
