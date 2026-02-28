@@ -3,7 +3,8 @@ const router = express.Router();
 const {
     db, notionService, safeJsonParse, normalizePortalEvents,
     extractUrls, normalizePortalUrl, isSupportedPortalUrl,
-    detectPortalProviderByUrl, generateQueue, portalQueue
+    detectPortalProviderByUrl, generateQueue, portalQueue,
+    transitionCaseRuntime
 } = require('./_helpers');
 
 /**
@@ -99,7 +100,15 @@ router.post('/human-reviews/:caseId/decision', async (req, res) => {
             });
         }
 
-        const updatedCase = await db.updateCaseStatus(caseId, newStatus, { substatus });
+        if (newStatus === 'portal_in_progress') {
+            await transitionCaseRuntime(caseId, 'PORTAL_STARTED', { substatus });
+        } else {
+            await transitionCaseRuntime(caseId, 'CASE_RECONCILED', {
+                targetStatus: newStatus,
+                substatus,
+            });
+        }
+        const updatedCase = await db.getCaseById(caseId);
         await notionService.syncStatusToNotion(caseId);
 
         await db.logActivity('human_review_decision', `Human review ${action} for ${caseData.case_name}`, {

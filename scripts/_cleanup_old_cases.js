@@ -9,6 +9,7 @@
  */
 
 const db = require('../services/database');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 const notionService = require('../services/notion-service');
 
 const OLD_CASE_IDS = [41, 42, 45, 46, 48, 49, 50, 51, 54, 55, 57, 60, 726, 1658, 1660, 2593];
@@ -81,9 +82,9 @@ async function main() {
       agency_id: null,
       substatus: 'needs_agency_research',
     });
-    await db.updateCaseStatus(25156, 'needs_human_review', {
+    await transitionCaseRuntime(25156, 'CASE_ESCALATED', {
       substatus: 'Agency mismatch detected — needs manual correction',
-      requires_human: true,
+      pauseReason: 'UNSPECIFIED',
     });
     console.log('Case 25156: Cleared mismatched portal_url/email/agency_id, set to needs_human_review');
   } else {

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, notionService } = require('./_helpers');
+const { db, notionService, transitionCaseRuntime } = require('./_helpers');
 
 /**
  * Test portal agent with autonomous form filling
@@ -180,7 +180,7 @@ router.post('/set-portal-url', async (req, res) => {
         });
 
         // Update status to portal_in_progress
-        await db.updateCaseStatus(case_id, 'portal_in_progress', {
+        await transitionCaseRuntime(case_id, 'PORTAL_STARTED', {
             substatus: 'Portal URL set - queued for submission'
         });
 
@@ -262,8 +262,9 @@ router.post('/approve-for-portal', async (req, res) => {
         }
 
         // Update status to awaiting_response with portal_submission_needed
-        await db.updateCaseStatus(case_id, 'awaiting_response', {
-            substatus: 'Approved - queued for portal submission'
+        await transitionCaseRuntime(case_id, 'CASE_RECONCILED', {
+            targetStatus: 'awaiting_response',
+            substatus: 'Approved - queued for portal submission',
         });
 
         // Sync to Notion

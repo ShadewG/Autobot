@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, notionService, aiService, emailQueue } = require('./_helpers');
+const { db, notionService, aiService, emailQueue, transitionCaseRuntime } = require('./_helpers');
 
 /**
  * Pending fee responses (needs approval)
@@ -83,8 +83,9 @@ router.post('/fee-responses/:id/approve', async (req, res) => {
         });
 
         const metadata = entry.metadata || {};
-        await db.updateCaseStatus(caseData.id, 'fee_negotiation', {
-            substatus: `Fee response sent (${metadata.recommended_action || 'negotiate'})`
+        await transitionCaseRuntime(caseData.id, 'CASE_RECONCILED', {
+            targetStatus: 'fee_negotiation',
+            substatus: `Fee response sent (${metadata.recommended_action || 'negotiate'})`,
         });
         await notionService.syncStatusToNotion(caseData.id);
 

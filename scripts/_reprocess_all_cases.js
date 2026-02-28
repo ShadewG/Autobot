@@ -22,6 +22,7 @@
 
 require('dotenv').config();
 const db = require('../services/database');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 const aiService = require('../services/ai-service');
 const logger = require('../services/logger');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
@@ -315,9 +316,8 @@ async function main() {
             'ACCEPT_FEE': 'FEE_QUOTE',
             'ESCALATE': 'SENSITIVE'
           };
-          await db.updateCaseStatus(caseId, 'needs_human_review', {
-            requires_human: true,
-            pause_reason: pauseReasonMap[newAction] || 'DENIAL'
+          await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+            pauseReason: pauseReasonMap[newAction] || 'DENIAL',
           });
         } else {
           console.log(`    ℹ️  Action is NONE/complete — no proposal needed`);

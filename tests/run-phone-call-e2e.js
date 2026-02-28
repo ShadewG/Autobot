@@ -21,6 +21,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') }
 const express = require('express');
 const supertest = require('supertest');
 const db = require('../services/database');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -492,7 +493,10 @@ async function main() {
             if (backup.substatus !== undefined) {
                 updateFields.substatus = backup.substatus;
             }
-            await db.updateCaseStatus(backup.id, backup.status, backup.substatus ? { substatus: backup.substatus } : {});
+            await transitionCaseRuntime(backup.id, 'CASE_RECONCILED', {
+                targetStatus: backup.status,
+                ...(backup.substatus ? { substatus: backup.substatus } : {}),
+            });
             logInfo(`Restored case #${backup.id} status to "${backup.status}"`);
         } catch (err) {
             logInfo(`Could not restore case #${backup.id}: ${err.message}`);

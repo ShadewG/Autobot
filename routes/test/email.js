@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, discordService, sgMail, crypto } = require('./_helpers');
+const { db, discordService, sgMail, crypto, transitionCaseRuntime } = require('./_helpers');
 
 /**
  * Test endpoint: Send email and enable instant auto-reply
@@ -128,9 +128,7 @@ FOIA Request Team (Test Mode)`,
         });
 
         // Update case status
-        await db.updateCaseStatus(caseId, 'sent', {
-            send_date: new Date()
-        });
+        await transitionCaseRuntime(caseId, 'CASE_SENT', { sendDate: new Date().toISOString() });
 
         await db.logActivity('test_email_sent', `Test email sent for instant auto-reply testing`, {
             case_id: caseId

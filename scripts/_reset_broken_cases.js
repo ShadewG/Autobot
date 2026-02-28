@@ -11,6 +11,7 @@
 
 require('dotenv').config();
 const db = require('../services/database');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 const triggerDispatch = require('../services/trigger-dispatch-service');
 
 const CASES_RESET_ONLY = [25140, 25206];
@@ -35,10 +36,7 @@ async function resetCase(caseId) {
   const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
 
   // 3. Clear requires_human and pause_reason, set correct status
-  await db.updateCaseStatus(caseId, targetStatus, {
-    requires_human: false,
-    pause_reason: null
-  });
+  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus });
   console.log(`  Case ${caseId}: status → ${targetStatus}, requires_human → false`);
 }
 

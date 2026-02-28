@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { db, notionService, discordService, generateQueue, detectPortalProviderByUrl } = require('./_helpers');
+const { db, notionService, discordService, generateQueue, detectPortalProviderByUrl, transitionCaseRuntime } = require('./_helpers');
 
 /**
  * Test endpoint: Process a Notion page with instant mode
@@ -235,8 +235,9 @@ router.post('/force-notion-sync', async (req, res) => {
 
             if (!hasPortal && !hasEmail) {
                 // No contact info - flag for contact info needed
-                await db.updateCaseStatus(caseData.id, 'needs_contact_info', {
-                    substatus: 'Missing contact information (no portal URL or email)'
+                await transitionCaseRuntime(caseData.id, 'CASE_RECONCILED', {
+                    targetStatus: 'needs_contact_info',
+                    substatus: 'Missing contact information (no portal URL or email)',
                 });
                 await notionService.syncStatusToNotion(caseData.id);
                 await db.logActivity('contact_missing', `Case ${caseData.id} flagged - missing contact info`, {

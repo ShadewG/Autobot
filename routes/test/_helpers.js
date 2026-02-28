@@ -8,6 +8,7 @@ const { emailQueue, generateQueue, portalQueue } = require('../../queues/email-q
 const { extractUrls } = require('../../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const PORTAL_ACTIVITY_EVENTS = require('../../utils/portal-activity-events');
+const { transitionCaseRuntime } = require('../../services/case-runtime');
 
 function safeJsonParse(value, defaultValue = null) {
     if (!value) {
@@ -130,5 +131,6 @@ module.exports = {
     safeJsonParse,
     normalizePortalEvents,
     buildNotionUrl,
-    resolvePoliceDeptPageId
+    resolvePoliceDeptPageId,
+    transitionCaseRuntime
 };
