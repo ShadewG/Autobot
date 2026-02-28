@@ -265,6 +265,55 @@ function formatAgencyNotes(notes?: string | null): string | null {
   }
 }
 
+function parseEmailList(value?: string | null): string[] {
+  if (!value) return [];
+  return String(value)
+    .split(/[,\s;]+/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.includes("@"));
+}
+
+function emailDomain(email?: string | null): string | null {
+  if (!email || !email.includes("@")) return null;
+  return email.split("@").pop()?.trim().toLowerCase() || null;
+}
+
+function normalizeAgencyKey(name?: string | null): string[] {
+  if (!name) return [];
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !["police", "department", "office", "county", "city", "records"].includes(token));
+}
+
+function messageMatchesAgency(message: RequestWorkspaceResponse["thread_messages"][number], agency: CaseAgency): boolean {
+  const agencyEmails = parseEmailList(agency.agency_email);
+  const from = String(message.from_email || "").trim().toLowerCase();
+  const to = String(message.to_email || "").trim().toLowerCase();
+  const fromDomain = emailDomain(from);
+  const toDomain = emailDomain(to);
+
+  if (agencyEmails.some((email) => email === from || email === to)) {
+    return true;
+  }
+
+  const agencyDomains = agencyEmails
+    .map((email) => emailDomain(email))
+    .filter((d): d is string => Boolean(d));
+  if (agencyDomains.some((d) => d === fromDomain || d === toDomain)) {
+    return true;
+  }
+
+  const searchableText = `${message.subject || ""}\n${message.body || ""}`.toLowerCase();
+  const agencyTokens = normalizeAgencyKey(agency.agency_name);
+  if (agencyTokens.length > 0 && agencyTokens.some((token) => searchableText.includes(token))) {
+    return true;
+  }
+
+  return false;
+}
+
 function RequestDetailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -287,6 +336,7 @@ function RequestDetailContent() {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
+  const [conversationTab, setConversationTab] = useState<string>("all");
 
   const [pollingUntil, setPollingUntil] = useState<number>(0);
   const refreshInterval = Date.now() < pollingUntil ? 3000 : 0;
@@ -889,6 +939,53 @@ function RequestDetailContent() {
   const submittedAtDisplay = request.submitted_at || thread_messages.find((m) => m.direction === "OUTBOUND")?.timestamp || null;
   const lastInboundAtDisplay = request.last_inbound_at || lastInboundMessage?.timestamp || null;
   const agentDecisions: AgentDecision[] = data.agent_decisions || [];
+  const activeCaseAgencies = case_agencies.filter((ca) => ca.is_active !== false);
+  const shouldShowConversationTabs = activeCaseAgencies.length > 1;
+
+  const conversationBuckets = useMemo(() => {
+    const allIds = new Set(thread_messages.map((m) => m.id));
+    const buckets: Array<{ id: string; label: string; count: number; messageIds: Set<number> }> = [
+      { id: "all", label: "All", count: thread_messages.length, messageIds: allIds },
+    ];
+    if (!shouldShowConversationTabs) return buckets;
+
+    const matchedMessageIds = new Set<number>();
+    for (const agency of activeCaseAgencies) {
+      const messageIds = new Set<number>();
+      for (const message of thread_messages) {
+        if (messageMatchesAgency(message, agency)) {
+          messageIds.add(message.id);
+          matchedMessageIds.add(message.id);
+        }
+      }
+      buckets.push({
+        id: `agency-${agency.id}`,
+        label: agency.agency_name || `Agency ${agency.id}`,
+        count: messageIds.size,
+        messageIds,
+      });
+    }
+
+    const otherIds = new Set(
+      thread_messages.filter((m) => !matchedMessageIds.has(m.id)).map((m) => m.id)
+    );
+    if (otherIds.size > 0) {
+      buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
+    }
+    return buckets;
+  }, [thread_messages, activeCaseAgencies, shouldShowConversationTabs]);
+
+  useEffect(() => {
+    if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
+      setConversationTab("all");
+    }
+  }, [conversationBuckets, conversationTab]);
+
+  const visibleThreadMessages = useMemo(() => {
+    const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
+    if (!selected || conversationTab === "all") return thread_messages;
+    return thread_messages.filter((message) => selected.messageIds.has(message.id));
+  }, [thread_messages, conversationBuckets, conversationTab]);
 
   return (
     <div className="space-y-4">
@@ -1246,7 +1343,28 @@ function RequestDetailContent() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <Thread messages={thread_messages} />
+                    {shouldShowConversationTabs && (
+                      <ScrollArea className="w-full whitespace-nowrap">
+                        <div className="flex items-center gap-1 pb-1">
+                          {conversationBuckets.map((bucket) => (
+                            <Button
+                              key={bucket.id}
+                              variant={conversationTab === bucket.id ? "secondary" : "outline"}
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setConversationTab(bucket.id)}
+                              title={bucket.label}
+                            >
+                              <span className="max-w-[140px] truncate">{bucket.label}</span>
+                              <Badge variant="secondary" className="ml-1 text-[10px] px-1">
+                                {bucket.count}
+                              </Badge>
+                            </Button>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                    <Thread messages={visibleThreadMessages} />
                     <Separator />
                     <Composer onSend={handleSendMessage} />
                   </CardContent>
@@ -1689,7 +1807,28 @@ function RequestDetailContent() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <Thread messages={thread_messages} />
+                    {shouldShowConversationTabs && (
+                      <ScrollArea className="w-full whitespace-nowrap">
+                        <div className="flex items-center gap-1 pb-1">
+                          {conversationBuckets.map((bucket) => (
+                            <Button
+                              key={bucket.id}
+                              variant={conversationTab === bucket.id ? "secondary" : "outline"}
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setConversationTab(bucket.id)}
+                              title={bucket.label}
+                            >
+                              <span className="max-w-[140px] truncate">{bucket.label}</span>
+                              <Badge variant="secondary" className="ml-1 text-[10px] px-1">
+                                {bucket.count}
+                              </Badge>
+                            </Button>
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                    <Thread messages={visibleThreadMessages} />
                     <Separator />
                     <Composer onSend={handleSendMessage} />
                   </CardContent>
@@ -1788,7 +1927,28 @@ function RequestDetailContent() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <Thread messages={thread_messages} />
+                  {shouldShowConversationTabs && (
+                    <ScrollArea className="w-full whitespace-nowrap">
+                      <div className="flex items-center gap-1 pb-1">
+                        {conversationBuckets.map((bucket) => (
+                          <Button
+                            key={bucket.id}
+                            variant={conversationTab === bucket.id ? "secondary" : "outline"}
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setConversationTab(bucket.id)}
+                            title={bucket.label}
+                          >
+                            <span className="max-w-[140px] truncate">{bucket.label}</span>
+                            <Badge variant="secondary" className="ml-1 text-[10px] px-1">
+                              {bucket.count}
+                            </Badge>
+                          </Button>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
+                  <Thread messages={visibleThreadMessages} />
                   <Separator />
                   <Composer onSend={handleSendMessage} />
                 </CardContent>
