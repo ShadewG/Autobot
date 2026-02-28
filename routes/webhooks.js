@@ -6,6 +6,7 @@ const sendgridService = require('../services/sendgrid-service');
 const db = require('../services/database');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
 const { notify } = require('../services/event-bus');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 
 // In-memory guard: track page IDs currently being imported to prevent concurrent duplicates
 const _importingPages = new Set();
@@ -437,9 +438,9 @@ router.post('/events', express.json(), async (req, res) => {
                         );
 
                         if (msg?.case_id) {
-                            await db.updateCaseStatus(msg.case_id, 'needs_human_review', {
+                            await transitionCaseRuntime(msg.case_id, 'CASE_ESCALATED', {
                                 substatus: `Email ${event.event}: ${event.reason || 'delivery failed'}`,
-                                requires_human: true
+                                pauseReason: 'email_delivery_failed',
                             });
                         }
                     } catch (err) {

@@ -8,6 +8,7 @@
 const db = require('./database');
 const notionService = require('./notion-service');
 const discordService = require('./discord-service');
+const { transitionCaseRuntime } = require('./case-runtime');
 
 // How long a case can sit in "responded" before we flag it (in hours)
 const STUCK_THRESHOLD_HOURS = 2;
@@ -59,9 +60,10 @@ class StuckResponseDetector {
                     : `Processing never triggered - no agent run found after ${Math.round(caseData.hours_stuck)} hours`;
 
                 // Flag for human review
-                await db.updateCaseStatus(caseData.id, 'needs_human_review', {
+                await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
                     substatus: 'Stuck response - auto-flagged by monitoring system',
-                    escalation_reason: reason
+                    pauseReason: 'stuck_response',
+                    escalationReason: reason,
                 });
 
                 // Sync to Notion

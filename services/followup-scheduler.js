@@ -16,6 +16,7 @@ const { CronJob } = require('cron');
 const db = require('./database');
 const logger = require('./logger');
 const triggerDispatch = require('./trigger-dispatch-service');
+const { transitionCaseRuntime } = require('./case-runtime');
 
 // Configuration
 const FOLLOWUP_CHECK_CRON = process.env.FOLLOWUP_CHECK_CRON || '*/15 * * * *'; // Every 15 minutes
@@ -361,8 +362,10 @@ class FollowupScheduler {
       .catch(err => logger.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
 
     // Update case status
-    await db.updateCaseStatus(caseId, 'needs_phone_call', {
-      substatus: 'No email response after follow-ups'
+    await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+      targetStatus: 'needs_phone_call',
+      substatus: 'No email response after follow-ups',
+      pauseReason: 'followup_exhausted',
     });
 
     // Log activity

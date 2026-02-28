@@ -19,6 +19,7 @@ const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
 const triggerDispatch = require('../services/trigger-dispatch-service');
 const logger = require('../services/logger');
 const { emailExecutor } = require('../services/executor-adapter');
+const { transitionCaseRuntime } = require('../services/case-runtime');
 
 // Trigger.dev queue + idempotency options for per-case concurrency control
 function triggerOpts(caseId, taskType, uniqueId) {
@@ -412,10 +413,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
         human_decision: humanDecision,
         status: 'EXECUTED'
       });
-      await db.updateCaseStatus(caseId, 'sent', {
-        requires_human: false,
-        pause_reason: null,
-        send_date: new Date(),
+      await transitionCaseRuntime(caseId, 'CASE_SENT', {
+        sendDate: new Date().toISOString(),
         substatus: 'Manually submitted via portal',
       });
       await db.logActivity('proposal_manual_submit', `Proposal ${proposalId} manually submitted via portal`, {
@@ -536,10 +535,10 @@ router.post('/proposals/:id/decision', async (req, res) => {
           if (REVIEW_STATUSES.includes(caseRow.status)) {
             const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
             const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
-            await db.updateCaseStatus(caseId, targetStatus, { requires_human: false, pause_reason: null });
+            await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus });
             logger.info('Reconciled case after legacy dismiss: cleared review state', { caseId, from: caseRow.status, to: targetStatus });
           } else {
-            await db.updateCaseStatus(caseId, caseRow.status, { requires_human: false, pause_reason: null });
+            await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: caseRow.status });
             logger.info('Reconciled case after legacy dismiss: cleared stale flags', { caseId, status: caseRow.status });
           }
         }
@@ -607,7 +606,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
 
       await db.updateProposal(proposalId, { status: 'EXECUTED' });
-      await db.updateCaseStatus(caseId, 'awaiting_response', { requires_human: false, pause_reason: null });
+      await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
       await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
         case_id: caseId, proposal_id: proposalId, action_type: refreshedProposal.action_type
       });

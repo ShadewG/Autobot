@@ -6,6 +6,7 @@ const { portalQueue } = require('../../queues/email-queue');
 const crypto = require('crypto');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const { eventBus, notify, emitDataUpdate } = require('../../services/event-bus');
+const { transitionCaseRuntime } = require('../../services/case-runtime');
 const pdContactService = require('../../services/pd-contact-service');
 
 // Initialize SendGrid
@@ -296,10 +297,10 @@ async function processProposalDecision(proposalId, action, { instruction = null,
                 if (REVIEW_STATUSES.includes(caseRow.status)) {
                     const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
                     const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
-                    await db.updateCaseStatus(caseId, targetStatus, { requires_human: false, pause_reason: null });
+                    await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus });
                     console.log(`[reconcile] Case ${caseId}: cleared review state ${caseRow.status} → ${targetStatus}`);
                 } else {
-                    await db.updateCaseStatus(caseId, caseRow.status, { requires_human: false, pause_reason: null });
+                    await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: caseRow.status });
                     console.log(`[reconcile] Case ${caseId}: cleared stale flags (status: ${caseRow.status})`);
                 }
             }
@@ -434,9 +435,9 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
         // Update case status
-        await db.updateCaseStatus(caseId, 'sent', {
+        await transitionCaseRuntime(caseId, 'CASE_SENT', {
+            sendDate: caseData.send_date ? new Date(caseData.send_date).toISOString() : new Date().toISOString(),
             substatus: `PDF form emailed to ${targetEmail}`,
-            send_date: caseData.send_date || new Date()
         });
 
         await db.logActivity('pdf_email_sent', `PDF form emailed to ${targetEmail} for case ${caseId}`, {
