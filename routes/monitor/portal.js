@@ -7,13 +7,40 @@ const {
     isSupportedPortalUrl,
     notify
 } = require('./_helpers');
-const { transitionCaseRuntime } = require('../../services/case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('../../services/case-runtime');
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+    const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await transitionCaseRuntime(caseId, event, context);
+        } catch (error) {
+            lastError = error;
+            const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+            if (!isLockError || attempt === attempts) {
+                throw error;
+            }
+            await sleep(baseDelayMs * attempt);
+        }
+    }
+
+    throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
+}
 
 /**
  * POST /api/monitor/case/:id/trigger-portal
  * Force queue a portal submission job for manual live testing.
  */
 router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
+    let queuedJob = null;
+    let runtimeTransitionApplied = false;
     try {
         const caseId = parseInt(req.params.id);
         const { instructions = null, provider = null, portal_url = null, research_context = null } = req.body || {};
@@ -61,7 +88,7 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             ? `${baseInstructions}\n\nCase research context:\n${research_context}`
             : baseInstructions;
 
-        const job = await portalQueue.add('portal-submit', {
+        queuedJob = await portalQueue.add('portal-submit', {
             caseId,
             portalUrl: normalizedPortalUrl,
             provider: provider || caseData.portal_provider || null,
@@ -69,13 +96,14 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
         });
 
         // Clear review flags so case leaves the queue
-        await transitionCaseRuntime(caseId, 'PORTAL_STARTED', {
+        await transitionCaseRuntimeWithRetry(caseId, 'PORTAL_STARTED', {
             substatus: 'Monitor-triggered portal submission queued',
             portalMetadata: {
                 last_portal_status: 'Portal submission queued (monitor trigger)',
                 last_portal_status_at: new Date().toISOString(),
             },
         });
+        runtimeTransitionApplied = true;
 
         // Dismiss pending proposals — human chose portal retry
         try {
@@ -90,7 +118,7 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             case_id: caseId,
             portal_url: normalizedPortalUrl,
             provider: provider || caseData.portal_provider || null,
-            job_id: job?.id || null
+            job_id: queuedJob?.id || null
         });
 
         notify('info', `Portal submission queued for ${caseData.case_name}`, { case_id: caseId });
@@ -98,11 +126,22 @@ router.post('/case/:id/trigger-portal', express.json(), async (req, res) => {
             success: true,
             message: 'Portal submission queued',
             case_id: caseId,
-            job_id: job?.id || null,
+            job_id: queuedJob?.id || null,
             portal_url: normalizedPortalUrl,
             monitor_case_url: `/api/monitor/case/${caseId}`
         });
     } catch (error) {
+        if (queuedJob && !runtimeTransitionApplied) {
+            try {
+                await queuedJob.remove();
+            } catch (_) {}
+        }
+        if (error?.name === 'CaseLockContention') {
+            return res.status(409).json({
+                success: false,
+                error: 'Case is currently processing another transition. Please retry in a few seconds.',
+            });
+        }
         res.status(500).json({ success: false, error: error.message });
     }
 });

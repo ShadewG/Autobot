@@ -20,7 +20,32 @@ const {
 } = require('../services/executor-adapter');
 const db = require('../services/database');
 const logger = require('../services/logger');
-const { transitionCaseRuntime } = require('../services/case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+  const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+  const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await transitionCaseRuntime(caseId, event, context);
+    } catch (error) {
+      lastError = error;
+      const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+      if (!isLockError || attempt === attempts) {
+        throw error;
+      }
+      await sleep(baseDelayMs * attempt);
+    }
+  }
+
+  throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
+}
 
 /**
  * GET /portal-tasks
@@ -180,10 +205,29 @@ router.post('/:id/complete', async (req, res) => {
       });
     }
 
-    // Update case status
-    await transitionCaseRuntime(task.case_id, 'CASE_RECONCILED', {
-      targetStatus: 'awaiting_response',
-    });
+    // Reconcile case status; if the case is locked, complete task anyway and queue reconcile retry.
+    let reconcileQueued = false;
+    try {
+      await transitionCaseRuntimeWithRetry(task.case_id, 'CASE_RECONCILED', {
+        targetStatus: 'awaiting_response',
+      });
+    } catch (error) {
+      if (error?.name !== 'CaseLockContention') {
+        throw error;
+      }
+      reconcileQueued = true;
+      setTimeout(() => {
+        transitionCaseRuntimeWithRetry(task.case_id, 'CASE_RECONCILED', {
+          targetStatus: 'awaiting_response',
+        }).catch((retryErr) => {
+          logger.warn('Deferred reconcile after portal completion failed', {
+            taskId,
+            caseId: task.case_id,
+            error: retryErr.message,
+          });
+        });
+      }, 1200);
+    }
 
     logger.info('Portal task completed', {
       taskId,
@@ -193,8 +237,11 @@ router.post('/:id/complete', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Task completed successfully',
-      task: updated
+      message: reconcileQueued
+        ? 'Task completed; case status reconcile queued'
+        : 'Task completed successfully',
+      reconcile_pending: reconcileQueued,
+      task: updated,
     });
   } catch (error) {
     logger.error('Error completing portal task', { taskId: req.params.id, error: error.message });

@@ -16,7 +16,7 @@ const {
 } = require('./queue-config');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 const { isValidEmail } = require('../utils/contact-utils');
-const { transitionCaseRuntime } = require('../services/case-runtime');
+const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
 
 // Feature flag for Run Engine (Phase 3) - new auditability layer
 const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
@@ -61,6 +61,31 @@ if (connection) {
     console.log('✅ Email queues initialized');
 } else {
     console.warn('⚠️ Email queues not initialized - no Redis connection');
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, options = {}) {
+    const attempts = Number.isFinite(options.attempts) ? options.attempts : 4;
+    const baseDelayMs = Number.isFinite(options.baseDelayMs) ? options.baseDelayMs : 150;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await transitionCaseRuntime(caseId, event, context);
+        } catch (error) {
+            lastError = error;
+            const isLockError = error instanceof CaseLockContention || error?.name === 'CaseLockContention';
+            if (!isLockError || attempt === attempts) {
+                throw error;
+            }
+            await sleep(baseDelayMs * attempt);
+        }
+    }
+
+    throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
 }
 
 /**
@@ -137,7 +162,7 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 result = await sendgridService.sendFOIARequest(caseId, content, subject, toEmail, instantReply || false);
 
                 // Update case status
-                await transitionCaseRuntime(caseId, 'CASE_SENT', {
+                await transitionCaseRuntimeWithRetry(caseId, 'CASE_SENT', {
                     sendDate: new Date().toISOString(),
                 });
 
@@ -248,7 +273,7 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 // Update case status
                 const sendCaseData = await db.getCaseById(caseId);
                 if (sendCaseData) {
-                    await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
+                    await transitionCaseRuntimeWithRetry(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
                     await notionService.syncStatusToNotion(caseId);
                     await discordService.notifyRequestSent(sendCaseData, 'email');
                 }
@@ -689,7 +714,7 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
                     const recordingUrl = portalResult.recording_url || taskUrl || null;
                     const portalRunId = portalResult.runId || portalResult.taskId || null;
 
-                    await transitionCaseRuntime(caseId, 'CASE_SENT', {
+                    await transitionCaseRuntimeWithRetry(caseId, 'CASE_SENT', {
                         sendDate: new Date().toISOString(),
                         substatus: `Portal submission completed (${submissionStatus})`,
                     });
@@ -799,7 +824,7 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
             if (portalUrl && !contactEmail) {
                 console.log(`🚫 Case ${caseId} has portal_url but portal failed and no email — needs human review`);
                 const portalErrMsg = (portalError?.message || 'Unknown error or unsupported domain').substring(0, 80);
-                await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+                await transitionCaseRuntimeWithRetry(caseId, 'CASE_ESCALATED', {
                     substatus: `Portal failed: ${portalErrMsg}`.substring(0, 100),
                     pauseReason: 'PORTAL_FAILED',
                 });
@@ -827,7 +852,7 @@ const generateWorker = connection ? new Worker('generate-queue', async (job) => 
 
             if (!contactEmail) {
                 console.warn(`❌ No valid email contact for case ${caseId}. Marking for human review.`);
-                await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+                await transitionCaseRuntimeWithRetry(caseId, 'CASE_ESCALATED', {
                     substatus: 'No valid portal or email contact detected',
                     pauseReason: 'UNSPECIFIED',
                 });
@@ -993,7 +1018,7 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
 
         // Mark case as portal in progress if not already sent
         if (caseData.status !== 'sent') {
-            await transitionCaseRuntime(caseId, 'PORTAL_STARTED', {
+            await transitionCaseRuntimeWithRetry(caseId, 'PORTAL_STARTED', {
                 substatus: 'Agency requested portal submission',
                 portalMetadata: {
                     last_portal_status: 'Portal submission queued',
@@ -1040,7 +1065,7 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
             sendDateISO = new Date().toISOString();
         }
 
-        await transitionCaseRuntime(caseId, 'CASE_SENT', {
+        await transitionCaseRuntimeWithRetry(caseId, 'CASE_SENT', {
             sendDate: sendDateISO,
             substatus: `Portal submission completed (${statusText})`,
         });
@@ -1090,7 +1115,7 @@ async function runPortalSubmissionJob({ job, caseId, portalUrl, provider, instru
         });
         // Safety net: ensure case is flagged for human review + create proposal
         try {
-            await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+            await transitionCaseRuntimeWithRetry(caseId, 'CASE_ESCALATED', {
                 substatus: 'Portal submission failed - requires human submission',
                 pauseReason: 'PORTAL_FAILED',
             });
