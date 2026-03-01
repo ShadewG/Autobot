@@ -202,8 +202,8 @@ const GATE_DISPLAY: Record<string, { icon: React.ReactNode; color: string; label
   },
   INITIAL_REQUEST: {
     icon: <Send className="h-4 w-4" />,
-    color: "text-blue-400 bg-blue-500/10 border-blue-700/50",
-    label: "Pending Approval",
+    color: "text-cyan-400 bg-cyan-500/10 border-cyan-700/50",
+    label: "Initial Request",
   },
   PENDING_APPROVAL: {
     icon: <Clock className="h-4 w-4" />,
@@ -486,7 +486,7 @@ function RequestDetailContent() {
       router.push("/requests");
     } catch (error) {
       console.error("Error withdrawing request:", error);
-      alert("Failed to withdraw request. Please try again.");
+      toast.error("Failed to withdraw request");
     } finally {
       setIsResolving(false);
     }
@@ -514,14 +514,14 @@ function RequestDetailContent() {
       });
       const data = await res.json();
       if (data.already_exists) {
-        alert("This case is already in the phone call queue.");
+        toast.info("Already in the phone call queue");
       } else {
-        alert("Added to phone call queue.");
+        toast.success("Added to phone call queue");
       }
       mutate();
     } catch (error) {
       console.error("Error adding to phone queue:", error);
-      alert("Failed to add to phone queue.");
+      toast.error("Failed to add to phone queue");
     }
   };
 
@@ -537,7 +537,7 @@ function RequestDetailContent() {
       optimisticClear();
     } catch (error: any) {
       console.error("Error resolving review:", error);
-      alert(error.message || "Failed to resolve review. Please try again.");
+      toast.error(error.message || "Failed to resolve review");
     } finally {
       setIsResolving(false);
     }
@@ -627,6 +627,26 @@ function RequestDetailContent() {
     }
   };
 
+  const handleRetryResearch = async () => {
+    if (!data?.pending_proposal) return;
+    setIsApproving(true);
+    try {
+      const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "RETRY_RESEARCH" }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed");
+      optimisticClear();
+      toast.success("Research retry started...");
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setIsApproving(false);
+    }
+  };
+
   const copyField = (key: string, value: string) => {
     navigator.clipboard.writeText(value);
     setCopiedField(key);
@@ -662,7 +682,7 @@ function RequestDetailContent() {
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to set primary agency");
       mutate();
     } catch (e: any) {
-      alert(e.message || "Failed to set primary agency");
+      toast.error(e.message || "Failed to set primary agency");
     } finally {
       setAgencyActionLoadingId(null);
     }
@@ -677,7 +697,7 @@ function RequestDetailContent() {
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to research agency");
       mutate();
     } catch (e: any) {
-      alert(e.message || "Failed to research agency");
+      toast.error(e.message || "Failed to research agency");
     } finally {
       setAgencyActionLoadingId(null);
     }
@@ -688,7 +708,7 @@ function RequestDetailContent() {
     const caseId = parseInt(id, 10);
     const caseAgency = data?.case_agencies?.find((ca) => Number(ca.id) === Number(caseAgencyId));
     if (!caseAgency) {
-      alert("Agency not found on this case");
+      toast.error("Agency not found on this case");
       return;
     }
 
@@ -711,7 +731,7 @@ function RequestDetailContent() {
       mutateRuns();
       startPolling();
     } catch (e: any) {
-      alert(e.message || "Failed to start request for agency");
+      toast.error(e.message || "Failed to start request for agency");
     } finally {
       setAgencyStartLoadingId(null);
     }
@@ -758,7 +778,7 @@ function RequestDetailContent() {
         mutate();
       }
     } catch (e: any) {
-      alert(e.message || "Failed to add agency candidate");
+      toast.error(e.message || "Failed to add agency candidate");
     } finally {
       setCandidateActionLoadingName(null);
       setCandidateStartLoadingName(null);
@@ -767,7 +787,7 @@ function RequestDetailContent() {
 
   const handleAddManualAgency = async (startAfterAdd = false) => {
     if (!manualAgencyName.trim()) {
-      alert("Agency name is required");
+      toast.error("Agency name is required");
       return;
     }
 
@@ -790,7 +810,7 @@ function RequestDetailContent() {
         mutate();
       }
     } catch (e: any) {
-      alert(e.message || "Failed to add agency");
+      toast.error(e.message || "Failed to add agency");
     } finally {
       setIsManualAgencySubmitting(false);
     }
@@ -854,11 +874,11 @@ function RequestDetailContent() {
       if (result.success) {
         mutate(); // Refresh data
       } else {
-        alert("Failed to generate initial request");
+        toast.error("Failed to generate initial request");
       }
     } catch (error: any) {
       console.error("Error generating initial request:", error);
-      alert(error.message || "Failed to generate initial request");
+      toast.error(error.message || "Failed to generate initial request");
     } finally {
       setIsGeneratingInitial(false);
     }
@@ -873,11 +893,11 @@ function RequestDetailContent() {
         mutate(); // Refresh data
         mutateRuns();
       } else {
-        alert(result.message || "Failed to invoke agent");
+        toast.error(result.message || "Failed to invoke agent");
       }
     } catch (error: any) {
       console.error("Error invoking agent:", error);
-      alert(error.message || "Failed to invoke agent");
+      toast.error(error.message || "Failed to invoke agent");
     } finally {
       setIsInvokingAgent(false);
     }
@@ -894,11 +914,11 @@ function RequestDetailContent() {
         mutate();
         mutateRuns();
       } else {
-        alert("Failed to trigger follow-up");
+        toast.error("Failed to trigger follow-up");
       }
     } catch (error: any) {
       console.error("Error triggering follow-up:", error);
-      alert(error.message || "Failed to trigger follow-up");
+      toast.error(error.message || "Failed to trigger follow-up");
     } finally {
       setIsRunningFollowup(false);
     }
@@ -917,11 +937,11 @@ function RequestDetailContent() {
         setShowInboundDialog(false);
         setSelectedMessageId(null);
       } else {
-        alert("Failed to process inbound message");
+        toast.error("Failed to process inbound message");
       }
     } catch (error: any) {
       console.error("Error processing inbound message:", error);
-      alert(error.message || "Failed to process inbound message");
+      toast.error(error.message || "Failed to process inbound message");
     } finally {
       setIsRunningInbound(false);
     }
@@ -938,11 +958,11 @@ function RequestDetailContent() {
         mutate();
         mutateRuns();
       } else {
-        alert("Failed to resimulate inbound message");
+        toast.error("Failed to resimulate inbound message");
       }
     } catch (error: any) {
       console.error("Error resimulating inbound message:", error);
-      alert(error.message || "Failed to resimulate inbound message");
+      toast.error(error.message || "Failed to resimulate inbound message");
     } finally {
       setIsRunningInbound(false);
     }
@@ -962,11 +982,11 @@ function RequestDetailContent() {
         mutate();
         mutateRuns();
       } else {
-        alert("Failed to reset case");
+        toast.error("Failed to reset case");
       }
     } catch (error: any) {
       console.error("Error resetting case:", error);
-      alert(error.message || "Failed to reset case");
+      toast.error(error.message || "Failed to reset case");
     } finally {
       setIsResettingCase(false);
     }
@@ -1057,7 +1077,7 @@ function RequestDetailContent() {
       mutate(); // Refresh data
     } catch (error: any) {
       console.error("Error revising action:", error);
-      alert(error.message || "Failed to revise action. There may not be a pending action to revise.");
+      toast.error(error.message || "Failed to revise action");
     } finally {
       setIsRevising(false);
     }
@@ -1889,6 +1909,39 @@ function RequestDetailContent() {
                                   </Button>
                                 )}
 
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="w-full"
+                                  onClick={() => {
+                                    const lines = [
+                                      `Name: ${portal_helper.requester.name}`,
+                                      `Email: ${portal_helper.requester.email}`,
+                                      `Phone: ${portal_helper.requester.phone}`,
+                                      portal_helper.requester.organization && `Organization: ${portal_helper.requester.organization}`,
+                                      portal_helper.requester.title && `Title: ${portal_helper.requester.title}`,
+                                      '',
+                                      `Street: ${portal_helper.address.line1}`,
+                                      portal_helper.address.line2 && `Apt/Suite: ${portal_helper.address.line2}`,
+                                      `City: ${portal_helper.address.city}`,
+                                      `State: ${portal_helper.address.state}`,
+                                      `Zip: ${portal_helper.address.zip}`,
+                                      '',
+                                      portal_helper.case_info.subject_name && `Subject: ${portal_helper.case_info.subject_name}`,
+                                      portal_helper.case_info.incident_date && `Date: ${portal_helper.case_info.incident_date}`,
+                                      portal_helper.case_info.incident_location && `Location: ${portal_helper.case_info.incident_location}`,
+                                      portal_helper.case_info.requested_records.length > 0 && `Records:\n${portal_helper.case_info.requested_records.map(r => `  - ${r}`).join('\n')}`,
+                                      portal_helper.case_info.additional_details && `Details: ${portal_helper.case_info.additional_details}`,
+                                      `Fee Waiver: ${portal_helper.fee_waiver_reason}`,
+                                      `Delivery: ${portal_helper.preferred_delivery}`,
+                                    ].filter(Boolean).join('\n');
+                                    navigator.clipboard.writeText(lines);
+                                    toast.success("All fields copied to clipboard");
+                                  }}
+                                >
+                                  <Copy className="h-3 w-3 mr-1.5" /> Copy All Fields
+                                </Button>
+
                                 {/* Requester Info */}
                                 <div>
                                   <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Requester</p>
@@ -2071,55 +2124,87 @@ function RequestDetailContent() {
                         </p>
                         {/* Action buttons */}
                         <div className="space-y-2 pt-1">
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              className="flex-1 bg-green-700 hover:bg-green-600 text-white"
-                              onClick={handleApprovePending}
-                              disabled={isApproving || isAdjustingPending}
-                            >
-                              {isApproving ? (
-                                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                              ) : isEmailLikePendingAction ? (
-                                <Send className="h-3 w-3 mr-1.5" />
-                              ) : (
-                                <CheckCircle className="h-3 w-3 mr-1.5" />
-                              )}
-                              {pendingApproveLabel}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setPendingAdjustModalOpen(true)}
-                              disabled={isApproving || isAdjustingPending}
-                            >
-                              <Edit className="h-3 w-3 mr-1" /> Adjust
-                            </Button>
-                          </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="w-full"
-                                disabled={isApproving || isAdjustingPending}
-                              >
-                                <Trash2 className="h-3 w-3 mr-1" /> Dismiss
-                                <ChevronDown className="h-3 w-3 ml-1" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="start">
-                              {DISMISS_REASONS.map((reason) => (
-                                <DropdownMenuItem
-                                  key={reason}
-                                  onClick={() => handleDismissPending(reason)}
-                                  className="text-xs"
-                                >
-                                  {reason}
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
+                          {(() => {
+                            const gateOptions = pending_proposal.gate_options as string[] | null;
+                            const showApprove = !gateOptions || gateOptions.includes("APPROVE");
+                            const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
+                            const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
+                            const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
+                            return (
+                              <>
+                                <div className="flex gap-2">
+                                  {showRetryResearch && (
+                                    <Button
+                                      size="sm"
+                                      className="flex-1 bg-amber-700 hover:bg-amber-600 text-white"
+                                      onClick={handleRetryResearch}
+                                      disabled={isApproving || isAdjustingPending}
+                                    >
+                                      {isApproving ? (
+                                        <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                                      ) : (
+                                        <RefreshCw className="h-3 w-3 mr-1.5" />
+                                      )}
+                                      Retry Research
+                                    </Button>
+                                  )}
+                                  {showApprove && (
+                                    <Button
+                                      size="sm"
+                                      className="flex-1 bg-green-700 hover:bg-green-600 text-white"
+                                      onClick={handleApprovePending}
+                                      disabled={isApproving || isAdjustingPending}
+                                    >
+                                      {isApproving ? (
+                                        <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                                      ) : isEmailLikePendingAction ? (
+                                        <Send className="h-3 w-3 mr-1.5" />
+                                      ) : (
+                                        <CheckCircle className="h-3 w-3 mr-1.5" />
+                                      )}
+                                      {pendingApproveLabel}
+                                    </Button>
+                                  )}
+                                  {showAdjust && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setPendingAdjustModalOpen(true)}
+                                      disabled={isApproving || isAdjustingPending}
+                                    >
+                                      <Edit className="h-3 w-3 mr-1" /> Adjust
+                                    </Button>
+                                  )}
+                                </div>
+                                {showDismiss && (
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="w-full"
+                                        disabled={isApproving || isAdjustingPending}
+                                      >
+                                        <Trash2 className="h-3 w-3 mr-1" /> Dismiss
+                                        <ChevronDown className="h-3 w-3 ml-1" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start">
+                                      {DISMISS_REASONS.map((reason) => (
+                                        <DropdownMenuItem
+                                          key={reason}
+                                          onClick={() => handleDismissPending(reason)}
+                                          className="text-xs"
+                                        >
+                                          {reason}
+                                        </DropdownMenuItem>
+                                      ))}
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </CardContent>
                     </Card>
@@ -2560,7 +2645,7 @@ function RequestDetailContent() {
                                   mutateRuns();
                                 }
                               } catch (error: any) {
-                                alert(error.message || "Failed to replay run");
+                                toast.error(error.message || "Failed to replay run");
                               }
                             }}
                           >

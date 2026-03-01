@@ -499,6 +499,7 @@ export interface PendingProposal {
   waitpoint_token: string | null;
   pause_reason: string | null;
   confidence?: number | null;
+  gate_options?: string[] | null;
 }
 
 export interface AgentDecision {
