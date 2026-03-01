@@ -67,7 +67,7 @@ function sortByImpact(requests: RequestListItem[]): RequestListItem[] {
 
 export default function RequestsPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const { appendUser } = useUserFilter();
+  const { appendUser, isAdmin } = useUserFilter();
 
   const { data, error, isLoading, mutate } = useSWR<RequestsListResponse>(
     appendUser("/requests"),
@@ -264,6 +264,7 @@ export default function RequestsPage() {
           botWorking={botWorking}
           waitingOnAgency={waitingOnAgency}
           completed={data?.completed || []}
+          isAdmin={isAdmin}
           onApprove={handleApprove}
           onAdjust={handleAdjust}
           onSnooze={handleSnooze}

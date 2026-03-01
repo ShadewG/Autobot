@@ -33,6 +33,7 @@ interface InboxSectionsProps {
   botWorking: RequestListItem[];
   waitingOnAgency: RequestListItem[];
   completed: RequestListItem[];
+  isAdmin?: boolean;
   onApprove: (id: string) => void;
   onAdjust: (id: string) => void;
   onSnooze: (id: string) => void;
@@ -59,6 +60,7 @@ export function InboxSections({
   botWorking,
   waitingOnAgency,
   completed,
+  isAdmin = false,
   onApprove,
   onAdjust,
   onSnooze,
@@ -325,6 +327,7 @@ export function InboxSections({
           <RequestTable
             requests={filteredNeedsDecision}
             variant="needs_decision"
+            isAdmin={isAdmin}
             onApprove={onApprove}
             onAdjust={onAdjust}
             onSnooze={onSnooze}
@@ -351,6 +354,7 @@ export function InboxSections({
             <RequestTable
               requests={filteredBotWorking}
               variant="bot_working"
+              isAdmin={isAdmin}
               onRepair={onRepair}
               onCancelRun={onCancelRun}
               selectedIds={selected}
@@ -402,6 +406,7 @@ export function InboxSections({
           <RequestTable
             requests={filteredWaiting}
             variant="waiting"
+            isAdmin={isAdmin}
             onRepair={onRepair}
             onFollowUp={onFollowUp}
             onTakeOver={onTakeOver}
@@ -432,7 +437,7 @@ export function InboxSections({
           </CardHeader>
           {showCompleted && (
             <CardContent>
-              <RequestTable requests={completed} variant="completed" onRepair={onRepair} />
+              <RequestTable requests={completed} variant="completed" isAdmin={isAdmin} onRepair={onRepair} />
             </CardContent>
           )}
         </Card>

@@ -39,11 +39,13 @@ import {
   Compass,
   Wrench,
   Search as SearchIcon,
+  ExternalLink,
 } from "lucide-react";
 
 interface RequestRowProps {
   request: RequestListItem;
   variant: TableVariant;
+  isAdmin?: boolean;
   onApprove?: (id: string) => void;
   onAdjust?: (id: string) => void;
   onSnooze?: (id: string) => void;
@@ -137,6 +139,7 @@ function OutcomeBadge({ outcomeType }: { outcomeType: string | null }) {
 export function RequestRow({
   request,
   variant,
+  isAdmin = false,
   onApprove,
   onAdjust,
   onSnooze,
@@ -183,6 +186,9 @@ export function RequestRow({
         hour: "numeric",
         minute: "2-digit",
       })
+    : null;
+  const triggerRunUrl = request.active_run_trigger_run_id
+    ? `https://cloud.trigger.dev/orgs/frontwind-llc-27ae/projects/autobot-Z-SQ/env/prod/runs/${request.active_run_trigger_run_id}`
     : null;
 
   return (
@@ -241,6 +247,21 @@ export function RequestRow({
               <p>Case status: {request.status.replace(/_/g, " ")}</p>
               <p>Review state: {request.review_state || "IDLE"}</p>
               {request.active_run_status && <p>Run: {request.active_run_status}</p>}
+              {isAdmin && triggerRunUrl && (
+                <p>
+                  Trigger:{" "}
+                  <a
+                    href={triggerRunUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 hover:underline inline-flex items-center gap-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Open run
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                </p>
+              )}
               {activityTime && <p>Last activity: {activityTime}</p>}
             </div>
           )}

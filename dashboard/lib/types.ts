@@ -53,6 +53,7 @@ export interface RequestListItem {
   active_run_status?: string | null;
   active_run_trigger_type?: string | null;
   active_run_started_at?: string | null;
+  active_run_trigger_run_id?: string | null;
   active_portal_task_status?: string | null;
   active_portal_task_type?: string | null;
   review_state?: ReviewState;

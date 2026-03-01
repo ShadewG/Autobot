@@ -510,6 +510,7 @@ function toRequestListItem(caseData) {
         active_run_status: caseData.active_run_status || null,
         active_run_trigger_type: caseData.active_run_trigger_type || null,
         active_run_started_at: caseData.active_run_started_at || null,
+        active_run_trigger_run_id: caseData.active_run_trigger_run_id || null,
         active_portal_task_status: caseData.active_portal_task_status || null,
         active_portal_task_type: caseData.active_portal_task_type || null,
         review_state,

@@ -16,6 +16,7 @@ export type TableVariant = "needs_decision" | "bot_working" | "waiting" | "compl
 interface RequestTableProps {
   requests: RequestListItem[];
   variant?: TableVariant;
+  isAdmin?: boolean;
   onApprove?: (id: string) => void;
   onAdjust?: (id: string) => void;
   onSnooze?: (id: string) => void;
@@ -33,6 +34,7 @@ interface RequestTableProps {
 export function RequestTable({
   requests,
   variant = "waiting",
+  isAdmin = false,
   onApprove,
   onAdjust,
   onSnooze,
@@ -100,6 +102,7 @@ export function RequestTable({
             key={request.id}
             request={request}
             variant={variant}
+            isAdmin={isAdmin}
             onApprove={onApprove}
             onAdjust={onAdjust}
             onSnooze={onSnooze}

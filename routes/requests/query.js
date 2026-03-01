@@ -18,12 +18,17 @@ router.get('/', async (req, res) => {
                 ar.status AS active_run_status,
                 ar.trigger_type AS active_run_trigger_type,
                 ar.started_at AS active_run_started_at,
+                ar.trigger_run_id AS active_run_trigger_run_id,
                 pt.status AS active_portal_task_status,
                 pt.action_type AS active_portal_task_type,
                 pp.status AS active_proposal_status
             FROM cases c
             LEFT JOIN LATERAL (
-                SELECT status, trigger_type, started_at
+                SELECT
+                    status,
+                    trigger_type,
+                    started_at,
+                    COALESCE(metadata->>'triggerRunId', metadata->>'trigger_run_id') AS trigger_run_id
                 FROM agent_runs
                 WHERE case_id = c.id
                   AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
