@@ -1451,16 +1451,20 @@ function RequestDetailContent() {
 
         {/* Case Status Panel */}
         <div className="flex items-center gap-4 text-xs mb-2">
-          <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
-            <span className="text-muted-foreground">Next:</span>
-            <span className="font-medium">{nextExpectedEvent}</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">Status:</span>
-            <Badge variant="outline" className="font-medium">
-              {statusDisplay}
-            </Badge>
-          </div>
+          {!(isPaused && gateDisplay) && (
+            <div className="flex items-center gap-1.5 rounded border border-muted bg-muted/20 px-2 py-1">
+              <span className="text-muted-foreground">Next:</span>
+              <span className="font-medium">{nextExpectedEvent}</span>
+            </div>
+          )}
+          {!(isPaused && gateDisplay) && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">Status:</span>
+              <Badge variant="outline" className="font-medium">
+                {statusDisplay}
+              </Badge>
+            </div>
+          )}
           {nextDelivery && (
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="text-muted-foreground">Next delivery:</span>
@@ -1505,11 +1509,6 @@ function RequestDetailContent() {
             >
               <ExternalLink className="h-3 w-3" /> Trigger Run
             </a>
-          )}
-          {request.last_portal_status && (
-            <Badge variant="outline" className="text-[10px] text-red-400 border-red-700/50">
-              {request.last_portal_status}
-            </Badge>
           )}
           {!shouldHidePauseReason && !(isPaused && gateDisplay) && (
             <div className="flex items-center gap-1.5">
@@ -1635,6 +1634,9 @@ function RequestDetailContent() {
               >
                 Open Skyvern
               </a>
+            )}
+            {request.last_portal_status && (
+              <span>Portal: {request.last_portal_status}</span>
             )}
           </div>
         )}
