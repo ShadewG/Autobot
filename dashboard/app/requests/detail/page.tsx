@@ -305,6 +305,28 @@ function formatAgencyNotes(notes?: string | null): string | null {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed);
+    // Render structured contact research notes as readable text
+    const lines: string[] = [];
+    if (parsed.brief?.summary) {
+      lines.push(parsed.brief.summary);
+    }
+    if (parsed.contactResult) {
+      const cr = parsed.contactResult;
+      if (cr.notes) lines.push(cr.notes);
+      if (cr.contact_email) lines.push(`Email: ${cr.contact_email}`);
+      if (cr.portal_url) lines.push(`Portal: ${cr.portal_url}`);
+      if (cr.contact_phone) lines.push(`Phone: ${cr.contact_phone}`);
+      if (cr.source) lines.push(`Source: ${cr.source} (${Math.round((cr.confidence || 0) * 100)}% confidence)`);
+    }
+    if (parsed.brief?.suggested_agencies?.length) {
+      lines.push("");
+      lines.push("Suggested agencies:");
+      for (const sa of parsed.brief.suggested_agencies) {
+        lines.push(`  - ${sa.name}${sa.reason ? `: ${sa.reason}` : ""}`);
+      }
+    }
+    if (lines.length > 0) return lines.join("\n");
+    // Fall back to pretty JSON for unknown structures
     return JSON.stringify(parsed, null, 2);
   } catch (_) {
     return trimmed;
@@ -2669,8 +2691,8 @@ function RequestDetailContent() {
               </div>
               {agency_summary.notes && (
                 <div>
-                  <p className="text-sm text-muted-foreground">Notes</p>
-                  <pre className="text-xs whitespace-pre-wrap bg-muted rounded p-2">{formatAgencyNotes(agency_summary.notes)}</pre>
+                  <p className="text-sm text-muted-foreground mb-1">Research Notes</p>
+                  <p className="text-sm whitespace-pre-wrap bg-muted rounded p-2">{formatAgencyNotes(agency_summary.notes)}</p>
                 </div>
               )}
               <Separator />

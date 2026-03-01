@@ -353,25 +353,39 @@ router.get('/:id/workspace', async (req, res) => {
             if (ar !== br) return ar - br;
             return new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime();
         });
-        // Backfill a synthetic primary entry so the UI doesn't show "Case Agencies (0)"
-        // when the case has a primary agency in the cases table but no case_agencies row yet.
+        // Backfill: create a real case_agencies row from the case record so buttons work.
         if (sortedCaseAgencies.length === 0 && (caseData.agency_name || caseData.agency_email || caseData.portal_url)) {
-            sortedCaseAgencies = [{
-                id: -requestId,
-                case_id: requestId,
-                agency_id: resolvedAgencyId || null,
-                agency_name: resolvedAgencyName || caseData.agency_name || '—',
-                agency_email: caseData.agency_email || null,
-                portal_url: caseData.portal_url || null,
-                portal_provider: caseData.portal_provider || null,
-                is_primary: true,
-                is_active: true,
-                added_source: 'case_row_fallback',
-                status: 'active',
-                notes: 'Synthetic primary agency entry generated from case record.',
-                created_at: caseData.created_at,
-                updated_at: caseData.updated_at,
-            }];
+            try {
+                const backfilled = await db.addCaseAgency(requestId, {
+                    agency_id: resolvedAgencyId || null,
+                    agency_name: resolvedAgencyName || caseData.agency_name || '—',
+                    agency_email: caseData.agency_email || null,
+                    portal_url: caseData.portal_url || null,
+                    portal_provider: caseData.portal_provider || null,
+                    is_primary: true,
+                    added_source: 'case_row_backfill',
+                    status: 'active',
+                });
+                sortedCaseAgencies = [backfilled];
+            } catch (backfillErr) {
+                console.warn(`[workspace] Failed to backfill case_agencies for case ${requestId}:`, backfillErr.message);
+                // Fall back to synthetic entry so the UI still renders
+                sortedCaseAgencies = [{
+                    id: -requestId,
+                    case_id: requestId,
+                    agency_id: resolvedAgencyId || null,
+                    agency_name: resolvedAgencyName || caseData.agency_name || '—',
+                    agency_email: caseData.agency_email || null,
+                    portal_url: caseData.portal_url || null,
+                    portal_provider: caseData.portal_provider || null,
+                    is_primary: true,
+                    is_active: true,
+                    added_source: 'case_row_fallback',
+                    status: 'active',
+                    created_at: caseData.created_at,
+                    updated_at: caseData.updated_at,
+                }];
+            }
         }
         const agencyCandidates = extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes);
 
