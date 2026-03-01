@@ -426,7 +426,8 @@ export async function executeAction(
       const ensureResearchHandoffProposal = async (
         handoffKey: string,
         handoffReason: string,
-        body: string
+        body: string,
+        opts?: { subject?: string; gateOptions?: string[] }
       ) => {
         try {
           await db.upsertProposal({
@@ -434,13 +435,14 @@ export async function executeAction(
             caseId,
             runId: runId || null,
             actionType: "RESEARCH_AGENCY",
-            draftSubject: `Research handoff needed - case ${caseId}`,
+            draftSubject: opts?.subject || `Research handoff needed - case ${caseId}`,
             draftBodyText: body,
             reasoning: [handoffReason],
             confidence: 0.4,
             requiresHuman: true,
             canAutoExecute: false,
             status: "PENDING_APPROVAL",
+            gateOptions: opts?.gateOptions || null,
           });
         } catch (proposalErr: any) {
           logger.warn("Failed to create research handoff proposal", {
@@ -467,12 +469,32 @@ export async function executeAction(
         } catch (e: any) { /* non-fatal */ }
       }
 
+      // If AI research itself failed (timeout/error), surface honest messaging
+      if (brief?.researchFailed) {
+        await ensureResearchHandoffProposal(
+          "research-failed",
+          "Agency research failed due to an error or timeout.",
+          `Agency research failed: ${brief.summary || "Unknown error"}. You can retry the research, provide an adjustment instruction with the correct agency name, or dismiss this proposal.`,
+          {
+            subject: `Research failed — case ${caseId}`,
+            gateOptions: ["RETRY_RESEARCH", "ADJUST", "DISMISS"],
+          }
+        );
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus: "agency_research_failed",
+          pauseReason: "RESEARCH_HANDOFF",
+        });
+        executionResult = { action: "research_failed", followup: "needs_retry" };
+        break;
+      }
+
       const suggestedAgency = brief?.suggested_agencies?.[0] || null;
       if (!suggestedAgency?.name) {
         await ensureResearchHandoffProposal(
           "no-suggested-agency",
           "Research completed but no clear target agency was identified.",
-          "Research completed but no suggested agency was identified. Review the latest inbound and research notes, then choose an agency or add contact details before retrying."
+          "Research completed but no suggested agency was identified. Review the latest inbound and research notes, then choose an agency or add contact details before retrying.",
+          { gateOptions: ["RETRY_RESEARCH", "ADJUST", "DISMISS"] }
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",
@@ -498,7 +520,8 @@ export async function executeAction(
         await ensureResearchHandoffProposal(
           "no-contact-info",
           `Research identified ${suggestedAgency.name} but did not produce contact info.`,
-          `Research identified ${suggestedAgency.name}, but no email or portal URL was found. Please add contact info or choose a different agency, then retry.`
+          `Research identified ${suggestedAgency.name}, but no email or portal URL was found. Please add contact info or choose a different agency, then retry.`,
+          { gateOptions: ["RETRY_RESEARCH", "ADJUST", "DISMISS"] }
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",

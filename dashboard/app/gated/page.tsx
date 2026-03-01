@@ -123,6 +123,7 @@ interface PendingProposal {
     highlights: string[];
     filename_signals: string[];
   };
+  gate_options?: string[] | null;
 }
 
 interface HumanReviewCase {
@@ -898,6 +899,32 @@ function MonitorPageContent() {
       revalidateQueue();
     } catch (err) {
       showToast(`Adjust failed: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleRetryResearch = async () => {
+    if (!selectedItem || selectedItem.type !== "proposal") return;
+    setIsSubmitting(true);
+    try {
+      const res = await fetch(
+        `/api/monitor/proposals/${selectedItem.data.id}/decision`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "RETRY_RESEARCH" }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || `Failed (${res.status})`);
+      }
+      removeCurrentItem();
+      showToast("Research retry started");
+      revalidateQueue();
+    } catch (err) {
+      showToast(`Retry failed: ${err instanceof Error ? err.message : err}`, "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -1866,63 +1893,94 @@ function MonitorPageContent() {
                 />
               </div>
             )}
-            <div className="flex gap-2">
-              <Button
-                className="flex-1 bg-green-700 hover:bg-green-600 text-white"
-                onClick={handleApprove}
-                disabled={isSubmitting || (isEscalateProposal && !reviewInstruction.trim())}
-              >
-                {isSubmitting ? (
-                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                ) : (
-                  <Send className="h-3 w-3 mr-1.5" />
-                )}
-                {getApproveLabel(selectedItem.data.action_type)}
-                <span className="ml-2 text-[10px] opacity-60 border border-white/20 px-1">
-                  A
-                </span>
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowAdjustModal(true)}
-                disabled={isSubmitting}
-              >
-                <Edit className="h-3 w-3 mr-1" /> ADJUST
-              </Button>
-            </div>
-            <div className="flex gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    disabled={isSubmitting}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1" /> DISMISS
-                    <ChevronDown className="h-3 w-3 ml-1" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  {DISMISS_REASONS.map((reason) => (
-                    <DropdownMenuItem
-                      key={reason}
-                      onClick={() => handleDismiss(reason)}
-                      className="text-xs"
+            {(() => {
+              const gateOptions = selectedItem.data.gate_options as string[] | null;
+              const showApprove = !gateOptions || gateOptions.includes("APPROVE");
+              const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
+              const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
+              const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
+              return (
+                <>
+                  <div className="flex gap-2">
+                    {showRetryResearch && (
+                      <Button
+                        className="flex-1 bg-amber-700 hover:bg-amber-600 text-white"
+                        onClick={handleRetryResearch}
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? (
+                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3 w-3 mr-1.5" />
+                        )}
+                        Retry Research
+                      </Button>
+                    )}
+                    {showApprove && (
+                      <Button
+                        className="flex-1 bg-green-700 hover:bg-green-600 text-white"
+                        onClick={handleApprove}
+                        disabled={isSubmitting || (isEscalateProposal && !reviewInstruction.trim())}
+                      >
+                        {isSubmitting ? (
+                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                        ) : (
+                          <Send className="h-3 w-3 mr-1.5" />
+                        )}
+                        {getApproveLabel(selectedItem.data.action_type)}
+                        <span className="ml-2 text-[10px] opacity-60 border border-white/20 px-1">
+                          A
+                        </span>
+                      </Button>
+                    )}
+                    {showAdjust && (
+                      <Button
+                        variant="outline"
+                        onClick={() => setShowAdjustModal(true)}
+                        disabled={isSubmitting}
+                      >
+                        <Edit className="h-3 w-3 mr-1" /> ADJUST
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    {showDismiss && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className="flex-1"
+                            disabled={isSubmitting}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" /> DISMISS
+                            <ChevronDown className="h-3 w-3 ml-1" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          {DISMISS_REASONS.map((reason) => (
+                            <DropdownMenuItem
+                              key={reason}
+                              onClick={() => handleDismiss(reason)}
+                              className="text-xs"
+                            >
+                              {reason}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
+                    <Button
+                      variant="destructive"
+                      className="flex-1"
+                      onClick={handleWithdraw}
+                      disabled={isSubmitting}
                     >
-                      {reason}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button
-                variant="destructive"
-                className="flex-1"
-                onClick={handleWithdraw}
-                disabled={isSubmitting}
-              >
-                <Ban className="h-3 w-3 mr-1" /> WITHDRAW
-              </Button>
-            </div>
+                      <Ban className="h-3 w-3 mr-1" /> WITHDRAW
+                    </Button>
+                  </div>
+                </>
+              );
+            })()}
             {/* Add to phone queue — always available */}
             <Button
               variant="outline"

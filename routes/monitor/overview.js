@@ -252,6 +252,7 @@ router.get('/live-overview', async (req, res) => {
                 p.pause_reason AS proposal_pause_reason,
                 p.risk_flags,
                 p.warnings,
+                p.gate_options,
                 c.case_name,
                 c.agency_name,
                 c.status AS case_status,

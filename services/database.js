@@ -1657,8 +1657,9 @@ class DatabaseService {
                 draft_subject, draft_body_text, draft_body_html,
                 reasoning, confidence, risk_flags, warnings,
                 can_auto_execute, requires_human, status,
-                langgraph_thread_id, adjustment_count, lessons_applied
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                langgraph_thread_id, adjustment_count, lessons_applied,
+                gate_options
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update when existing row is PENDING_APPROVAL, or system-DISMISSED
                 -- (auto-superseded, no human_decision). Human-dismissed proposals must
@@ -1755,6 +1756,12 @@ class DatabaseService {
                     THEN COALESCE(EXCLUDED.lessons_applied, proposals.lessons_applied)
                     ELSE proposals.lessons_applied
                 END,
+                gate_options = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN EXCLUDED.gate_options
+                    ELSE proposals.gate_options
+                END,
                 updated_at = CASE
                     WHEN proposals.status = 'PENDING_APPROVAL'
                       OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
@@ -1787,7 +1794,8 @@ class DatabaseService {
             proposalData.status || 'PENDING_APPROVAL',
             proposalData.langgraphThreadId || null,
             proposalData.adjustmentCount || 0,
-            proposalData.lessonsApplied ? JSON.stringify(proposalData.lessonsApplied) : null
+            proposalData.lessonsApplied ? JSON.stringify(proposalData.lessonsApplied) : null,
+            proposalData.gateOptions ? JSON.stringify(proposalData.gateOptions) : null
         ];
 
         try {

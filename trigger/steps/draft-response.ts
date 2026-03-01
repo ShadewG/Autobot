@@ -370,6 +370,40 @@ export async function draftResponse(
         /* PD-contact lookup unavailable */
       }
       const brief = await aiService.generateAgencyResearchBrief(caseData);
+
+      // Firecrawl fallback: if AI research failed, parse inbound for agency name hint
+      if (brief.researchFailed && !contactResult) {
+        try {
+          const inboundBody = latestInbound?.body_text || latestInbound?.body_html || "";
+          // Look for patterns like "contact [Agency Name]", "refer to [Agency Name]", "forward to [Agency Name]"
+          const agencyHintMatch = inboundBody.match(
+            /(?:contact|refer(?:red)?\s+(?:you\s+)?to|forward(?:ed)?\s+to|try|reach\s+out\s+to)\s+(?:the\s+)?([A-Z][A-Za-z\s.&'-]+?)(?:\s+at\s+|\s+for\s+|\s*[.,;]|\s+to\s+(?:request|obtain|file))/i
+          );
+          if (agencyHintMatch?.[1]) {
+            const hintName = agencyHintMatch[1].trim();
+            logger.info("Attempting Firecrawl fallback for suggested agency", { caseId, hintName });
+            // @ts-ignore
+            const pdContactService = require("../../services/pd-contact-service");
+            const fallbackContact = await pdContactService.lookupContact(
+              hintName,
+              caseData.state || caseData.incident_location
+            );
+            if (fallbackContact?.contact_email || fallbackContact?.portal_url) {
+              contactResult = fallbackContact;
+              // Synthesize a suggested_agencies entry so execute-action can find it
+              brief.suggested_agencies = [{
+                name: hintName,
+                reason: `Extracted from agency referral message via Firecrawl lookup`,
+                confidence: "medium",
+              }];
+              logger.info("Firecrawl fallback found contact info", { caseId, hintName, email: fallbackContact.contact_email });
+            }
+          }
+        } catch (e: any) {
+          logger.warn("Firecrawl fallback failed", { caseId, error: e.message });
+        }
+      }
+
       await db.updateCase(caseId, {
         contact_research_notes: JSON.stringify({ contactResult, brief }),
         last_contact_research_at: new Date(),

@@ -1864,6 +1864,7 @@ Return ONLY valid JSON.`;
         } catch (error) {
             console.error('Error generating agency research brief:', error);
             return {
+                researchFailed: true,
                 summary: `Research failed: ${error.message}. Manual agency lookup needed.`,
                 suggested_agencies: [],
                 research_notes: null,

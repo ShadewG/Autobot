@@ -197,7 +197,7 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
 }
 
 async function processProposalDecision(proposalId, action, { instruction = null, reason = null, route_mode = null, decidedBy = 'monitor', userId = null } = {}) {
-    const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS'];
+    const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS', 'RETRY_RESEARCH'];
     if (!allowedActions.includes(action)) {
         const err = new Error(`action must be one of: ${allowedActions.join(', ')}`);
         err.status = 400;
@@ -216,6 +216,15 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         err.status = 409;
         err.payload = { current_status: proposal.status };
         throw err;
+    }
+
+    // Server-side gate validation: if proposal has gate_options, verify action is allowed
+    if (proposal.gate_options && Array.isArray(proposal.gate_options)) {
+        if (!proposal.gate_options.includes(action)) {
+            const err = new Error(`Action '${action}' is not allowed for this proposal. Allowed: ${proposal.gate_options.join(', ')}`);
+            err.status = 400;
+            throw err;
+        }
     }
 
     const caseId = proposal.case_id;
@@ -260,6 +269,77 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         decidedAt: new Date().toISOString(),
         decidedBy: userId || decidedBy
     };
+
+    if (action === 'RETRY_RESEARCH') {
+        const humanDecisionForRetry = {
+            action,
+            proposalId,
+            instruction: null,
+            route_mode,
+            reason: reason || 'User requested research retry',
+            decidedAt: new Date().toISOString(),
+            decidedBy: userId || decidedBy
+        };
+
+        // Dismiss the current proposal
+        await db.updateProposal(proposalId, {
+            human_decision: humanDecisionForRetry,
+            status: 'DISMISSED'
+        });
+
+        // Clear old research notes but preserve audit trail
+        await db.updateCase(caseId, {
+            contact_research_notes: JSON.stringify({ cleared: true, retryReason: 'user_retry', previouslyClearedAt: new Date().toISOString() }),
+        });
+
+        // Find the latest inbound message for re-triggering
+        const latestInbound = await db.query(
+            `SELECT id FROM messages WHERE case_id = $1 AND direction = 'inbound' ORDER BY COALESCE(received_at, created_at) DESC LIMIT 1`,
+            [caseId]
+        );
+        const messageId = latestInbound.rows[0]?.id || proposal.trigger_message_id || null;
+
+        let handle;
+        try {
+            handle = (await triggerDispatch.triggerTask('process-inbound', {
+                runId: 0,
+                caseId,
+                messageId,
+                autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+                triggerType: 'HUMAN_REVIEW_RESOLUTION',
+                reviewAction: 'RETRY_RESEARCH',
+                reviewInstruction: 'Research failed previously. Retry agency research from scratch.',
+            }, triggerOpts(caseId, 'retry-research', proposalId))).handle;
+        } catch (triggerError) {
+            // Roll back proposal to PENDING_APPROVAL if dispatch fails
+            await db.updateProposal(proposalId, {
+                status: 'PENDING_APPROVAL',
+                human_decision: null
+            });
+            await db.logActivity('proposal_dispatch_failed', `Retry research for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
+                case_id: caseId,
+                proposal_id: proposalId,
+                error: triggerError.message
+            });
+            throw triggerError;
+        }
+
+        await db.logActivity('proposal_retry_research', `Research retry triggered for proposal #${proposalId} — re-processing case ${caseId}`, {
+            case_id: caseId,
+            proposal_id: proposalId,
+            trigger_run_id: handle.id,
+            user_id: userId || undefined
+        });
+        notify('info', `Research retry started for case ${caseId}`, { case_id: caseId });
+        emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
+        return {
+            success: true,
+            message: 'Research retry started. A new research proposal will be generated.',
+            proposal_id: proposalId,
+            action,
+            trigger_run_id: handle.id
+        };
+    }
 
     if (action === 'DISMISS') {
         await db.updateProposal(proposalId, {
