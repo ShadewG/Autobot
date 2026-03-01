@@ -265,6 +265,11 @@ export interface CaseAgency {
   created_at: string;
   updated_at: string;
   agency_notion_page_id?: string | null;
+  send_date?: string | null;
+  last_response_date?: string | null;
+  last_portal_status?: string | null;
+  portal_request_number?: string | null;
+  email_thread_id?: number | null;
 }
 
 export interface AgencyCandidate {

@@ -51,7 +51,7 @@ import type {
   AgencyCandidate,
   ThreadMessage,
 } from "@/lib/types";
-import { formatDate, cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
+import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
 import {
   ArrowLeft,
   Loader2,
@@ -356,8 +356,9 @@ function normalizeAgencyKey(name?: string | null): string[] {
 }
 
 function messageMatchesAgency(message: RequestWorkspaceResponse["thread_messages"][number], agency: CaseAgency): boolean {
-  if (message.case_agency_id && Number(message.case_agency_id) === Number(agency.id)) {
-    return true;
+  // If message has explicit agency link, use it authoritatively — don't fall through to heuristics
+  if (message.case_agency_id != null) {
+    return Number(message.case_agency_id) === Number(agency.id);
   }
 
   const agencyEmails = parseEmailList(agency.agency_email);
@@ -1122,6 +1123,27 @@ function RequestDetailContent() {
     }
     return buckets;
   }, [_threadMessages, conversationAgencies, shouldShowConversationTabs]);
+
+  // Per-agency message stats for the Agency tab cards
+  const agencyMessageStats = useMemo(() => {
+    const stats = new Map<number, { total: number; inbound: number; outbound: number; lastMessageAt: string | null }>();
+    for (const agency of _activeCaseAgencies) {
+      let total = 0, inbound = 0, outbound = 0;
+      let lastMessageAt: string | null = null;
+      for (const message of _threadMessages) {
+        if (messageMatchesAgency(message, agency)) {
+          total++;
+          if (message.direction === "INBOUND") inbound++;
+          else outbound++;
+          if (!lastMessageAt || message.sent_at > lastMessageAt) {
+            lastMessageAt = message.sent_at;
+          }
+        }
+      }
+      stats.set(agency.id, { total, inbound, outbound, lastMessageAt });
+    }
+    return stats;
+  }, [_threadMessages, _activeCaseAgencies]);
 
   useEffect(() => {
     if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
@@ -2759,49 +2781,89 @@ function RequestDetailContent() {
               {case_agencies.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No linked case agencies yet.</p>
               ) : (
-                case_agencies.map((ca: CaseAgency) => (
-                  <div key={ca.id} className="rounded border p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-medium">{ca.agency_name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {ca.agency_email || "No email"} {ca.portal_url ? `• Portal` : ""}
-                        </p>
-                        <div className="mt-2 flex gap-2">
-                          {ca.is_primary && <Badge>Primary</Badge>}
-                          <Badge variant="outline">{ca.status || "pending"}</Badge>
+                case_agencies.map((ca: CaseAgency) => {
+                  const stats = agencyMessageStats.get(ca.id) || { total: 0, inbound: 0, outbound: 0, lastMessageAt: null };
+                  // For primary agency, prefer case-level dates (reliably populated)
+                  const sentDate = ca.is_primary ? (request.submitted_at || null) : (stats.outbound > 0 ? stats.lastMessageAt : null);
+                  const lastReplyDate = ca.is_primary ? (request.last_inbound_at || null) : (stats.inbound > 0 ? (() => {
+                    // Find latest inbound message for this agency
+                    let latest: string | null = null;
+                    for (const m of thread_messages) {
+                      if (m.direction === "INBOUND" && messageMatchesAgency(m, ca)) {
+                        if (!latest || m.sent_at > latest) latest = m.sent_at;
+                      }
+                    }
+                    return latest;
+                  })() : null);
+                  const hasBeenContacted = ca.is_primary ? !!sentDate : stats.outbound > 0;
+                  const hasReplies = ca.is_primary ? !!lastReplyDate : stats.inbound > 0;
+
+                  return (
+                    <div key={ca.id} className="rounded border p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{ca.agency_name}</p>
+                            {ca.is_primary && <Badge className="shrink-0">Primary</Badge>}
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {ca.agency_email || "No email"}{ca.portal_url ? " · Portal" : ""}
+                          </p>
+
+                          {/* Request status line */}
+                          <div className="mt-2 text-xs">
+                            {hasBeenContacted ? (
+                              <span className="text-muted-foreground">
+                                Sent {formatDate(sentDate)}
+                                {hasReplies
+                                  ? ` · Last reply ${formatRelativeTime(lastReplyDate)}`
+                                  : " · Awaiting response"}
+                              </span>
+                            ) : (
+                              <span className="text-amber-600 font-medium">Not yet contacted</span>
+                            )}
+                          </div>
+
+                          {/* Message count summary */}
+                          {stats.total > 0 && (
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {stats.total} message{stats.total !== 1 ? "s" : ""} ({stats.inbound} in, {stats.outbound} out)
+                            </p>
+                          )}
                         </div>
-                      </div>
-                      <div className="flex gap-2">
-                        {!ca.is_primary && (
+
+                        <div className="flex gap-2 shrink-0">
+                          {!ca.is_primary && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={agencyActionLoadingId === ca.id || ca.id <= 0}
+                              onClick={() => handleSetPrimaryAgency(ca.id)}
+                            >
+                              Set Primary
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
                             disabled={agencyActionLoadingId === ca.id || ca.id <= 0}
-                            onClick={() => handleSetPrimaryAgency(ca.id)}
+                            onClick={() => handleResearchAgency(ca.id)}
                           >
-                            Set Primary
+                            {agencyActionLoadingId === ca.id ? "Researching..." : "Research"}
                           </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={agencyActionLoadingId === ca.id || ca.id <= 0}
-                          onClick={() => handleResearchAgency(ca.id)}
-                        >
-                          {agencyActionLoadingId === ca.id ? "Researching..." : "Research"}
-                        </Button>
-                        <Button
-                          size="sm"
-                          disabled={agencyStartLoadingId === ca.id || ca.id <= 0}
-                          onClick={() => handleStartRequestForAgency(ca.id)}
-                        >
-                          {agencyStartLoadingId === ca.id ? "Starting..." : "Start Request"}
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant={hasBeenContacted ? "outline" : "default"}
+                            disabled={agencyStartLoadingId === ca.id || ca.id <= 0}
+                            onClick={() => handleStartRequestForAgency(ca.id)}
+                          >
+                            {agencyStartLoadingId === ca.id ? "Starting..." : "Start Request"}
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </CardContent>
           </Card>
