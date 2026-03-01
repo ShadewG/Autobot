@@ -103,6 +103,28 @@ export async function createProposalAndGate(
     gateOptions: gateOptions || ["APPROVE", "ADJUST", "DISMISS", "WITHDRAW"],
   });
 
+  // Reclaim proposal from a prior run whose execution is stale.
+  // The upsert ON CONFLICT preserves EXECUTED status (correct for same-run retries),
+  // but a NEW run processing the same message needs a fresh proposal.
+  if (proposal.status === 'EXECUTED' && proposal.run_id !== runId) {
+    const reclaimStatus = canAutoExecute ? 'APPROVED' : 'PENDING_APPROVAL';
+    await db.updateProposal(proposal.id, {
+      status: reclaimStatus,
+      run_id: runId,
+      executionKey: null,
+      executed_at: null,
+      emailJobId: null,
+      humanDecision: null,
+      humanDecidedAt: null,
+      humanDecidedBy: null,
+      waitpoint_token: null,
+    });
+    proposal.status = reclaimStatus;
+    proposal.run_id = runId;
+    proposal.execution_key = null;
+    proposal.executed_at = null;
+  }
+
   // AUTO EXECUTE PATH
   if (canAutoExecute && !requiresHuman) {
     return {
