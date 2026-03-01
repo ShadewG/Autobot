@@ -1914,19 +1914,21 @@ function RequestDetailContent() {
                                   variant="outline"
                                   className="w-full"
                                   onClick={() => {
-                                    const lines = [
+                                    const requester = [
                                       `Name: ${portal_helper.requester.name}`,
                                       `Email: ${portal_helper.requester.email}`,
                                       `Phone: ${portal_helper.requester.phone}`,
                                       portal_helper.requester.organization && `Organization: ${portal_helper.requester.organization}`,
                                       portal_helper.requester.title && `Title: ${portal_helper.requester.title}`,
-                                      '',
+                                    ].filter(Boolean).join('\n');
+                                    const address = [
                                       `Street: ${portal_helper.address.line1}`,
                                       portal_helper.address.line2 && `Apt/Suite: ${portal_helper.address.line2}`,
                                       `City: ${portal_helper.address.city}`,
                                       `State: ${portal_helper.address.state}`,
                                       `Zip: ${portal_helper.address.zip}`,
-                                      '',
+                                    ].filter(Boolean).join('\n');
+                                    const details = [
                                       portal_helper.case_info.subject_name && `Subject: ${portal_helper.case_info.subject_name}`,
                                       portal_helper.case_info.incident_date && `Date: ${portal_helper.case_info.incident_date}`,
                                       portal_helper.case_info.incident_location && `Location: ${portal_helper.case_info.incident_location}`,
@@ -1935,6 +1937,7 @@ function RequestDetailContent() {
                                       `Fee Waiver: ${portal_helper.fee_waiver_reason}`,
                                       `Delivery: ${portal_helper.preferred_delivery}`,
                                     ].filter(Boolean).join('\n');
+                                    const lines = [requester, address, details].join('\n\n');
                                     navigator.clipboard.writeText(lines);
                                     toast.success("All fields copied to clipboard");
                                   }}
