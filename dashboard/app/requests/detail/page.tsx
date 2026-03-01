@@ -537,10 +537,10 @@ function RequestDetailContent() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
 
-      // Add optimistic message for email-like actions
-      const emailActions = ["SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_CLARIFICATION", "SEND_REBUTTAL", "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL"];
+      // Add optimistic message for any action that has a draft (email will be sent)
+      const nonEmailActions = ["RESEARCH_AGENCY", "ESCALATE", "WITHDRAW"];
       const actionType = data.pending_proposal.action_type || "";
-      if (emailActions.includes(actionType) && (editedBody || data.pending_proposal.draft_body_text)) {
+      if (!nonEmailActions.includes(actionType) && (editedBody || data.pending_proposal.draft_body_text)) {
         setOptimisticMessages(prev => [...prev, {
           id: -Date.now(),
           direction: 'OUTBOUND' as const,
@@ -554,7 +554,7 @@ function RequestDetailContent() {
           attachments: [],
           _sending: true as const,
         }]);
-        toast.success("Email sent");
+        toast.success("Sending...");
       } else {
         toast.success("Approved");
       }
