@@ -19,6 +19,7 @@ const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 const { PDFExtract } = require('pdf.js-extract');
 const OpenAI = require('openai');
 const database = require('./database');
+const os = require('os');
 
 let _openai;
 function getOpenAI() {
@@ -26,7 +27,32 @@ function getOpenAI() {
     return _openai;
 }
 
-const ATTACHMENTS_DIR = path.join(__dirname, '..', 'data', 'attachments');
+function resolveWritableAttachmentsDir() {
+    const candidates = [
+        process.env.ATTACHMENT_DIR,
+        path.join(__dirname, '..', 'data', 'attachments'),
+        path.join(process.cwd(), 'data', 'attachments'),
+        path.join(os.tmpdir(), 'autobot-attachments'),
+    ].filter(Boolean);
+
+    for (const dir of candidates) {
+        try {
+            fs.mkdirSync(dir, { recursive: true });
+            fs.accessSync(dir, fs.constants.W_OK);
+            return dir;
+        } catch (_) {
+            // Try next candidate.
+        }
+    }
+    throw new Error(`No writable attachment directory found. Tried: ${candidates.join(', ')}`);
+}
+
+function resolveCaseAttachmentDir(caseId) {
+    const root = resolveWritableAttachmentsDir();
+    const caseDir = path.join(root, String(caseId));
+    fs.mkdirSync(caseDir, { recursive: true });
+    return caseDir;
+}
 
 // =========================================================================
 // Detection
@@ -122,8 +148,7 @@ async function extractPdfUrl(failureReason, workflowResponse, portalUrl) {
  * Download a PDF from a URL and save to disk.
  */
 async function downloadPdf(url, caseId) {
-    const caseDir = path.join(ATTACHMENTS_DIR, String(caseId));
-    fs.mkdirSync(caseDir, { recursive: true });
+    const caseDir = resolveCaseAttachmentDir(caseId);
 
     const timestamp = Date.now();
     const filename = `form_${timestamp}.pdf`;
@@ -713,8 +738,7 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
     }
 
     // 4. Save filled PDF to disk
-    const caseDir = path.join(ATTACHMENTS_DIR, String(caseData.id));
-    fs.mkdirSync(caseDir, { recursive: true });
+    const caseDir = resolveCaseAttachmentDir(caseData.id);
 
     const timestamp = Date.now();
     const filledFilename = `filled_${timestamp}.pdf`;

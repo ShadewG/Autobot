@@ -469,6 +469,26 @@ class SendGridService {
                 text: inboundData.text || inboundData.body_text || ''
             });
 
+            // Learn missing destination email from inbound thread sender.
+            // Many portal systems (e.g. NextRequest) route replies through a
+            // service mailbox; if case/case_agency email is empty we should
+            // persist that mailbox to avoid downstream "destination not set".
+            const normalizedFromEmail = String(fromEmail || '').trim().toLowerCase();
+            const isValidFromEmail = normalizedFromEmail.includes('@');
+            const isInternalMailbox =
+                normalizedFromEmail.endsWith('@foib-request.com') ||
+                normalizedFromEmail.endsWith('@autobot.local');
+            if (matchedCaseAgency && isValidFromEmail && !isInternalMailbox && !matchedCaseAgency.agency_email) {
+                try {
+                    await db.updateCaseAgency(matchedCaseAgency.id, {
+                        agency_email: normalizedFromEmail
+                    });
+                    matchedCaseAgency.agency_email = normalizedFromEmail;
+                } catch (syncErr) {
+                    console.warn(`Failed to backfill case_agencies.agency_email for case ${caseData.id}:`, syncErr.message);
+                }
+            }
+
             // --- Post-match: Extract and store request number if missing ---
             if (caseData && !caseData.portal_request_number) {
                 const bodyText = inboundData.text || inboundData.body_text || '';
@@ -493,10 +513,20 @@ class SendGridService {
                 }
             }
 
-            // Get or create thread
-            let thread = await db.getThreadByCaseId(caseData.id);
+            // Resolve thread from headers first; fallback to latest thread for this case.
+            const threadHeaderCandidates = [inReplyToId, ...referenceIds].filter(Boolean);
+            let thread = null;
+            for (const candidate of threadHeaderCandidates) {
+                thread = await db.getThreadByMessageIdentifier(caseData.id, candidate);
+                if (thread) break;
+                thread = await db.getThreadByThreadIdentifier(caseData.id, candidate);
+                if (thread) break;
+            }
             if (!thread) {
-                const threadIdentifier = referenceIds[0] || inReplyToId || messageId;
+                thread = await db.getThreadByCaseId(caseData.id);
+            }
+            if (!thread) {
+                const threadIdentifier = inReplyToId || referenceIds[0] || messageId;
                 thread = await db.createEmailThread({
                     case_id: caseData.id,
                     thread_id: threadIdentifier,
@@ -677,7 +707,26 @@ class SendGridService {
                 const storageService = require('./storage-service');
                 const fsPromises = require('fs').promises;
                 const path = require('path');
-                const attachmentDir = process.env.ATTACHMENT_DIR || '/data/attachments';
+                const os = require('os');
+                const attachmentDirCandidates = [
+                    process.env.ATTACHMENT_DIR,
+                    path.join(process.cwd(), 'data', 'attachments'),
+                    path.join(__dirname, '..', 'data', 'attachments'),
+                    path.join(os.tmpdir(), 'autobot-attachments'),
+                ].filter(Boolean);
+                let attachmentDir = null;
+                for (const candidate of attachmentDirCandidates) {
+                    try {
+                        await fsPromises.mkdir(candidate, { recursive: true });
+                        attachmentDir = candidate;
+                        break;
+                    } catch (_) {
+                        // try next writable location
+                    }
+                }
+                if (!attachmentDir) {
+                    throw new Error(`No writable attachment directory found: ${attachmentDirCandidates.join(', ')}`);
+                }
 
                 for (const att of inboundData.attachments) {
                     try {
@@ -1826,33 +1875,37 @@ class SendGridService {
      */
     async logSentMessage(messageData) {
         try {
-            // Get or create thread
-            let thread = await db.getThreadByCaseId(messageData.case_id);
+            const matchedCaseAgency = await this.resolveCaseAgencyForMessage(messageData.case_id, {
+                toEmail: messageData.to_email,
+                subject: messageData.subject,
+                text: messageData.body_text
+            });
 
+            // Find existing thread for replies by looking up the referenced
+            // message id first, then explicit thread identifiers.
+            let thread = null;
+            if (messageData.thread_id) {
+                thread = await db.getThreadByMessageIdentifier(messageData.case_id, messageData.thread_id);
+                if (!thread) {
+                    thread = await db.getThreadByThreadIdentifier(messageData.case_id, messageData.thread_id);
+                }
+            }
+
+            // No match means this is a fresh outbound conversation.
             if (!thread) {
-                const matchedCaseAgency = await this.resolveCaseAgencyForMessage(messageData.case_id, {
-                    toEmail: messageData.to_email,
-                    subject: messageData.subject,
-                    text: messageData.body_text
-                });
+                const threadIdentifier = messageData.thread_id || messageData.message_id;
                 thread = await db.createEmailThread({
                     case_id: messageData.case_id,
-                    thread_id: messageData.thread_id,
+                    thread_id: threadIdentifier,
                     subject: messageData.subject,
                     agency_email: messageData.to_email,
                     initial_message_id: messageData.message_id,
                     status: 'active',
                     case_agency_id: matchedCaseAgency?.id || null
                 });
-            } else if (!thread.case_agency_id) {
-                const matchedCaseAgency = await this.resolveCaseAgencyForMessage(messageData.case_id, {
-                    toEmail: messageData.to_email,
-                    subject: messageData.subject,
-                    text: messageData.body_text
-                });
-                if (matchedCaseAgency?.id) {
-                    await db.updateThread(thread.id, { case_agency_id: matchedCaseAgency.id });
-                }
+            } else if (!thread.case_agency_id && matchedCaseAgency?.id) {
+                await db.updateThread(thread.id, { case_agency_id: matchedCaseAgency.id });
+                thread.case_agency_id = matchedCaseAgency.id;
             }
 
             // Create message record — use per-case user email if available
@@ -1877,9 +1930,10 @@ class SendGridService {
             });
 
             // Update thread
+            const currentMessageCount = Number.isFinite(Number(thread.message_count)) ? Number(thread.message_count) : 0;
             await db.updateThread(thread.id, {
                 last_message_at: new Date(),
-                message_count: thread.message_count + 1
+                message_count: currentMessageCount + 1
             });
 
             // Generate and save a one-sentence summary (non-blocking)
@@ -2027,7 +2081,7 @@ class SendGridService {
                     body_text: text,
                     body_html: html || this.formatEmailHtml(text),
                     message_type: messageType,
-                    thread_id: inReplyTo
+                    thread_id: inReplyTo || messageId
                 });
             }
 
