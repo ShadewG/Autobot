@@ -316,6 +316,8 @@ function DetailV2Content() {
   const [selectedMessageId, setSelectedMessageId] = useState<number | null>(null);
   const [isRunningInbound, setIsRunningInbound] = useState(false);
   const [optimisticMessages, setOptimisticMessages] = useState<Array<ThreadMessage & { _sending: true }>>([]);
+  const [pendingSubmission, setPendingSubmission] = useState<{ proposalId: number; startedAt: number } | null>(null);
+  const [pendingUiLockUntil, setPendingUiLockUntil] = useState<number>(0);
   // Chain draft editing
   const [editedChainSubject, setEditedChainSubject] = useState<string>("");
   const [editedChainBody, setEditedChainBody] = useState<string>("");
@@ -623,15 +625,54 @@ function DetailV2Content() {
     return () => clearTimeout(timer);
   }, [optimisticMessages.length]);
 
+  useEffect(() => {
+    if (!pendingSubmission) return;
+    const activePendingId = data?.pending_proposal?.id ? Number(data.pending_proposal.id) : null;
+    // Only clear when we can positively identify that a different proposal is active.
+    // Do not clear on transient nulls during optimistic mutate/refetch, which can cause
+    // the same proposal controls to flicker back in.
+    if (activePendingId && activePendingId !== pendingSubmission.proposalId) {
+      setPendingSubmission(null);
+    }
+  }, [pendingSubmission, data?.pending_proposal?.id]);
+
+  useEffect(() => {
+    if (!pendingSubmission) return;
+    const timer = setTimeout(() => setPendingSubmission(null), 120_000);
+    return () => clearTimeout(timer);
+  }, [pendingSubmission]);
+
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handleApprovePending = async () => {
     if (!data?.pending_proposal) return;
     setIsApproving(true);
+    const proposalId = Number(data.pending_proposal.id);
+    const actionType = data.pending_proposal.action_type || "";
+    const nonEmailActions = ["RESEARCH_AGENCY", "ESCALATE", "WITHDRAW"];
+    const shouldOptimisticMessage = !nonEmailActions.includes(actionType) && Boolean(editedBody || data.pending_proposal.draft_body_text);
+    const optimisticMessageId = -Date.now();
+    if (shouldOptimisticMessage) {
+      setOptimisticMessages(prev => [...prev, {
+        id: optimisticMessageId, direction: 'OUTBOUND' as const, channel: 'EMAIL' as const,
+        from_email: '', to_email: data.request.agency_email || '',
+        subject: editedSubject || data.pending_proposal!.draft_subject || '',
+        body: editedBody || data.pending_proposal!.draft_body_text || '',
+        sent_at: new Date().toISOString(), timestamp: new Date().toISOString(),
+        attachments: [], _sending: true as const,
+      }]);
+    }
+    setPendingSubmission({ proposalId, startedAt: Date.now() });
+    setPendingUiLockUntil(Date.now() + 45_000);
     try {
       const body: Record<string, unknown> = { action: "APPROVE" };
       if (editedBody && editedBody !== (data.pending_proposal.draft_body_text || "")) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== (data.pending_proposal.draft_subject || "")) body.draft_subject = editedSubject;
+      if (actionType === "ESCALATE") {
+        body.instruction = (typeof editedBody === "string" && editedBody.trim().length > 0)
+          ? editedBody.trim()
+          : "Use the current primary agency and existing contact data to generate a concrete next proposal to restart the request (prefer SUBMIT_PORTAL or SEND_INITIAL_REQUEST). Do not return ESCALATE again unless truly blocked.";
+      }
       const chain = data.pending_proposal.action_chain;
       if (chain && chain.length > 1) {
         if (editedChainBody && editedChainBody !== (chain[1].draftBodyText || "")) body.chain_draft_body_text = editedChainBody;
@@ -644,23 +685,18 @@ function DetailV2Content() {
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed");
-      const nonEmailActions = ["RESEARCH_AGENCY", "ESCALATE", "WITHDRAW"];
-      const actionType = data.pending_proposal.action_type || "";
-      if (!nonEmailActions.includes(actionType) && (editedBody || data.pending_proposal.draft_body_text)) {
-        setOptimisticMessages(prev => [...prev, {
-          id: -Date.now(), direction: 'OUTBOUND' as const, channel: 'EMAIL' as const,
-          from_email: '', to_email: data.request.agency_email || '',
-          subject: editedSubject || data.pending_proposal!.draft_subject || '',
-          body: editedBody || data.pending_proposal!.draft_body_text || '',
-          sent_at: new Date().toISOString(), timestamp: new Date().toISOString(),
-          attachments: [], _sending: true as const,
-        }]);
+      if (shouldOptimisticMessage) {
         toast.success("Sending...");
       } else {
         toast.success("Approved");
       }
       optimisticClear();
     } catch (e: any) {
+      if (shouldOptimisticMessage) {
+        setOptimisticMessages(prev => prev.filter((m) => m.id !== optimisticMessageId));
+      }
+      setPendingSubmission(null);
+      setPendingUiLockUntil(0);
       toast.error(e.message);
     } finally {
       setIsApproving(false);
@@ -1125,6 +1161,7 @@ function DetailV2Content() {
   const pendingAgencyCandidatesCount = agency_candidates.length;
 
   const pendingActionType = pending_proposal?.action_type || "";
+  const pendingProposalStatus = String((pending_proposal as any)?.status || "").toUpperCase();
   const isEmailLikePendingAction = [
     "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_CLARIFICATION", "SEND_REBUTTAL",
     "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL",
@@ -1143,6 +1180,15 @@ function DetailV2Content() {
     ? review_state === "DECISION_REQUIRED"
     : (Boolean(request.pause_reason) || request.requires_human || isPausedStatus);
   const isPaused = decisionRequired && !hasExecutionInFlight;
+  const isPendingApplying =
+    Boolean(pending_proposal) &&
+    (
+      Date.now() < pendingUiLockUntil ||
+      pendingProposalStatus === "DECISION_RECEIVED" ||
+      review_state === "DECISION_APPLYING" ||
+      (pendingSubmission?.proposalId != null && Number(pending_proposal?.id) === pendingSubmission.proposalId) ||
+      (hasExecutionInFlight && review_state !== "DECISION_REQUIRED")
+    );
 
   const controlDisplay = getControlStateDisplay(control_state);
   const ControlStateIcon = controlDisplay.icon;
@@ -1509,7 +1555,12 @@ function DetailV2Content() {
 
                     {/* Action buttons */}
                     <div className="flex items-center gap-2 pt-1">
-                      {(() => {
+                      {isPendingApplying ? (
+                        <div className="flex items-center gap-2 text-xs text-blue-300 rounded border border-blue-700/50 bg-blue-500/10 px-2 py-1">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Applying decision...
+                        </div>
+                      ) : (() => {
                         const gateOptions = pending_proposal.gate_options as string[] | null;
                         const showApprove = !gateOptions || gateOptions.includes("APPROVE");
                         const showAdjust = !gateOptions || gateOptions.includes("ADJUST");

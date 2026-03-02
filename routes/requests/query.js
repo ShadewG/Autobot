@@ -177,13 +177,27 @@ router.get('/:id/workspace', async (req, res) => {
             });
         }
 
-        // Fetch thread and messages
-        const thread = await db.getThreadByCaseId(requestId);
+        // Fetch threads and messages
+        const threads = await db.getThreadsByCaseId(requestId);
+        const latestThread = threads.length > 0 ? threads[threads.length - 1] : null;
         let threadMessages = [];
         let analysisMap = {};
 
-        if (thread) {
-            const messages = await db.getMessagesByThreadId(thread.id);
+        if (threads.length > 0) {
+            const threadMessagesByThread = await Promise.all(
+                threads.map(async (thread) => {
+                    const messages = await db.getMessagesByThreadId(thread.id);
+                    return messages;
+                })
+            );
+            const messages = threadMessagesByThread
+                .flat()
+                .sort((a, b) => {
+                    const aTime = new Date(a.sent_at || a.received_at || a.created_at || 0).getTime();
+                    const bTime = new Date(b.sent_at || b.received_at || b.created_at || 0).getTime();
+                    if (aTime !== bTime) return aTime - bTime;
+                    return Number(a.id || 0) - Number(b.id || 0);
+                });
 
             // Fetch analysis for all inbound messages first
             for (const msg of messages.filter(m => m.direction === 'inbound')) {
@@ -541,11 +555,23 @@ router.get('/:id/workspace', async (req, res) => {
         }
 
         const requestDetail = toRequestDetail(caseData);
+        // Delivery fallback for UI: when case.agency_email is missing, surface
+        // thread/inbound sender so destination displays correctly.
+        if (!requestDetail.agency_email) {
+            const latestInbound = threadMessages.find((m) => m.direction === 'INBOUND');
+            const fallbackEmailRaw = (latestThread?.agency_email || latestInbound?.from_email || '').trim().toLowerCase();
+            if (fallbackEmailRaw.includes('@') && !fallbackEmailRaw.endsWith('@foib-request.com')) {
+                requestDetail.agency_email = fallbackEmailRaw;
+            }
+        }
         if (resolvedAgencyName) {
             requestDetail.agency_name = resolvedAgencyName;
         }
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
+        requestDetail.review_state = review_state;
+        requestDetail.control_state = control_state;
+        requestDetail.control_mismatches = control_mismatches;
         requestDetail.requires_human = review_state === 'DECISION_REQUIRED';
         if (review_state !== 'DECISION_REQUIRED') {
             requestDetail.pause_reason = null;
