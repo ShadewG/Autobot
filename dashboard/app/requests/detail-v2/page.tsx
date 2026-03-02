@@ -31,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { DueDisplay } from "@/components/due-display";
 import { Timeline } from "@/components/timeline";
@@ -193,6 +194,61 @@ function daysUntilDue(dueAt: string | null | undefined): string | null {
   return `Due ${diff}d`;
 }
 
+// ── Multi-agency helpers ─────────────────────────────────────────────────────
+
+function parseEmailList(value?: string | null): string[] {
+  if (!value) return [];
+  return String(value)
+    .split(/[,\s;]+/)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => part.includes("@"));
+}
+
+function emailDomain(email?: string | null): string | null {
+  if (!email || !email.includes("@")) return null;
+  return email.split("@").pop()?.trim().toLowerCase() || null;
+}
+
+function normalizeAgencyKey(name?: string | null): string[] {
+  if (!name) return [];
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !["police", "department", "office", "county", "city", "records"].includes(token));
+}
+
+function messageMatchesAgency(message: RequestWorkspaceResponse["thread_messages"][number], agency: CaseAgency): boolean {
+  if (message.case_agency_id != null) {
+    return Number(message.case_agency_id) === Number(agency.id);
+  }
+
+  const agencyEmails = parseEmailList(agency.agency_email);
+  const from = String(message.from_email || "").trim().toLowerCase();
+  const to = String(message.to_email || "").trim().toLowerCase();
+  const fromDomain = emailDomain(from);
+  const toDomain = emailDomain(to);
+
+  if (agencyEmails.some((email) => email === from || email === to)) {
+    return true;
+  }
+
+  const agencyDomains = agencyEmails
+    .map((email) => emailDomain(email))
+    .filter((d): d is string => Boolean(d));
+  if (agencyDomains.some((d) => d === fromDomain || d === toDomain)) {
+    return true;
+  }
+
+  const searchableText = `${message.subject || ""}\n${message.body || ""}`.toLowerCase();
+  const agencyTokens = normalizeAgencyKey(agency.agency_name);
+  if (agencyTokens.length > 0 && agencyTokens.some((token) => searchableText.includes(token))) {
+    return true;
+  }
+
+  return false;
+}
+
 // ── Section header style ─────────────────────────────────────────────────────
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -262,8 +318,19 @@ function DetailV2Content() {
   // Chain draft editing
   const [editedChainSubject, setEditedChainSubject] = useState<string>("");
   const [editedChainBody, setEditedChainBody] = useState<string>("");
-  // Secondary tabs at bottom
-  const [bottomTab, setBottomTab] = useState<string | null>(null);
+  // View management
+  const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency">("thread");
+  const [bottomDrawer, setBottomDrawer] = useState<"runs" | "agent-log" | null>(null);
+  const [conversationTab, setConversationTab] = useState<string>("all");
+  // Multi-agency state
+  const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
+  const [agencyStartLoadingId, setAgencyStartLoadingId] = useState<number | null>(null);
+  const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
+  const [candidateStartLoadingName, setCandidateStartLoadingName] = useState<string | null>(null);
+  const [manualAgencyName, setManualAgencyName] = useState("");
+  const [manualAgencyEmail, setManualAgencyEmail] = useState("");
+  const [manualAgencyPortalUrl, setManualAgencyPortalUrl] = useState("");
+  const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
   // Scope editing
   const [isUpdatingScope, setIsUpdatingScope] = useState(false);
 
@@ -327,9 +394,92 @@ function DetailV2Content() {
 
   // ── Derived state ──────────────────────────────────────────────────────────
   const _threadMessages = data?.thread_messages || [];
+  const _caseAgencies: CaseAgency[] = (data as any)?.case_agencies || [];
+  const _activeCaseAgencies = _caseAgencies.filter((ca: CaseAgency) => ca.is_active !== false);
+
+  const conversationAgencies = useMemo(() => {
+    const dedup = new Map<string, CaseAgency>();
+    for (const agency of _activeCaseAgencies) {
+      const key = `${String(agency.agency_name || "").trim().toLowerCase()}|${String(agency.agency_email || "").trim().toLowerCase()}|${String(agency.portal_url || "").trim().toLowerCase()}`;
+      const existing = dedup.get(key);
+      if (!existing) {
+        dedup.set(key, agency);
+        continue;
+      }
+      if (!existing.is_primary && agency.is_primary) {
+        dedup.set(key, agency);
+      }
+    }
+    return Array.from(dedup.values());
+  }, [_activeCaseAgencies]);
+  const shouldShowConversationTabs = conversationAgencies.length > 1;
+
+  const conversationBuckets = useMemo(() => {
+    const allIds = new Set(_threadMessages.map((m) => m.id));
+    const buckets: Array<{ id: string; label: string; count: number; messageIds: Set<number> }> = [
+      { id: "all", label: "All", count: _threadMessages.length, messageIds: allIds },
+    ];
+    if (!shouldShowConversationTabs) return buckets;
+
+    const matchedMessageIds = new Set<number>();
+    for (const agency of conversationAgencies) {
+      const messageIds = new Set<number>();
+      for (const message of _threadMessages) {
+        if (messageMatchesAgency(message, agency)) {
+          messageIds.add(message.id);
+          matchedMessageIds.add(message.id);
+        }
+      }
+      buckets.push({
+        id: `agency-${agency.id}`,
+        label: agency.agency_name || `Agency ${agency.id}`,
+        count: messageIds.size,
+        messageIds,
+      });
+    }
+
+    const otherIds = new Set(
+      _threadMessages.filter((m) => !matchedMessageIds.has(m.id)).map((m) => m.id)
+    );
+    if (otherIds.size > 0) {
+      buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
+    }
+    return buckets;
+  }, [_threadMessages, conversationAgencies, shouldShowConversationTabs]);
+
+  const agencyMessageStats = useMemo(() => {
+    const stats = new Map<number, { total: number; inbound: number; outbound: number; lastMessageAt: string | null }>();
+    for (const agency of _activeCaseAgencies) {
+      let total = 0, inbound = 0, outbound = 0;
+      let lastMessageAt: string | null = null;
+      for (const message of _threadMessages) {
+        if (messageMatchesAgency(message, agency)) {
+          total++;
+          if (message.direction === "INBOUND") inbound++;
+          else outbound++;
+          if (!lastMessageAt || message.sent_at > lastMessageAt) {
+            lastMessageAt = message.sent_at;
+          }
+        }
+      }
+      stats.set(agency.id, { total, inbound, outbound, lastMessageAt });
+    }
+    return stats;
+  }, [_threadMessages, _activeCaseAgencies]);
+
+  useEffect(() => {
+    if (!conversationBuckets.some((bucket) => bucket.id === conversationTab)) {
+      setConversationTab("all");
+    }
+  }, [conversationBuckets, conversationTab]);
+
   const visibleThreadMessages = useMemo(() => {
-    return [..._threadMessages, ...optimisticMessages];
-  }, [_threadMessages, optimisticMessages]);
+    const selected = conversationBuckets.find((bucket) => bucket.id === conversationTab);
+    const real = (!selected || conversationTab === "all")
+      ? _threadMessages
+      : _threadMessages.filter((message) => selected.messageIds.has(message.id));
+    return [...real, ...optimisticMessages];
+  }, [_threadMessages, conversationBuckets, conversationTab, optimisticMessages]);
 
   const liveRun = useMemo(() => {
     const list = runsData?.runs || [];
@@ -708,6 +858,146 @@ function DetailV2Content() {
     }
   };
 
+  // ── Multi-agency handlers ──────────────────────────────────────────────────
+
+  const handleSetPrimaryAgency = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoadingId(caseAgencyId);
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/set-primary`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to set primary agency");
+      mutate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to set primary agency");
+    } finally {
+      setAgencyActionLoadingId(null);
+    }
+  };
+
+  const handleResearchAgency = async (caseAgencyId: number) => {
+    if (!id) return;
+    setAgencyActionLoadingId(caseAgencyId);
+    try {
+      const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/research`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Failed to research agency");
+      mutate();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to research agency");
+    } finally {
+      setAgencyActionLoadingId(null);
+    }
+  };
+
+  const handleStartRequestForAgency = async (caseAgencyId: number) => {
+    if (!id) return;
+    const caseId = parseInt(id, 10);
+    const caseAgency = _caseAgencies.find((ca) => Number(ca.id) === Number(caseAgencyId));
+    if (!caseAgency) {
+      toast.error("Agency not found on this case");
+      return;
+    }
+
+    setAgencyStartLoadingId(caseAgencyId);
+    try {
+      if (!caseAgency.is_primary) {
+        const setPrimaryRes = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/set-primary`, { method: "POST" });
+        const setPrimaryJson = await setPrimaryRes.json();
+        if (!setPrimaryRes.ok || !setPrimaryJson.success) {
+          throw new Error(setPrimaryJson.error || "Failed to set primary agency");
+        }
+      }
+      const runResult = await casesAPI.runInitial(caseId, { autopilotMode: "SUPERVISED" });
+      if (!runResult.success) {
+        throw new Error("Failed to queue request processing");
+      }
+      mutate();
+      mutateRuns();
+      startPolling();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to start request for agency");
+    } finally {
+      setAgencyStartLoadingId(null);
+    }
+  };
+
+  const createCaseAgency = async (agency: {
+    agency_name: string;
+    agency_email?: string;
+    portal_url?: string;
+    notes?: string;
+    added_source?: string;
+  }) => {
+    if (!id) throw new Error("Missing case id");
+    const res = await fetch(`/api/cases/${id}/agencies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(agency),
+    });
+    const json = await res.json();
+    if (!res.ok || !json.success) {
+      throw new Error(json.error || "Failed to add agency");
+    }
+    return json.case_agency as CaseAgency;
+  };
+
+  const handleAddCandidateAgency = async (candidate: AgencyCandidate, startAfterAdd = false) => {
+    if (!id || !candidate?.name) return;
+    if (startAfterAdd) {
+      setCandidateStartLoadingName(candidate.name);
+    } else {
+      setCandidateActionLoadingName(candidate.name);
+    }
+    try {
+      const caseAgency = await createCaseAgency({
+        agency_name: candidate.name,
+        agency_email: candidate.agency_email || undefined,
+        portal_url: candidate.portal_url || undefined,
+        notes: candidate.reason || undefined,
+        added_source: candidate.source || "research_candidate",
+      });
+      if (startAfterAdd && caseAgency?.id) {
+        await handleStartRequestForAgency(caseAgency.id);
+      } else {
+        mutate();
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to add agency candidate");
+    } finally {
+      setCandidateActionLoadingName(null);
+      setCandidateStartLoadingName(null);
+    }
+  };
+
+  const handleAddManualAgency = async (startAfterAdd = false) => {
+    if (!manualAgencyName.trim()) {
+      toast.error("Agency name is required");
+      return;
+    }
+    setIsManualAgencySubmitting(true);
+    try {
+      const caseAgency = await createCaseAgency({
+        agency_name: manualAgencyName.trim(),
+        agency_email: manualAgencyEmail.trim() || undefined,
+        portal_url: manualAgencyPortalUrl.trim() || undefined,
+        added_source: "manual",
+      });
+      setManualAgencyName("");
+      setManualAgencyEmail("");
+      setManualAgencyPortalUrl("");
+      if (startAfterAdd && caseAgency?.id) {
+        await handleStartRequestForAgency(caseAgency.id);
+      } else {
+        mutate();
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to add agency");
+    } finally {
+      setIsManualAgencySubmitting(false);
+    }
+  };
+
   const copyField = (key: string, value: string) => {
     navigator.clipboard.writeText(value);
     setCopiedField(key);
@@ -748,7 +1038,9 @@ function DetailV2Content() {
     request, timeline_events, agency_summary, deadline_milestones, state_deadline,
     pending_proposal, portal_helper, review_state, control_state,
     control_mismatches = [], active_run, agent_decisions = [],
-  } = data;
+    case_agencies = [], agency_candidates = [],
+  } = data as RequestWorkspaceResponse & { case_agencies?: CaseAgency[]; agency_candidates?: AgencyCandidate[] };
+  const pendingAgencyCandidatesCount = agency_candidates.length;
 
   const pendingActionType = pending_proposal?.action_type || "";
   const isEmailLikePendingAction = [
@@ -943,13 +1235,14 @@ function DetailV2Content() {
 
       {/* ── MAIN BODY ─── two-panel split ──────────────────────────────────── */}
       <div className="flex-1 flex min-h-0">
-        {/* ── LEFT PANEL: Action + Thread ──────────────────────────────────── */}
+        {/* ── LEFT PANEL: Main Content ─────────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-border/50">
-          <ScrollArea className="flex-1 h-0">
-            <div className="p-0">
-              {/* Draft case CTA */}
+          {activeView === "thread" ? (
+            /* ── THREAD VIEW (chat-style) ──────────────────────────────────── */
+            <div className="flex-1 flex flex-col min-h-0">
+              {/* Draft case CTA (shrink-0) */}
               {(request.status === 'DRAFT' || request.status === 'READY_TO_SEND') && !request.submitted_at && (
-                <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-blue-500/5">
+                <div className="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-blue-500/5">
                   <Send className="h-3.5 w-3.5 text-blue-400" />
                   <span className="text-xs text-blue-300 font-medium">Ready to Submit</span>
                   <div className="flex-1" />
@@ -960,18 +1253,53 @@ function DetailV2Content() {
                 </div>
               )}
 
-              {/* Proposal status after approval */}
+              {/* Proposal status after approval (shrink-0) */}
               {proposalState !== "PENDING" && (
-                <div className="px-3 py-2 border-b border-border/50">
+                <div className="shrink-0 px-3 py-2 border-b border-border/50">
                   <ProposalStatus state={proposalState} scheduledFor={scheduledSendAt} />
                 </div>
               )}
 
-              {/* ── ACTION AREA ─────────────────────────────────────────────── */}
-              {pending_proposal ? (
-                <div className="border-b border-border/50">
-                  <SectionHeader>ACTION</SectionHeader>
-                  <div className="px-3 pb-3 space-y-2">
+              {/* Conversation tabs for multi-agency (shrink-0) */}
+              {shouldShowConversationTabs && (
+                <div className="shrink-0 px-3 py-1.5 border-b border-border/50">
+                  <ScrollArea className="w-full whitespace-nowrap">
+                    <div className="flex items-center gap-1">
+                      {conversationBuckets.map((bucket) => (
+                        <Button
+                          key={bucket.id}
+                          variant={conversationTab === bucket.id ? "secondary" : "outline"}
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => setConversationTab(bucket.id)}
+                          title={bucket.label}
+                        >
+                          <span className="max-w-[140px] truncate">{bucket.label}</span>
+                          <Badge variant="secondary" className="ml-1 text-[10px] px-1">
+                            {bucket.count}
+                          </Badge>
+                        </Button>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
+              {!shouldShowConversationTabs && pendingAgencyCandidatesCount > 0 && (
+                <div className="shrink-0 mx-3 mt-1.5 rounded border border-amber-700/40 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-300">
+                  {pendingAgencyCandidatesCount} suggested agenc{pendingAgencyCandidatesCount === 1 ? "y" : "ies"} not yet added to case.
+                  Add them in the <button className="font-medium underline" onClick={() => setActiveView("agency")}>Agency</button> tab to split conversation by agency.
+                </div>
+              )}
+
+              {/* Thread (flex-1, fills remaining space) */}
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <Thread messages={visibleThreadMessages} maxHeight="h-full" />
+              </div>
+
+              {/* Bottom action area (shrink-0, pinned at bottom) */}
+              <div className="shrink-0 border-t border-border/50 max-h-[50%] overflow-y-auto">
+                {pending_proposal ? (
+                  <div className="px-3 py-3 space-y-2">
                     {/* Action type + confidence */}
                     <div className="flex items-center gap-2">
                       <Badge variant="outline" className={cn("text-[10px] px-1 py-0", ACTION_TYPE_LABELS[pending_proposal.action_type]?.color || "")}>
@@ -1000,7 +1328,7 @@ function DetailV2Content() {
                         )}
                         <textarea
                           className="w-full bg-background border border-border/50 rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
-                          rows={10}
+                          rows={8}
                           value={editedBody}
                           onChange={(e) => setEditedBody(e.target.value)}
                         />
@@ -1031,7 +1359,7 @@ function DetailV2Content() {
                             )}
                             <textarea
                               className="w-full bg-background border border-border/50 rounded p-2 text-xs leading-relaxed resize-y"
-                              rows={6}
+                              rows={4}
                               value={editedChainBody}
                               onChange={(e) => setEditedChainBody(e.target.value)}
                             />
@@ -1140,11 +1468,8 @@ function DetailV2Content() {
                       })()}
                     </div>
                   </div>
-                </div>
-              ) : isPaused ? (
-                <div className="border-b border-border/50">
-                  <SectionHeader>DECISION REQUIRED</SectionHeader>
-                  <div className="px-3 pb-3">
+                ) : isPaused ? (
+                  <div className="px-3 py-3">
                     <DecisionPanel
                       request={request}
                       nextAction={nextAction}
@@ -1163,42 +1488,28 @@ function DetailV2Content() {
                       isLoading={isApproving || isRevising || isResolving}
                     />
                   </div>
-                </div>
-              ) : (
-                /* No proposal, not paused — show composer + guide */
-                <div className="border-b border-border/50">
-                  <SectionHeader>COMPOSE</SectionHeader>
-                  <div className="px-3 pb-3 space-y-2">
+                ) : (
+                  <div className="px-3 py-3 space-y-2">
                     <Composer onSend={handleSendMessage} />
                     <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => setGuideModalOpen(true)}>
                       <Bot className="h-3 w-3 mr-1" /> Guide AI
                     </Button>
                   </div>
-                </div>
-              )}
-
-              {/* ── THREAD ──────────────────────────────────────────────────── */}
-              <div>
-                <SectionHeader>THREAD</SectionHeader>
-                <div className="px-3 pb-3">
-                  <Thread messages={visibleThreadMessages} />
-                </div>
+                )}
               </div>
             </div>
-          </ScrollArea>
-        </div>
-
-        {/* ── RIGHT PANEL: Intel Sidebar or Tab Takeover ──────────────────── */}
-        <div className="w-[380px] shrink-0 flex flex-col min-h-0">
-          {bottomTab === "case-info" ? (
+          ) : activeView === "case-info" ? (
+            /* ── CASE INFO VIEW ────────────────────────────────────────────── */
             <ScrollArea className="flex-1 h-0">
               <div className="p-3">
                 <CaseInfoTab request={request} agencySummary={agency_summary} deadlineMilestones={deadline_milestones} stateDeadline={state_deadline} />
               </div>
             </ScrollArea>
-          ) : bottomTab === "agency" ? (
+          ) : (
+            /* ── AGENCY VIEW ───────────────────────────────────────────────── */
             <ScrollArea className="flex-1 h-0">
-              <div className="p-3">
+              <div className="p-3 space-y-4">
+                {/* CopilotPanel */}
                 <CopilotPanel
                   request={request}
                   nextAction={nextAction}
@@ -1206,10 +1517,139 @@ function DetailV2Content() {
                   onChallenge={() => setAdjustModalOpen(true)}
                   onRefresh={mutate}
                 />
+
+                {/* Case Agencies */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Case Agencies ({_activeCaseAgencies.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {/* Add Agency form */}
+                    <div className="space-y-2 rounded border border-dashed border-border/60 p-2">
+                      <Input
+                        placeholder="Agency name"
+                        value={manualAgencyName}
+                        onChange={(e) => setManualAgencyName(e.target.value)}
+                        className="h-7 text-xs"
+                      />
+                      <Input
+                        placeholder="Email (optional)"
+                        value={manualAgencyEmail}
+                        onChange={(e) => setManualAgencyEmail(e.target.value)}
+                        className="h-7 text-xs"
+                      />
+                      <Input
+                        placeholder="Portal URL (optional)"
+                        value={manualAgencyPortalUrl}
+                        onChange={(e) => setManualAgencyPortalUrl(e.target.value)}
+                        className="h-7 text-xs"
+                      />
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" className="h-7 text-xs flex-1" onClick={() => handleAddManualAgency(false)} disabled={isManualAgencySubmitting || !manualAgencyName.trim()}>
+                          {isManualAgencySubmitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+                          Add Agency
+                        </Button>
+                        <Button size="sm" className="h-7 text-xs flex-1" onClick={() => handleAddManualAgency(true)} disabled={isManualAgencySubmitting || !manualAgencyName.trim()}>
+                          {isManualAgencySubmitting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Play className="h-3 w-3 mr-1" />}
+                          Add & Start
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Agency list */}
+                    {_activeCaseAgencies.map((ca) => {
+                      const stats = agencyMessageStats.get(ca.id);
+                      return (
+                        <div key={ca.id} className="rounded border p-3 space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium">{ca.agency_name || "Unnamed"}</span>
+                            {ca.is_primary && <Badge variant="secondary" className="text-[10px] px-1">Primary</Badge>}
+                          </div>
+                          {ca.agency_email && (
+                            <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                              <Mail className="h-2.5 w-2.5" />
+                              <span className="truncate">{ca.agency_email}</span>
+                            </div>
+                          )}
+                          {ca.portal_url && (
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                              <a href={ca.portal_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">Portal</a>
+                            </div>
+                          )}
+                          {stats && stats.total > 0 && (
+                            <div className="text-[10px] text-muted-foreground">
+                              {stats.total} messages ({stats.outbound} sent, {stats.inbound} received)
+                              {stats.lastMessageAt && <span> · Last: {formatRelativeTime(stats.lastMessageAt)}</span>}
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1.5 pt-1">
+                            {!ca.is_primary && (
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleSetPrimaryAgency(ca.id)} disabled={agencyActionLoadingId === ca.id}>
+                                {agencyActionLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : "Set Primary"}
+                              </Button>
+                            )}
+                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleResearchAgency(ca.id)} disabled={agencyActionLoadingId === ca.id}>
+                              {agencyActionLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : "Research"}
+                            </Button>
+                            <Button size="sm" className="h-6 text-[10px]" onClick={() => handleStartRequestForAgency(ca.id)} disabled={agencyStartLoadingId === ca.id}>
+                              {agencyStartLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <Play className="h-2.5 w-2.5 mr-1" />}
+                              Start Request
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+
+                {/* Research Candidates */}
+                {agency_candidates.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm">Research Candidates</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {agency_candidates.map((candidate: AgencyCandidate, idx: number) => (
+                        <div key={`${candidate.name || "candidate"}-${idx}`} className="rounded border p-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium">{candidate.name || "Unnamed agency"}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {candidate.agency_email || "No email"} {candidate.portal_url ? "· Portal found" : ""}
+                              </p>
+                              {candidate.reason && (
+                                <p className="text-[10px] text-muted-foreground mt-1">{candidate.reason}</p>
+                              )}
+                              <div className="mt-1.5 flex gap-1.5 flex-wrap">
+                                {candidate.source && <Badge variant="outline" className="text-[10px]">{candidate.source}</Badge>}
+                                {typeof candidate.confidence === "number" && (
+                                  <Badge variant="outline" className="text-[10px]">{Math.round(candidate.confidence * 100)}%</Badge>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex gap-1.5 shrink-0">
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleAddCandidateAgency(candidate)}>
+                                {candidateActionLoadingName === candidate.name ? "Adding..." : "Add"}
+                              </Button>
+                              <Button size="sm" className="h-6 text-[10px]" onClick={() => handleAddCandidateAgency(candidate, true)}>
+                                {candidateStartLoadingName === candidate.name ? "Starting..." : "Add & Start"}
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </ScrollArea>
-          ) : (
-            <ScrollArea className="flex-1 h-0">
+          )}
+        </div>
+
+        {/* ── RIGHT PANEL: Intel Sidebar (always visible) ─────────────────── */}
+        <div className="w-[380px] shrink-0 flex flex-col min-h-0">
+          <ScrollArea className="flex-1 h-0">
               {/* Portal overlay */}
               {portalTaskActive && (
                 <CollapsibleSection title="PORTAL LIVE">
@@ -1352,38 +1792,64 @@ function DetailV2Content() {
                 </CollapsibleSection>
               )}
             </ScrollArea>
-          )}
         </div>
       </div>
 
       {/* ── BOTTOM TAB BAR ─────────────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-border/50">
         <div className="flex items-center gap-0 px-3 h-8">
-          {(["runs", "agent-log", "agency", "case-info"] as const).map((tab) => (
+          {/* Main view tabs */}
+          {(["thread", "case-info", "agency"] as const).map((tab) => (
             <button
               key={tab}
-              onClick={() => setBottomTab(bottomTab === tab ? null : tab)}
+              onClick={() => {
+                if (activeView === tab) setActiveView("thread");
+                else { setActiveView(tab); setBottomDrawer(null); }
+              }}
               className={cn(
                 "px-3 py-1 text-[11px] font-medium border-b-2 transition-colors",
-                bottomTab === tab
+                activeView === tab
                   ? "border-foreground text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {tab === "thread" && "Thread"}
+              {tab === "case-info" && "Case Info"}
+              {tab === "agency" && (
+                <>
+                  Agency
+                  {pendingAgencyCandidatesCount > 0 && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">{pendingAgencyCandidatesCount}</Badge>
+                  )}
+                </>
+              )}
+            </button>
+          ))}
+          <span className="text-border mx-1">|</span>
+          {/* Drawer tabs */}
+          {(["runs", "agent-log"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setBottomDrawer(bottomDrawer === tab ? null : tab)}
+              className={cn(
+                "px-3 py-1 text-[11px] font-medium border-b-2 transition-colors",
+                bottomDrawer === tab
+                  ? "border-dashed border-foreground text-foreground"
                   : "border-transparent text-muted-foreground hover:text-foreground"
               )}
             >
               {tab === "runs" && "Runs"}
               {tab === "agent-log" && "Agent Log"}
-              {tab === "agency" && "Agency"}
-              {tab === "case-info" && "Case Info"}
               {tab === "runs" && runsData?.runs && runsData.runs.length > 0 && (
                 <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">{runsData.runs.length}</Badge>
               )}
             </button>
           ))}
         </div>
-        {/* Drawer - only for runs/agent-log; case-info and agency take over right panel */}
-        {(bottomTab === "runs" || bottomTab === "agent-log") && (
+        {/* Bottom drawer content */}
+        {bottomDrawer && (
           <div className="max-h-[300px] overflow-auto border-t border-border/50">
-            {bottomTab === "runs" && (
+            {bottomDrawer === "runs" && (
               <div className="p-3">
                 {runsData?.runs && runsData.runs.length > 0 ? (
                   <Table>
@@ -1415,7 +1881,7 @@ function DetailV2Content() {
                 )}
               </div>
             )}
-            {bottomTab === "agent-log" && (
+            {bottomDrawer === "agent-log" && (
               <div className="p-3 space-y-1">
                 {agentDecisions.length > 0 ? agentDecisions.slice(0, 20).map((d) => (
                   <div key={d.id} className="flex items-start gap-2 text-[11px]">
