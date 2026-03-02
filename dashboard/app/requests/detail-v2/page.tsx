@@ -1092,7 +1092,7 @@ function DetailV2Content() {
 
   const statusValue = String(request.status || "").toUpperCase();
   const isPausedStatus = statusValue === "NEEDS_HUMAN_REVIEW" || statusValue === "PAUSED";
-  const statusDisplay = isPausedStatus ? "PAUSED" : (request.status || "—");
+  const statusDisplay = isPausedStatus && !hasExecutionInFlight ? "PAUSED" : isPausedStatus && hasExecutionInFlight ? "PROCESSING" : (request.status || "—");
 
   const decisionRequired = review_state
     ? review_state === "DECISION_REQUIRED"
@@ -1127,7 +1127,8 @@ function DetailV2Content() {
             variant="outline"
             className={cn(
               "text-[10px] px-1 py-0 shrink-0",
-              isPausedStatus ? "border-amber-700/50 bg-amber-500/10 text-amber-300" : ""
+              statusDisplay === "PAUSED" ? "border-amber-700/50 bg-amber-500/10 text-amber-300"
+                : statusDisplay === "PROCESSING" ? "border-blue-700/50 bg-blue-500/10 text-blue-300" : ""
             )}
           >
             {statusDisplay}
@@ -1777,11 +1778,13 @@ function DetailV2Content() {
                         DENIED: { label: "Denied", color: "text-red-400" },
                         PARTIAL: { label: "Partial", color: "text-yellow-400" },
                         EXEMPT: { label: "Exempt", color: "text-red-400" },
+                        REQUESTED: { label: "Requested", color: "text-gray-500" },
+                        PENDING: { label: "Pending", color: "text-blue-400" },
                       };
                       const s = statusMap[item.status] || { label: item.status || "Requested", color: "text-gray-500" };
                       return (
                         <div key={idx} className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="truncate">{item.name}</span>
+                          <span className="truncate min-w-0">{item.name}</span>
                           <span className={cn("shrink-0 text-[10px] font-medium", s.color)}>{s.label}</span>
                         </div>
                       );
