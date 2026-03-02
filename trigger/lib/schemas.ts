@@ -179,6 +179,14 @@ export const decisionSchema = z.object({
     .describe("How much research to do before drafting (none=skip, light=contacts, medium=+laws, deep=+full custodian chain)"),
   overrideMessageId: z.number().nullable()
     .describe("If set, redirect drafting to target this specific inbound message instead of the latest one. Use null if not needed."),
+  followUpAction: z.enum([
+    "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
+    "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
+    "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
+    "ESCALATE", "NONE", "CLOSE_CASE", "WITHDRAW", "RESEARCH_AGENCY",
+    "REFORMULATE_REQUEST", "SUBMIT_PORTAL", "SEND_PDF_EMAIL",
+  ]).nullable()
+    .describe("Optional follow-up action to execute AFTER the primary action. Use when two sequential actions are clearly needed (e.g., DECLINE_FEE then REFORMULATE_REQUEST). null if only one action needed."),
 }).strict();
 
 export type DecisionOutput = z.infer<typeof decisionSchema>;

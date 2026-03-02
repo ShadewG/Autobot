@@ -9,7 +9,7 @@
  */
 
 import db, { logger, caseRuntime } from "../lib/db";
-import type { ActionType, ProposalRecord } from "../lib/types";
+import type { ActionType, ProposalRecord, ChainAction } from "../lib/types";
 
 function generateProposalKey(
   caseId: number,
@@ -29,6 +29,7 @@ export interface GateResult {
   proposalKey: string;
   shouldWait: boolean;
   waitpointTokenId: string | null;
+  chainId: string | null;
 }
 
 export async function createProposalAndGate(
@@ -46,11 +47,12 @@ export async function createProposalAndGate(
   adjustmentCount: number,
   caseAgencyId: number | null,
   lessonsApplied: any[] | null,
-  gateOptions?: string[]
+  gateOptions?: string[],
+  chainActions?: ChainAction[]
 ): Promise<GateResult> {
   // NONE actions skip proposal creation
   if (actionType === "NONE") {
-    return { proposalId: 0, proposalKey: "", shouldWait: false, waitpointTokenId: null };
+    return { proposalId: 0, proposalKey: "", shouldWait: false, waitpointTokenId: null, chainId: null };
   }
 
   // Confidence-based auto-execution tiers (even in SUPERVISED mode)
@@ -81,6 +83,10 @@ export async function createProposalAndGate(
     runId
   );
 
+  // Determine chain metadata
+  const hasChain = chainActions && chainActions.length > 1;
+  const chainId = hasChain ? crypto.randomUUID() : null;
+
   // Idempotent upsert
   const proposal = await db.upsertProposal({
     proposalKey,
@@ -101,7 +107,48 @@ export async function createProposalAndGate(
     adjustmentCount: adjustmentCount || 0,
     lessonsApplied: lessonsApplied || null,
     gateOptions: gateOptions || ["APPROVE", "ADJUST", "DISMISS", "WITHDRAW"],
+    actionChain: hasChain ? chainActions : null,
+    chainId,
+    chainStep: hasChain ? 0 : null,
   });
+
+  // Create follow-up chain proposals (CHAIN_PENDING status — wait for primary approval)
+  if (hasChain && chainId) {
+    for (let step = 1; step < chainActions.length; step++) {
+      const chainAction = chainActions[step];
+      const chainProposalKey = generateProposalKey(
+        caseId, messageId, chainAction.actionType, adjustmentCount, caseAgencyId, runId
+      ) + `:chain-${step}`;
+
+      await db.upsertProposal({
+        proposalKey: chainProposalKey,
+        caseId,
+        runId,
+        triggerMessageId: messageId,
+        actionType: chainAction.actionType,
+        draftSubject: chainAction.draftSubject,
+        draftBodyText: chainAction.draftBodyText,
+        draftBodyHtml: chainAction.draftBodyHtml,
+        reasoning: [`Chain step ${step + 1}: follows ${actionType}`],
+        confidence: confidence ?? 0.8,
+        riskFlags: [],
+        warnings: [],
+        canAutoExecute: false,
+        requiresHuman: true,
+        status: "CHAIN_PENDING",
+        adjustmentCount: adjustmentCount || 0,
+        lessonsApplied: null,
+        gateOptions: null,
+        chainId,
+        chainStep: step,
+      });
+    }
+
+    logger.info("Created action chain proposals", {
+      caseId, chainId, steps: chainActions.length,
+      actions: chainActions.map(a => a.actionType),
+    });
+  }
 
   // Reclaim proposal from a prior run whose execution is stale.
   // The upsert ON CONFLICT preserves EXECUTED status (correct for same-run retries),
@@ -132,6 +179,7 @@ export async function createProposalAndGate(
       proposalKey,
       shouldWait: false,
       waitpointTokenId: null,
+      chainId,
     };
   }
 
@@ -159,5 +207,6 @@ export async function createProposalAndGate(
     proposalKey,
     shouldWait: true,
     waitpointTokenId: tokenId,
+    chainId,
   };
 }

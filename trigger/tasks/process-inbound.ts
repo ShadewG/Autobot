@@ -20,7 +20,7 @@ import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger, attachmentProcessor, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
-import type { HumanDecision, InboundPayload, ResearchContext } from "../lib/types";
+import type { HumanDecision, InboundPayload, ResearchContext, ChainAction, ActionType } from "../lib/types";
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
@@ -442,22 +442,72 @@ export const processInbound = task({
       );
     }
 
-    // Step 6: Safety check
+    // Step 5b: Draft chain follow-up (if decision includes a chain)
+    const chainDrafts = new Map<string, any>();
+    if (decision.followUpAction) {
+      const followUpNeedsDraft = DRAFT_REQUIRED_ACTIONS.includes(decision.followUpAction) ||
+        ["RESEARCH_AGENCY", "REFORMULATE_REQUEST"].includes(decision.followUpAction);
+      if (followUpNeedsDraft) {
+        await markStep("draft_chain_followup", `Run #${runId}: drafting chain follow-up`, { action_type: decision.followUpAction });
+        const followUpDraft = await draftResponse(
+          caseId, decision.followUpAction, constraints, scopeItems,
+          classification.extractedFeeAmount,
+          `This is a follow-up action after ${decision.actionType}. ${decision.adjustmentInstruction || ""}`.trim(),
+          decision.overrideMessageId || messageId,
+          research
+        );
+        chainDrafts.set(decision.followUpAction, followUpDraft);
+      }
+    }
+
+    // Step 6: Safety check (primary)
     await markStep("safety_check", `Run #${runId}: safety checking draft`);
     const safety = await safetyCheck(
       draft.bodyText, draft.subject, decision.actionType, constraints, scopeItems,
       classification.jurisdiction_level, context.caseData.state
     );
 
+    // Step 6b: Safety check chain follow-ups and merge results
+    let combinedSafety = { ...safety };
+    for (const [followUpAction, followUpDraft] of chainDrafts) {
+      const stepSafety = await safetyCheck(
+        followUpDraft.bodyText, followUpDraft.subject, followUpAction as ActionType,
+        constraints, scopeItems, classification.jurisdiction_level, context.caseData.state
+      );
+      combinedSafety = {
+        riskFlags: [...combinedSafety.riskFlags, ...stepSafety.riskFlags],
+        warnings: [...combinedSafety.warnings, ...stepSafety.warnings],
+        canAutoExecute: combinedSafety.canAutoExecute && stepSafety.canAutoExecute,
+        requiresHuman: combinedSafety.requiresHuman || stepSafety.requiresHuman,
+        pauseReason: combinedSafety.pauseReason || stepSafety.pauseReason,
+      };
+    }
+
+    // Build chain actions array for gate
+    let chainActions: ChainAction[] | undefined;
+    if (decision.followUpAction && chainDrafts.size > 0) {
+      chainActions = [
+        { actionType: decision.actionType, draftSubject: draft.subject, draftBodyText: draft.bodyText, draftBodyHtml: draft.bodyHtml },
+        ...Array.from(chainDrafts.entries()).map(([actionType, d]) => ({
+          actionType: actionType as ActionType,
+          draftSubject: d.subject,
+          draftBodyText: d.bodyText,
+          draftBodyHtml: d.bodyHtml,
+        })),
+      ];
+      logger.info("Action chain built", { caseId, actions: chainActions.map(a => a.actionType) });
+    }
+
     // Step 7: Create proposal + determine gate
     await markStep("gate", `Run #${runId}: creating proposal and evaluating gate`, { action_type: decision.actionType });
     const gate = await createProposalAndGate(
       caseId, runId, decision.actionType,
-      messageId, draft, safety,
+      messageId, draft, combinedSafety,
       decision.canAutoExecute, decision.requiresHuman,
       decision.pauseReason, decision.reasoning,
       classification.confidence, 0, null,
-      draft.lessonsApplied, decision.gateOptions
+      draft.lessonsApplied, decision.gateOptions,
+      chainActions
     );
 
     // Step 8: If human gate, wait for approval
@@ -553,6 +603,13 @@ export const processInbound = task({
 
       if (humanDecision.action === "DISMISS") {
         await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        // Also dismiss chain siblings if this was a chain primary
+        if (gate.chainId) {
+          const chainSiblings = await db.getChainProposals(gate.chainId);
+          for (const sibling of chainSiblings.filter((p: any) => p.id !== gate.proposalId)) {
+            await db.updateProposal(sibling.id, { status: "DISMISSED" });
+          }
+        }
         await reconcileCaseAfterDismiss(caseId);
         await completeRun(caseId, runId);
         return { status: "dismissed", proposalId: gate.proposalId };
@@ -638,7 +695,7 @@ export const processInbound = task({
       // APPROVE falls through to execute
     }
 
-    // Step 9: Execute
+    // Step 9: Execute primary action
     await markStep("execute_action", `Run #${runId}: executing action`, { action_type: decision.actionType });
     const execution = await executeAction(
       caseId, gate.proposalId, decision.actionType, runId,
@@ -646,6 +703,61 @@ export const processInbound = task({
       draft.researchContactResult, draft.researchBrief,
       classification.classification
     );
+
+    // Step 9b: Execute chain follow-ups sequentially
+    if (execution.actionExecuted && gate.chainId && chainDrafts.size > 0) {
+      await markStep("execute_chain", `Run #${runId}: executing chain follow-ups`, { chain_id: gate.chainId });
+      const chainProposals = await db.getChainProposals(gate.chainId);
+
+      for (const stepProposal of chainProposals.filter((p: any) => p.chain_step > 0)) {
+        const stepDraft = chainDrafts.get(stepProposal.action_type);
+        if (!stepDraft) continue;
+
+        // Use DB-stored drafts if user edited them in the dashboard, fall back to in-memory
+        const finalSubject = stepProposal.draft_subject || stepDraft.subject;
+        const finalBodyText = stepProposal.draft_body_text || stepDraft.bodyText;
+        const finalBodyHtml = stepDraft.bodyHtml;
+
+        try {
+          // Transition chain sibling from CHAIN_PENDING → APPROVED
+          await db.updateProposal(stepProposal.id, { status: "APPROVED" });
+
+          const stepExecution = await executeAction(
+            caseId, stepProposal.id, stepProposal.action_type, runId,
+            { subject: finalSubject, bodyText: finalBodyText, bodyHtml: finalBodyHtml },
+            null, [`Chain step ${stepProposal.chain_step + 1}: ${stepProposal.action_type}`],
+            stepDraft.researchContactResult, stepDraft.researchBrief,
+            classification.classification,
+            { chainId: gate.chainId }
+          );
+
+          if (!stepExecution.actionExecuted) {
+            logger.warn("Chain step failed to execute", {
+              caseId, chainId: gate.chainId, step: stepProposal.chain_step,
+              actionType: stepProposal.action_type,
+            });
+            // Mark case for human review — partial chain execution
+            await caseRuntime.transitionCaseRuntime(caseId, "CASE_NEEDS_REVIEW", {
+              substatus: `Partial chain: ${decision.actionType} executed, ${stepProposal.action_type} failed`,
+            });
+            break;
+          }
+
+          logger.info("Chain step executed", {
+            caseId, chainId: gate.chainId, step: stepProposal.chain_step,
+            actionType: stepProposal.action_type,
+          });
+        } catch (err: any) {
+          logger.error("Chain step execution error", {
+            caseId, chainId: gate.chainId, step: stepProposal.chain_step, error: err.message,
+          });
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_NEEDS_REVIEW", {
+            substatus: `Chain error: ${decision.actionType} executed, ${stepProposal.action_type} failed: ${err.message}`,
+          });
+          break;
+        }
+      }
+    }
 
     // Step 10: Commit
     await markStep("commit_state", `Run #${runId}: committing state`);
@@ -661,6 +773,7 @@ export const processInbound = task({
       proposalId: gate.proposalId,
       actionType: decision.actionType,
       executed: execution.actionExecuted,
+      chainId: gate.chainId || undefined,
     };
   },
 });

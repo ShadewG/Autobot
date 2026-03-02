@@ -378,6 +378,26 @@ router.post('/proposals/:id/decision', async (req, res) => {
       logger.info('Applied inline draft edits before approval', { proposalId, fields: Object.keys(draftUpdates) });
     }
 
+    // Apply chain follow-up draft edits (if user edited the chain step in the dashboard)
+    const { chain_draft_body_text, chain_draft_subject } = req.body;
+    if (action === 'APPROVE' && proposal.chain_id && (chain_draft_body_text !== undefined || chain_draft_subject !== undefined)) {
+      try {
+        const chainProposals = await db.getChainProposals(proposal.chain_id);
+        const followUp = chainProposals.find(p => p.chain_step > 0);
+        if (followUp) {
+          const chainUpdates = {};
+          if (chain_draft_body_text !== undefined) chainUpdates.draft_body_text = chain_draft_body_text;
+          if (chain_draft_subject !== undefined) chainUpdates.draft_subject = chain_draft_subject;
+          if (Object.keys(chainUpdates).length > 0) {
+            await db.updateProposal(followUp.id, chainUpdates);
+            logger.info('Applied chain follow-up draft edits', { proposalId: followUp.id, chainId: proposal.chain_id, fields: Object.keys(chainUpdates) });
+          }
+        }
+      } catch (chainErr) {
+        logger.warn('Failed to apply chain draft edits (non-fatal)', { proposalId, chainId: proposal.chain_id, error: chainErr.message });
+      }
+    }
+
     // Build human decision object (full details for graph and DB)
     const humanDecision = {
       action,

@@ -84,6 +84,7 @@ import {
   Copy,
   Check,
   ChevronRight,
+  ArrowRight,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -436,11 +437,24 @@ function RequestDetailContent() {
     setNextAction(data?.next_action_proposal || null);
   }, [data?.next_action_proposal]);
 
+  // Chain draft editing state
+  const [editedChainSubject, setEditedChainSubject] = useState<string>("");
+  const [editedChainBody, setEditedChainBody] = useState<string>("");
+
   // Keep edited draft in sync when pending_proposal changes
   useEffect(() => {
     setEditedBody(data?.pending_proposal?.draft_body_text || "");
     setEditedSubject(data?.pending_proposal?.draft_subject || "");
-  }, [data?.pending_proposal?.draft_body_text, data?.pending_proposal?.draft_subject]);
+    // Sync chain follow-up draft
+    const chain = data?.pending_proposal?.action_chain;
+    if (chain && chain.length > 1) {
+      setEditedChainSubject(chain[1].draftSubject || "");
+      setEditedChainBody(chain[1].draftBodyText || "");
+    } else {
+      setEditedChainSubject("");
+      setEditedChainBody("");
+    }
+  }, [data?.pending_proposal?.draft_body_text, data?.pending_proposal?.draft_subject, data?.pending_proposal?.action_chain]);
 
   // Get last inbound message
   const lastInboundMessage = useMemo(() => {
@@ -551,6 +565,16 @@ function RequestDetailContent() {
       // Include any edits the user made to the draft
       if (editedBody && editedBody !== (data.pending_proposal.draft_body_text || "")) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== (data.pending_proposal.draft_subject || "")) body.draft_subject = editedSubject;
+      // Include chain follow-up draft edits
+      const chain = data.pending_proposal.action_chain;
+      if (chain && chain.length > 1) {
+        if (editedChainBody && editedChainBody !== (chain[1].draftBodyText || "")) {
+          body.chain_draft_body_text = editedChainBody;
+        }
+        if (editedChainSubject && editedChainSubject !== (chain[1].draftSubject || "")) {
+          body.chain_draft_subject = editedChainSubject;
+        }
+      }
 
       const res = await fetch(`/api/proposals/${data.pending_proposal.id}/decision`, {
         method: "POST",
@@ -1264,7 +1288,10 @@ function RequestDetailContent() {
   const pendingCardTitle = isEmailLikePendingAction
     ? "Draft Pending Approval"
     : "Proposal Pending Approval";
-  const pendingApproveLabel = isEmailLikePendingAction ? "Send" : "Approve";
+  const hasChain = (pending_proposal?.action_chain?.length ?? 0) > 1;
+  const pendingApproveLabel = hasChain
+    ? `Approve ${pending_proposal!.action_chain!.length} Actions`
+    : isEmailLikePendingAction ? "Send" : "Approve";
   const pendingDelivery = getDeliveryTarget(pendingActionType || null, request, agency_summary || null);
   const nextDelivery = pendingDelivery
     ? pendingDelivery
@@ -1880,6 +1907,28 @@ function RequestDetailContent() {
                               value={editedBody}
                               onChange={(e) => setEditedBody(e.target.value)}
                             />
+                            {/* Chain follow-up action draft */}
+                            {pending_proposal.action_chain && pending_proposal.action_chain.length > 1 && (
+                              <div className="border-t border-dashed pt-3 mt-3 space-y-2">
+                                <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                                  <ArrowRight className="h-3 w-3" /> Then: {ACTION_TYPE_LABELS[pending_proposal.action_chain[1].actionType]?.label || pending_proposal.action_chain[1].actionType}
+                                </span>
+                                {pending_proposal.action_chain[1].draftSubject && (
+                                  <input
+                                    className="w-full bg-background border rounded px-2 py-1 text-xs font-[inherit]"
+                                    value={editedChainSubject}
+                                    onChange={(e) => setEditedChainSubject(e.target.value)}
+                                    placeholder="Follow-up Subject"
+                                  />
+                                )}
+                                <textarea
+                                  className="w-full bg-background border rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
+                                  rows={8}
+                                  value={editedChainBody}
+                                  onChange={(e) => setEditedChainBody(e.target.value)}
+                                />
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground">

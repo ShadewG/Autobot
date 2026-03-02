@@ -413,7 +413,7 @@ router.get('/:id/workspace', async (req, res) => {
 
         // Fetch latest active proposal (includes DECISION_RECEIVED for review_state)
         const pendingProposalResult = await db.query(`
-            SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason, confidence, gate_options
+            SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason, confidence, gate_options, action_chain, chain_id
             FROM proposals
             WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
             ORDER BY created_at DESC

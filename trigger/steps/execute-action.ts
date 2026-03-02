@@ -90,7 +90,8 @@ export async function executeAction(
   reasoning: string[],
   researchContactResult?: any,
   researchBrief?: any,
-  classification?: string | null
+  classification?: string | null,
+  options?: { chainId?: string }
 ): Promise<{ actionExecuted: boolean; executionResult: ExecutionResult | null }> {
   // AI Router v2: apply classification side effects at execution time
   if (isAIRouterV2Active(caseId) && classification) {
@@ -158,26 +159,30 @@ export async function executeAction(
     "REFORMULATE_REQUEST", "SUBMIT_PORTAL",
   ];
   if (OUTBOUND_ACTIONS.includes(actionType)) {
-    const cooldownHours = parseInt(process.env.OUTBOUND_COOLDOWN_HOURS || "24", 10);
-    if (cooldownHours > 0) {
-      const recent = await db.query(
-        `SELECT id FROM executions
-         WHERE case_id = $1 AND status IN ('QUEUED', 'SENT')
-           AND action_type = ANY($2::text[])
-           AND created_at > NOW() - make_interval(hours => $3)
-         LIMIT 1`,
-        [caseId, OUTBOUND_ACTIONS, cooldownHours]
-      );
-      if (recent.rows.length > 0) {
-        logger.warn("Outbound rate limit hit", { caseId, proposalId, actionType, cooldownHours });
-        await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_BLOCKED", {
-          proposalId,
-          error: `Rate limit: already sent within ${cooldownHours}h. Approve to override.`,
-        });
-        return {
-          actionExecuted: false,
-          executionResult: { action: "rate_limited", cooldownHours },
-        };
+    // Skip rate limit for chain follow-ups (pre-approved as part of chain)
+    const isChainFollowUp = options?.chainId != null;
+    if (!isChainFollowUp) {
+      const cooldownHours = parseInt(process.env.OUTBOUND_COOLDOWN_HOURS || "24", 10);
+      if (cooldownHours > 0) {
+        const recent = await db.query(
+          `SELECT id FROM executions
+           WHERE case_id = $1 AND status IN ('QUEUED', 'SENT')
+             AND action_type = ANY($2::text[])
+             AND created_at > NOW() - make_interval(hours => $3)
+           LIMIT 1`,
+          [caseId, OUTBOUND_ACTIONS, cooldownHours]
+        );
+        if (recent.rows.length > 0) {
+          logger.warn("Outbound rate limit hit", { caseId, proposalId, actionType, cooldownHours });
+          await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_BLOCKED", {
+            proposalId,
+            error: `Rate limit: already sent within ${cooldownHours}h. Approve to override.`,
+          });
+          return {
+            actionExecuted: false,
+            executionResult: { action: "rate_limited", cooldownHours },
+          };
+        }
       }
     }
   }

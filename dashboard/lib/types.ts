@@ -490,6 +490,13 @@ export interface PortalHelper {
   preferred_delivery: string;
 }
 
+export interface ChainActionItem {
+  actionType: string;
+  draftSubject: string | null;
+  draftBodyText: string | null;
+  draftBodyHtml: string | null;
+}
+
 export interface PendingProposal {
   id: number;
   action_type: string;
@@ -501,6 +508,8 @@ export interface PendingProposal {
   pause_reason: string | null;
   confidence?: number | null;
   gate_options?: string[] | null;
+  action_chain?: ChainActionItem[] | null;
+  chain_id?: string | null;
 }
 
 export interface AgentDecision {

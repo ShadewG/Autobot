@@ -161,6 +161,15 @@ export interface DecisionResult {
   // For clarification override: redirect to a different inbound message
   overrideMessageId?: number;
   researchLevel?: ResearchLevel;
+  // Optional follow-up action to execute after the primary (action chains)
+  followUpAction?: ActionType;
+}
+
+export interface ChainAction {
+  actionType: ActionType;
+  draftSubject: string | null;
+  draftBodyText: string | null;
+  draftBodyHtml: string | null;
 }
 
 export interface DraftResult {
@@ -197,6 +206,9 @@ export interface ProposalRecord {
   waitpoint_token: string | null;
   version: number;
   execution_key: string | null;
+  action_chain: ChainAction[] | null;
+  chain_id: string | null;
+  chain_step: number | null;
 }
 
 export interface ExecutionResult {

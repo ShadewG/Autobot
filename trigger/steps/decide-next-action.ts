@@ -39,6 +39,22 @@ const ALWAYS_GATE_ACTIONS: ActionType[] = [
   "CLOSE_CASE", "ESCALATE", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW",
 ];
 
+// Valid action chain pairs: primary → allowed follow-ups
+const VALID_CHAINS: Record<string, ActionType[]> = {
+  DECLINE_FEE: ["REFORMULATE_REQUEST", "SEND_INITIAL_REQUEST"],
+  RESPOND_PARTIAL_APPROVAL: ["SEND_FOLLOWUP"],
+};
+
+function validateFollowUpAction(
+  primaryAction: ActionType,
+  followUpAction: ActionType | null | undefined
+): ActionType | undefined {
+  if (!followUpAction || followUpAction === "NONE") return undefined;
+  const allowed = VALID_CHAINS[primaryAction];
+  if (!allowed || !allowed.includes(followUpAction)) return undefined;
+  return followUpAction;
+}
+
 function useAIRouter(caseId: number): boolean {
   if (AI_ROUTER_V2 === "true") return true;
   if (AI_ROUTER_V2 === "false") return false;
@@ -104,9 +120,10 @@ function buildAllowedActions(params: {
   // Classification-specific narrowing
   if (classification === "FEE_QUOTE") {
     // Fee quotes should use fee actions primarily
+    // Include REFORMULATE_REQUEST and SEND_INITIAL_REQUEST as valid chain follow-ups for DECLINE_FEE
     return base.filter(a =>
       ["ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE", "SEND_FEE_WAIVER_REQUEST",
-       "SEND_REBUTTAL", "ESCALATE", "NONE"].includes(a)
+       "SEND_REBUTTAL", "ESCALATE", "NONE", "REFORMULATE_REQUEST", "SEND_INITIAL_REQUEST"].includes(a)
     );
   }
 
@@ -437,7 +454,15 @@ ${allowedActionsSection}
 - "medium" = contacts + state law research
 - "deep" = full custodian chain research
 
-Choose exactly one action from the ALLOWED ACTIONS list. Provide concise reasoning. Set researchLevel appropriately.`;
+### Action Chains (followUpAction)
+When TWO sequential actions are clearly needed, set followUpAction to the second action. Both will be drafted, reviewed, and executed together.
+Valid chains:
+- DECLINE_FEE → REFORMULATE_REQUEST: Decline expensive fee AND submit a narrower request
+- DECLINE_FEE → SEND_INITIAL_REQUEST: Decline fee AND send a fresh request to a different contact
+- RESPOND_PARTIAL_APPROVAL → SEND_FOLLOWUP: Accept partial records AND follow up on missing ones
+Use followUpAction=null (default) when only one action is needed. Do NOT chain if the follow-up depends on the outcome of the first action.
+
+Choose exactly one primary action from the ALLOWED ACTIONS list. Optionally set followUpAction if a chain is appropriate. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 
 async function makeAIDecisionV2(params: {
@@ -550,20 +575,33 @@ async function makeAIDecisionV2(params: {
         finalRequiresHuman = true;
       }
 
+      // Validate follow-up action chain
+      const validatedFollowUp = validateFollowUpAction(
+        object.action as ActionType,
+        (object as any).followUpAction as ActionType | null
+      );
+
       logger.info("AI Router v2 decision made", {
         caseId, classification, action: object.action, confidence: object.confidence,
         attempt, requiresHuman: finalRequiresHuman,
+        followUpAction: validatedFollowUp || null,
       });
 
+      // Chains always require human review
+      const chainRequiresHuman = validatedFollowUp ? true : finalRequiresHuman;
+
       return decision(object.action as ActionType, {
-        canAutoExecute: autopilotMode === "AUTO" && !finalRequiresHuman && !ALWAYS_GATE_ACTIONS.includes(object.action as ActionType),
-        requiresHuman: finalRequiresHuman,
-        pauseReason: finalRequiresHuman ? (object.pauseReason || "SENSITIVE") : null,
-        reasoning: object.reasoning,
+        canAutoExecute: validatedFollowUp ? false : (autopilotMode === "AUTO" && !finalRequiresHuman && !ALWAYS_GATE_ACTIONS.includes(object.action as ActionType)),
+        requiresHuman: chainRequiresHuman,
+        pauseReason: chainRequiresHuman ? (object.pauseReason || "SENSITIVE") : null,
+        reasoning: validatedFollowUp
+          ? [...object.reasoning, `Action chain: ${object.action} → ${validatedFollowUp}`]
+          : object.reasoning,
         adjustmentInstruction: object.adjustmentInstruction,
         isComplete: object.action === "NONE",
         researchLevel: (object as any).researchLevel || "none",
         overrideMessageId: (object as any).overrideMessageId || undefined,
+        followUpAction: validatedFollowUp,
       });
     } catch (error: any) {
       lastError = error.message;
@@ -1274,14 +1312,25 @@ async function aiDecision(params: {
       });
     }
 
+    // Validate follow-up action chain (v1 path)
+    const validatedFollowUp = validateFollowUpAction(
+      object.action as ActionType,
+      (object as any).followUpAction as ActionType | null
+    );
+
+    const chainRequiresHuman = validatedFollowUp ? true : requiresHuman;
+
     return decision(object.action, {
-      canAutoExecute,
-      requiresHuman,
-      pauseReason: requiresHuman ? (object.pauseReason || "SENSITIVE") : null,
-      reasoning: object.reasoning,
+      canAutoExecute: validatedFollowUp ? false : canAutoExecute,
+      requiresHuman: chainRequiresHuman,
+      pauseReason: chainRequiresHuman ? (object.pauseReason || "SENSITIVE") : null,
+      reasoning: validatedFollowUp
+        ? [...object.reasoning, `Action chain: ${object.action} → ${validatedFollowUp}`]
+        : object.reasoning,
       adjustmentInstruction: object.adjustmentInstruction,
       isComplete: object.action === "NONE",
       researchLevel: (object as any).researchLevel || "none",
+      followUpAction: validatedFollowUp,
     });
   } catch (error: any) {
     logger.warn("AI decision failed; using deterministic fallback", {

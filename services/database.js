@@ -1648,6 +1648,15 @@ class DatabaseService {
                      WHERE id = ANY($1) AND status = ANY($2)`,
                     [staleIds, ACTIVE_PROPOSAL_STATUSES]
                 );
+                // Also dismiss any CHAIN_PENDING siblings of the stale proposals
+                const staleChainIds = existing.rows.filter(r => r.chain_id).map(r => r.chain_id);
+                if (staleChainIds.length > 0) {
+                    await this.query(
+                        `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
+                         WHERE chain_id = ANY($1) AND status = 'CHAIN_PENDING'`,
+                        [staleChainIds]
+                    );
+                }
             }
         }
 
@@ -1658,8 +1667,9 @@ class DatabaseService {
                 reasoning, confidence, risk_flags, warnings,
                 can_auto_execute, requires_human, status,
                 langgraph_thread_id, adjustment_count, lessons_applied,
-                gate_options
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                gate_options,
+                action_chain, chain_id, chain_step
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update when existing row is PENDING_APPROVAL, or system-DISMISSED
                 -- (auto-superseded, no human_decision). Human-dismissed proposals must
@@ -1762,6 +1772,24 @@ class DatabaseService {
                     THEN EXCLUDED.gate_options
                     ELSE proposals.gate_options
                 END,
+                action_chain = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN EXCLUDED.action_chain
+                    ELSE proposals.action_chain
+                END,
+                chain_id = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN EXCLUDED.chain_id
+                    ELSE proposals.chain_id
+                END,
+                chain_step = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN EXCLUDED.chain_step
+                    ELSE proposals.chain_step
+                END,
                 updated_at = CASE
                     WHEN proposals.status = 'PENDING_APPROVAL'
                       OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
@@ -1795,7 +1823,10 @@ class DatabaseService {
             proposalData.langgraphThreadId || null,
             proposalData.adjustmentCount || 0,
             proposalData.lessonsApplied ? JSON.stringify(proposalData.lessonsApplied) : null,
-            proposalData.gateOptions ? JSON.stringify(proposalData.gateOptions) : null
+            proposalData.gateOptions ? JSON.stringify(proposalData.gateOptions) : null,
+            proposalData.actionChain ? JSON.stringify(proposalData.actionChain) : null,
+            proposalData.chainId || null,
+            proposalData.chainStep != null ? proposalData.chainStep : null
         ];
 
         try {
@@ -1875,6 +1906,17 @@ class DatabaseService {
             [proposalId]
         );
         return result.rows[0];
+    }
+
+    /**
+     * Get all proposals in an action chain, ordered by step.
+     */
+    async getChainProposals(chainId) {
+        const result = await this.query(
+            'SELECT * FROM proposals WHERE chain_id = $1 ORDER BY chain_step ASC',
+            [chainId]
+        );
+        return result.rows;
     }
 
     /**
