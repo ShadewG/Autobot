@@ -727,10 +727,10 @@ function RequestDetailContent() {
     }
   };
 
-  const handleStartRequestForAgency = async (caseAgencyId: number) => {
+  const handleStartRequestForAgency = async (caseAgencyId: number, freshCaseAgency?: CaseAgency) => {
     if (!id) return;
     const caseId = parseInt(id, 10);
-    const caseAgency = data?.case_agencies?.find((ca) => Number(ca.id) === Number(caseAgencyId));
+    const caseAgency = freshCaseAgency || data?.case_agencies?.find((ca) => Number(ca.id) === Number(caseAgencyId));
     if (!caseAgency) {
       toast.error("Agency not found on this case");
       return;
@@ -797,7 +797,7 @@ function RequestDetailContent() {
         added_source: candidate.source || "research_candidate",
       });
       if (startAfterAdd && caseAgency?.id) {
-        await handleStartRequestForAgency(caseAgency.id);
+        await handleStartRequestForAgency(caseAgency.id, caseAgency);
       } else {
         mutate();
       }
@@ -829,7 +829,7 @@ function RequestDetailContent() {
       setManualAgencyPortalUrl("");
 
       if (startAfterAdd && caseAgency?.id) {
-        await handleStartRequestForAgency(caseAgency.id);
+        await handleStartRequestForAgency(caseAgency.id, caseAgency);
       } else {
         mutate();
       }
