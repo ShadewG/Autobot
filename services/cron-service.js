@@ -1190,6 +1190,38 @@ class CronService {
             console.error('Error in stuck agent run cleanup:', error);
         }
 
+        // Sweep 4b: Transition cases stuck with "Resolving:" substatus > 30 min
+        // These had a human-review reprocess dispatched but ALL runs failed/were cleaned,
+        // leaving the case with requires_human=false and a stale substatus.
+        let staleResolvingFixed = 0;
+        try {
+            const staleResult = await db.query(`
+                UPDATE cases
+                SET requires_human = true,
+                    substatus = 'Reprocess failed — needs review',
+                    pause_reason = 'agent_run_failed'
+                WHERE substatus LIKE 'Resolving:%'
+                  AND updated_at < NOW() - INTERVAL '30 minutes'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM agent_runs ar
+                      WHERE ar.case_id = cases.id
+                        AND ar.status IN ('queued', 'running', 'waiting')
+                  )
+                RETURNING id
+            `);
+            staleResolvingFixed = staleResult.rowCount || 0;
+            if (staleResolvingFixed > 0) {
+                const caseIds = staleResult.rows.map(r => r.id);
+                console.log(`Fixed ${staleResolvingFixed} cases stuck with stale Resolving substatus: ${caseIds.join(', ')}`);
+                await db.logActivity('stale_resolving_fixed',
+                    `Fixed ${staleResolvingFixed} cases with stale "Resolving:" substatus`,
+                    { case_ids: caseIds }
+                );
+            }
+        } catch (error) {
+            console.error('Error in stale Resolving substatus sweep:', error);
+        }
+
         // Sweep 5: Retry proposals stuck in DECISION_RECEIVED > 5 minutes
         // These are proposals the user approved but the resume job failed (e.g. Redis timeout)
         // Max 5 retries — after that, mark as failed and escalate
@@ -1416,7 +1448,7 @@ class CronService {
             console.error('Error in stuck portal_tasks sweep:', error);
         }
 
-        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, stuckDecisionsRetried, staleHumanFlagsCleared, stuckPortalTasksCleaned };
+        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, staleResolvingFixed, stuckDecisionsRetried, staleHumanFlagsCleared, stuckPortalTasksCleaned };
     }
 
     /**

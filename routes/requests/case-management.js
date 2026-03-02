@@ -458,6 +458,19 @@ router.post('/:id/resolve-review', async (req, res) => {
         });
     } catch (error) {
         log.error(`Error resolving review: ${error.message}`);
+
+        // Rollback: re-flag for human review so the case doesn't get stuck with
+        // requires_human=false and a stale "Resolving:" substatus
+        try {
+            await db.updateCase(requestId, {
+                requires_human: true,
+                substatus: 'Reprocess dispatch failed',
+                pause_reason: 'agent_run_failed',
+            });
+        } catch (rollbackErr) {
+            log.error(`Failed to rollback case ${requestId} after dispatch failure: ${rollbackErr.message}`);
+        }
+
         res.status(500).json({
             success: false,
             error: error.message

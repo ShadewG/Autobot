@@ -105,15 +105,15 @@ export const PAUSE_REASON_LABELS: Record<string, string> = {
   UNSPECIFIED: 'Needs Review',
 };
 
-// Format "no response" age + SLA deadline info
+// Format "no response" age + due date status using the same due clock shown in the table.
 export function formatNoResponseAge(
-  lastActivityAt: string | null | undefined,
-  statutoryDueAt: string | null | undefined
+  lastResponseAt: string | null | undefined,
+  dueAt: string | null | undefined
 ): string {
   const parts: string[] = [];
 
-  if (lastActivityAt) {
-    const d = new Date(lastActivityAt);
+  if (lastResponseAt) {
+    const d = new Date(lastResponseAt);
     if (!isNaN(d.getTime())) {
       const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
       parts.push(`No response (${days}d)`);
@@ -124,8 +124,8 @@ export function formatNoResponseAge(
     parts.push('No response');
   }
 
-  if (statutoryDueAt) {
-    const due = new Date(statutoryDueAt);
+  if (dueAt) {
+    const due = new Date(dueAt);
     if (!isNaN(due.getTime())) {
       const diffMs = due.getTime() - Date.now();
       const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
@@ -140,9 +140,54 @@ export function formatNoResponseAge(
   return parts.join(' · ');
 }
 
+// US state name → 2-letter code (mirrors STATE_ABBREVIATIONS in notion-service.js)
+const US_STATES: Record<string, string> = {
+  'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR', 'california': 'CA',
+  'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE', 'district of columbia': 'DC',
+  'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID', 'illinois': 'IL',
+  'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS', 'kentucky': 'KY', 'louisiana': 'LA',
+  'maine': 'ME', 'maryland': 'MD', 'massachusetts': 'MA', 'michigan': 'MI',
+  'minnesota': 'MN', 'mississippi': 'MS', 'missouri': 'MO', 'montana': 'MT',
+  'nebraska': 'NE', 'nevada': 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ',
+  'new mexico': 'NM', 'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND',
+  'ohio': 'OH', 'oklahoma': 'OK', 'oregon': 'OR', 'pennsylvania': 'PA',
+  'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', 'tennessee': 'TN',
+  'texas': 'TX', 'utah': 'UT', 'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA',
+  'west virginia': 'WV', 'wisconsin': 'WI', 'wyoming': 'WY',
+};
+
+// Reverse lookup: "AL" → true
+const VALID_STATE_CODES = new Set(Object.values(US_STATES));
+
+// Try to extract a state code from the trailing ", State" or ", XX" in an agency name
+function parseStateFromAgencyName(agencyName: string): string | null {
+  const match = agencyName.match(/,\s*([^,]+)$/);
+  if (!match) return null;
+  const suffix = match[1].trim();
+
+  // Try 2-letter code first (", AL")
+  const upper = suffix.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper) && VALID_STATE_CODES.has(upper)) return upper;
+
+  // Try full name (", Alabama")
+  const code = US_STATES[suffix.toLowerCase()];
+  if (code) return code;
+
+  return null;
+}
+
 // Check if agency name looks unresolved/generic
 export function isUnknownAgency(request: { state: string | null | undefined; agency_name: string }): boolean {
-  if (!request.state || request.state === '—' || request.state.trim() === '') return true;
+  // If state is present, trust it
+  let hasState = !!(request.state && request.state !== '—' && request.state.trim() !== '');
+
+  // Fallback: try to parse state from agency name suffix (e.g. "Lawrence County Sheriff's Office, Alabama")
+  if (!hasState) {
+    hasState = parseStateFromAgencyName(request.agency_name) !== null;
+  }
+
+  if (!hasState) return true;
+
   const generic = /^(Police|Fire|City|County|Sheriff|School|Water|Transit)\s+(Department|District|Board|Authority)$/i;
   return generic.test(request.agency_name.trim());
 }

@@ -14,6 +14,7 @@ const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const logger = require('../services/logger');
+const { normalizeStateCode, parseStateFromAgencyName } = require('../utils/state-utils');
 
 /**
  * Extract Notion page ID from various URL formats
@@ -263,8 +264,9 @@ router.post('/import-direct', async (req, res) => {
   if (!requests.length) return res.status(400).json({ success: false, error: 'At least one request/agency is required' });
 
   try {
-    // Normalize state to 2-letter uppercase
-    const normalizedState = state ? state.trim().toUpperCase().slice(0, 2) : null;
+    // Normalize state to 2-letter uppercase; fall back to parsing from primary agency name
+    const normalizedState = normalizeStateCode(state)
+      || parseStateFromAgencyName((requests[0] || {}).agency_name);
 
     // Parse incident_date to ISO YYYY-MM-DD
     let parsedDate = null;
