@@ -16,7 +16,7 @@ import type {
   AgencySummary,
   ScopeItem,
 } from "@/lib/types";
-import { formatCurrency, formatDate, formatReasoning } from "@/lib/utils";
+import { formatCurrency, formatDate, formatReasoning, humanizeRiskFlag } from "@/lib/utils";
 import {
   AlertTriangle,
   DollarSign,
@@ -122,7 +122,7 @@ export function CopilotPanel({
                 </Badge>
                 {nextAction.risk_flags.map((flag, i) => (
                   <Badge key={i} variant="destructive" className="text-xs">
-                    {flag}
+                    {humanizeRiskFlag(flag)}
                   </Badge>
                 ))}
               </div>

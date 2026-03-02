@@ -100,8 +100,8 @@ function getWhyHereInfo(request: RequestListItem, variant: TableVariant): {
     // No response
     return {
       text: formatNoResponseAge(
-        request.last_activity_at,
-        request.due_info?.statutory_due_at
+        request.last_inbound_at || request.last_activity_at,
+        request.next_due_at || request.due_info?.statutory_due_at
       ),
       tone: "amber",
       icon: "clock",

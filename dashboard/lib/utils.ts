@@ -192,6 +192,49 @@ export function isUnknownAgency(request: { state: string | null | undefined; age
   return generic.test(request.agency_name.trim());
 }
 
+// Risk flag humanization — maps raw SCREAMING_SNAKE flags to user-friendly text
+const RISK_FLAG_LABELS: Record<string, string> = {
+  CONTAINS_PII: 'Contains personal info (SSN, etc.)',
+  REQUESTS_EXEMPT_ITEM: 'Requests records the agency marked exempt',
+  CONTRADICTS_FEE_ACCEPTANCE: 'Contradicts a prior fee acceptance',
+  CONTRADICTS_SCOPE_NARROWING: 'Re-expands scope after narrowing',
+  LAW_JURISDICTION_MISMATCH: 'Cites wrong jurisdiction\'s law',
+  REQUESTS_CLOSURE_CONFIRM_NO_BALANCE: 'Asks to close — confirm no balance',
+  REQUESTS_POTENTIALLY_EXEMPT_RESTRICTED_RECORDS: 'Requests potentially restricted records',
+  POTENTIAL_SCOPE_CONTRADICTION_WITH_PRIOR_ITEMS: 'Scope may conflict with earlier items',
+  NO_DRAFT: 'No draft generated',
+  MISSING_DRAFT: 'Draft is missing',
+  DRAFT_EMPTY: 'Draft is empty',
+};
+
+export function humanizeRiskFlag(flag: string): string {
+  // Exact match first
+  const exact = RISK_FLAG_LABELS[flag];
+  if (exact) return exact;
+
+  // Normalize: replace underscores with spaces, title-case
+  return flag
+    .replace(/_/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Condense a list of review warnings into a short summary + details.
+// Returns { summary: string, details: string[] } where summary is ≤ 2 sentences.
+export function condenseReviewNotes(warnings: string[]): { summary: string; details: string[] } {
+  if (warnings.length === 0) return { summary: '', details: [] };
+  if (warnings.length === 1) return { summary: warnings[0], details: [] };
+
+  // Try to find the most actionable warnings (ones with "should", "must", "consider", "may")
+  const actionable = warnings.filter((w) =>
+    /\b(should|must|consider|review|confirm|verify|check|ensure|avoid|risk)\b/i.test(w)
+  );
+  const summary = actionable.length > 0 ? actionable[0] : warnings[0];
+  const details = warnings.filter((w) => w !== summary);
+
+  return { summary, details };
+}
+
 // Status display labels
 export const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Draft',

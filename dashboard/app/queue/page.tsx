@@ -21,7 +21,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { fetchAPI, fetcher, proposalsAPI, type ProposalListItem, type ProposalsListResponse } from "@/lib/api";
-import { cn, formatReasoning, ACTION_TYPE_LABELS } from "@/lib/utils";
+import { cn, formatReasoning, ACTION_TYPE_LABELS, humanizeRiskFlag } from "@/lib/utils";
 import {
   CheckCircle,
   XCircle,
@@ -180,7 +180,7 @@ function ProposalCard({
           )}
           {proposal.risk_flags?.map((flag, i) => (
             <Badge key={i} variant="destructive" className="text-xs">
-              {flag}
+              {humanizeRiskFlag(flag)}
             </Badge>
           ))}
           {proposal.warnings?.map((warning, i) => (

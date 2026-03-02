@@ -104,12 +104,48 @@ function deriveCostStatus(caseData) {
     return 'QUOTED';
 }
 
+const STATE_RESPONSE_DAYS = {
+    CA: 10, TX: 10, NY: 5, FL: 14, IL: 7, PA: 5, OH: 10, GA: 3, NC: 14, MI: 5,
+    NJ: 7, VA: 5, WA: 5, AZ: 5, MA: 10, TN: 7, IN: 7, MO: 3, MD: 30, WI: 10,
+    CO: 3, MN: 10, SC: 15, AL: 10, LA: 3, KY: 3, OR: 5, OK: 3, CT: 4, UT: 10,
+    IA: 10, NV: 5, AR: 3, MS: 7, KS: 3, NM: 15, NE: 4, ID: 3, WV: 5, HI: 10,
+    NH: 5, ME: 5, MT: 5, RI: 10, DE: 15, SD: 5, ND: 5, AK: 10, DC: 15, VT: 3,
+    WY: 5,
+    DEFAULT: 10,
+};
+
 /**
- * Build due_info object from case data
+ * Build due_info object from case data.
+ *
+ * Dynamic statutory clock:
+ * - Anchor is latest known correspondence baseline (last_response_date, else send_date)
+ * - Statutory due is anchor + state response days
+ * - Explicit workflow due dates (next_due_at from follow-up/snooze) take precedence
  */
 function buildDueInfo(caseData) {
     const dueInfo = caseData.due_info_jsonb || {};
-    const nextDueAt = caseData.next_due_at || caseData.deadline_date;
+
+    const stateCode = String(caseData.state || '').toUpperCase();
+    const statutoryDays = Number.isFinite(Number(dueInfo.statutory_days))
+        ? Number(dueInfo.statutory_days)
+        : (STATE_RESPONSE_DAYS[stateCode] || STATE_RESPONSE_DAYS.DEFAULT);
+
+    const statutoryAnchor = caseData.last_response_date || caseData.send_date || null;
+    let dynamicStatutoryDueAt = null;
+    if (statutoryAnchor && statutoryDays) {
+        const anchorDate = new Date(statutoryAnchor);
+        if (!Number.isNaN(anchorDate.getTime())) {
+            anchorDate.setDate(anchorDate.getDate() + statutoryDays);
+            dynamicStatutoryDueAt = anchorDate.toISOString();
+        }
+    }
+
+    const explicitNextDueAt = caseData.next_due_at || null;
+    const fallbackStatutoryDueAt = dynamicStatutoryDueAt || dueInfo.statutory_due_at || caseData.deadline_date || null;
+    const nextDueAt = explicitNextDueAt || fallbackStatutoryDueAt;
+
+    const inferredDueType = dueInfo.due_type
+        || (explicitNextDueAt ? 'FOLLOW_UP' : (fallbackStatutoryDueAt ? 'STATUTORY' : null));
 
     // Calculate overdue status
     let isOverdue = false;
@@ -117,17 +153,17 @@ function buildDueInfo(caseData) {
     if (nextDueAt) {
         const dueDate = new Date(nextDueAt);
         const now = new Date();
-        if (dueDate < now) {
+        if (!Number.isNaN(dueDate.getTime()) && dueDate < now) {
             isOverdue = true;
             overdueDays = Math.floor((now - dueDate) / (1000 * 60 * 60 * 24));
         }
     }
 
     return {
-        next_due_at: nextDueAt || null,
-        due_type: dueInfo.due_type || (caseData.deadline_date ? 'STATUTORY' : null),
-        statutory_days: dueInfo.statutory_days || null,
-        statutory_due_at: dueInfo.statutory_due_at || caseData.deadline_date || null,
+        next_due_at: nextDueAt,
+        due_type: inferredDueType,
+        statutory_days: statutoryDays || null,
+        statutory_due_at: fallbackStatutoryDueAt,
         snoozed_until: dueInfo.snoozed_until || null,
         is_overdue: isOverdue,
         overdue_days: overdueDays

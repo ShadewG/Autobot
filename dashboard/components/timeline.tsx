@@ -12,7 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { TimelineEvent, EventType } from "@/lib/types";
-import { formatDateTime, cn } from "@/lib/utils";
+import { formatDateTime, cn, humanizeRiskFlag } from "@/lib/utils";
 import {
   FileText,
   Send,
@@ -39,6 +39,124 @@ import {
   Shield,
   Zap,
 } from "lucide-react";
+
+const categoryLabels: Record<TimelineEvent["category"], string> = {
+  MESSAGE: "Messages",
+  STATUS: "Case updates",
+  COST: "Fees",
+  RESEARCH: "Research",
+  AGENT: "AI activity",
+  GATE: "Decision",
+};
+
+const eventTypeLabels: Partial<Record<EventType, string>> = {
+  CREATED: "Case created",
+  SENT: "Request sent",
+  RECEIVED: "Response received",
+  EMAIL_SENT: "Email sent",
+  EMAIL_RECEIVED: "Email received",
+  FEE_QUOTE: "Fee quote",
+  FEE_ACCEPTED: "Fee approved",
+  FEE_NEGOTIATED: "Fee negotiated",
+  DENIAL: "Denied",
+  PARTIAL_DENIAL: "Partially denied",
+  RECORDS_PROVIDED: "Records provided",
+  FOLLOW_UP: "Follow-up",
+  FOLLOWUP_SCHEDULED: "Follow-up scheduled",
+  FOLLOWUP_TRIGGERED: "Follow-up started",
+  PORTAL_TASK: "Portal task",
+  PORTAL_TASK_CREATED: "Portal task started",
+  PORTAL_TASK_COMPLETED: "Portal task completed",
+  GATE_TRIGGERED: "Decision required",
+  PROPOSAL_QUEUED: "Proposal queued",
+  PROPOSAL_CREATED: "Proposal created",
+  PROPOSAL_APPROVED: "Proposal approved",
+  PROPOSAL_DISMISSED: "Proposal dismissed",
+  PROPOSAL_ADJUSTED: "Proposal adjusted",
+  RUN_STARTED: "AI run started",
+  RUN_COMPLETED: "AI run completed",
+  RUN_FAILED: "AI run failed",
+  RUN_GATED: "AI run waiting for decision",
+  HUMAN_DECISION: "Decision recorded",
+  HUMAN_APPROVAL: "Approval recorded",
+  ACTION_EXECUTED: "Action executed",
+  ACTION_DRY_RUN: "Action preview",
+  CONSTRAINT_DETECTED: "Constraint detected",
+  SCOPE_UPDATED: "Scope updated",
+  STATUS_CHANGED: "Status updated",
+  CASE_CLOSED: "Case closed",
+  CASE_WITHDRAWN: "Case withdrawn",
+};
+
+const runStepLabels: Record<string, string> = {
+  "loading inbound context": "reviewing latest inbound context",
+  "classifying inbound message": "analyzing inbound message",
+  "updating constraints/scope from classification": "updating scope and constraints",
+  "deciding next action": "choosing the next action",
+  "running research context": "checking agency/research context",
+  "generating draft": "drafting message",
+  "drafting chain follow-up": "drafting follow-up step",
+  "safety checking draft": "running safety checks",
+  "creating proposal and evaluating gate": "preparing recommendation for review",
+  "waiting for human decision": "waiting for your decision",
+  "executing action": "executing approved action",
+  "committing state": "saving case state",
+  "started process-inbound": "started inbound processing",
+  "started process-initial-request": "started initial request processing",
+  "started process-followup": "started follow-up processing",
+};
+
+function fallbackLabel(value: string): string {
+  return value
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function extractRunNumber(summary: string): string | null {
+  const match = summary.match(/^Run\s+#?(\d+):/i);
+  return match?.[1] ?? null;
+}
+
+function humanizeRunStep(step: string): string {
+  const normalized = step.trim().toLowerCase();
+  return runStepLabels[normalized] || normalized;
+}
+
+function getFriendlySummary(event: TimelineEvent): string {
+  const summary = (event.summary || "").trim();
+  if (!summary) return eventTypeLabels[event.type] || fallbackLabel(event.type);
+
+  const runMatch = summary.match(/^Run\s+#?(\d+):\s*(.+)$/i);
+  if (runMatch) {
+    const [, runId, step] = runMatch;
+    return `AI run #${runId}: ${humanizeRunStep(step)}`;
+  }
+
+  if (/^Reset to latest inbound #\d+ and queued fresh processing$/i.test(summary)) {
+    return "Case was reset to the latest inbound message and re-queued";
+  }
+
+  if (/^Auto-dispatched initial request for case/i.test(summary)) {
+    return "Initial request was auto-queued";
+  }
+
+  const statusMatch = summary.match(/^Case status changed to "(.+?)"/i);
+  if (statusMatch) {
+    return `Case status updated to ${statusMatch[1]}`;
+  }
+
+  if (/^Process-[\w-]+ failed for case \d+:/i.test(summary)) {
+    return "Automated processing failed";
+  }
+
+  return summary;
+}
+
+function getFriendlyEventLabel(event: TimelineEvent): string {
+  return eventTypeLabels[event.type] || fallbackLabel(event.type);
+}
 
 const eventIcons: Record<string, React.ReactNode> = {
   // Case lifecycle
@@ -196,8 +314,12 @@ interface TimelineEventItemProps {
   mergedCount?: number;
 }
 
-const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, mergedCount }: TimelineEventItemProps) {
+const TimelineEventItem = memo(function TimelineEventItem({ event, mergedCount }: TimelineEventItemProps) {
   const [expanded, setExpanded] = useState(false);
+  const runNumber = extractRunNumber(event.summary || "");
+  const categoryLabel = categoryLabels[event.category || "STATUS"];
+  const eventLabel = getFriendlyEventLabel(event);
+  const friendlySummary = getFriendlySummary(event);
 
   return (
     <div className="flex gap-3 pb-4">
@@ -211,9 +333,12 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-medium text-sm">{event.summary}</span>
-          <Badge variant="outline" className="text-[10px]">{event.type}</Badge>
-          <Badge variant="secondary" className="text-[10px]">{event.category || "STATUS"}</Badge>
+          <span className="font-medium text-sm">{friendlySummary}</span>
+          <Badge variant="secondary" className="text-[10px]">{eventLabel}</Badge>
+          <Badge variant="outline" className="text-[10px]">{categoryLabel}</Badge>
+          {runNumber && (
+            <Badge variant="outline" className="text-[10px]">Run #{runNumber}</Badge>
+          )}
           {mergedCount && mergedCount > 1 && (
             <Badge variant="outline" className="text-[10px]">
               <Layers className="h-2.5 w-2.5 mr-1" />
@@ -262,6 +387,9 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
 
         {expanded && (
           <div className="mt-2 space-y-2">
+            <div className="text-[11px] text-muted-foreground">
+              Event: {event.type} • Category: {event.category || "STATUS"}
+            </div>
             {/* AI Audit */}
             {event.ai_audit && (
               <Card>
@@ -311,7 +439,7 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, collapsed, me
                       <span className="text-xs text-muted-foreground">Flags:</span>
                       {event.ai_audit.risk_flags.map((flag, i) => (
                         <Badge key={i} variant="destructive" className="text-[10px]">
-                          {flag}
+                          {humanizeRiskFlag(flag)}
                         </Badge>
                       ))}
                     </div>

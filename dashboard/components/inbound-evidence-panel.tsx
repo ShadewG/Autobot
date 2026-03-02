@@ -17,7 +17,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, humanizeRiskFlag } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import {
   Mail,
@@ -361,7 +361,7 @@ export function InboundEvidencePanel({
               <div className="flex flex-wrap gap-1">
                 {analysis.risk_flags.map((flag, i) => (
                   <Badge key={i} variant="destructive" className="text-xs">
-                    {flag}
+                    {humanizeRiskFlag(flag)}
                   </Badge>
                 ))}
               </div>

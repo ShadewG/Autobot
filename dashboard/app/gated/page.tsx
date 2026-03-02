@@ -23,7 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn, formatRelativeTime, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
 import {
@@ -552,6 +552,7 @@ function MonitorPageContent() {
     startedAt: number;
   } | null>(null);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
+  const [reviewNotesExpanded, setReviewNotesExpanded] = useState(false);
   const [showDestructiveConfirm, setShowDestructiveConfirm] = useState<{
     title: string;
     description: string;
@@ -1633,57 +1634,75 @@ function MonitorPageContent() {
                     variant="outline"
                     className="text-[10px] text-amber-400 border-amber-700/50"
                   >
-                    {flag.replace(/_/g, " ")}
+                    {humanizeRiskFlag(flag)}
                   </Badge>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Review notes from safety check */}
-          {warnings.length > 0 && (
-            <div className="border border-border bg-muted/50 p-3">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                Review Notes
-              </p>
-              {warnings.map((w, i) => (
-                <p key={i} className="text-xs text-muted-foreground">
-                  {i + 1}. {w}
-                </p>
-              ))}
-            </div>
-          )}
+          {/* Review notes from safety check — condensed */}
+          {warnings.length > 0 && (() => {
+            const { summary, details } = condenseReviewNotes(warnings);
+            return (
+              <Collapsible open={reviewNotesExpanded} onOpenChange={setReviewNotesExpanded}>
+                <div className="border border-border bg-muted/50 p-3">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Review Notes
+                    {warnings.length > 1 && (
+                      <span className="ml-1 font-normal">({warnings.length})</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{summary}</p>
+                  {details.length > 0 && (
+                    <>
+                      <CollapsibleContent>
+                        {details.map((w, i) => (
+                          <p key={i} className="text-xs text-muted-foreground mt-1">
+                            • {w}
+                          </p>
+                        ))}
+                      </CollapsibleContent>
+                      <CollapsibleTrigger asChild>
+                        <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
+                          {reviewNotesExpanded ? (
+                            <><ChevronUp className="h-3 w-3" /> Show less</>
+                          ) : (
+                            <><ChevronDown className="h-3 w-3" /> +{details.length} more</>
+                          )}
+                        </button>
+                      </CollapsibleTrigger>
+                    </>
+                  )}
+                </div>
+              </Collapsible>
+            );
+          })()}
 
-          {/* Reasoning */}
+          {/* Reasoning — show top 2, collapse rest */}
           {reasoning.length > 0 && (
             <Collapsible open={reasoningExpanded} onOpenChange={setReasoningExpanded}>
               <div className="border p-3">
-                <SectionLabel>Reasoning</SectionLabel>
-                {reasoning.slice(0, 3).map((r, i) => (
+                <SectionLabel>Reasoning ({reasoning.length})</SectionLabel>
+                {reasoning.slice(0, 2).map((r, i) => (
                   <p key={i} className="text-xs text-foreground/80 mb-1">
-                    <span className="text-muted-foreground mr-1.5 tabular-nums">
-                      {i + 1}.
-                    </span>
-                    {typeof r === "string" ? r : JSON.stringify(r)}
+                    • {formatReasoningItem(r)}
                   </p>
                 ))}
                 <CollapsibleContent>
-                  {reasoning.slice(3).map((r, i) => (
-                    <p key={i + 3} className="text-xs text-foreground/80 mb-1">
-                      <span className="text-muted-foreground mr-1.5 tabular-nums">
-                        {i + 4}.
-                      </span>
-                      {typeof r === "string" ? r : JSON.stringify(r)}
+                  {reasoning.slice(2).map((r, i) => (
+                    <p key={i + 2} className="text-xs text-foreground/80 mb-1">
+                      • {formatReasoningItem(r)}
                     </p>
                   ))}
                 </CollapsibleContent>
-                {reasoning.length > 3 && (
+                {reasoning.length > 2 && (
                   <CollapsibleTrigger asChild>
                     <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
                       {reasoningExpanded ? (
                         <><ChevronUp className="h-3 w-3" /> Show less</>
                       ) : (
-                        <><ChevronDown className="h-3 w-3" /> Show {reasoning.length - 3} more...</>
+                        <><ChevronDown className="h-3 w-3" /> +{reasoning.length - 2} more</>
                       )}
                     </button>
                   </CollapsibleTrigger>
