@@ -37,6 +37,10 @@ import { Timeline } from "@/components/timeline";
 import { Thread } from "@/components/thread";
 import { Composer } from "@/components/composer";
 import { CopilotPanel } from "@/components/copilot-panel";
+import { ScopeTable, ScopeSummary } from "@/components/scope-table";
+import { ConstraintsDisplay } from "@/components/constraints-display";
+import { FeeBreakdown } from "@/components/fee-breakdown";
+import { ExemptionClaimsList } from "@/components/exemption-claim-card";
 import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
@@ -104,17 +108,6 @@ const DISMISS_REASONS = [
   "Not needed",
 ];
 
-const SCOPE_STATUS_ICONS: Record<string, { icon: string; color: string }> = {
-  REQUESTED: { icon: "○", color: "text-muted-foreground" },
-  CONFIRMED_AVAILABLE: { icon: "✓", color: "text-green-400" },
-  DELIVERED: { icon: "✓", color: "text-green-400" },
-  NOT_DISCLOSABLE: { icon: "✕", color: "text-red-400" },
-  DENIED: { icon: "✕", color: "text-red-400" },
-  EXEMPT: { icon: "✕", color: "text-red-400" },
-  NOT_HELD: { icon: "–", color: "text-yellow-400" },
-  PENDING: { icon: "○", color: "text-muted-foreground" },
-  PARTIAL: { icon: "◐", color: "text-amber-400" },
-};
 
 function getControlStateDisplay(controlState?: string | null) {
   const key = String(controlState || "").toUpperCase();
@@ -210,6 +203,24 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
+function CollapsibleSection({ title, defaultOpen = true, count, children }: {
+  title: string;
+  defaultOpen?: boolean;
+  count?: number | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <details open={defaultOpen || undefined} className="border-b border-border/50 group">
+      <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
+        {title}
+        {count != null && <span className="ml-auto text-muted-foreground">{count}</span>}
+      </summary>
+      <div className="px-3 pb-2">{children}</div>
+    </details>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 function DetailV2Content() {
@@ -253,6 +264,8 @@ function DetailV2Content() {
   const [editedChainBody, setEditedChainBody] = useState<string>("");
   // Secondary tabs at bottom
   const [bottomTab, setBottomTab] = useState<string | null>(null);
+  // Scope editing
+  const [isUpdatingScope, setIsUpdatingScope] = useState(false);
 
   // ── Polling ────────────────────────────────────────────────────────────────
   const [pollingUntil, setPollingUntil] = useState<number>(0);
@@ -665,6 +678,19 @@ function DetailV2Content() {
     mutate();
   };
 
+  const handleScopeStatusChange = async (itemIndex: number, newStatus: Parameters<typeof requestsAPI.updateScopeItem>[2], reason?: string) => {
+    if (!id) return;
+    setIsUpdatingScope(true);
+    try {
+      await requestsAPI.updateScopeItem(id, itemIndex, newStatus, reason);
+      mutate();
+    } catch {
+      toast.error("Failed to update scope item status");
+    } finally {
+      setIsUpdatingScope(false);
+    }
+  };
+
   const handleAddToPhoneQueue = async () => {
     if (!id) return;
     try {
@@ -919,7 +945,7 @@ function DetailV2Content() {
       <div className="flex-1 flex min-h-0">
         {/* ── LEFT PANEL: Action + Thread ──────────────────────────────────── */}
         <div className="flex-1 flex flex-col min-w-0 border-r border-border/50">
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1 h-0">
             <div className="p-0">
               {/* Draft case CTA */}
               {(request.status === 'DRAFT' || request.status === 'READY_TO_SEND') && !request.submitted_at && (
@@ -1162,172 +1188,171 @@ function DetailV2Content() {
           </ScrollArea>
         </div>
 
-        {/* ── RIGHT PANEL: Intel Sidebar ───────────────────────────────────── */}
-        <div className="w-[320px] shrink-0 flex flex-col min-h-0">
-          <ScrollArea className="flex-1">
-            {/* Portal overlay */}
-            {portalTaskActive && (
-              <div className="border-b border-border/50">
-                <SectionHeader>PORTAL LIVE</SectionHeader>
-                <div className="px-3 pb-3">
+        {/* ── RIGHT PANEL: Intel Sidebar or Tab Takeover ──────────────────── */}
+        <div className="w-[380px] shrink-0 flex flex-col min-h-0">
+          {bottomTab === "case-info" ? (
+            <ScrollArea className="flex-1 h-0">
+              <div className="p-3">
+                <CaseInfoTab request={request} agencySummary={agency_summary} deadlineMilestones={deadline_milestones} stateDeadline={state_deadline} />
+              </div>
+            </ScrollArea>
+          ) : bottomTab === "agency" ? (
+            <ScrollArea className="flex-1 h-0">
+              <div className="p-3">
+                <CopilotPanel
+                  request={request}
+                  nextAction={nextAction}
+                  agency={agency_summary}
+                  onChallenge={() => setAdjustModalOpen(true)}
+                  onRefresh={mutate}
+                />
+              </div>
+            </ScrollArea>
+          ) : (
+            <ScrollArea className="flex-1 h-0">
+              {/* Portal overlay */}
+              {portalTaskActive && (
+                <CollapsibleSection title="PORTAL LIVE">
                   <PortalLiveView
                     caseId={id!}
                     initialScreenshotUrl={request.last_portal_screenshot_url}
                     portalTaskUrl={request.last_portal_task_url}
                   />
-                </div>
-              </div>
-            )}
+                </CollapsibleSection>
+              )}
 
-            {/* AGENCY */}
-            <div className="border-b border-border/50">
-              <SectionHeader>AGENCY</SectionHeader>
-              <div className="px-3 pb-2 space-y-1">
-                <div className="text-xs font-medium">{agency_summary?.name || request.agency_name}</div>
-                {request.state && <span className="text-[10px] text-muted-foreground">{request.state}</span>}
-                {request.agency_email && (
-                  <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                    <Mail className="h-2.5 w-2.5" />
-                    <span className="truncate">{request.agency_email}</span>
+              {/* AGENCY */}
+              <CollapsibleSection title="AGENCY">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium">{agency_summary?.name || request.agency_name}</div>
+                    {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
+                      <a href={`/agencies/detail?id=${agency_summary.id}`} className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
+                        <ExternalLink className="h-2.5 w-2.5" /> Profile
+                      </a>
+                    )}
                   </div>
-                )}
-                {(request.portal_url || agency_summary?.portal_url) && (
-                  <div className="flex items-center gap-1 text-[10px]">
-                    <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                    <a
-                      href={request.portal_url || agency_summary?.portal_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-400 hover:underline truncate"
-                    >
-                      {request.portal_provider || agency_summary?.portal_provider || "Portal"}
-                    </a>
-                  </div>
-                )}
-                {agency_summary?.submission_method && (
-                  <Badge variant="outline" className="text-[10px] px-1 py-0">
-                    {agency_summary.submission_method}
-                  </Badge>
-                )}
-              </div>
-            </div>
-
-            {/* SCOPE */}
-            {request.scope_items && request.scope_items.length > 0 && (
-              <div className="border-b border-border/50">
-                <SectionHeader>SCOPE ({request.scope_items.length})</SectionHeader>
-                <div className="px-3 pb-2 space-y-0.5">
-                  {request.scope_items.map((item, i) => {
-                    const display = SCOPE_STATUS_ICONS[item.status] || SCOPE_STATUS_ICONS.PENDING;
-                    return (
-                      <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                        <span className={cn("shrink-0 w-3 text-center", display.color)}>{display.icon}</span>
-                        <span className="text-foreground leading-tight">{item.name}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* FEES */}
-            {(request.fee_quote || request.cost_amount != null) && (
-              <div className="border-b border-border/50">
-                <SectionHeader>FEES</SectionHeader>
-                <div className="px-3 pb-2 space-y-0.5">
-                  {request.fee_quote ? (
-                    <>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-muted-foreground">Amount</span>
-                        <span className="font-medium">{formatCurrency(request.fee_quote.amount)}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">Status</span>
-                        <Badge variant="outline" className="text-[10px] px-1 py-0">{request.fee_quote.status}</Badge>
-                      </div>
-                      {request.fee_quote.deposit_amount != null && request.fee_quote.deposit_amount > 0 && (
-                        <div className="flex items-center justify-between text-[10px]">
-                          <span className="text-muted-foreground">Deposit</span>
-                          <span>{formatCurrency(request.fee_quote.deposit_amount)}</span>
+                  {request.state && <span className="text-[10px] text-muted-foreground">{request.state}</span>}
+                  {request.agency_email && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Mail className="h-2.5 w-2.5" />
+                      <span className="truncate">{request.agency_email}</span>
+                    </div>
+                  )}
+                  {(request.portal_url || agency_summary?.portal_url) && (
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                      <a
+                        href={request.portal_url || agency_summary?.portal_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 hover:underline truncate"
+                      >
+                        {request.portal_provider || agency_summary?.portal_provider || "Portal"}
+                      </a>
+                    </div>
+                  )}
+                  {agency_summary?.submission_method && (
+                    <Badge variant="outline" className="text-[10px] px-1 py-0">
+                      {agency_summary.submission_method}
+                    </Badge>
+                  )}
+                  {agency_summary?.rules && (
+                    <div className="text-[10px] space-y-1 pt-1 border-t border-border/30">
+                      {agency_summary.rules.fee_auto_approve_threshold !== null && agency_summary.rules.fee_auto_approve_threshold !== undefined && (
+                        <div className="flex items-center justify-between text-muted-foreground">
+                          <span>Auto-approve fees under</span>
+                          <span className="font-medium text-foreground">{formatCurrency(agency_summary.rules.fee_auto_approve_threshold)}</span>
                         </div>
                       )}
-                      {request.fee_quote.breakdown && request.fee_quote.breakdown.length > 0 && (
-                        <details className="text-[10px] mt-1">
-                          <summary className="text-muted-foreground cursor-pointer hover:text-foreground">Breakdown ({request.fee_quote.breakdown.length} items)</summary>
-                          <div className="mt-1 space-y-0.5">
-                            {request.fee_quote.breakdown.map((b, i) => (
-                              <div key={i} className="flex justify-between">
-                                <span className="text-muted-foreground truncate">{b.item}</span>
-                                <span>{formatCurrency(b.subtotal)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
+                      {agency_summary.rules.always_human_gates && agency_summary.rules.always_human_gates.length > 0 && (
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className="text-muted-foreground">Always-human:</span>
+                          {agency_summary.rules.always_human_gates.map((g: string, i: number) => (
+                            <Badge key={i} variant="secondary" className="text-[10px]">{g}</Badge>
+                          ))}
+                        </div>
                       )}
-                    </>
-                  ) : (
-                    <div className="text-[10px] text-muted-foreground">
-                      {request.cost_amount != null && request.cost_amount > 0 ? formatCurrency(request.cost_amount) : "None quoted"}
                     </div>
                   )}
                 </div>
-              </div>
-            )}
+              </CollapsibleSection>
 
-            {/* DEADLINE */}
-            {deadline_milestones && deadline_milestones.length > 0 && (
-              <div className="border-b border-border/50">
-                <SectionHeader>DEADLINE</SectionHeader>
-                <div className="px-3 pb-2">
+              {/* SCOPE */}
+              <CollapsibleSection title="SCOPE" count={request.scope_items?.length}>
+                {request.scope_items && request.scope_items.length > 0 && (
+                  <ScopeSummary items={request.scope_items} />
+                )}
+                <ScopeTable
+                  items={request.scope_items || []}
+                  onStatusChange={handleScopeStatusChange}
+                  isUpdating={isUpdatingScope}
+                />
+                {(!request.scope_items || request.scope_items.length === 0) && (
+                  <div className="text-[10px] text-muted-foreground">No scope items</div>
+                )}
+              </CollapsibleSection>
+
+              {/* FEES */}
+              <CollapsibleSection title="FEES">
+                {request.fee_quote && request.fee_quote.amount > 0 ? (
+                  <FeeBreakdown feeQuote={request.fee_quote} scopeItems={request.scope_items} className="border-0 bg-transparent p-0 shadow-none" />
+                ) : (
+                  <div className="text-[10px] text-muted-foreground">
+                    {request.cost_amount != null && request.cost_amount > 0 ? formatCurrency(request.cost_amount) : "None quoted"}
+                  </div>
+                )}
+              </CollapsibleSection>
+
+              {/* DEADLINE */}
+              {deadline_milestones && deadline_milestones.length > 0 && (
+                <CollapsibleSection title="DEADLINE">
                   <DeadlineCalculator
                     milestones={deadline_milestones}
                     stateDeadline={state_deadline}
                     compact
                   />
-                </div>
-              </div>
-            )}
+                </CollapsibleSection>
+              )}
 
-            {/* CONSTRAINTS */}
-            {request.constraints && request.constraints.length > 0 && (
-              <div className="border-b border-border/50">
-                <SectionHeader>CONSTRAINTS</SectionHeader>
-                <div className="px-3 pb-2 space-y-1">
-                  {request.constraints.map((c, i) => (
-                    <div key={i} className="text-[11px] flex gap-1.5">
-                      <span className="text-muted-foreground shrink-0">-</span>
-                      <div>
-                        <span className="text-foreground">{c.description}</span>
-                        {c.source && <span className="text-muted-foreground ml-1">({c.source})</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              {/* CONSTRAINTS */}
+              {request.constraints && request.constraints.length > 0 && (
+                <CollapsibleSection title="CONSTRAINTS" count={request.constraints.length}>
+                  <ConstraintsDisplay constraints={request.constraints} />
+                </CollapsibleSection>
+              )}
 
-            {/* TIMELINE (compact) */}
-            <div className="border-b border-border/50">
-              <SectionHeader>TIMELINE</SectionHeader>
-              <div className="px-3 pb-2">
+              {/* EXEMPTION CLAIMS */}
+              {request.constraints && request.constraints.length > 0 && (
+                <CollapsibleSection title="EXEMPTION CLAIMS" defaultOpen={false}>
+                  <ExemptionClaimsList
+                    constraints={request.constraints}
+                    state={request.state || ""}
+                    requestId={String(request.id)}
+                    onChallenge={(instruction) => {
+                      setAdjustModalOpen(true);
+                    }}
+                  />
+                </CollapsibleSection>
+              )}
+
+              {/* TIMELINE (compact) */}
+              <CollapsibleSection title="TIMELINE" count={timeline_events.length}>
                 <Timeline events={timeline_events.slice(0, 12)} />
-              </div>
-            </div>
+              </CollapsibleSection>
 
-            {/* Portal history */}
-            {hasPortalHistory && (
-              <div className="border-b border-border/50">
-                <SectionHeader>PORTAL HISTORY</SectionHeader>
-                <div className="px-3 pb-2">
+              {/* Portal history */}
+              {hasPortalHistory && (
+                <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
                   <PortalLiveView
                     caseId={id!}
                     portalTaskUrl={request.last_portal_task_url}
                     isLive={false}
                   />
-                </div>
-              </div>
-            )}
-          </ScrollArea>
+                </CollapsibleSection>
+              )}
+            </ScrollArea>
+          )}
         </div>
       </div>
 
@@ -1355,8 +1380,8 @@ function DetailV2Content() {
             </button>
           ))}
         </div>
-        {/* Drawer */}
-        {bottomTab && (
+        {/* Drawer - only for runs/agent-log; case-info and agency take over right panel */}
+        {(bottomTab === "runs" || bottomTab === "agent-log") && (
           <div className="max-h-[300px] overflow-auto border-t border-border/50">
             {bottomTab === "runs" && (
               <div className="p-3">
@@ -1401,22 +1426,6 @@ function DetailV2Content() {
                 )) : (
                   <p className="text-xs text-muted-foreground">No agent decisions yet</p>
                 )}
-              </div>
-            )}
-            {bottomTab === "agency" && (
-              <div className="p-3">
-                <CopilotPanel
-                  request={request}
-                  nextAction={nextAction}
-                  agency={agency_summary}
-                  onChallenge={() => setAdjustModalOpen(true)}
-                  onRefresh={mutate}
-                />
-              </div>
-            )}
-            {bottomTab === "case-info" && (
-              <div className="p-3">
-                <CaseInfoTab request={request} agencySummary={agency_summary} deadlineMilestones={deadline_milestones} stateDeadline={state_deadline} />
               </div>
             )}
           </div>
