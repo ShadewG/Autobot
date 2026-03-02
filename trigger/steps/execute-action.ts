@@ -80,6 +80,17 @@ function buildReplyHeaders(
   };
 }
 
+function normalizeEmail(value: any): string | null {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || !raw.includes("@")) return null;
+  return raw;
+}
+
+function isAutoBotMailbox(email: string | null): boolean {
+  if (!email) return false;
+  return email.endsWith("@foib-request.com") || email.endsWith("@autobot.local");
+}
+
 export async function executeAction(
   caseId: number,
   proposalId: number,
@@ -205,13 +216,55 @@ export async function executeAction(
   const caseData = await db.getCaseById(caseId);
 
   // Resolve target agency
-  let targetEmail = caseData?.agency_email;
+  let targetEmail = normalizeEmail(caseData?.agency_email);
   let targetPortalUrl = caseData?.portal_url;
+  let resolvedCaseAgencyId = caseAgencyId || null;
   if (caseAgencyId) {
     const targetAgency = await db.getCaseAgencyById(caseAgencyId);
     if (targetAgency) {
-      targetEmail = targetAgency.agency_email || targetEmail;
+      targetEmail = normalizeEmail(targetAgency.agency_email) || targetEmail;
       targetPortalUrl = targetAgency.portal_url || targetPortalUrl;
+    }
+  }
+
+  // Fallback: for portal-threaded agencies (e.g. NextRequest), the reliable
+  // destination can exist on email_threads / latest inbound even when
+  // cases.agency_email is null.
+  const thread = await db.getThreadByCaseId(caseId);
+  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const inboundFrom = normalizeEmail(latestInbound?.from_email);
+  const threadAgencyEmail = normalizeEmail(thread?.agency_email);
+  if (!targetEmail) {
+    const fallbackTargetEmail = [threadAgencyEmail, inboundFrom].find(
+      (candidate) => candidate && !isAutoBotMailbox(candidate)
+    ) || null;
+    if (fallbackTargetEmail) {
+      targetEmail = fallbackTargetEmail;
+      logger.info("Resolved target email from thread/inbound fallback", {
+        caseId,
+        proposalId,
+        actionType,
+        fallbackTargetEmail,
+      });
+
+      // Persist learned destination so future runs/UI resolve consistently.
+      try {
+        if (!resolvedCaseAgencyId) {
+          const primary = await db.getPrimaryCaseAgency(caseId);
+          if (primary?.id) resolvedCaseAgencyId = primary.id;
+        }
+        if (resolvedCaseAgencyId) {
+          await db.updateCaseAgency(resolvedCaseAgencyId, { agency_email: fallbackTargetEmail });
+        } else {
+          await db.updateCase(caseId, { agency_email: fallbackTargetEmail });
+        }
+      } catch (persistErr: any) {
+        logger.warn("Failed to persist fallback target email", {
+          caseId,
+          fallbackTargetEmail,
+          error: persistErr?.message || String(persistErr),
+        });
+      }
     }
   }
 
@@ -328,8 +381,6 @@ export async function executeAction(
         return { actionExecuted: false, executionResult: { action: "portal_task_created", ...portalResult } };
       }
 
-      const thread = await db.getThreadByCaseId(caseId);
-      const latestInbound = await db.getLatestInboundMessage(caseId);
       // REFORMULATE_REQUEST is a brand-new FOIA request — send as fresh email, not a reply
       const isFreshEmail = resolvedActionType === "REFORMULATE_REQUEST" || resolvedActionType === "SEND_INITIAL_REQUEST";
       const replyHeaders = isFreshEmail ? {} : buildReplyHeaders(targetEmail, latestInbound);
@@ -494,7 +545,17 @@ export async function executeAction(
         break;
       }
 
-      const suggestedAgency = brief?.suggested_agencies?.[0] || null;
+      const suggestedAgencies = Array.isArray(brief?.suggested_agencies)
+        ? brief.suggested_agencies
+        : [];
+      const inboundTextForAgencyHint = `${latestInbound?.subject || ""}\n${latestInbound?.body_text || ""}`.toLowerCase();
+      const prefersIowaDCI = /iowa\s+dci|division of criminal investigation|department of public safety/.test(inboundTextForAgencyHint);
+      const suggestedAgency = prefersIowaDCI
+        ? (suggestedAgencies.find((a: any) => {
+            const n = String(a?.name || "").toLowerCase();
+            return n.includes("iowa") && (n.includes("dci") || n.includes("division of criminal investigation") || n.includes("department of public safety"));
+          }) || suggestedAgencies[0] || null)
+        : (suggestedAgencies[0] || null);
       if (!suggestedAgency?.name) {
         await ensureResearchHandoffProposal(
           "no-suggested-agency",
@@ -510,8 +571,25 @@ export async function executeAction(
         break;
       }
 
-      let newEmail = contactResult?.contact_email || null;
-      let newPortalUrl = contactResult?.portal_url || null;
+      // Never bind generic contact lookup output to a different suggested agency.
+      // Example failure mode: contactResult for Milford accidentally applied to DCI.
+      let newEmail = null;
+      let newPortalUrl = null;
+      const contactName = String(contactResult?.agency_name || contactResult?.name || "").trim().toLowerCase();
+      const suggestedName = String(suggestedAgency?.name || "").trim().toLowerCase();
+      const contactMatchesSuggested = !!contactName && (
+        contactName.includes(suggestedName) || suggestedName.includes(contactName)
+      );
+      if (contactResult && contactMatchesSuggested) {
+        newEmail = contactResult.contact_email || null;
+        newPortalUrl = contactResult.portal_url || null;
+      } else if (contactResult && !contactMatchesSuggested) {
+        logger.warn("Skipping mismatched contactResult for suggested agency", {
+          caseId,
+          suggestedAgency: suggestedAgency?.name || null,
+          contactAgency: contactResult?.agency_name || contactResult?.name || null,
+        });
+      }
       let agencyId = null;
       try {
         const known = await db.findAgencyByName(suggestedAgency.name, caseData?.state || null);
