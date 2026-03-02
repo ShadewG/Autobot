@@ -128,6 +128,10 @@ export const submitPortal = task({
 
     logger.info("submit-portal started", { caseId, portalUrl, portalTaskId, agentRunId });
 
+    const linkedProposalId = portalTaskId
+      ? Number((await db.query("SELECT proposal_id FROM portal_tasks WHERE id = $1 LIMIT 1", [portalTaskId])).rows[0]?.proposal_id || 0) || undefined
+      : undefined;
+
     // Mark agent_run as running
     if (agentRunId) {
       try {
@@ -155,6 +159,7 @@ export const submitPortal = task({
         substatus: `Portal circuit breaker: ${failCount} failures in ${FAILURE_WINDOW_HOURS}h`,
         pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
+        proposalId: linkedProposalId,
         error: "Circuit breaker triggered",
       });
       await closeAgentRun("failed", "Circuit breaker triggered");
@@ -182,6 +187,7 @@ export const submitPortal = task({
         substatus: `Portal hard limit: ${todayRuns} today (max ${MAX_PORTAL_RUNS_PER_DAY}), ${totalRuns} total (max ${MAX_PORTAL_RUNS_TOTAL})`,
         pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
+        proposalId: linkedProposalId,
         error: "Hard rate limit hit",
       });
       await closeAgentRun("failed", "Hard rate limit");
@@ -219,6 +225,7 @@ export const submitPortal = task({
         substatus: "No online portal available (paper form required)",
         pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
+        proposalId: linkedProposalId,
         error: "Provider marked paper-only (no online portal)",
       });
       await closeAgentRun("failed", "Provider is paper-only");
@@ -263,6 +270,7 @@ export const submitPortal = task({
         substatus: "No portal URL available for submission",
         pauseReason: "PORTAL_ABORTED",
         portalTaskId: portalTaskId || undefined,
+        proposalId: linkedProposalId,
         error: "Missing portal URL",
       });
       await closeAgentRun("failed", "Missing portal URL");
@@ -285,6 +293,7 @@ export const submitPortal = task({
           substatus: `Portal account ${portalAccount.account_status} — manual login needed`,
           pauseReason: "PORTAL_ABORTED",
           portalTaskId: portalTaskId || undefined,
+          proposalId: linkedProposalId,
           error: `Portal account blocked: ${portalAccount.account_status}`,
         });
         await closeAgentRun("failed", `Portal account ${portalAccount.account_status}`);
@@ -374,6 +383,7 @@ export const submitPortal = task({
             substatus: `Portal requires manual handling: ${result.status}`,
             pauseReason: "PORTAL_ABORTED",
             portalTaskId: portalTaskId || undefined,
+            proposalId: linkedProposalId,
             error: `Alternative path: ${result.status}`,
           });
           await closeAgentRun("failed", `Alternative path: ${result.status}`);
@@ -391,6 +401,7 @@ export const submitPortal = task({
             substatus: `Portal skipped: ${result.reason}`,
             pauseReason: "PORTAL_ABORTED",
             portalTaskId: portalTaskId || undefined,
+            proposalId: linkedProposalId,
             error: `Skyvern dedup skip: ${result.reason || "already handled"}`,
           });
         } else {
@@ -405,15 +416,10 @@ export const submitPortal = task({
       const statusText = result.status || "submitted";
       const taskUrl = result.taskId ? `https://app.skyvern.com/tasks/${result.taskId}` : null;
 
-      // Resolve linked proposal for the runtime
-      const linkedProposal = portalTaskId
-        ? await db.query(`SELECT proposal_id FROM portal_tasks WHERE id = $1`, [portalTaskId])
-        : null;
-
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_COMPLETED", {
         portalTaskId: portalTaskId || undefined,
         runId: agentRunId || undefined,
-        proposalId: linkedProposal?.rows[0]?.proposal_id || undefined,
+        proposalId: linkedProposalId,
         sendDate: caseData.send_date || new Date().toISOString(),
         confirmationNumber: result.confirmationNumber,
         portalMetadata: {
