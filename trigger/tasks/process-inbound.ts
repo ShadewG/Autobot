@@ -272,7 +272,11 @@ export const processInbound = task({
           );
         }
 
-        await completeRun(caseId, runId);
+        try {
+          await completeRun(caseId, runId);
+        } catch (err: any) {
+          logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
+        }
         return { status: "completed", action: originalActionType, adjusted: true };
       } catch (err: any) {
         logger.error("Adjustment fast-path failed", { caseId, error: err.message });
@@ -688,7 +692,11 @@ export const processInbound = task({
             classification.confidence, "INBOUND_MESSAGE",
             adjustedExecution.actionExecuted, adjustedExecution.executionResult
           );
-          await completeRun(caseId, runId);
+          try {
+            await completeRun(caseId, runId);
+          } catch (err: any) {
+            logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
+          }
           return { status: "completed", proposalId: adjustedGate.proposalId };
         }
       }
@@ -808,7 +816,11 @@ export const processInbound = task({
       execution.actionExecuted, execution.executionResult
     );
 
-    await completeRun(caseId, runId);
+    try {
+      await completeRun(caseId, runId);
+    } catch (err: any) {
+      logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
+    }
     return {
       status: "completed",
       proposalId: gate.proposalId,

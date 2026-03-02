@@ -172,6 +172,21 @@ export async function createProposalAndGate(
     proposal.executed_at = null;
   }
 
+  // Same-run retry guard: if proposal was already EXECUTED by THIS run,
+  // the action completed in a prior attempt — don't re-gate.
+  if (proposal.status === 'EXECUTED' && proposal.run_id === runId) {
+    logger.info("Proposal already executed by this run, skipping re-gate", {
+      caseId, proposalId: proposal.id, runId,
+    });
+    return {
+      proposalId: proposal.id,
+      proposalKey,
+      shouldWait: false,
+      waitpointTokenId: null,
+      chainId,
+    };
+  }
+
   // AUTO EXECUTE PATH
   if (canAutoExecute && !requiresHuman) {
     return {
