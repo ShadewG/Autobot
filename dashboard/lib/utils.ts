@@ -219,20 +219,36 @@ export function humanizeRiskFlag(flag: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-// Condense a list of review warnings into a short summary + details.
-// Returns { summary: string, details: string[] } where summary is ≤ 2 sentences.
-export function condenseReviewNotes(warnings: string[]): { summary: string; details: string[] } {
-  if (warnings.length === 0) return { summary: '', details: [] };
-  if (warnings.length === 1) return { summary: warnings[0], details: [] };
+// Condense review warnings into actionable items vs informational noise.
+// Returns { actionable: string[], informational: string[] }.
+// Actionable = things the reviewer must decide on or watch for.
+// Informational = context/background the AI considered (usually skippable).
+export function condenseReviewNotes(warnings: string[]): { actionable: string[]; informational: string[] } {
+  if (warnings.length === 0) return { actionable: [], informational: [] };
 
-  // Try to find the most actionable warnings (ones with "should", "must", "consider", "may")
-  const actionable = warnings.filter((w) =>
-    /\b(should|must|consider|review|confirm|verify|check|ensure|avoid|risk)\b/i.test(w)
-  );
-  const summary = actionable.length > 0 ? actionable[0] : warnings[0];
-  const details = warnings.filter((w) => w !== summary);
+  const actionable: string[] = [];
+  const informational: string[] = [];
 
-  return { summary, details };
+  for (const w of warnings) {
+    // Actionable: reviewer needs to decide or verify something
+    if (/\b(should|must|consider|confirm|verify|check|ensure|avoid|may trigger|could be seen|re-request)/i.test(w)) {
+      actionable.push(w);
+    } else {
+      informational.push(w);
+    }
+  }
+
+  // If nothing matched as actionable, promote the first warning
+  if (actionable.length === 0 && informational.length > 0) {
+    actionable.push(informational.shift()!);
+  }
+
+  // Cap actionable at 3 — the rest become informational
+  if (actionable.length > 3) {
+    informational.unshift(...actionable.splice(3));
+  }
+
+  return { actionable, informational };
 }
 
 // Status display labels

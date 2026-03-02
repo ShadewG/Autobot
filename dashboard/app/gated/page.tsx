@@ -553,6 +553,7 @@ function MonitorPageContent() {
   } | null>(null);
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const [reviewNotesExpanded, setReviewNotesExpanded] = useState(false);
+  const [riskFlagsExpanded, setRiskFlagsExpanded] = useState(false);
   const [showDestructiveConfirm, setShowDestructiveConfirm] = useState<{
     title: string;
     description: string;
@@ -1252,11 +1253,11 @@ function MonitorPageContent() {
   const INTERNAL_FLAGS = new Set(["NO_DRAFT", "MISSING_DRAFT", "DRAFT_EMPTY"]);
   const riskFlags = (() => {
     if (selectedItem?.type !== "proposal") return [];
-    // Prefer detail data (more complete), fall back to overview
     const detailFlags = proposalDetail?.proposal?.risk_flags;
     const overviewFlags = selectedItem.data.risk_flags;
     const raw = (detailFlags && detailFlags.length > 0 ? detailFlags : overviewFlags) || [];
-    return raw.filter((f: string) => !INTERNAL_FLAGS.has(f));
+    // Deduplicate + filter internal flags
+    return [...new Set(raw)].filter((f: string) => !INTERNAL_FLAGS.has(f));
   })();
 
   const warnings = (() => {
@@ -1621,16 +1622,33 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Risk flags */}
+          {/* Risk flags — deduped, capped at 3 */}
           {riskFlags.length > 0 && (
             <div className="border border-amber-700/50 bg-amber-950/20 p-3">
               <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1 mb-1.5">
-                <AlertTriangle className="h-3 w-3" /> Risk Flags
+                <AlertTriangle className="h-3 w-3" /> Risk Flags ({riskFlags.length})
               </p>
               <div className="flex flex-wrap gap-1">
-                {riskFlags.map((flag, i) => (
+                {riskFlags.slice(0, 3).map((flag, i) => (
                   <Badge
                     key={i}
+                    variant="outline"
+                    className="text-[10px] text-amber-400 border-amber-700/50"
+                  >
+                    {humanizeRiskFlag(flag)}
+                  </Badge>
+                ))}
+                {riskFlags.length > 3 && !riskFlagsExpanded && (
+                  <button
+                    onClick={() => setRiskFlagsExpanded(true)}
+                    className="text-[10px] text-amber-400 hover:underline"
+                  >
+                    +{riskFlags.length - 3} more
+                  </button>
+                )}
+                {riskFlagsExpanded && riskFlags.slice(3).map((flag, i) => (
+                  <Badge
+                    key={i + 3}
                     variant="outline"
                     className="text-[10px] text-amber-400 border-amber-700/50"
                   >
@@ -1641,24 +1659,28 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Review notes from safety check — condensed */}
+          {/* Review notes — only actionable items shown, informational collapsed */}
           {warnings.length > 0 && (() => {
-            const { summary, details } = condenseReviewNotes(warnings);
+            const { actionable, informational } = condenseReviewNotes(warnings);
             return (
               <Collapsible open={reviewNotesExpanded} onOpenChange={setReviewNotesExpanded}>
                 <div className="border border-border bg-muted/50 p-3">
                   <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">
-                    Review Notes
-                    {warnings.length > 1 && (
-                      <span className="ml-1 font-normal">({warnings.length})</span>
-                    )}
+                    Watch For
                   </p>
-                  <p className="text-xs text-muted-foreground">{summary}</p>
-                  {details.length > 0 && (
+                  {actionable.map((w, i) => (
+                    <p key={i} className="text-xs text-muted-foreground mb-1">
+                      • {w}
+                    </p>
+                  ))}
+                  {informational.length > 0 && (
                     <>
                       <CollapsibleContent>
-                        {details.map((w, i) => (
-                          <p key={i} className="text-xs text-muted-foreground mt-1">
+                        <p className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mt-2 mb-1">
+                          Background context
+                        </p>
+                        {informational.map((w, i) => (
+                          <p key={i} className="text-xs text-muted-foreground/70 mb-1">
                             • {w}
                           </p>
                         ))}
@@ -1666,9 +1688,9 @@ function MonitorPageContent() {
                       <CollapsibleTrigger asChild>
                         <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
                           {reviewNotesExpanded ? (
-                            <><ChevronUp className="h-3 w-3" /> Show less</>
+                            <><ChevronUp className="h-3 w-3" /> Hide context</>
                           ) : (
-                            <><ChevronDown className="h-3 w-3" /> +{details.length} more</>
+                            <><ChevronDown className="h-3 w-3" /> +{informational.length} background notes</>
                           )}
                         </button>
                       </CollapsibleTrigger>
@@ -1679,33 +1701,33 @@ function MonitorPageContent() {
             );
           })()}
 
-          {/* Reasoning — show top 2, collapse rest */}
+          {/* Reasoning — show key takeaway, collapse details */}
           {reasoning.length > 0 && (
             <Collapsible open={reasoningExpanded} onOpenChange={setReasoningExpanded}>
               <div className="border p-3">
-                <SectionLabel>Reasoning ({reasoning.length})</SectionLabel>
-                {reasoning.slice(0, 2).map((r, i) => (
-                  <p key={i} className="text-xs text-foreground/80 mb-1">
-                    • {formatReasoningItem(r)}
-                  </p>
-                ))}
-                <CollapsibleContent>
-                  {reasoning.slice(2).map((r, i) => (
-                    <p key={i + 2} className="text-xs text-foreground/80 mb-1">
-                      • {formatReasoningItem(r)}
-                    </p>
-                  ))}
-                </CollapsibleContent>
-                {reasoning.length > 2 && (
-                  <CollapsibleTrigger asChild>
-                    <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
-                      {reasoningExpanded ? (
-                        <><ChevronUp className="h-3 w-3" /> Show less</>
-                      ) : (
-                        <><ChevronDown className="h-3 w-3" /> +{reasoning.length - 2} more</>
-                      )}
-                    </button>
-                  </CollapsibleTrigger>
+                <SectionLabel>Why</SectionLabel>
+                <p className="text-xs text-foreground/80 mb-1">
+                  {formatReasoningItem(reasoning[0])}
+                </p>
+                {reasoning.length > 1 && (
+                  <>
+                    <CollapsibleContent>
+                      {reasoning.slice(1).map((r, i) => (
+                        <p key={i + 1} className="text-xs text-foreground/60 mb-1">
+                          • {formatReasoningItem(r)}
+                        </p>
+                      ))}
+                    </CollapsibleContent>
+                    <CollapsibleTrigger asChild>
+                      <button className="text-[10px] text-primary hover:underline mt-1 flex items-center gap-1">
+                        {reasoningExpanded ? (
+                          <><ChevronUp className="h-3 w-3" /> Hide details</>
+                        ) : (
+                          <><ChevronDown className="h-3 w-3" /> +{reasoning.length - 1} details</>
+                        )}
+                      </button>
+                    </CollapsibleTrigger>
+                  </>
                 )}
               </div>
             </Collapsible>

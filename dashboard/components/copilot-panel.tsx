@@ -16,7 +16,7 @@ import type {
   AgencySummary,
   ScopeItem,
 } from "@/lib/types";
-import { formatCurrency, formatDate, formatReasoning, humanizeRiskFlag } from "@/lib/utils";
+import { formatCurrency, formatDate, formatReasoning, humanizeRiskFlag, condenseReviewNotes } from "@/lib/utils";
 import {
   AlertTriangle,
   DollarSign,
@@ -127,20 +127,23 @@ export function CopilotPanel({
                 ))}
               </div>
 
-              {/* Review notes from safety check */}
-              {nextAction.warnings && nextAction.warnings.length > 0 && (
-                <div className="bg-muted/50 border border-border rounded-lg p-2">
-                  <div className="flex items-start gap-2">
-                    <Info className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div className="text-xs">
-                      <p className="font-medium text-muted-foreground">Review Notes</p>
-                      {nextAction.warnings.map((w, i) => (
-                        <p key={i} className="text-muted-foreground">{w}</p>
-                      ))}
+              {/* Review notes — only actionable items */}
+              {nextAction.warnings && nextAction.warnings.length > 0 && (() => {
+                const { actionable } = condenseReviewNotes(nextAction.warnings);
+                return actionable.length > 0 ? (
+                  <div className="bg-muted/50 border border-border rounded-lg p-2">
+                    <div className="flex items-start gap-2">
+                      <Info className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div className="text-xs">
+                        <p className="font-medium text-muted-foreground">Watch For</p>
+                        {actionable.map((w, i) => (
+                          <p key={i} className="text-muted-foreground">• {w}</p>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                ) : null;
+              })()}
 
               {/* Draft preview - not shown here when decision required (shown in DecisionPanel) */}
               {nextAction.draft_content && (
