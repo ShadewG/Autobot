@@ -421,25 +421,76 @@ function DetailV2Content() {
     ];
     if (!shouldShowConversationTabs) return buckets;
 
-    const matchedMessageIds = new Set<number>();
-    for (const agency of conversationAgencies) {
-      const messageIds = new Set<number>();
-      for (const message of _threadMessages) {
-        if (messageMatchesAgency(message, agency)) {
-          messageIds.add(message.id);
-          matchedMessageIds.add(message.id);
+    // Priority-based exclusive assignment so messages aren't duplicated across tabs
+    const assigned = new Map<number, string>(); // messageId → bucketId
+
+    // Pass 1: explicit case_agency_id (highest priority)
+    for (const msg of _threadMessages) {
+      if (msg.case_agency_id != null) {
+        const ag = conversationAgencies.find((a) => Number(a.id) === Number(msg.case_agency_id));
+        if (ag) assigned.set(msg.id, `agency-${ag.id}`);
+      }
+    }
+
+    // Pass 2: exact email match
+    for (const msg of _threadMessages) {
+      if (assigned.has(msg.id)) continue;
+      const from = String(msg.from_email || "").trim().toLowerCase();
+      const to = String(msg.to_email || "").trim().toLowerCase();
+      for (const ag of conversationAgencies) {
+        const emails = parseEmailList(ag.agency_email);
+        if (emails.some((e) => e === from || e === to)) {
+          assigned.set(msg.id, `agency-${ag.id}`);
+          break;
         }
       }
+    }
+
+    // Pass 3: domain match (only if not yet assigned)
+    for (const msg of _threadMessages) {
+      if (assigned.has(msg.id)) continue;
+      const fromD = emailDomain(String(msg.from_email || ""));
+      const toD = emailDomain(String(msg.to_email || ""));
+      for (const ag of conversationAgencies) {
+        const domains = parseEmailList(ag.agency_email).map((e) => emailDomain(e)).filter(Boolean);
+        if (domains.some((d) => d === fromD || d === toD)) {
+          assigned.set(msg.id, `agency-${ag.id}`);
+          break;
+        }
+      }
+    }
+
+    // Pass 4: name token match
+    for (const msg of _threadMessages) {
+      if (assigned.has(msg.id)) continue;
+      const text = `${msg.subject || ""}\n${msg.body || ""}`.toLowerCase();
+      for (const ag of conversationAgencies) {
+        const tokens = normalizeAgencyKey(ag.agency_name);
+        if (tokens.length > 0 && tokens.some((t) => text.includes(t))) {
+          assigned.set(msg.id, `agency-${ag.id}`);
+          break;
+        }
+      }
+    }
+
+    // Build per-agency buckets from assignments
+    for (const ag of conversationAgencies) {
+      const bucketId = `agency-${ag.id}`;
+      const messageIds = new Set<number>();
+      for (const [msgId, bid] of assigned) {
+        if (bid === bucketId) messageIds.add(msgId);
+      }
       buckets.push({
-        id: `agency-${agency.id}`,
-        label: agency.agency_name || `Agency ${agency.id}`,
+        id: bucketId,
+        label: ag.agency_name || `Agency ${ag.id}`,
         count: messageIds.size,
         messageIds,
       });
     }
 
+    // "Other" for unassigned messages
     const otherIds = new Set(
-      _threadMessages.filter((m) => !matchedMessageIds.has(m.id)).map((m) => m.id)
+      _threadMessages.filter((m) => !assigned.has(m.id)).map((m) => m.id)
     );
     if (otherIds.size > 0) {
       buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
