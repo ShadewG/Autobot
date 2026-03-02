@@ -233,9 +233,12 @@ export async function executeAction(
   // Resolve target agency
   let targetEmail = normalizeEmail(caseData?.agency_email);
   let targetPortalUrl = caseData?.portal_url;
-  let resolvedCaseAgencyId = caseAgencyId || null;
-  if (caseAgencyId) {
-    const targetAgency = await db.getCaseAgencyById(caseAgencyId);
+  let resolvedCaseAgencyId =
+    caseAgencyId ||
+    (existingProposal?.case_agency_id ? Number(existingProposal.case_agency_id) : null) ||
+    null;
+  if (resolvedCaseAgencyId) {
+    const targetAgency = await db.getCaseAgencyById(resolvedCaseAgencyId);
     if (targetAgency) {
       targetEmail = normalizeEmail(targetAgency.agency_email) || targetEmail;
       targetPortalUrl = targetAgency.portal_url || targetPortalUrl;
@@ -245,7 +248,9 @@ export async function executeAction(
   // Fallback: for portal-threaded agencies (e.g. NextRequest), the reliable
   // destination can exist on email_threads / latest inbound even when
   // cases.agency_email is null.
-  const thread = await db.getThreadByCaseId(caseId);
+  const thread = resolvedCaseAgencyId
+    ? (await db.getThreadByCaseAgencyId(resolvedCaseAgencyId)) || (await db.getThreadByCaseId(caseId))
+    : await db.getThreadByCaseId(caseId);
   const latestInbound = await db.getLatestInboundMessage(caseId);
   const inboundFrom = normalizeEmail(latestInbound?.from_email);
   const threadAgencyEmail = normalizeEmail(thread?.agency_email);
@@ -798,7 +803,7 @@ export async function executeAction(
 
       const followupKey = `${caseId}:research:ca${caseAgency.id}:${followupActionType}:0`;
       try {
-        await db.upsertProposal({
+        const followupProposal = await db.upsertProposal({
           proposalKey: followupKey,
           caseId,
           runId: runId || null,
@@ -822,6 +827,9 @@ export async function executeAction(
           canAutoExecute: false,
           status: "PENDING_APPROVAL",
         });
+        if (followupProposal?.id) {
+          await db.updateProposal(followupProposal.id, { case_agency_id: caseAgency.id });
+        }
       } catch (e: any) {
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           substatus: "agency_research_complete",

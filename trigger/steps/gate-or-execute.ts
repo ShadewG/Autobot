@@ -111,6 +111,9 @@ export async function createProposalAndGate(
     chainId,
     chainStep: hasChain ? 0 : null,
   });
+  if (caseAgencyId && proposal?.id) {
+    await db.updateProposal(proposal.id, { case_agency_id: caseAgencyId });
+  }
 
   // Create follow-up chain proposals (CHAIN_PENDING status — wait for primary approval)
   if (hasChain && chainId) {
@@ -120,7 +123,7 @@ export async function createProposalAndGate(
         caseId, messageId, chainAction.actionType, adjustmentCount, caseAgencyId, runId
       ) + `:chain-${step}`;
 
-      await db.upsertProposal({
+      const chainProposal = await db.upsertProposal({
         proposalKey: chainProposalKey,
         caseId,
         runId,
@@ -142,6 +145,9 @@ export async function createProposalAndGate(
         chainId,
         chainStep: step,
       });
+      if (caseAgencyId && chainProposal?.id) {
+        await db.updateProposal(chainProposal.id, { case_agency_id: caseAgencyId });
+      }
     }
 
     logger.info("Created action chain proposals", {
