@@ -1198,8 +1198,6 @@ function DetailV2Content() {
         {/* Line 2: metrics bar */}
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
           <span>{daysOpen(submittedAtDisplay)} open</span>
-          <span className="text-border">|</span>
-          <span>{formatCurrency(request.cost_amount) !== "—" ? formatCurrency(request.cost_amount) : "$0"}</span>
           {(request.next_due_at || request.statutory_due_at) && (
             <>
               <span className="text-border">|</span>
@@ -1783,8 +1781,8 @@ function DetailV2Content() {
                       };
                       const s = statusMap[item.status] || { label: item.status || "Requested", color: "text-gray-500" };
                       return (
-                        <div key={idx} className="flex items-center justify-between gap-2 text-[11px]">
-                          <span className="truncate min-w-0">{item.name}</span>
+                        <div key={idx} className="flex items-center gap-2 text-[11px] min-w-0">
+                          <span className="truncate flex-1 min-w-0">{item.name}</span>
                           <span className={cn("shrink-0 text-[10px] font-medium", s.color)}>{s.label}</span>
                         </div>
                       );
