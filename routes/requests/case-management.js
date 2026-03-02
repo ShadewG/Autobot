@@ -397,8 +397,11 @@ router.post('/:id/resolve-review', async (req, res) => {
             [JSON.stringify(`Superseded by human review action: ${action}`), requestId]
         );
 
-        // Clear review flags
+        // Clear review flags and normalize stale review statuses so the UI
+        // doesn't remain in "decision required" with no active proposal.
+        const isReviewStatus = String(caseData.status || '').startsWith('needs_');
         await db.updateCase(requestId, {
+            status: isReviewStatus ? 'awaiting_response' : caseData.status,
             requires_human: false,
             pause_reason: null,
             substatus: `Resolving: ${action}`

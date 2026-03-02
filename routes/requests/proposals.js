@@ -315,6 +315,24 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
             humanDecidedAt: new Date()
         });
 
+        // If this was the last active proposal, clear stale human-review flags.
+        const remainingActive = await db.query(
+            `SELECT id FROM proposals
+             WHERE case_id = $1
+               AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+             LIMIT 1`,
+            [requestId]
+        );
+        if (remainingActive.rows.length === 0) {
+            const caseData = await db.getCaseById(requestId);
+            const isReviewStatus = String(caseData?.status || '').startsWith('needs_');
+            await db.updateCase(requestId, {
+                status: isReviewStatus ? 'awaiting_response' : undefined,
+                requires_human: false,
+                pause_reason: null,
+            });
+        }
+
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
             const { wait: triggerWait } = require('@trigger.dev/sdk');
