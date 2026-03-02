@@ -38,7 +38,7 @@ import { Timeline } from "@/components/timeline";
 import { Thread } from "@/components/thread";
 import { Composer } from "@/components/composer";
 import { CopilotPanel } from "@/components/copilot-panel";
-import { ScopeTable, ScopeSummary } from "@/components/scope-table";
+import { ScopeSummary } from "@/components/scope-table";
 import { ConstraintsDisplay } from "@/components/constraints-display";
 import { FeeBreakdown } from "@/components/fee-breakdown";
 import { ExemptionClaimsList } from "@/components/exemption-claim-card";
@@ -331,8 +331,6 @@ function DetailV2Content() {
   const [manualAgencyEmail, setManualAgencyEmail] = useState("");
   const [manualAgencyPortalUrl, setManualAgencyPortalUrl] = useState("");
   const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
-  // Scope editing
-  const [isUpdatingScope, setIsUpdatingScope] = useState(false);
 
   // ── Polling ────────────────────────────────────────────────────────────────
   const [pollingUntil, setPollingUntil] = useState<number>(0);
@@ -381,10 +379,11 @@ function DetailV2Content() {
     mutate(
       (cur) => cur ? {
         ...cur,
-        request: { ...cur.request, requires_human: false, pause_reason: null },
+        request: { ...cur.request, requires_human: false, pause_reason: null, status: 'AWAITING_RESPONSE' as const },
         pending_proposal: null,
         next_action_proposal: null,
         review_state: 'PROCESSING',
+        control_state: 'WORKING',
       } : cur,
       { revalidate: true }
     );
@@ -879,19 +878,6 @@ function DetailV2Content() {
     mutate();
   };
 
-  const handleScopeStatusChange = async (itemIndex: number, newStatus: Parameters<typeof requestsAPI.updateScopeItem>[2], reason?: string) => {
-    if (!id) return;
-    setIsUpdatingScope(true);
-    try {
-      await requestsAPI.updateScopeItem(id, itemIndex, newStatus, reason);
-      mutate();
-    } catch {
-      toast.error("Failed to update scope item status");
-    } finally {
-      setIsUpdatingScope(false);
-    }
-  };
-
   const handleAddToPhoneQueue = async () => {
     if (!id) return;
     try {
@@ -1213,12 +1199,6 @@ function DetailV2Content() {
           <span>{daysOpen(submittedAtDisplay)} open</span>
           <span className="text-border">|</span>
           <span>{formatCurrency(request.cost_amount) !== "—" ? formatCurrency(request.cost_amount) : "$0"}</span>
-          {request.fee_quote?.amount != null && request.fee_quote.amount > 0 && (
-            <>
-              <span className="text-border">|</span>
-              <span className="text-amber-400">Fee: {formatCurrency(request.fee_quote.amount)}</span>
-            </>
-          )}
           {(request.next_due_at || request.statutory_due_at) && (
             <>
               <span className="text-border">|</span>
@@ -1397,9 +1377,19 @@ function DetailV2Content() {
                         {/* Chain follow-up */}
                         {pending_proposal.action_chain && pending_proposal.action_chain.length > 1 && (
                           <div className="border-t border-dashed pt-2 mt-2 space-y-1.5">
-                            <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
-                              <ArrowRight className="h-2.5 w-2.5" /> Then: {ACTION_TYPE_LABELS[pending_proposal.action_chain[1].actionType]?.label || pending_proposal.action_chain[1].actionType}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                                <ArrowRight className="h-2.5 w-2.5" /> Then: {ACTION_TYPE_LABELS[pending_proposal.action_chain[1].actionType]?.label || pending_proposal.action_chain[1].actionType}
+                              </span>
+                              {(() => {
+                                const chainTarget = getDeliveryTarget(pending_proposal.action_chain[1].actionType, request, agency_summary || null);
+                                return chainTarget ? (
+                                  <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
+                                    {chainTarget.method} → {chainTarget.target || "not set"}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </div>
                             {pending_proposal.action_chain[1].draftSubject && (
                               <input
                                 className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs"
@@ -1777,11 +1767,26 @@ function DetailV2Content() {
               {request.scope_items && request.scope_items.length > 0 && (
                 <CollapsibleSection title="SCOPE" count={request.scope_items.length}>
                   <ScopeSummary items={request.scope_items} />
-                  <ScopeTable
-                    items={request.scope_items}
-                    onStatusChange={handleScopeStatusChange}
-                    isUpdating={isUpdatingScope}
-                  />
+                  <div className="mt-1.5 space-y-1">
+                    {request.scope_items.map((item: any, idx: number) => {
+                      const statusMap: Record<string, { label: string; color: string }> = {
+                        CONFIRMED_AVAILABLE: { label: "Available", color: "text-green-400" },
+                        NOT_DISCLOSABLE: { label: "Exempt", color: "text-red-400" },
+                        NOT_HELD: { label: "Not Held", color: "text-orange-400" },
+                        DELIVERED: { label: "Delivered", color: "text-emerald-400" },
+                        DENIED: { label: "Denied", color: "text-red-400" },
+                        PARTIAL: { label: "Partial", color: "text-yellow-400" },
+                        EXEMPT: { label: "Exempt", color: "text-red-400" },
+                      };
+                      const s = statusMap[item.status] || { label: item.status || "Requested", color: "text-gray-500" };
+                      return (
+                        <div key={idx} className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="truncate">{item.name}</span>
+                          <span className={cn("shrink-0 text-[10px] font-medium", s.color)}>{s.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </CollapsibleSection>
               )}
 

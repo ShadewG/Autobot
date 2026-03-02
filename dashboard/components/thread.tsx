@@ -151,11 +151,13 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
     );
   }
 
+  const isFullHeight = maxHeight === "h-full";
+
   return (
-    <div className="space-y-2">
+    <div className={cn(isFullHeight ? "flex flex-col h-full" : "space-y-2")}>
       {/* Toggle buttons - only show if any message has raw content */}
       {hasAnyRawContent && (
-        <div className="flex items-center gap-1 justify-end">
+        <div className={cn("flex items-center gap-1 justify-end", isFullHeight && "shrink-0 px-2 pt-1")}>
           <Button
             size="sm"
             variant={showRaw ? "ghost" : "secondary"}
@@ -176,7 +178,7 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
           </Button>
         </div>
       )}
-      <ScrollArea className={cn(maxHeight || "h-[400px]", "w-full")}>
+      <ScrollArea className={cn(isFullHeight ? "flex-1 min-h-0" : (maxHeight || "h-[400px]"), "w-full")}>
         <div className="space-y-4 pr-2 w-full">
           {messages.map((message) => (
             <MessageBubble key={message.id} message={message} showRaw={showRaw} />
