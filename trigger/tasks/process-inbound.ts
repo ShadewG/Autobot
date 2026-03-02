@@ -705,18 +705,33 @@ export const processInbound = task({
     );
 
     // Step 9b: Execute chain follow-ups sequentially
-    if (execution.actionExecuted && gate.chainId && chainDrafts.size > 0) {
-      await markStep("execute_chain", `Run #${runId}: executing chain follow-ups`, { chain_id: gate.chainId });
+    // NOTE: chainDrafts (a Map) may be empty after a Trigger.dev checkpoint restore.
+    // Always check DB for chain proposals and fall back to DB-stored drafts.
+    if (execution.actionExecuted && gate.chainId) {
       const chainProposals = await db.getChainProposals(gate.chainId);
+      const pendingChainSteps = chainProposals.filter(
+        (p: any) => p.chain_step > 0 && p.status === "CHAIN_PENDING"
+      );
 
-      for (const stepProposal of chainProposals.filter((p: any) => p.chain_step > 0)) {
-        const stepDraft = chainDrafts.get(stepProposal.action_type);
-        if (!stepDraft) continue;
+      if (pendingChainSteps.length > 0) {
+        await markStep("execute_chain", `Run #${runId}: executing chain follow-ups`, { chain_id: gate.chainId });
+      }
 
-        // Use DB-stored drafts if user edited them in the dashboard, fall back to in-memory
-        const finalSubject = stepProposal.draft_subject || stepDraft.subject;
-        const finalBodyText = stepProposal.draft_body_text || stepDraft.bodyText;
-        const finalBodyHtml = stepDraft.bodyHtml;
+      for (const stepProposal of pendingChainSteps) {
+        const inMemoryDraft = chainDrafts.get(stepProposal.action_type);
+
+        // Prefer DB-stored drafts (may have been edited by user), fall back to in-memory
+        const finalSubject = stepProposal.draft_subject || inMemoryDraft?.subject;
+        const finalBodyText = stepProposal.draft_body_text || inMemoryDraft?.bodyText;
+        const finalBodyHtml = inMemoryDraft?.bodyHtml || null;
+
+        if (!finalSubject && !finalBodyText) {
+          logger.warn("Chain step has no draft content, skipping", {
+            caseId, chainId: gate.chainId, step: stepProposal.chain_step,
+            actionType: stepProposal.action_type,
+          });
+          continue;
+        }
 
         try {
           // Transition chain sibling from CHAIN_PENDING → APPROVED
@@ -726,7 +741,7 @@ export const processInbound = task({
             caseId, stepProposal.id, stepProposal.action_type, runId,
             { subject: finalSubject, bodyText: finalBodyText, bodyHtml: finalBodyHtml },
             null, [`Chain step ${stepProposal.chain_step + 1}: ${stepProposal.action_type}`],
-            stepDraft.researchContactResult, stepDraft.researchBrief,
+            inMemoryDraft?.researchContactResult, inMemoryDraft?.researchBrief,
             classification.classification,
             { chainId: gate.chainId }
           );
