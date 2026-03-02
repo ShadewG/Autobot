@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Constraint } from "@/lib/types";
-import { AlertTriangle, Ban, FileX, DollarSign, Shield, Clock, Eye, Minimize2, Info } from "lucide-react";
+import { AlertTriangle, Ban, FileX, DollarSign, Shield, Clock, Eye, Minimize2, Info, ArrowRightLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const CONSTRAINT_CONFIG: Record<string, {
@@ -25,6 +25,7 @@ const CONSTRAINT_CONFIG: Record<string, {
   CASH_OR_CHECK_ONLY: { icon: DollarSign, color: "text-blue-400", bgColor: "bg-blue-500/10" },
   CERTIFICATION_REQUIRED: { icon: Shield, color: "text-blue-400", bgColor: "bg-blue-500/10" },
   CERTIFICATION_NO_FINANCIAL_GAIN_REQUIRED: { icon: Shield, color: "text-blue-400", bgColor: "bg-blue-500/10" },
+  WRONG_AGENCY_REFERRAL: { icon: ArrowRightLeft, color: "text-orange-400", bgColor: "bg-orange-500/10" },
   // Informational constraints — not blocking, just context
   IN_PERSON_VIEWING_OPTION: { icon: Eye, color: "text-muted-foreground", bgColor: "bg-muted" },
   SCOPE_NARROWING_SUGGESTED: { icon: Minimize2, color: "text-muted-foreground", bgColor: "bg-muted" },
@@ -64,7 +65,7 @@ function canonicalizeConstraint(constraint: Constraint): {
   const text = `${type} ${desc}`;
 
   if (text.includes("wrong agency") || text.includes("referred") || text.includes("custodian") || text.includes("redirect")) {
-    return { key: "WRONG_AGENCY_REFERRAL", label: "Wrong agency referral", priority: 100 };
+    return { key: "WRONG_AGENCY_REFERRAL", label: "Referred to another agency", priority: 100 };
   }
   if (text.includes("form") && (text.includes("required") || text.includes("format"))) {
     return { key: "FORM_REQUIRED", label: "Agency form required", priority: 95 };
@@ -76,10 +77,10 @@ function canonicalizeConstraint(constraint: Constraint): {
     return { key: "ID_REQUIRED", label: "Identity verification required", priority: 85 };
   }
   if (text.includes("fee")) {
-    return { key: "FEE_REQUIRED", label: "Fee action required", priority: 80 };
+    return { key: "FEE_REQUIRED", label: "Fee payment required", priority: 80 };
   }
   if (text.includes("denial") || text.includes("exempt")) {
-    return { key: "DENIAL_OR_EXEMPTION", label: "Denial or exemption constraint", priority: 75 };
+    return { key: "DENIAL_OR_EXEMPTION", label: "Records denied or exempt", priority: 75 };
   }
 
   // Fallback: readable label from type or description
@@ -170,7 +171,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
     <div className={cn("space-y-2", className)}>
       <div className="space-y-1.5">
         {normalized.map((constraint, index) => {
-          const config = CONSTRAINT_CONFIG[constraint.type] || FALLBACK_CONSTRAINT_CONFIG;
+          const config = CONSTRAINT_CONFIG[constraint.canonicalKey] || CONSTRAINT_CONFIG[constraint.type] || FALLBACK_CONSTRAINT_CONFIG;
           const Icon = config.icon;
 
           return (
@@ -184,19 +185,7 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
               <div className="flex items-start gap-2">
                 <Icon className={cn("h-3.5 w-3.5 mt-0.5 flex-shrink-0", config.color)} />
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-xs font-medium">{constraint.normalizedLabel}</p>
-                    {index < 3 && (
-                      <Badge variant="outline" className="text-[10px]">
-                        Priority {index + 1}
-                      </Badge>
-                    )}
-                    {constraint.mergedCount > 1 && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        merged {constraint.mergedCount}
-                      </Badge>
-                    )}
-                  </div>
+                  <p className="text-xs font-medium">{constraint.normalizedLabel}</p>
                   {constraint.rawDescriptions[0] && (
                     <p className="text-[11px] text-muted-foreground mt-0.5">
                       {constraint.rawDescriptions[0]}
