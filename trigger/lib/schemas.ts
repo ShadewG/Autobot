@@ -145,7 +145,7 @@ export const classificationSchema = z.object({
       notes: z.string().nullable().describe("Any additional context about the referral (e.g., 'they handle 911 audio')"),
     })
     .nullable()
-    .describe("If the agency redirects to another agency/custodian, extract their contact information here. Only populate for wrong_agency or portal_redirect intents."),
+    .describe("If the agency explicitly references another agency, department, or custodian that may hold the requested records, extract their contact info here. Populate for ANY intent where the agency names a specific different entity, not just wrong_agency or portal_redirect."),
 }).strict();
 
 export type ClassificationOutput = z.infer<typeof classificationSchema>;

@@ -36,13 +36,17 @@ const ALL_ACTION_TYPES: ActionType[] = [
 ];
 
 const ALWAYS_GATE_ACTIONS: ActionType[] = [
-  "CLOSE_CASE", "ESCALATE", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW",
+  "CLOSE_CASE", "ESCALATE", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW", "RESEARCH_AGENCY",
 ];
 
 // Valid action chain pairs: primary → allowed follow-ups
 const VALID_CHAINS: Record<string, ActionType[]> = {
   DECLINE_FEE: ["REFORMULATE_REQUEST", "SEND_INITIAL_REQUEST"],
-  RESPOND_PARTIAL_APPROVAL: ["SEND_FOLLOWUP"],
+  RESPOND_PARTIAL_APPROVAL: ["SEND_FOLLOWUP", "RESEARCH_AGENCY"],
+  SEND_REBUTTAL: ["RESEARCH_AGENCY"],
+  SEND_FOLLOWUP: ["RESEARCH_AGENCY"],
+  SEND_CLARIFICATION: ["RESEARCH_AGENCY"],
+  REFORMULATE_REQUEST: ["RESEARCH_AGENCY"],
 };
 
 function validateFollowUpAction(
@@ -86,10 +90,10 @@ function buildAllowedActions(params: {
   // Hard constraints — AI cannot override these
   if (classification === "HOSTILE" || classification === "UNKNOWN") return ["ESCALATE"];
   if (classification === "WRONG_AGENCY") return ["RESEARCH_AGENCY", "ESCALATE"];
-  if (classification === "PARTIAL_APPROVAL") return ["RESPOND_PARTIAL_APPROVAL", "ESCALATE"];
+  if (classification === "PARTIAL_APPROVAL") return ["RESPOND_PARTIAL_APPROVAL", "RESEARCH_AGENCY", "ESCALATE"];
   if (classification === "RECORDS_READY") return ["NONE", "CLOSE_CASE"];
   if (classification === "ACKNOWLEDGMENT") return ["NONE"];
-  if (classification === "PARTIAL_DELIVERY") return ["NONE", "SEND_FOLLOWUP"];
+  if (classification === "PARTIAL_DELIVERY") return ["NONE", "SEND_FOLLOWUP", "RESEARCH_AGENCY"];
   if (followupCount >= maxFollowups) return ["ESCALATE"];
 
   // Citizenship/residency restriction — force escalate for human handling
@@ -443,8 +447,16 @@ ${allowedActionsSection}
 ### Bodycam Custodian Research
 - If bodycam custodian research is flagged as needed AND classification is CLARIFICATION_REQUEST, prefer RESEARCH_AGENCY with researchLevel=deep
 
+### Cross-Classification RESEARCH_AGENCY
+- If the agency response explicitly names or references a DIFFERENT agency, department, or custodian that may hold records, consider RESEARCH_AGENCY — either as primary or as followUpAction in a chain
+- PARTIAL_APPROVAL mentioning another custodian → RESPOND_PARTIAL_APPROVAL + followUpAction=RESEARCH_AGENCY
+- PARTIAL_DELIVERY referencing another agency → SEND_FOLLOWUP + followUpAction=RESEARCH_AGENCY
+- DENIAL mentioning a specific other agency by name → SEND_REBUTTAL + followUpAction=RESEARCH_AGENCY (or standalone RESEARCH_AGENCY if rebuttal is not warranted)
+- Only propose RESEARCH_AGENCY when the response provides concrete signals (agency name, department reference, contact info, or "try X for those records") — do NOT speculatively research without evidence in the agency's message
+- RESEARCH_AGENCY always requires human approval — set requiresHuman=true
+
 ### requiresHuman Rules
-- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW
+- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW, RESEARCH_AGENCY
 - Require human when confidence < 0.7
 - Require human in SUPERVISED mode for any email-sending action
 
@@ -460,6 +472,11 @@ Valid chains:
 - DECLINE_FEE → REFORMULATE_REQUEST: Decline expensive fee AND submit a narrower request
 - DECLINE_FEE → SEND_INITIAL_REQUEST: Decline fee AND send a fresh request to a different contact
 - RESPOND_PARTIAL_APPROVAL → SEND_FOLLOWUP: Accept partial records AND follow up on missing ones
+- SEND_REBUTTAL → RESEARCH_AGENCY: Rebut the denial AND research a different agency mentioned in the response
+- RESPOND_PARTIAL_APPROVAL → RESEARCH_AGENCY: Accept partial records AND research another agency for the withheld portions
+- SEND_FOLLOWUP → RESEARCH_AGENCY: Follow up on remaining records AND research another agency referenced
+- SEND_CLARIFICATION → RESEARCH_AGENCY: Clarify with current agency AND research another entity they mentioned
+- REFORMULATE_REQUEST → RESEARCH_AGENCY: Narrow the request AND research the correct custodian
 Use followUpAction=null (default) when only one action is needed. Do NOT chain if the follow-up depends on the outcome of the first action.
 
 Choose exactly one primary action from the ALLOWED ACTIONS list. Optionally set followUpAction if a chain is appropriate. Provide concise reasoning. Set researchLevel appropriately.`;
@@ -1023,8 +1040,16 @@ ${threadSummary || "No thread messages available."}
 - Check for mixed withholdings → RESPOND_PARTIAL_APPROVAL
 - Check for portal pickup instructions → NONE with note
 
+### Cross-Classification RESEARCH_AGENCY
+- If the agency response explicitly names or references a DIFFERENT agency, department, or custodian that may hold records, consider RESEARCH_AGENCY — either as primary or as followUpAction in a chain
+- PARTIAL_APPROVAL mentioning another custodian → RESPOND_PARTIAL_APPROVAL + followUpAction=RESEARCH_AGENCY
+- PARTIAL_DELIVERY referencing another agency → SEND_FOLLOWUP + followUpAction=RESEARCH_AGENCY
+- DENIAL mentioning a specific other agency by name → SEND_REBUTTAL + followUpAction=RESEARCH_AGENCY (or standalone RESEARCH_AGENCY if rebuttal is not warranted)
+- Only propose RESEARCH_AGENCY when the response provides concrete signals (agency name, department reference, contact info, or "try X for those records") — do NOT speculatively research without evidence in the agency's message
+- RESEARCH_AGENCY always requires human approval — set requiresHuman=true
+
 ### requiresHuman Rules
-- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW
+- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW, RESEARCH_AGENCY
 - Require human when confidence < 0.7
 - Require human in SUPERVISED mode for any email-sending action
 
@@ -1034,6 +1059,16 @@ ${threadSummary || "No thread messages available."}
 - "light" = verify contacts/portal only (portal redirects, simple clarifications)
 - "medium" = contacts + state law research (most denials, complex clarifications)
 - "deep" = full custodian chain research (no_records without verified custodian, wrong_agency)
+
+### Action Chains (followUpAction)
+When TWO sequential actions are clearly needed, set followUpAction to the second action.
+Valid chains:
+- SEND_REBUTTAL → RESEARCH_AGENCY: Rebut the denial AND research a different agency mentioned in the response
+- RESPOND_PARTIAL_APPROVAL → RESEARCH_AGENCY: Accept partial records AND research another agency for the withheld portions
+- SEND_FOLLOWUP → RESEARCH_AGENCY: Follow up on remaining records AND research another agency referenced
+- SEND_CLARIFICATION → RESEARCH_AGENCY: Clarify with current agency AND research another entity they mentioned
+- REFORMULATE_REQUEST → RESEARCH_AGENCY: Narrow the request AND research the correct custodian
+Use followUpAction=null (default) when only one action is needed. Do NOT chain if the follow-up depends on the outcome of the first action.
 
 Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }
@@ -1105,9 +1140,9 @@ async function validateDecision(
     return { valid: false, reason: "PORTAL_REDIRECT is handled by deterministic portal-task creation (always falls to deterministic)" };
   }
 
-  // PARTIAL_APPROVAL must always use RESPOND_PARTIAL_APPROVAL — don't let AI override with SEND_REBUTTAL or SEND_APPEAL
-  if (classification === "PARTIAL_APPROVAL" && aiDecisionResult.action !== "RESPOND_PARTIAL_APPROVAL") {
-    return { valid: false, reason: "PARTIAL_APPROVAL classification must use RESPOND_PARTIAL_APPROVAL" };
+  // PARTIAL_APPROVAL must use RESPOND_PARTIAL_APPROVAL or RESEARCH_AGENCY — don't let AI override with SEND_REBUTTAL or SEND_APPEAL
+  if (classification === "PARTIAL_APPROVAL" && aiDecisionResult.action !== "RESPOND_PARTIAL_APPROVAL" && aiDecisionResult.action !== "RESEARCH_AGENCY") {
+    return { valid: false, reason: "PARTIAL_APPROVAL classification must use RESPOND_PARTIAL_APPROVAL or RESEARCH_AGENCY" };
   }
 
   // RECORDS_READY means records are already here — no follow-up needed
@@ -1131,10 +1166,9 @@ async function validateDecision(
     return { valid: false, reason: `DENIAL with subtype ${context.denialSubtype} should not use SEND_CLARIFICATION` };
   }
 
-  // Vague denials (no subtype) should not route to RESEARCH_AGENCY or SEND_CLARIFICATION
-  if (classification === "DENIAL" && !context.denialSubtype &&
-      (aiDecisionResult.action === "RESEARCH_AGENCY" || aiDecisionResult.action === "SEND_CLARIFICATION")) {
-    return { valid: false, reason: "DENIAL without a specific subtype should use SEND_REBUTTAL or CLOSE_CASE, not RESEARCH_AGENCY/SEND_CLARIFICATION" };
+  // Vague denials (no subtype) should not route to SEND_CLARIFICATION
+  if (classification === "DENIAL" && !context.denialSubtype && aiDecisionResult.action === "SEND_CLARIFICATION") {
+    return { valid: false, reason: "DENIAL without a specific subtype should use SEND_REBUTTAL or CLOSE_CASE, not SEND_CLARIFICATION" };
   }
 
   if (aiDecisionResult.action === "CLOSE_CASE" && !aiDecisionResult.requiresHuman) {

@@ -197,7 +197,7 @@ IMPORTANT: If attachments include PDFs or documents and the message references t
 7. **Unanswered question**: If the agency asked a question we haven't answered, state the question.
 8. **Jurisdiction**: Determine if agency is federal, state, or local.
 9. **Response nature**: Determine if response is substantive, procedural, administrative, or mixed.
-10. **Referral contact**: If intent is "wrong_agency" or "portal_redirect" and the agency provides contact info for the correct custodian (email, phone, name, URL), extract it into referral_contact. This is critical — we need the exact email/phone they provide so we can contact the right agency.`;
+10. **Referral contact**: If the agency's response explicitly names, references, or redirects to a DIFFERENT agency, department, or custodian that may hold the requested records, extract their contact info into referral_contact (email, phone, name, URL). This applies to ANY intent — not just wrong_agency or portal_redirect. Look for concrete signals such as: "contact [agency name]", "those records are maintained by [department]", "we forwarded your request to [entity]", "try [office] for that". Only extract when the agency provides specific identifying details — do NOT infer a referral from vague language like "check with the appropriate office".`;
 }
 
 export async function classifyInbound(
