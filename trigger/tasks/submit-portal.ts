@@ -225,15 +225,9 @@ export const submitPortal = task({
       return { success: false, skipped: true, reason: "provider_paper_only" };
     }
 
-    // ── WRONG_AGENCY guard: skip if case has WRONG_AGENCY constraint ──
-    const rawConstraints = caseData.constraints_jsonb || caseData.constraints || [];
-    const constraints = Array.isArray(rawConstraints) ? rawConstraints : [];
-    if (constraints.includes("WRONG_AGENCY")) {
-      logger.warn("Portal submission skipped — wrong agency", { caseId });
-      await cancelPortalTask("Case marked WRONG_AGENCY");
-      await closeAgentRun("failed", "Wrong agency");
-      return { success: false, skipped: true, reason: "wrong_agency" };
-    }
+    // NOTE: WRONG_AGENCY is informational after reroute and must not globally block
+    // portal submission for newly researched agencies. Active wrong-agency work is
+    // already stopped by CASE_WRONG_AGENCY transitions + cancelled portal_task guard below.
 
     // ── Cancelled task guard: skip if portal task was cancelled (e.g. by WRONG_AGENCY handler) ──
     if (portalTaskId) {

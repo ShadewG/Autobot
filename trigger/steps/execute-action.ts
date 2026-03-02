@@ -831,6 +831,28 @@ export async function executeAction(
         break;
       }
 
+      // A concrete reroute target has now been identified and queued for approval.
+      // Clear sticky WRONG_AGENCY to avoid blocking execution of the new route.
+      try {
+        const refreshedCase = await db.getCaseById(caseId);
+        const rawConstraints = refreshedCase?.constraints_jsonb || refreshedCase?.constraints || [];
+        const constraintList = Array.isArray(rawConstraints) ? rawConstraints : [];
+        if (constraintList.includes("WRONG_AGENCY")) {
+          const nextConstraints = constraintList.filter((c: string) => c !== "WRONG_AGENCY");
+          await db.updateCase(caseId, { constraints_jsonb: JSON.stringify(nextConstraints) });
+          logger.info("Cleared WRONG_AGENCY constraint after successful reroute proposal", {
+            caseId,
+            newAgency: suggestedAgency.name,
+            actionType: followupActionType,
+          });
+        }
+      } catch (constraintErr: any) {
+        logger.warn("Failed to clear WRONG_AGENCY constraint after reroute proposal", {
+          caseId,
+          error: constraintErr?.message || String(constraintErr),
+        });
+      }
+
       await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
         substatus: "research_followup_proposed",
         pauseReason: "RESEARCH_HANDOFF",
