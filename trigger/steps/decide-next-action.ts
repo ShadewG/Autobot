@@ -72,6 +72,19 @@ function removeAction(actions: ActionType[], action: ActionType): void {
   if (idx !== -1) actions.splice(idx, 1);
 }
 
+function normalizeEmail(value: any): string | null {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw || !raw.includes("@")) return null;
+  return raw;
+}
+
+function emailDomain(value: string | null): string | null {
+  if (!value) return null;
+  const idx = value.lastIndexOf("@");
+  if (idx === -1 || idx === value.length - 1) return null;
+  return value.slice(idx + 1);
+}
+
 function buildAllowedActions(params: {
   classification: Classification;
   denialSubtype: string | null;
@@ -153,8 +166,21 @@ async function getWrongAgencyDirectAction(caseId: number): Promise<ActionType | 
   if (!primaryAgency) return null;
 
   const source = String(primaryAgency.added_source || "").toLowerCase();
-  const canDirectSend = source === "wrong_agency_referral" || source === "research";
+  const canDirectSendFromSource = source === "wrong_agency_referral" || source === "research";
+  const hasDirectContact = Boolean(primaryAgency.agency_email || primaryAgency.portal_url);
+  const canDirectSend = canDirectSendFromSource || hasDirectContact;
   if (!canDirectSend) return null;
+
+  // Safety check: don't direct-send to the same mailbox/domain that just sent the
+  // WRONG_AGENCY response; that likely indicates we haven't switched agencies yet.
+  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const inboundFrom = normalizeEmail(latestInbound?.from_email);
+  const primaryEmail = normalizeEmail(primaryAgency.agency_email);
+  if (primaryEmail && inboundFrom) {
+    const sameEmail = primaryEmail === inboundFrom;
+    const sameDomain = emailDomain(primaryEmail) && emailDomain(primaryEmail) === emailDomain(inboundFrom);
+    if (sameEmail || sameDomain) return null;
+  }
 
   const hasPortal = hasAutomatablePortal(
     primaryAgency.portal_url || null,
