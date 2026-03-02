@@ -81,6 +81,7 @@ function buildAllowedActions(params: {
   hasAutomatablePortal: boolean;
   triggerType: string;
   dismissedActionCounts: Record<string, number>;
+  canDirectWrongAgencySend?: boolean;
 }): ActionType[] {
   const {
     classification, denialSubtype, constraints, followupCount,
@@ -89,7 +90,14 @@ function buildAllowedActions(params: {
 
   // Hard constraints — AI cannot override these
   if (classification === "HOSTILE" || classification === "UNKNOWN") return ["ESCALATE"];
-  if (classification === "WRONG_AGENCY") return ["RESEARCH_AGENCY", "ESCALATE"];
+  if (classification === "WRONG_AGENCY") {
+    if (params.canDirectWrongAgencySend) {
+      return hasPortal
+        ? ["SUBMIT_PORTAL", "SEND_INITIAL_REQUEST", "RESEARCH_AGENCY", "ESCALATE"]
+        : ["SEND_INITIAL_REQUEST", "RESEARCH_AGENCY", "ESCALATE"];
+    }
+    return ["RESEARCH_AGENCY", "ESCALATE"];
+  }
   if (classification === "PARTIAL_APPROVAL") return ["RESPOND_PARTIAL_APPROVAL", "RESEARCH_AGENCY", "ESCALATE"];
   if (classification === "RECORDS_READY") return ["NONE", "CLOSE_CASE"];
   if (classification === "ACKNOWLEDGMENT") return ["NONE"];
@@ -140,6 +148,23 @@ function buildAllowedActions(params: {
   return base;
 }
 
+async function getWrongAgencyDirectAction(caseId: number): Promise<ActionType | null> {
+  const primaryAgency = await db.getPrimaryCaseAgency(caseId);
+  if (!primaryAgency) return null;
+
+  const source = String(primaryAgency.added_source || "").toLowerCase();
+  const canDirectSend = source === "wrong_agency_referral" || source === "research";
+  if (!canDirectSend) return null;
+
+  const hasPortal = hasAutomatablePortal(
+    primaryAgency.portal_url || null,
+    primaryAgency.portal_provider || null
+  );
+  if (hasPortal) return "SUBMIT_PORTAL";
+  if (primaryAgency.agency_email) return "SEND_INITIAL_REQUEST";
+  return null;
+}
+
 interface PreComputedContext {
   denialStrength: "strong" | "medium" | "weak" | null;
   unansweredClarificationMsgId: number | null;
@@ -152,6 +177,7 @@ interface PreComputedContext {
   latestAnalysis: any;
   caseData: any;
   threadMessages: any[];
+  canDirectWrongAgencySend: boolean;
 }
 
 async function preComputeDecisionContext(
@@ -209,6 +235,7 @@ async function preComputeDecisionContext(
 
   // Pre-compute bodycam research flag
   const bodycamResearchNeeded = shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, constraints);
+  const canDirectWrongAgencySend = !!(await getWrongAgencyDirectAction(caseId));
 
   // Count dismissed actions
   const dismissedActionCounts: Record<string, number> = {};
@@ -228,6 +255,7 @@ async function preComputeDecisionContext(
     latestAnalysis,
     caseData,
     threadMessages: Array.isArray(threadMessages) ? threadMessages : [],
+    canDirectWrongAgencySend,
   };
 }
 
@@ -1502,6 +1530,13 @@ async function deterministicRouting(
             constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
           });
         }
+        const directAction = await getWrongAgencyDirectAction(caseId);
+        if (directAction) {
+          return decision(directAction, {
+            pauseReason: "DENIAL",
+            reasoning: [...reasoning, `Wrong agency referral resolved - sending to routed custodian via ${directAction}`],
+          });
+        }
         return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Wrong agency - researching correct one"] });
       }
       case "overly_broad":
@@ -1670,6 +1705,13 @@ async function deterministicRouting(
     if (!currentConstraints.includes("WRONG_AGENCY")) {
       await db.updateCase(caseId, {
         constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+      });
+    }
+    const directAction = await getWrongAgencyDirectAction(caseId);
+    if (directAction) {
+      return decision(directAction, {
+        pauseReason: "DENIAL",
+        reasoning: [`Wrong agency referral already resolved - sending to routed custodian via ${directAction}`],
       });
     }
     return decision("RESEARCH_AGENCY", {
@@ -1892,6 +1934,12 @@ export async function decideNextAction(
       const reviewMap: Record<string, () => Promise<DecisionResult>> = {
         send_via_email: async () => {
           if (isWrongAgency) {
+            const directAction = await getWrongAgencyDirectAction(caseId);
+            if (directAction) {
+              return decision(directAction, {
+                reasoning: [...reasoning, `Wrong-agency reroute already configured - executing ${directAction}`],
+              });
+            }
             return decision("RESEARCH_AGENCY", {
               reasoning: [...reasoning, "Redirected: cannot send to wrong agency — researching correct one"],
               researchLevel: "deep",
@@ -1947,6 +1995,7 @@ export async function decideNextAction(
               hasAutomatablePortal: portalAvailable,
               triggerType: "INITIAL_REQUEST", // Allow full action set for reprocess
               dismissedActionCounts: preComputed.dismissedActionCounts,
+              canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
             });
             const v2Result = await makeAIDecisionV2({
               caseId, classification, constraints, extractedFeeAmount,
@@ -2069,6 +2118,7 @@ export async function decideNextAction(
               hasAutomatablePortal: portalAvailable,
               triggerType: "INITIAL_REQUEST", // Allow full action set for custom instruction
               dismissedActionCounts: preComputed.dismissedActionCounts,
+              canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
             });
             const v2Result = await makeAIDecisionV2({
               caseId, classification, constraints, extractedFeeAmount,
@@ -2219,6 +2269,7 @@ export async function decideNextAction(
         hasAutomatablePortal: portalAvailable,
         triggerType,
         dismissedActionCounts: preComputed.dismissedActionCounts,
+        canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
       });
 
       // Special handling for classifications with side effects that happen at decision time
