@@ -177,8 +177,14 @@ router.get('/:id/workspace', async (req, res) => {
             });
         }
 
-        // Fetch threads and messages
-        const threads = await db.getThreadsByCaseId(requestId);
+        // Fetch threads and messages (compat: older runtime may only expose getThreadByCaseId)
+        let threads = [];
+        if (typeof db.getThreadsByCaseId === 'function') {
+            threads = await db.getThreadsByCaseId(requestId);
+        } else {
+            const singleThread = await db.getThreadByCaseId(requestId);
+            threads = singleThread ? [singleThread] : [];
+        }
         const latestThread = threads.length > 0 ? threads[threads.length - 1] : null;
         let threadMessages = [];
         let analysisMap = {};
