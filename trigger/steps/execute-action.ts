@@ -91,6 +91,21 @@ function isAutoBotMailbox(email: string | null): boolean {
   return email.endsWith("@foib-request.com") || email.endsWith("@autobot.local");
 }
 
+function normalizePortalForCompare(value: any): string | null {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return null;
+  return raw
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/+$/, "");
+}
+
+function normalizePhoneForCompare(value: any): string | null {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 7) return null;
+  return digits;
+}
+
 export async function executeAction(
   caseId: number,
   proposalId: number,
@@ -449,17 +464,44 @@ export async function executeAction(
     }
 
     case "ESCALATE": {
+      const hasPhoneFollowupMarker = Array.isArray(reasoning)
+        && reasoning.some((r) => String(r).includes("FOLLOWUP_CHANNEL:PHONE"));
+      const hasFaxFollowupMarker = Array.isArray(reasoning)
+        && reasoning.some((r) => String(r).includes("FOLLOWUP_CHANNEL:FAX"));
+      const suggestedAction = hasPhoneFollowupMarker
+        ? "Call agency follow-up using newly researched number"
+        : hasFaxFollowupMarker
+          ? "Fax agency follow-up using newly researched fax number"
+          : "Review case and decide next steps";
+
       const escalation = await db.upsertEscalation({
         caseId,
         executionKey,
         reason: (reasoning || []).join("; ") || "Escalated by agent",
         urgency: "medium",
-        suggestedAction: "Review case and decide next steps",
+        suggestedAction,
       });
+      let phoneTaskId: number | null = null;
+      if (hasPhoneFollowupMarker) {
+        try {
+          // @ts-ignore
+          const followupScheduler = require("../../services/followup-scheduler");
+          const phoneTask = await followupScheduler.escalateToPhoneQueue(caseId, "no_email_response", {
+            notes: draft?.bodyText || "Research found a new phone contact for overdue follow-up.",
+          });
+          phoneTaskId = phoneTask?.id || null;
+        } catch (e: any) {
+          logger.warn("Failed to create phone call task during escalation", {
+            caseId,
+            proposalId,
+            error: e?.message || String(e),
+          });
+        }
+      }
       await createExecutionRecord({
         caseId, proposalId, runId, executionKey, actionType: "ESCALATE",
         status: "SENT", provider: "none",
-        providerPayload: { escalationId: escalation.id, wasNew: escalation.wasInserted },
+        providerPayload: { escalationId: escalation.id, wasNew: escalation.wasInserted, phoneTaskId },
       });
       if (escalation.wasInserted) {
         try {
@@ -468,7 +510,7 @@ export async function executeAction(
           await discordService.sendCaseEscalation(caseData, escalation);
         } catch (e: any) { /* non-fatal */ }
       }
-      executionResult = { action: "escalated", escalationId: escalation.id };
+      executionResult = { action: "escalated", escalationId: escalation.id, phoneTaskId };
       await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
       break;
     }
@@ -573,16 +615,20 @@ export async function executeAction(
 
       // Never bind generic contact lookup output to a different suggested agency.
       // Example failure mode: contactResult for Milford accidentally applied to DCI.
-      let newEmail = null;
-      let newPortalUrl = null;
+      let candidateEmail: string | null = null;
+      let candidatePortalUrl: string | null = null;
+      let candidatePhone: string | null = null;
+      let candidateFax: string | null = null;
       const contactName = String(contactResult?.agency_name || contactResult?.name || "").trim().toLowerCase();
       const suggestedName = String(suggestedAgency?.name || "").trim().toLowerCase();
       const contactMatchesSuggested = !!contactName && (
         contactName.includes(suggestedName) || suggestedName.includes(contactName)
       );
       if (contactResult && contactMatchesSuggested) {
-        newEmail = contactResult.contact_email || null;
-        newPortalUrl = contactResult.portal_url || null;
+        candidateEmail = contactResult.contact_email || null;
+        candidatePortalUrl = contactResult.portal_url || null;
+        candidatePhone = contactResult.contact_phone || null;
+        candidateFax = contactResult.contact_fax || null;
       } else if (contactResult && !contactMatchesSuggested) {
         logger.warn("Skipping mismatched contactResult for suggested agency", {
           caseId,
@@ -591,20 +637,90 @@ export async function executeAction(
         });
       }
       let agencyId = null;
+      let knownAgencyPhone: string | null = null;
+      let knownAgencyFax: string | null = null;
       try {
         const known = await db.findAgencyByName(suggestedAgency.name, caseData?.state || null);
         if (known) {
           agencyId = known.id;
-          newEmail = newEmail || known.email_main || null;
-          newPortalUrl = newPortalUrl || known.portal_url || null;
+          candidateEmail = candidateEmail || known.email_main || known.email_foia || null;
+          candidatePortalUrl = candidatePortalUrl || known.portal_url || known.portal_url_alt || null;
+          knownAgencyPhone = known.phone || null;
+          knownAgencyFax = known.fax || null;
         }
       } catch (e: any) { /* non-fatal */ }
+      candidatePhone = candidatePhone || knownAgencyPhone;
+      candidateFax = candidateFax || knownAgencyFax;
 
-      if (!newEmail && !newPortalUrl) {
+      // Only propose channels that are genuinely NEW vs existing case channels.
+      const existingEmails = new Set<string>();
+      const existingPortals = new Set<string>();
+      const existingPhones = new Set<string>();
+      const existingFaxes = new Set<string>();
+      try {
+        const existingCaseAgencies = await db.query(
+          `SELECT ca.agency_email, ca.portal_url, a.phone, a.fax
+           FROM case_agencies ca
+           LEFT JOIN agencies a ON ca.agency_id = a.id
+           WHERE ca.case_id = $1`,
+          [caseId]
+        );
+        const knownEmails = [
+          caseData?.agency_email,
+          caseData?.alternate_agency_email,
+          thread?.agency_email,
+          ...(existingCaseAgencies.rows || []).map((r: any) => r.agency_email),
+        ];
+        const knownPortals = [
+          caseData?.portal_url,
+          ...(existingCaseAgencies.rows || []).map((r: any) => r.portal_url),
+        ];
+        const knownPhones = (existingCaseAgencies.rows || []).map((r: any) => r.phone);
+        const knownFaxes = (existingCaseAgencies.rows || []).map((r: any) => r.fax);
+
+        for (const v of knownEmails) {
+          const n = normalizeEmail(v);
+          if (n) existingEmails.add(n);
+        }
+        for (const v of knownPortals) {
+          const n = normalizePortalForCompare(v);
+          if (n) existingPortals.add(n);
+        }
+        for (const v of knownPhones) {
+          const n = normalizePhoneForCompare(v);
+          if (n) existingPhones.add(n);
+        }
+        for (const v of knownFaxes) {
+          const n = normalizePhoneForCompare(v);
+          if (n) existingFaxes.add(n);
+        }
+      } catch (e: any) {
+        logger.warn("Failed building existing contact channel sets", { caseId, error: e?.message || String(e) });
+      }
+
+      const normalizedCandidateEmail = normalizeEmail(candidateEmail);
+      const normalizedCandidatePortal = normalizePortalForCompare(candidatePortalUrl);
+      const normalizedCandidatePhone = normalizePhoneForCompare(candidatePhone);
+      const normalizedCandidateFax = normalizePhoneForCompare(candidateFax);
+
+      const newEmail = normalizedCandidateEmail && !existingEmails.has(normalizedCandidateEmail)
+        ? candidateEmail
+        : null;
+      const newPortalUrl = normalizedCandidatePortal && !existingPortals.has(normalizedCandidatePortal)
+        ? candidatePortalUrl
+        : null;
+      const newPhone = normalizedCandidatePhone && !existingPhones.has(normalizedCandidatePhone)
+        ? candidatePhone
+        : null;
+      const newFax = normalizedCandidateFax && !existingFaxes.has(normalizedCandidateFax)
+        ? candidateFax
+        : null;
+
+      if (!newEmail && !newPortalUrl && !newPhone && !newFax) {
         await ensureResearchHandoffProposal(
           "no-contact-info",
-          `Research identified ${suggestedAgency.name} but did not produce contact info.`,
-          `Research identified ${suggestedAgency.name}, but no email or portal URL was found. Please add contact info or choose a different agency, then retry.`,
+          `Research identified ${suggestedAgency.name} but did not produce a new contact channel.`,
+          `Research identified ${suggestedAgency.name}, but no NEW email, portal, phone, or fax channel was found. Please add contact info or choose a different agency, then retry.`,
           { gateOptions: ["RETRY_RESEARCH", "ADJUST", "DISMISS"] }
         );
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
@@ -640,24 +756,46 @@ export async function executeAction(
         break;
       }
 
-      let foiaResult;
-      try {
-        foiaResult = await aiService.generateFOIARequest({ ...caseData, agency_name: suggestedAgency.name });
-      } catch (e: any) {
-        await ensureResearchHandoffProposal(
-          "foia-generation-failed",
-          `Research identified ${suggestedAgency.name} but FOIA draft generation failed.`,
-          `Research identified ${suggestedAgency.name}, but draft generation failed (${e?.message || "unknown error"}). Please draft manually or retry generation.`
-        );
-        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
-          substatus: "agency_research_complete",
-          pauseReason: "RESEARCH_HANDOFF",
-        });
-        executionResult = { action: "research_complete", followup: "foia_generation_failed" };
-        break;
+      const followupActionType = newPortalUrl
+        ? "SUBMIT_PORTAL"
+        : newEmail
+          ? "SEND_INITIAL_REQUEST"
+          : "ESCALATE";
+
+      let foiaRequestText: string | null = null;
+      if (followupActionType !== "ESCALATE") {
+        try {
+          const foiaResult = await aiService.generateFOIARequest({ ...caseData, agency_name: suggestedAgency.name });
+          foiaRequestText = foiaResult.request_text;
+        } catch (e: any) {
+          await ensureResearchHandoffProposal(
+            "foia-generation-failed",
+            `Research identified ${suggestedAgency.name} but FOIA draft generation failed.`,
+            `Research identified ${suggestedAgency.name}, but draft generation failed (${e?.message || "unknown error"}). Please draft manually or retry generation.`
+          );
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+            substatus: "agency_research_complete",
+            pauseReason: "RESEARCH_HANDOFF",
+          });
+          executionResult = { action: "research_complete", followup: "foia_generation_failed" };
+          break;
+        }
       }
 
-      const followupActionType = newPortalUrl ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
+      const escalationForPhone = !!newPhone && !newPortalUrl && !newEmail;
+      const escalationForFax = !!newFax && !newPortalUrl && !newEmail && !newPhone;
+      const escalationReasonMarker = escalationForPhone
+        ? "FOLLOWUP_CHANNEL:PHONE"
+        : escalationForFax
+          ? "FOLLOWUP_CHANNEL:FAX"
+          : null;
+      const escalationDraftSubject = escalationForPhone
+        ? `Call follow-up recommendation - ${suggestedAgency.name}`
+        : `Fax follow-up recommendation - ${suggestedAgency.name}`;
+      const escalationDraftBody = escalationForPhone
+        ? `Research found a new phone number for follow-up: ${newPhone}\n\nRecommended next step: place a phone call to ${suggestedAgency.name} and reference case #${caseId}.`
+        : `Research found a new fax number for follow-up: ${newFax}\n\nRecommended next step: send a fax follow-up to ${suggestedAgency.name}. Fax is lowest-priority and is suggested only because no new portal/email/phone channel was found.`;
+
       const followupKey = `${caseId}:research:ca${caseAgency.id}:${followupActionType}:0`;
       try {
         await db.upsertProposal({
@@ -665,9 +803,20 @@ export async function executeAction(
           caseId,
           runId: runId || null,
           actionType: followupActionType,
-          draftSubject: `Public Records Request - ${caseData?.subject_name || "Records Request"}`,
-          draftBodyText: foiaResult.request_text,
-          reasoning: [`Research identified ${suggestedAgency.name} as likely records holder`],
+          draftSubject: followupActionType === "ESCALATE"
+            ? escalationDraftSubject
+            : `Public Records Request - ${caseData?.subject_name || "Records Request"}`,
+          draftBodyText: followupActionType === "ESCALATE"
+            ? escalationDraftBody
+            : foiaRequestText,
+          reasoning: [
+            `Research identified ${suggestedAgency.name} as likely records holder`,
+            ...(newPortalUrl ? [`Proposed channel: new portal (${newPortalUrl})`] : []),
+            ...(newEmail ? [`Proposed channel: new email (${newEmail})`] : []),
+            ...(newPhone ? [`Discovered phone: ${newPhone}`] : []),
+            ...(newFax ? [`Discovered fax: ${newFax}`] : []),
+            ...(escalationReasonMarker ? [escalationReasonMarker] : []),
+          ],
           confidence: suggestedAgency.confidence || 0.7,
           requiresHuman: true,
           canAutoExecute: false,

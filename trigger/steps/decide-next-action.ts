@@ -175,7 +175,10 @@ async function preComputeDecisionContext(
     db.getLatestResponseAnalysis(caseId),
     db.query(
       `SELECT action_type, reasoning, human_decision, created_at FROM proposals
-       WHERE case_id = $1 AND status = 'DISMISSED'
+       WHERE case_id = $1
+         AND status = 'DISMISSED'
+         AND human_decision IS NOT NULL
+         AND COALESCE(human_decision->>'auto_dismiss_reason', '') = ''
        ORDER BY created_at DESC LIMIT 5`,
       [caseId]
     ).then((r: any) => r.rows),
@@ -1241,7 +1244,10 @@ async function aiDecision(params: {
       db.getLatestResponseAnalysis(params.caseId),
       db.query(
         `SELECT action_type, reasoning, human_decision, created_at FROM proposals
-         WHERE case_id = $1 AND status = 'DISMISSED'
+         WHERE case_id = $1
+           AND status = 'DISMISSED'
+           AND human_decision IS NOT NULL
+           AND COALESCE(human_decision->>'auto_dismiss_reason', '') = ''
          ORDER BY created_at DESC LIMIT 5`,
         [params.caseId]
       ).then((r: any) => r.rows),
@@ -1812,6 +1818,42 @@ export async function decideNextAction(
         });
       }
       return noAction([...reasoning, "No email response needed"]);
+    }
+
+    // Overdue / scheduled follow-up policy:
+    // Route through research first so we can propose the best *new* channel
+    // (new portal/new email/phone/fax) instead of repeatedly emailing stale contacts.
+    if (classification === "NO_RESPONSE" || isFollowupTrigger) {
+      const [followupSchedule, caseSnapshot] = await Promise.all([
+        db.getFollowUpScheduleByCaseId(caseId),
+        db.getCaseById(caseId),
+      ]);
+      const followupCount = followupSchedule?.followup_count || 0;
+      if (followupCount >= MAX_FOLLOWUPS) {
+        return decision("ESCALATE", {
+          canAutoExecute: true,
+          pauseReason: "CLOSE_ACTION",
+          reasoning: [`Max follow-ups reached (${followupCount}/${MAX_FOLLOWUPS})`],
+        });
+      }
+
+      const daysOverdue = Number(caseSnapshot?.days_overdue || 0);
+      const deadlineTs = caseSnapshot?.deadline_date ? new Date(caseSnapshot.deadline_date).getTime() : null;
+      const isPastDeadline = !!(deadlineTs && Number.isFinite(deadlineTs) && deadlineTs < Date.now());
+      const isDueOrOverdue = isFollowupTrigger || daysOverdue > 0 || isPastDeadline;
+
+      if (isDueOrOverdue) {
+        return decision("RESEARCH_AGENCY", {
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: "SCOPE",
+          researchLevel: "light",
+          reasoning: [
+            `Follow-up due/overdue (${followupCount + 1}/${MAX_FOLLOWUPS})`,
+            "Researching alternative channels before sending another follow-up",
+          ],
+        });
+      }
     }
 
     // === HUMAN_REVIEW_RESOLUTION ===
