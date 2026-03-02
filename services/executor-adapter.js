@@ -45,6 +45,8 @@ async function createExecutionRecord(data) {
       case_id, proposal_id, run_id, execution_key,
       action_type, status, provider, provider_payload, error_message
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    ON CONFLICT (execution_key) DO UPDATE
+      SET updated_at = NOW()
     RETURNING *
   `;
 
