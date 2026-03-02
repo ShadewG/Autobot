@@ -860,7 +860,13 @@ Generate a STRONG, legally-grounded rebuttal that:
 4. Quotes exact statutory language where helpful (from the research provided)
 5. Shows good faith and willingness to cooperate
 6. References relevant case law if provided in research
-7. Is under 250 words
+7. Is under 250 words (body content, not counting greeting/sign-off)
+
+EMAIL FORMAT (required):
+- Start with a greeting addressing the person who responded (use their name if available from the correspondence, otherwise "Records Custodian")
+- Include a brief intro sentence referencing our original request and their response/denial
+- Then the rebuttal content
+- End with sign-off: "Best regards,\nSamuel Hylton\nDr Insanity"
 ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researched Support Points (use these):**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 Return ONLY the email body text, no subject line.`;
@@ -872,9 +878,11 @@ Return ONLY the email body text, no subject line.`;
 
             console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars) with GPT-5`);
 
+            const shortReference = this.getShortCaseReference(caseData);
+
             // Normalize output format: always return { subject, body_text, body_html }
             return {
-                subject: null,  // Rebuttals don't generate subjects (use RE: pattern)
+                subject: `RE: Public Records Request - ${shortReference}`,
                 body_text: rebuttalText,
                 body_html: null,
                 // Metadata

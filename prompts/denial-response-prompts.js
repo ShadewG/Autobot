@@ -38,6 +38,12 @@ FORMATTING:
 - Use plain dashes (-) for bullet points.
 - Use plain text labels like "Phase 1:" instead of markdown bold.
 
+EMAIL STRUCTURE:
+- Start with a greeting (use the contact name from correspondence if available, otherwise "Records Custodian")
+- Brief intro referencing our original request and their response
+- The rebuttal/request content
+- Sign off with: Best regards, Samuel Hylton, Dr Insanity
+
 PRINCIPLE: The goal is getting records, not winning arguments.`,
 
     // Specific strategies for each denial type
