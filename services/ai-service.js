@@ -44,6 +44,70 @@ class AIService {
         }
     }
 
+    async getUserSignatureForCase(caseData) {
+        let user = null;
+        if (caseData?.user_id) {
+            user = await db.getUserById(caseData.user_id);
+        }
+
+        const name = user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const title = user?.signature_title || process.env.REQUESTER_TITLE || '';
+        const organization = user?.signature_organization || '';
+        const phone = user?.signature_phone || process.env.REQUESTER_PHONE || '';
+        const email = user?.email || process.env.REQUESTER_EMAIL || process.env.SENDGRID_FROM_EMAIL || '';
+
+        const addressParts = [
+            user?.address_street,
+            user?.address_street2,
+            [user?.address_city, user?.address_state].filter(Boolean).join(', '),
+            user?.address_zip
+        ].filter(Boolean);
+
+        return {
+            name,
+            title,
+            organization,
+            phone,
+            email,
+            address: addressParts.join('\n')
+        };
+    }
+
+    buildCanonicalSignatureLines(userSignature, { includeEmail = false, includeAddress = false } = {}) {
+        const lines = [];
+        if (userSignature?.name) lines.push(userSignature.name);
+        if (userSignature?.title) lines.push(userSignature.title);
+        if (userSignature?.organization) lines.push(userSignature.organization);
+        if (userSignature?.phone) lines.push(userSignature.phone);
+        if (includeEmail && userSignature?.email) lines.push(userSignature.email);
+        if (includeAddress && userSignature?.address) lines.push(userSignature.address);
+        return lines;
+    }
+
+    normalizeGeneratedDraftSignature(text, userSignature, { includeEmail = false, includeAddress = false } = {}) {
+        const cleaned = this.sanitizeSignaturePlaceholders(text, userSignature);
+        if (!cleaned) return cleaned;
+
+        const signatureLines = this.buildCanonicalSignatureLines(userSignature, { includeEmail, includeAddress });
+        if (signatureLines.length === 0) return cleaned;
+
+        const lines = cleaned.replace(/\r\n/g, '\n').split('\n');
+        const closingRegex = /^\s*(thank you(?: for your assistance)?|sincerely|best regards|regards)\s*[,.!]*\s*$/i;
+        let closingIdx = -1;
+        for (let i = lines.length - 1; i >= 0; i--) {
+            if (closingRegex.test(lines[i])) {
+                closingIdx = i;
+                break;
+            }
+        }
+
+        const rebuilt = closingIdx >= 0
+            ? [...lines.slice(0, closingIdx + 1), '', ...signatureLines]
+            : [...lines, '', 'Thank you,', '', ...signatureLines];
+
+        return rebuilt.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    }
+
     /**
      * Strip quoted reply history from email bodies
      */
@@ -84,19 +148,27 @@ class AIService {
     sanitizeSignaturePlaceholders(text, userSignature) {
         if (!text) return text;
         const name = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const title = userSignature?.title || 'Documentary Researcher, Dr Insanity';
+        const title = userSignature?.title || process.env.REQUESTER_TITLE || '';
         const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
 
         let result = text;
-        // Replace name placeholders
-        result = result.replace(/\[Your (?:Full )?Name\]/gi, name);
-        // Replace title/organization placeholders
-        result = result.replace(/\[Your (?:Title|Organization)\]/gi, title);
-        // Replace phone placeholders
-        result = result.replace(/\[Your Phone(?: Number)?\]/gi, phone);
-        // Remove lines with remaining bracketed placeholders for email/address
-        // (system prompt says DO NOT include these)
-        result = result.replace(/^.*\[Your (?:Email|E-?mail Address|Mailing Address|Address)(?:\s*\(optional\))?\].*$/gmi, '');
+        // Replace common placeholder variants (with or without brackets/markdown)
+        // Name/title placeholders are replaced with real values.
+        result = result.replace(/(?:\*\*)?\[?\s*your\s+(?:full\s+)?name\s*\]?(?:\*\*)?/gi, name);
+        result = result.replace(/(?:\*\*)?\[?\s*your\s+(?:title|organization)\s*\]?(?:\*\*)?/gi, title);
+
+        // Phone placeholder: use configured phone if available, otherwise remove placeholder token.
+        result = result.replace(/(?:\*\*)?\[?\s*your\s+phone(?:\s+number)?\s*\]?(?:\*\*)?/gi, phone || '');
+
+        // Remove full lines that still contain contact placeholders we never want in output.
+        // Handles variants like "[Your Address/City, State]" and markdown bullet/label wrappers.
+        result = result.replace(
+            /^.*(?:\*\*)?\[?\s*your\s+(?:email|e-?mail(?:\s+address)?|mailing\s+address|address(?:\s*\/\s*city,\s*state)?)\s*(?:\(optional\))?\]?(?:\*\*)?.*$/gmi,
+            ''
+        );
+
+        // Remove now-empty label lines left by token replacement, e.g. "Phone:".
+        result = result.replace(/^\s*(?:[-*]\s*)?(?:phone|telephone)\s*:\s*$/gmi, '');
         // Clean up any trailing blank lines left by removals
         result = result.replace(/\n{3,}/g, '\n\n');
         return result.trim();
@@ -110,18 +182,7 @@ class AIService {
             console.log(`Generating FOIA request for case: ${caseData.case_name}`);
 
             // Load user signature if case is assigned
-            let userSignature = null;
-            if (caseData.user_id) {
-                const user = await db.getUserById(caseData.user_id);
-                if (user) {
-                    userSignature = {
-                        name: user.signature_name || user.name,
-                        title: user.signature_title || 'Documentary Researcher, Dr Insanity',
-                        organization: user.signature_organization || null,
-                        phone: user.signature_phone || null
-                    };
-                }
-            }
+            const userSignature = await this.getUserSignatureForCase(caseData);
 
             // Get adaptive strategy based on learned patterns
             const strategy = await adaptiveLearning.generateStrategicVariation(caseData);
@@ -168,7 +229,7 @@ class AIService {
                 }
 
                 // Fix AI placeholder patterns ([Your Name], etc.)
-                requestText = this.sanitizeSignaturePlaceholders(requestText, userSignature);
+                requestText = this.normalizeGeneratedDraftSignature(requestText, userSignature, { includeEmail: false, includeAddress: false });
 
                 // Store generated request with strategy info
                 const modelUsed = process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11';
@@ -231,8 +292,8 @@ class AIService {
             ]
         });
 
-        const requestText = this.sanitizeSignaturePlaceholders(
-            response.content[0].text, userSignature
+        const requestText = this.normalizeGeneratedDraftSignature(
+            response.content[0].text, userSignature, { includeEmail: false, includeAddress: false }
         );
 
         await db.createGeneratedRequest({
@@ -332,11 +393,14 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 
         // Get requester info from user signature, env, or defaults
         const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const requesterTitle = userSignature?.title || 'Documentary Researcher, Dr Insanity';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
         const requesterPhone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
 
         // Build signature block for the closing
-        let signatureBlock = `   - Name: ${requesterName}\n   - Title: ${requesterTitle}`;
+        let signatureBlock = `   - Name: ${requesterName}`;
+        if (requesterTitle) {
+            signatureBlock += `\n   - Title: ${requesterTitle}`;
+        }
         if (requesterPhone) {
             signatureBlock += `\n   - Phone: ${requesterPhone}`;
         }
@@ -1890,21 +1954,10 @@ Return ONLY valid JSON.`;
         const keyPoints = denialContext.key_points || [];
 
         // Load requester info for signature
-        let userSignature = null;
-        if (caseData.user_id) {
-            const user = await db.getUserById(caseData.user_id);
-            if (user) {
-                userSignature = {
-                    name: user.signature_name || user.name,
-                    title: user.signature_title || 'Documentary Researcher, Dr Insanity',
-                    organization: user.signature_organization || null,
-                    phone: user.signature_phone || null
-                };
-            }
-        }
+        const userSignature = await this.getUserSignatureForCase(caseData);
         const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
-        const requesterTitle = userSignature?.title || 'Documentary Researcher, Dr Insanity';
-        const requesterEmail = process.env.SENDGRID_FROM_EMAIL || '';
+        const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
+        const requesterEmail = userSignature?.email || process.env.SENDGRID_FROM_EMAIL || '';
 
         const prompt = `You are a FOIA request strategist. A previous request was denied or had an excessive fee. Generate a NEW, reformulated FOIA request
 that approaches the same records from a different angle or with narrower scope.
@@ -1960,7 +2013,7 @@ Return ONLY valid JSON.`;
                 const result = JSON.parse(jsonMatch[0]);
                 // Catch any remaining placeholder patterns
                 if (result.body_text) {
-                    result.body_text = this.sanitizeSignaturePlaceholders(result.body_text, userSignature);
+                    result.body_text = this.normalizeGeneratedDraftSignature(result.body_text, userSignature, { includeEmail: true, includeAddress: false });
                 }
                 return result;
             }
