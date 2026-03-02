@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ThreadMessage } from "@/lib/types";
 import { formatDateTime, cn } from "@/lib/utils";
-import { Mail, Globe, Phone, Truck, FileText, FileCode, Loader2 } from "lucide-react";
+import { Mail, Globe, Phone, Truck, FileText, FileCode, Loader2, Paperclip, Download, ExternalLink } from "lucide-react";
 
 const channelIcons: Record<string, React.ReactNode> = {
   EMAIL: <Mail className="h-3 w-3" />,
@@ -102,12 +102,41 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
 
       {/* Attachments */}
       {message.attachments.length > 0 && (
-        <div className="flex items-center gap-1 flex-wrap mt-1.5">
-          {message.attachments.map((att, i) => (
-            <Badge key={i} variant="outline" className="text-xs">
-              {att.filename}
-            </Badge>
-          ))}
+        <div className="mt-2 space-y-1">
+          {message.attachments.map((att, i) => {
+            const isPdf = att.content_type === "application/pdf" || att.filename?.toLowerCase().endsWith(".pdf");
+            const downloadUrl = `/api/monitor/attachments/${att.id}/download`;
+            const sizeLabel = att.size_bytes
+              ? att.size_bytes > 1024 * 1024
+                ? `${(att.size_bytes / (1024 * 1024)).toFixed(1)} MB`
+                : `${Math.round(att.size_bytes / 1024)} KB`
+              : null;
+
+            return (
+              <div key={i} className="flex items-center gap-2 rounded border border-border/60 bg-muted/30 px-2.5 py-1.5">
+                <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="text-xs font-medium truncate flex-1 min-w-0">{att.filename}</span>
+                {sizeLabel && <span className="text-[10px] text-muted-foreground shrink-0">{sizeLabel}</span>}
+                {isPdf && (
+                  <a
+                    href={downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+                  >
+                    <ExternalLink className="h-3 w-3" /> View
+                  </a>
+                )}
+                <a
+                  href={downloadUrl}
+                  download={att.filename}
+                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+                >
+                  <Download className="h-3 w-3" /> Download
+                </a>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
