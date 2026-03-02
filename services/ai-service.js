@@ -1889,7 +1889,24 @@ Return ONLY valid JSON.`;
         const denialContext = denialAnalysis?.full_analysis_json || denialAnalysis || {};
         const keyPoints = denialContext.key_points || [];
 
-        const prompt = `You are a FOIA request strategist. A previous request was denied. Generate a NEW, reformulated FOIA request
+        // Load requester info for signature
+        let userSignature = null;
+        if (caseData.user_id) {
+            const user = await db.getUserById(caseData.user_id);
+            if (user) {
+                userSignature = {
+                    name: user.signature_name || user.name,
+                    title: user.signature_title || 'Documentary Researcher, Dr Insanity',
+                    organization: user.signature_organization || null,
+                    phone: user.signature_phone || null
+                };
+            }
+        }
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const requesterTitle = userSignature?.title || 'Documentary Researcher, Dr Insanity';
+        const requesterEmail = process.env.SENDGRID_FROM_EMAIL || '';
+
+        const prompt = `You are a FOIA request strategist. A previous request was denied or had an excessive fee. Generate a NEW, reformulated FOIA request
 that approaches the same records from a different angle or with narrower scope.
 
 ORIGINAL REQUEST CONTEXT:
@@ -1900,18 +1917,24 @@ ORIGINAL REQUEST CONTEXT:
 - Incident date: ${caseData.incident_date || 'Unknown'}
 - Incident location: ${caseData.incident_location || 'Unknown'}
 
-DENIAL DETAILS:
+DENIAL/FEE DETAILS:
 - Denial subtype: ${denialContext.denial_subtype || 'unknown'}
 - Key points: ${keyPoints.join('; ')}
 - Summary: ${denialContext.summary || 'No summary available'}
 
+REQUESTER INFO (use these exact details — do NOT use placeholders):
+- Name: ${requesterName}
+- Title: ${requesterTitle}
+- Email: ${requesterEmail}
+
 REFORMULATION STRATEGY:
 - If "no CCTV/BWC records" → request incident/dispatch reports, CAD logs, or 911 calls instead
-- If "overly broad" → narrow by specific dates, times, officers, or record types
+- If "overly broad" or fee too high → narrow by specific dates, times, officers, or record types
 - If "no records for that address" → try broader location description or different record category
 - Use different terminology that may match agency filing systems
 - Keep request specific enough to avoid "overly broad" but broad enough to capture relevant records
 - Cite applicable state public records law
+- Sign with the requester's real name and title above — NEVER use [Your Name] or similar placeholders
 
 Return JSON:
 {
@@ -1934,7 +1957,12 @@ Return ONLY valid JSON.`;
             const raw = response.output_text?.trim();
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                return JSON.parse(jsonMatch[0]);
+                const result = JSON.parse(jsonMatch[0]);
+                // Catch any remaining placeholder patterns
+                if (result.body_text) {
+                    result.body_text = this.sanitizeSignaturePlaceholders(result.body_text, userSignature);
+                }
+                return result;
             }
             throw new Error('Failed to parse reformulated request JSON');
         } catch (error) {

@@ -330,9 +330,10 @@ export async function executeAction(
 
       const thread = await db.getThreadByCaseId(caseId);
       const latestInbound = await db.getLatestInboundMessage(caseId);
-      const replyHeaders = buildReplyHeaders(targetEmail, latestInbound);
-      const isInitial = resolvedActionType === "SEND_INITIAL_REQUEST";
-      const delayMinutes = isInitial ? 0 : Math.floor(Math.random() * 480) + 120;
+      // REFORMULATE_REQUEST is a brand-new FOIA request — send as fresh email, not a reply
+      const isFreshEmail = resolvedActionType === "REFORMULATE_REQUEST" || resolvedActionType === "SEND_INITIAL_REQUEST";
+      const replyHeaders = isFreshEmail ? {} : buildReplyHeaders(targetEmail, latestInbound);
+      const delayMinutes = isFreshEmail ? 0 : Math.floor(Math.random() * 480) + 120;
       const delayMs = delayMinutes * 60 * 1000;
 
       const emailResult = await emailExecutor.sendEmail({
@@ -346,8 +347,8 @@ export async function executeAction(
         runId,
         actionType: resolvedActionType,
         delayMs,
-        threadId: thread?.id,
-        originalMessageId: latestInbound?.message_id,
+        threadId: isFreshEmail ? undefined : thread?.id,
+        originalMessageId: isFreshEmail ? undefined : latestInbound?.message_id,
       });
 
       if (!emailResult || emailResult.success !== true) {
