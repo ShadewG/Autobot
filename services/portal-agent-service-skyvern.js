@@ -1707,7 +1707,9 @@ class PortalAgentServiceSkyvern {
         try {
             console.log(`📧 Portal failed for case ${caseData.id}, falling back to email (${targetEmail})`);
             const pdfResult = await pdfFormService.handlePdfFormFallback(caseData, portalUrl, reason, {});
-            if (!pdfResult.success) return false;
+            if (!pdfResult.success) {
+                return await this._sendDirectEmailFallback(caseData, targetEmail, portalUrl, `${reason} (PDF fallback unavailable)`);
+            }
 
             const fs = require('fs');
             const sendgridService = require('./sendgrid-service');
@@ -1722,7 +1724,9 @@ class PortalAgentServiceSkyvern {
                 const fullAtt = await database.getAttachmentById(pdfAttachment.id);
                 if (fullAtt?.file_data) pdfBuffer = fullAtt.file_data;
             }
-            if (!pdfBuffer) return false;
+            if (!pdfBuffer) {
+                return await this._sendDirectEmailFallback(caseData, targetEmail, portalUrl, `${reason} (PDF attachment unavailable)`);
+            }
 
             const draftSubject = pdfResult.draftSubject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`;
             const sendResult = await sendgridService.sendEmail({
@@ -1758,6 +1762,68 @@ class PortalAgentServiceSkyvern {
             return true;
         } catch (err) {
             console.warn(`📧 Email fallback failed for case ${caseData.id}:`, err.message);
+            return await this._sendDirectEmailFallback(caseData, targetEmail, portalUrl, `${reason} (PDF flow error: ${err.message})`);
+        }
+    }
+
+    /**
+     * Direct email fallback (no attachment) when PDF fallback fails.
+     */
+    async _sendDirectEmailFallback(caseData, targetEmail, portalUrl, reason) {
+        if (!targetEmail) return false;
+        try {
+            const sendgridService = require('./sendgrid-service');
+            const latestOutbound = await database.query(
+                `SELECT subject, body_text
+                 FROM messages
+                 WHERE case_id = $1 AND direction = 'outbound'
+                 ORDER BY created_at DESC
+                 LIMIT 1`,
+                [caseData.id]
+            );
+            const reusedSubject = latestOutbound.rows[0]?.subject || null;
+            const reusedBody = latestOutbound.rows[0]?.body_text || null;
+            const subject = reusedSubject || `Public Records Request - ${caseData.subject_name || caseData.case_name || 'Records Request'}`;
+            const bodyText = reusedBody || `Hello,\n\nThis is a public records request regarding ${caseData.subject_name || caseData.case_name || 'the referenced incident'}.\n\nRequested records: ${caseData.requested_records || 'see prior correspondence'}.\n\nThe agency portal appears unavailable, so we are submitting this request by email.\n\nThank you.`;
+
+            const sendResult = await sendgridService.sendEmail({
+                to: targetEmail,
+                subject,
+                text: bodyText,
+                caseId: caseData.id,
+                messageType: 'send_initial_request'
+            });
+
+            try { await database.dismissPendingProposals(caseData.id, 'Portal failed, direct email fallback sent', ['SUBMIT_PORTAL']); } catch (_) {}
+            await database.upsertProposal({
+                proposalKey: `${caseData.id}:portal_fallback:SEND_INITIAL_REQUEST:direct`,
+                caseId: caseData.id,
+                actionType: 'SEND_INITIAL_REQUEST',
+                reasoning: [
+                    `Portal submission failed: ${reason}`,
+                    `Direct email fallback sent to ${targetEmail}`
+                ],
+                confidence: 0.85,
+                requiresHuman: false,
+                canAutoExecute: true,
+                draftSubject: subject,
+                draftBodyText: bodyText,
+                status: 'EXECUTED'
+            });
+            await database.updateCaseStatus(caseData.id, 'sent', {
+                substatus: `Direct email fallback to ${targetEmail} (portal unavailable)`,
+                send_date: new Date()
+            });
+            await database.logActivity('portal_email_fallback',
+                `Portal failed, direct email fallback sent to ${targetEmail}`, {
+                case_id: caseData.id,
+                portal_url: portalUrl,
+                sendgrid_message_id: sendResult.messageId
+            });
+            console.log(`📧 Direct email fallback sent to ${targetEmail} for case ${caseData.id}`);
+            return true;
+        } catch (err) {
+            console.warn(`📧 Direct email fallback failed for case ${caseData.id}:`, err.message);
             return false;
         }
     }
@@ -1924,6 +1990,18 @@ class PortalAgentServiceSkyvern {
             await database.logActivity('pdf_form_fallback_failed', `PDF fallback failed: ${pdfErr.message}`, {
                 case_id: caseData.id, portal_url: originalUrl, error: pdfErr.message
             });
+            const fallbackEmail = caseData.agency_email || caseData.alternate_agency_email;
+            if (fallbackEmail) {
+                const directSent = await this._sendDirectEmailFallback(
+                    caseData,
+                    fallbackEmail,
+                    originalUrl,
+                    `${reason} (pdf fallback failed: ${pdfErr.message})`
+                );
+                if (directSent) {
+                    return { success: true, status: 'email_fallback_sent', engine: 'direct_email_fallback' };
+                }
+            }
         }
 
         // Step 3: Both research and PDF failed — escalate to human
