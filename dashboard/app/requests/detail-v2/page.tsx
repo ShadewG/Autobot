@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, Suspense, useMemo } from "react";
+import { useCallback, useEffect, useState, useRef, Suspense, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -87,6 +87,7 @@ import {
   Check,
   ChevronRight,
   ArrowRight,
+  GripVertical,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -331,6 +332,50 @@ function DetailV2Content() {
   const [manualAgencyEmail, setManualAgencyEmail] = useState("");
   const [manualAgencyPortalUrl, setManualAgencyPortalUrl] = useState("");
   const [isManualAgencySubmitting, setIsManualAgencySubmitting] = useState(false);
+  // Resizable sidebar
+  const SIDEBAR_STORAGE_KEY = "detail-v2-sidebar-width";
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
+      if (stored) return Math.max(280, Math.min(700, parseInt(stored, 10)));
+    }
+    return 380;
+  });
+  const isDraggingRef = useRef(false);
+  const dragStartXRef = useRef(0);
+  const dragStartWidthRef = useRef(380);
+
+  const handleSidebarDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingRef.current = true;
+    dragStartXRef.current = e.clientX;
+    dragStartWidthRef.current = sidebarWidth;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const delta = dragStartXRef.current - ev.clientX; // dragging left = wider sidebar
+      const newWidth = Math.max(280, Math.min(700, dragStartWidthRef.current + delta));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      // Persist
+      setSidebarWidth((w) => {
+        localStorage.setItem(SIDEBAR_STORAGE_KEY, String(w));
+        return w;
+      });
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+  }, [sidebarWidth]);
 
   // ── Polling ────────────────────────────────────────────────────────────────
   const [pollingUntil, setPollingUntil] = useState<number>(0);
@@ -1691,8 +1736,16 @@ function DetailV2Content() {
           )}
         </div>
 
+        {/* ── RESIZE HANDLE ────────────────────────────────────────────────── */}
+        <div
+          className="shrink-0 w-1.5 cursor-col-resize flex items-center justify-center hover:bg-primary/20 active:bg-primary/30 transition-colors group"
+          onMouseDown={handleSidebarDragStart}
+        >
+          <GripVertical className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground" />
+        </div>
+
         {/* ── RIGHT PANEL: Intel Sidebar (always visible) ─────────────────── */}
-        <div className="w-[380px] shrink-0 flex flex-col min-h-0">
+        <div style={{ width: sidebarWidth }} className="shrink-0 flex flex-col min-h-0">
           <ScrollArea className="flex-1 h-0">
               {/* Portal overlay */}
               {portalTaskActive && (
@@ -1762,35 +1815,6 @@ function DetailV2Content() {
                 </div>
               </CollapsibleSection>
 
-              {/* SCOPE */}
-              {request.scope_items && request.scope_items.length > 0 && (
-                <CollapsibleSection title="SCOPE" count={request.scope_items.length}>
-                  <ScopeSummary items={request.scope_items} />
-                  <div className="mt-1.5 space-y-1">
-                    {request.scope_items.map((item: any, idx: number) => {
-                      const statusMap: Record<string, { label: string; color: string }> = {
-                        CONFIRMED_AVAILABLE: { label: "Available", color: "text-green-400" },
-                        NOT_DISCLOSABLE: { label: "Exempt", color: "text-red-400" },
-                        NOT_HELD: { label: "Not Held", color: "text-orange-400" },
-                        DELIVERED: { label: "Delivered", color: "text-emerald-400" },
-                        DENIED: { label: "Denied", color: "text-red-400" },
-                        PARTIAL: { label: "Partial", color: "text-yellow-400" },
-                        EXEMPT: { label: "Exempt", color: "text-red-400" },
-                        REQUESTED: { label: "Requested", color: "text-gray-500" },
-                        PENDING: { label: "Pending", color: "text-blue-400" },
-                      };
-                      const s = statusMap[item.status] || { label: item.status || "Requested", color: "text-gray-500" };
-                      return (
-                        <div key={idx} className="flex items-center gap-2 text-[11px] min-w-0">
-                          <span className="truncate flex-1 min-w-0">{item.name}</span>
-                          <span className={cn("shrink-0 text-[10px] font-medium", s.color)}>{s.label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CollapsibleSection>
-              )}
-
               {/* FEES */}
               {((request.fee_quote && request.fee_quote.amount > 0) || (request.cost_amount != null && request.cost_amount > 0)) && (
                 <CollapsibleSection title="FEES">
@@ -1839,7 +1863,7 @@ function DetailV2Content() {
               {/* TIMELINE */}
               {timeline_events.length > 0 && (
                 <CollapsibleSection title="TIMELINE" count={timeline_events.length}>
-                  <Timeline events={timeline_events.slice(0, 12)} />
+                  <Timeline events={timeline_events.slice(0, 20)} compact />
                 </CollapsibleSection>
               )}
 

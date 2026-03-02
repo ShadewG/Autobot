@@ -180,7 +180,7 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
       )}
       <ScrollArea className={cn(isFullHeight ? "flex-1 min-h-0" : (maxHeight || "h-[400px]"), "w-full")}>
         <div className="space-y-4 pr-2 w-full">
-          {messages.map((message) => (
+          {[...messages].reverse().map((message) => (
             <MessageBubble key={message.id} message={message} showRaw={showRaw} />
           ))}
         </div>

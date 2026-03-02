@@ -130,8 +130,8 @@ function getFriendlySummary(event: TimelineEvent): string {
 
   const runMatch = summary.match(/^Run\s+#?(\d+):\s*(.+)$/i);
   if (runMatch) {
-    const [, runId, step] = runMatch;
-    return `AI run #${runId}: ${humanizeRunStep(step)}`;
+    const [, , step] = runMatch;
+    return humanizeRunStep(step);
   }
 
   if (/^Reset to latest inbound #\d+ and queued fresh processing$/i.test(summary)) {
@@ -316,7 +316,6 @@ interface TimelineEventItemProps {
 
 const TimelineEventItem = memo(function TimelineEventItem({ event, mergedCount }: TimelineEventItemProps) {
   const [expanded, setExpanded] = useState(false);
-  const runNumber = extractRunNumber(event.summary || "");
   const categoryLabel = categoryLabels[event.category || "STATUS"];
   const eventLabel = getFriendlyEventLabel(event);
   const friendlySummary = getFriendlySummary(event);
@@ -336,9 +335,6 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, mergedCount }
           <span className="font-medium text-sm">{friendlySummary}</span>
           <Badge variant="secondary" className="text-[10px]">{eventLabel}</Badge>
           <Badge variant="outline" className="text-[10px]">{categoryLabel}</Badge>
-          {runNumber && (
-            <Badge variant="outline" className="text-[10px]">Run #{runNumber}</Badge>
-          )}
           {mergedCount && mergedCount > 1 && (
             <Badge variant="outline" className="text-[10px]">
               <Layers className="h-2.5 w-2.5 mr-1" />
@@ -489,9 +485,10 @@ const TimelineEventItem = memo(function TimelineEventItem({ event, mergedCount }
 
 interface TimelineProps {
   events: TimelineEvent[];
+  compact?: boolean;
 }
 
-export function Timeline({ events }: TimelineProps) {
+export function Timeline({ events, compact = false }: TimelineProps) {
   // Default to decision-relevant events
   const [activeFilters, setActiveFilters] = useState<Set<CategoryFilter>>(getDefaultFilters);
   const [showFilters, setShowFilters] = useState(false);
@@ -578,6 +575,21 @@ export function Timeline({ events }: TimelineProps) {
 
   const totalEvents = events.length;
   const filteredOut = totalEvents - processedEvents.length;
+
+  // Compact mode: no filters, no internal scroll — parent handles scrolling
+  if (compact) {
+    return (
+      <div className="space-y-0">
+        {processedEvents.map((event) => (
+          <TimelineEventItem
+            key={event.id}
+            event={event}
+            mergedCount={event.mergedCount}
+          />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
