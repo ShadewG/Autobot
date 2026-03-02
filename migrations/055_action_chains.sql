@@ -13,11 +13,17 @@ CREATE INDEX IF NOT EXISTS idx_proposals_chain_id ON proposals (chain_id) WHERE 
 -- Drop the old constraint and replace with chain-aware version.
 DROP INDEX IF EXISTS idx_proposals_one_active_per_case;
 
--- Non-chain proposals: still enforce one active per case
+-- Enforce exactly one active PRIMARY proposal per case.
+-- - Non-chain proposals: chain_id IS NULL (primary)
+-- - Chain primaries: chain_step = 0 (primary)
+-- Chain siblings (chain_step > 0, CHAIN_PENDING) are exempt.
 CREATE UNIQUE INDEX idx_proposals_one_active_per_case
   ON proposals (case_id)
   WHERE status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
-    AND chain_id IS NULL;
+    AND (
+      chain_id IS NULL
+      OR chain_step = 0
+    );
 
 -- Chain siblings are allowed (multiple active per case as long as they share a chain_id).
 -- The primary proposal (chain_step=0) owns the waitpoint_token; siblings use CHAIN_PENDING status.

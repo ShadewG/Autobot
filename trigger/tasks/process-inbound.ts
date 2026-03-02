@@ -737,7 +737,9 @@ export const processInbound = task({
               actionType: stepProposal.action_type,
             });
             // Mark case for human review — partial chain execution
-            await caseRuntime.transitionCaseRuntime(caseId, "CASE_NEEDS_REVIEW", {
+            await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+              targetStatus: "needs_human_review",
+              pauseReason: "EXECUTION_BLOCKED",
               substatus: `Partial chain: ${decision.actionType} executed, ${stepProposal.action_type} failed`,
             });
             break;
@@ -751,7 +753,9 @@ export const processInbound = task({
           logger.error("Chain step execution error", {
             caseId, chainId: gate.chainId, step: stepProposal.chain_step, error: err.message,
           });
-          await caseRuntime.transitionCaseRuntime(caseId, "CASE_NEEDS_REVIEW", {
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+            targetStatus: "needs_human_review",
+            pauseReason: "EXECUTION_BLOCKED",
             substatus: `Chain error: ${decision.actionType} executed, ${stepProposal.action_type} failed: ${err.message}`,
           });
           break;

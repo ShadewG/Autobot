@@ -155,6 +155,15 @@ async function applyMutations(txQuery, caseId, mutations) {
        WHERE case_id = $1 AND status = ANY($3::text[])`,
       [caseId, reason, ACTIVE_PROPOSAL_STATUSES]
     ));
+    // Also clear chain sibling proposals that remain in CHAIN_PENDING.
+    promises.push(txQuery(
+      `UPDATE proposals
+       SET status = 'DISMISSED', updated_at = NOW(),
+           human_decision = COALESCE(human_decision, '{}'::jsonb)
+             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+       WHERE case_id = $1 AND status = 'CHAIN_PENDING'`,
+      [caseId, reason]
+    ));
   }
 
   // --- proposals_dismiss_portal: dismiss portal-type and outbound proposals (for wrong_agency) ---
@@ -168,6 +177,16 @@ async function applyMutations(txQuery, caseId, mutations) {
        WHERE case_id = $1 AND status = ANY($3::text[])
          AND action_type IN ('SUBMIT_PORTAL', 'PORTAL_SUBMISSION', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
       [caseId, reason, ACTIVE_PROPOSAL_STATUSES]
+    ));
+    // Ensure portal-related chains don't leave CHAIN_PENDING siblings behind.
+    promises.push(txQuery(
+      `UPDATE proposals
+       SET status = 'DISMISSED', updated_at = NOW(),
+           human_decision = COALESCE(human_decision, '{}'::jsonb)
+             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+       WHERE case_id = $1 AND status = 'CHAIN_PENDING'
+         AND action_type IN ('SUBMIT_PORTAL', 'PORTAL_SUBMISSION', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
+      [caseId, reason]
     ));
   }
 
