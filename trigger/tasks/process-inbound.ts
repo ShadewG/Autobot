@@ -709,15 +709,37 @@ export const processInbound = task({
     // Always check DB for chain proposals and fall back to DB-stored drafts.
     if (execution.actionExecuted && gate.chainId) {
       const chainProposals = await db.getChainProposals(gate.chainId);
-      const pendingChainSteps = chainProposals.filter(
-        (p: any) => p.chain_step > 0 && p.status === "CHAIN_PENDING"
+      const unprocessedChainSteps = chainProposals.filter(
+        (p: any) => p.chain_step > 0 && p.status !== "EXECUTED"
       );
 
-      if (pendingChainSteps.length > 0) {
+      if (unprocessedChainSteps.length > 0) {
         await markStep("execute_chain", `Run #${runId}: executing chain follow-ups`, { chain_id: gate.chainId });
       }
 
-      for (const stepProposal of pendingChainSteps) {
+      // Chain steps that represent new independent requests get promoted
+      // to standalone proposals instead of auto-executing
+      const INDEPENDENT_CHAIN_ACTIONS = ["REFORMULATE_REQUEST", "SEND_INITIAL_REQUEST"];
+
+      for (const stepProposal of unprocessedChainSteps) {
+        // New-request chain steps → promote to independent proposal
+        if (INDEPENDENT_CHAIN_ACTIONS.includes(stepProposal.action_type)) {
+          const updated = await db.query(
+            `UPDATE proposals
+             SET status = 'PENDING_APPROVAL', chain_id = NULL, chain_step = NULL,
+                 gate_options = $3, updated_at = NOW()
+             WHERE id = $1 AND case_id = $2 AND status IN ('CHAIN_PENDING', 'DISMISSED')
+             RETURNING id`,
+            [stepProposal.id, caseId, JSON.stringify(["APPROVE", "ADJUST", "DISMISS"])]
+          );
+          if (updated.rowCount > 0) {
+            await db.query('UPDATE cases SET requires_human = true WHERE id = $1', [caseId]);
+            logger.info("Chain step promoted to independent proposal", {
+              caseId, proposalId: stepProposal.id, actionType: stepProposal.action_type,
+            });
+          }
+          continue;
+        }
         const inMemoryDraft = chainDrafts.get(stepProposal.action_type);
 
         // Prefer DB-stored drafts (may have been edited by user), fall back to in-memory

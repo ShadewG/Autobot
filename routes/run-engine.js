@@ -599,8 +599,11 @@ router.post('/proposals/:id/decision', async (req, res) => {
       const latestInbound = await db.getLatestInboundMessage(caseId);
       const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
       const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
+      // REFORMULATE_REQUEST / SEND_INITIAL_REQUEST are new requests, not replies
+      const FRESH_EMAIL_ACTIONS = ['REFORMULATE_REQUEST', 'SEND_INITIAL_REQUEST'];
+      const isFreshEmail = FRESH_EMAIL_ACTIONS.includes(refreshedProposal.action_type);
       const replyHeaders =
-        latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
+        !isFreshEmail && latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
           ? {
               'In-Reply-To': latestInbound.message_id,
               'References': latestInbound.message_id
