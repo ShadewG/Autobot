@@ -10,9 +10,10 @@ interface ComposerProps {
   onSend: (content: string) => Promise<void>;
   onGenerateDraft?: () => Promise<string>;
   disabled?: boolean;
+  extraActions?: React.ReactNode;
 }
 
-export function Composer({ onSend, onGenerateDraft, disabled }: ComposerProps) {
+export function Composer({ onSend, onGenerateDraft, disabled, extraActions }: ComposerProps) {
   const [content, setContent] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -66,7 +67,8 @@ export function Composer({ onSend, onGenerateDraft, disabled }: ComposerProps) {
         disabled={disabled}
         rows={4}
       />
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {extraActions}
         <Button
           onClick={handleSend}
           disabled={disabled || isSending || !content.trim()}

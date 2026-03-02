@@ -1489,11 +1489,15 @@ function DetailV2Content() {
                     />
                   </div>
                 ) : (
-                  <div className="px-3 py-3 space-y-2">
-                    <Composer onSend={handleSendMessage} />
-                    <Button size="sm" variant="outline" className="h-7 text-xs w-full" onClick={() => setGuideModalOpen(true)}>
-                      <Bot className="h-3 w-3 mr-1" /> Guide AI
-                    </Button>
+                  <div className="px-3 py-3">
+                    <Composer
+                      onSend={handleSendMessage}
+                      extraActions={
+                        <Button variant="outline" onClick={() => setGuideModalOpen(true)}>
+                          <Bot className="h-4 w-4 mr-1" /> Guide AI
+                        </Button>
+                      }
+                    />
                   </div>
                 )}
               </div>
@@ -1719,30 +1723,29 @@ function DetailV2Content() {
               </CollapsibleSection>
 
               {/* SCOPE */}
-              <CollapsibleSection title="SCOPE" count={request.scope_items?.length}>
-                {request.scope_items && request.scope_items.length > 0 && (
+              {request.scope_items && request.scope_items.length > 0 && (
+                <CollapsibleSection title="SCOPE" count={request.scope_items.length}>
                   <ScopeSummary items={request.scope_items} />
-                )}
-                <ScopeTable
-                  items={request.scope_items || []}
-                  onStatusChange={handleScopeStatusChange}
-                  isUpdating={isUpdatingScope}
-                />
-                {(!request.scope_items || request.scope_items.length === 0) && (
-                  <div className="text-[10px] text-muted-foreground">No scope items</div>
-                )}
-              </CollapsibleSection>
+                  <ScopeTable
+                    items={request.scope_items}
+                    onStatusChange={handleScopeStatusChange}
+                    isUpdating={isUpdatingScope}
+                  />
+                </CollapsibleSection>
+              )}
 
               {/* FEES */}
-              <CollapsibleSection title="FEES">
-                {request.fee_quote && request.fee_quote.amount > 0 ? (
-                  <FeeBreakdown feeQuote={request.fee_quote} scopeItems={request.scope_items} className="border-0 bg-transparent p-0 shadow-none" />
-                ) : (
-                  <div className="text-[10px] text-muted-foreground">
-                    {request.cost_amount != null && request.cost_amount > 0 ? formatCurrency(request.cost_amount) : "None quoted"}
-                  </div>
-                )}
-              </CollapsibleSection>
+              {((request.fee_quote && request.fee_quote.amount > 0) || (request.cost_amount != null && request.cost_amount > 0)) && (
+                <CollapsibleSection title="FEES">
+                  {request.fee_quote && request.fee_quote.amount > 0 ? (
+                    <FeeBreakdown feeQuote={request.fee_quote} scopeItems={request.scope_items} className="border-0 bg-transparent p-0 shadow-none" />
+                  ) : (
+                    <div className="text-[10px] text-muted-foreground">
+                      {formatCurrency(request.cost_amount!)}
+                    </div>
+                  )}
+                </CollapsibleSection>
+              )}
 
               {/* DEADLINE */}
               {deadline_milestones && deadline_milestones.length > 0 && (
@@ -1763,7 +1766,7 @@ function DetailV2Content() {
               )}
 
               {/* EXEMPTION CLAIMS */}
-              {request.constraints && request.constraints.length > 0 && (
+              {request.constraints && request.constraints.some((c: any) => c.type === "EXEMPTION") && (
                 <CollapsibleSection title="EXEMPTION CLAIMS" defaultOpen={false}>
                   <ExemptionClaimsList
                     constraints={request.constraints}
@@ -1776,10 +1779,12 @@ function DetailV2Content() {
                 </CollapsibleSection>
               )}
 
-              {/* TIMELINE (compact) */}
-              <CollapsibleSection title="TIMELINE" count={timeline_events.length}>
-                <Timeline events={timeline_events.slice(0, 12)} />
-              </CollapsibleSection>
+              {/* TIMELINE */}
+              {timeline_events.length > 0 && (
+                <CollapsibleSection title="TIMELINE" count={timeline_events.length}>
+                  <Timeline events={timeline_events.slice(0, 12)} />
+                </CollapsibleSection>
+              )}
 
               {/* Portal history */}
               {hasPortalHistory && (
