@@ -679,16 +679,18 @@ export const processInbound = task({
             return { status: adjustResult.output.action.toLowerCase(), proposalId: adjustedGate.proposalId };
           }
 
-          await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: decision.actionType });
+          const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
+          const adjustedExecutionActionType = (adjustedProposalRow?.action_type || decision.actionType) as ActionType;
+          await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: adjustedExecutionActionType });
           const adjustedExecution = await executeAction(
-            caseId, adjustedGate.proposalId, decision.actionType, runId,
+            caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
             adjustedDraft, null, decision.reasoning,
             undefined, undefined,
             classification.classification
           );
           await markStep("commit_state", `Run #${runId}: committing adjusted approved action state`);
           await commitState(
-            caseId, runId, decision.actionType, decision.reasoning,
+            caseId, runId, adjustedExecutionActionType, decision.reasoning,
             classification.confidence, "INBOUND_MESSAGE",
             adjustedExecution.actionExecuted, adjustedExecution.executionResult
           );
@@ -704,9 +706,19 @@ export const processInbound = task({
     }
 
     // Step 9: Execute primary action
-    await markStep("execute_action", `Run #${runId}: executing action`, { action_type: decision.actionType });
+    const currentProposal = await db.getProposalById(gate.proposalId);
+    const executionActionType = (currentProposal?.action_type || decision.actionType) as ActionType;
+    if (executionActionType !== decision.actionType) {
+      logger.warn("Execution action diverged from decision action; using proposal action", {
+        caseId,
+        proposalId: gate.proposalId,
+        decisionAction: decision.actionType,
+        proposalAction: executionActionType,
+      });
+    }
+    await markStep("execute_action", `Run #${runId}: executing action`, { action_type: executionActionType });
     const execution = await executeAction(
-      caseId, gate.proposalId, decision.actionType, runId,
+      caseId, gate.proposalId, executionActionType, runId,
       draft, null, decision.reasoning,
       draft.researchContactResult, draft.researchBrief,
       classification.classification
@@ -785,7 +797,7 @@ export const processInbound = task({
             await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
               targetStatus: "needs_human_review",
               pauseReason: "EXECUTION_BLOCKED",
-              substatus: `Partial chain: ${decision.actionType} executed, ${stepProposal.action_type} failed`,
+              substatus: `Partial chain: ${executionActionType} executed, ${stepProposal.action_type} failed`,
             });
             break;
           }
@@ -801,7 +813,7 @@ export const processInbound = task({
           await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
             targetStatus: "needs_human_review",
             pauseReason: "EXECUTION_BLOCKED",
-            substatus: `Chain error: ${decision.actionType} executed, ${stepProposal.action_type} failed: ${err.message}`,
+            substatus: `Chain error: ${executionActionType} executed, ${stepProposal.action_type} failed: ${err.message}`,
           });
           break;
         }
@@ -811,7 +823,7 @@ export const processInbound = task({
     // Step 10: Commit
     await markStep("commit_state", `Run #${runId}: committing state`);
     await commitState(
-      caseId, runId, decision.actionType, decision.reasoning,
+      caseId, runId, executionActionType, decision.reasoning,
       classification.confidence, "INBOUND_MESSAGE",
       execution.actionExecuted, execution.executionResult
     );
@@ -824,7 +836,7 @@ export const processInbound = task({
     return {
       status: "completed",
       proposalId: gate.proposalId,
-      actionType: decision.actionType,
+      actionType: executionActionType,
       executed: execution.actionExecuted,
       chainId: gate.chainId || undefined,
     };

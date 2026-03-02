@@ -613,8 +613,14 @@ function DetailV2Content() {
     if (optimisticMessages.length === 0) return;
     setOptimisticMessages(prev => prev.filter(opt => {
       const hasReal = _threadMessages.some(m =>
-        m.direction === 'OUTBOUND' && m.id > 0 &&
-        new Date(m.sent_at).getTime() >= new Date(opt.sent_at).getTime() - 5000
+        m.direction === 'OUTBOUND' && m.id > 0 && (
+          (
+            String(m.subject || '').trim() !== '' &&
+            String(m.subject || '').trim() === String(opt.subject || '').trim() &&
+            String(m.to_email || '').trim().toLowerCase() === String(opt.to_email || '').trim().toLowerCase()
+          ) ||
+          new Date((m.sent_at || m.timestamp) as string).getTime() >= new Date(opt.sent_at).getTime() - 5000
+        )
       );
       return !hasReal;
     }));
@@ -641,6 +647,17 @@ function DetailV2Content() {
     const timer = setTimeout(() => setPendingSubmission(null), 120_000);
     return () => clearTimeout(timer);
   }, [pendingSubmission]);
+
+  useEffect(() => {
+    if (!pendingSubmission) return;
+    const noPendingProposal = !data?.pending_proposal;
+    const noExecutionInFlight = !hasExecutionInFlight;
+    if (noPendingProposal && noExecutionInFlight) {
+      setPendingSubmission(null);
+      setPendingUiLockUntil(0);
+      setOptimisticMessages([]);
+    }
+  }, [pendingSubmission, data?.pending_proposal, hasExecutionInFlight]);
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
@@ -1174,7 +1191,14 @@ function DetailV2Content() {
 
   const statusValue = String(request.status || "").toUpperCase();
   const isPausedStatus = statusValue === "NEEDS_HUMAN_REVIEW" || statusValue === "PAUSED";
-  const statusDisplay = isPausedStatus && !hasExecutionInFlight ? "PAUSED" : isPausedStatus && hasExecutionInFlight ? "PROCESSING" : (request.status || "—");
+  const staleReviewStatus = isPausedStatus && !request.requires_human && review_state !== "DECISION_REQUIRED";
+  const statusDisplay = staleReviewStatus
+    ? "AWAITING_RESPONSE"
+    : isPausedStatus && !hasExecutionInFlight
+      ? "PAUSED"
+      : isPausedStatus && hasExecutionInFlight
+        ? "PROCESSING"
+        : (request.status || "—");
 
   const decisionRequired = review_state
     ? review_state === "DECISION_REQUIRED"
@@ -1623,6 +1647,18 @@ function DetailV2Content() {
                       onRepair={handleResetToLastInbound}
                       isLoading={isApproving || isRevising || isResolving}
                     />
+                  </div>
+                ) : staleReviewStatus ? (
+                  <div className="px-3 py-3">
+                    <div className="rounded border border-amber-700/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                      Case status was stale and no active proposal is available. Reprocessing will generate the next proposal if needed.
+                    </div>
+                    <div className="mt-2">
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleInvokeAgent} disabled={isInvokingAgent}>
+                        {isInvokingAgent ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+                        Re-process Case
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="px-3 py-3">

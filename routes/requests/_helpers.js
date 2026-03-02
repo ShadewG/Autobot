@@ -24,6 +24,14 @@ const STATUS_MAP = {
     'id_state': 'ID_STATE'
 };
 
+const REVIEW_DB_STATUSES = new Set([
+    'needs_human_review',
+    'needs_human_fee_approval',
+    'needs_phone_call',
+    'needs_rebuttal',
+    'pending_fee_decision',
+]);
+
 /**
  * Generate AI outcome summary when a case is closed.
  * Summarizes what happened, why it was closed, and the result.
@@ -233,16 +241,26 @@ function extractAgencyCandidatesFromResearchNotes(contactResearchNotes) {
     }
 
     if (contact && (contact.contact_email || contact.portal_url || contact.notes)) {
-        const primaryName = candidates[0]?.name || null;
-        candidates.push({
-            name: primaryName,
-            reason: contact.notes || null,
-            confidence: contact.confidence ?? null,
-            source: contact.source || 'contact_research',
-            agency_email: contact.contact_email || null,
-            portal_url: contact.portal_url || null,
-            contact_phone: contact.contact_phone || null,
-        });
+        // Do not attach generic contact lookup output to the first suggested agency.
+        // If the lookup did not include an explicit agency name, this will misbind
+        // current-agency contact info (e.g. Milford) onto a different suggestion
+        // (e.g. Dickinson County SO).
+        const contactName =
+            (typeof contact.agency_name === 'string' && contact.agency_name.trim())
+            || (typeof contact.name === 'string' && contact.name.trim())
+            || null;
+
+        if (contactName) {
+            candidates.push({
+                name: contactName,
+                reason: contact.notes || null,
+                confidence: contact.confidence ?? null,
+                source: contact.source || 'contact_research',
+                agency_email: contact.contact_email || null,
+                portal_url: contact.portal_url || null,
+                contact_phone: contact.contact_phone || null,
+            });
+        }
     }
 
     const deduped = new Map();
@@ -523,12 +541,25 @@ function toRequestListItem(caseData) {
         activePortalTaskStatus: caseData.active_portal_task_status || null,
     });
 
+    let effectiveDbStatus = String(caseData.status || '').toLowerCase();
+    if (
+        REVIEW_DB_STATUSES.has(effectiveDbStatus) &&
+        !Boolean(caseData.requires_human) &&
+        review_state !== 'DECISION_REQUIRED'
+    ) {
+        if (review_state === 'PROCESSING' || review_state === 'DECISION_APPLYING') {
+            effectiveDbStatus = 'ready_to_send';
+        } else {
+            effectiveDbStatus = 'awaiting_response';
+        }
+    }
+
     return {
         id: String(caseData.id),
         subject: subject,
         agency_name: caseData.agency_name || '—',
         state: caseData.state || '—',
-        status: STATUS_MAP[caseData.status] || 'DRAFT',
+        status: STATUS_MAP[effectiveDbStatus] || 'DRAFT',
         last_inbound_at: caseData.last_response_date || null,
         last_activity_at: caseData.updated_at || caseData.created_at,
         next_due_at: dueInfo.next_due_at,
@@ -682,6 +713,7 @@ function toThreadMessage(message, attachments = []) {
         timestamp: timestamp,  // Alias for convenience
         processed_at: message.processed_at || null,  // When this message was processed by the agent
         case_agency_id: caseAgencyId,
+        email_thread_id: Number.isFinite(Number(message.thread_id)) ? Number(message.thread_id) : null,
         attachments: attachments
     };
 }

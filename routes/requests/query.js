@@ -582,6 +582,39 @@ router.get('/:id/workspace', async (req, res) => {
         if (review_state !== 'DECISION_REQUIRED') {
             requestDetail.pause_reason = null;
         }
+        const dbStatus = String(rawCaseData?.status || '').toLowerCase();
+        const isHumanReviewStatus = ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call', 'needs_rebuttal', 'pending_fee_decision'].includes(dbStatus);
+        const runStatus = String(activeRun?.status || '').toLowerCase();
+        const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
+        const portalStatus = String(caseData.active_portal_task_status || '').toUpperCase();
+        const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
+        const shouldNormalizeStaleReviewStatus =
+            isHumanReviewStatus &&
+            !Boolean(rawCaseData?.requires_human) &&
+            review_state !== 'DECISION_REQUIRED' &&
+            !pendingProposal &&
+            !hasActiveRun &&
+            !portalActive;
+
+        if (shouldNormalizeStaleReviewStatus) {
+            requestDetail.status = 'AWAITING_RESPONSE';
+            requestDetail.substatus = requestDetail.substatus || 'Recovered from stale human-review status';
+            db.query(
+                `UPDATE cases
+                 SET status = 'awaiting_response',
+                     pause_reason = NULL,
+                     updated_at = NOW()
+                 WHERE id = $1
+                   AND status = ANY($2::text[])
+                   AND (requires_human = false OR requires_human IS NULL)`,
+                [requestId, ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call', 'needs_rebuttal', 'pending_fee_decision']]
+            ).catch((err) => {
+                logger.warn('[workspace] failed to normalize stale review status', {
+                    case_id: requestId,
+                    error: err.message,
+                });
+            });
+        }
 
         res.json({
             success: true,

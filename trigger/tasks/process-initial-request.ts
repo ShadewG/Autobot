@@ -284,6 +284,18 @@ export const processInitialRequest = task({
     await markStep("draft_initial_request", `Run #${runId}: drafting initial request`);
     const draft = await draftInitialRequest(caseId, runId, autopilotMode);
 
+    // If proposal was auto-dismissed by status guard (e.g. case already awaiting
+    // response), do not continue to gate/execute. Exit cleanly and reconcile flags.
+    if (draft.proposalStatus === "DISMISSED") {
+      await markStep(
+        "proposal_dismissed",
+        `Run #${runId}: initial request proposal was auto-dismissed`
+      );
+      await reconcileCaseAfterDismiss(caseId);
+      await completeRun(caseId, runId);
+      return { status: "dismissed_externally", proposalId: draft.proposalId };
+    }
+
     // Step 3: Safety check
     await markStep("safety_check", `Run #${runId}: safety checking initial request`);
     const safety = await safetyCheck(
@@ -473,9 +485,11 @@ export const processInitialRequest = task({
     }
 
     // Step 4: Execute
-    await markStep("execute_action", `Run #${runId}: executing initial request`, { action_type: draft.actionType });
+    const executionProposal = await db.getProposalById(draft.proposalId);
+    const executionActionType = executionProposal?.action_type || draft.actionType;
+    await markStep("execute_action", `Run #${runId}: executing initial request`, { action_type: executionActionType });
     const execution = await executeAction(
-      caseId, draft.proposalId, draft.actionType, runId,
+      caseId, draft.proposalId, executionActionType, runId,
       { subject: draft.subject, bodyText: draft.bodyText, bodyHtml: draft.bodyHtml },
       null, draft.reasoning
     );
@@ -489,7 +503,7 @@ export const processInitialRequest = task({
     // Step 6: Commit state
     await markStep("commit_state", `Run #${runId}: committing initial request state`);
     await commitState(
-      caseId, runId, draft.actionType, draft.reasoning,
+      caseId, runId, executionActionType, draft.reasoning,
       0.9, "initial_request", execution.actionExecuted, execution.executionResult
     );
 
