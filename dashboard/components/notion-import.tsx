@@ -109,7 +109,7 @@ export function NotionImport({ onImported }: NotionImportProps) {
   const handleViewCase = () => {
     if (result?.caseId) {
       setOpen(false);
-      router.push(`/requests/detail?id=${result.caseId}`);
+      router.push(`/requests/detail-v2?id=${result.caseId}`);
     }
   };
 

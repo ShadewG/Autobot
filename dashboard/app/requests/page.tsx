@@ -76,11 +76,11 @@ export default function RequestsPage() {
   );
 
   const handleApprove = async (id: string) => {
-    window.location.href = `/requests/detail?id=${id}`;
+    window.location.href = `/requests/detail-v2?id=${id}`;
   };
 
   const handleAdjust = (id: string) => {
-    window.location.href = `/requests/detail?id=${id}&adjust=true`;
+    window.location.href = `/requests/detail-v2?id=${id}&adjust=true`;
   };
 
   const handleSnooze = async (id: string) => {
@@ -123,13 +123,13 @@ export default function RequestsPage() {
   }, [mutate]);
 
   const handleGuideAI = useCallback((id: string) => {
-    window.location.href = `/requests/detail?id=${id}&adjust=true`;
+    window.location.href = `/requests/detail-v2?id=${id}&adjust=true`;
   }, []);
 
   const handleCancelRun = useCallback(async (id: string) => {
     try {
       // Navigate to detail page where they can cancel
-      window.location.href = `/requests/detail?id=${id}`;
+      window.location.href = `/requests/detail-v2?id=${id}`;
     } catch (err) {
       console.error("Failed to cancel run:", err);
     }

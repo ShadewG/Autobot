@@ -1505,7 +1505,7 @@ function MonitorPageContent() {
                   <MessageSquare className="h-3 w-3" /> Thread
                 </button>
                 <Link
-                  href={`/requests/detail?id=${selectedItem.data.case_id}`}
+                  href={`/requests/detail-v2?id=${selectedItem.data.case_id}`}
                   className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
                 >
                   <ExternalLink className="h-3 w-3" /> Case
@@ -2085,7 +2085,7 @@ function MonitorPageContent() {
                   <MessageSquare className="h-3 w-3" /> Thread
                 </button>
                 <Link
-                  href={`/requests/detail?id=${selectedItem.data.id}`}
+                  href={`/requests/detail-v2?id=${selectedItem.data.id}`}
                   className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
                 >
                   <ExternalLink className="h-3 w-3" /> Case
@@ -2362,7 +2362,7 @@ function MonitorPageContent() {
                   >
                     <Ban className="h-3 w-3 mr-1" /> WITHDRAW
                   </Button>
-                  <Link href={`/requests/detail?id=${selectedItem.data.id}`}>
+                  <Link href={`/requests/detail-v2?id=${selectedItem.data.id}`}>
                     <Button variant="ghost" className="text-xs text-muted-foreground">
                       <ExternalLink className="h-3 w-3 mr-1" /> Full Case
                     </Button>
@@ -2485,7 +2485,7 @@ function MonitorPageContent() {
                           <div className="flex items-center gap-2 mb-0.5">
                             {msg.case_id ? (
                               <Link
-                                href={`/requests/detail?id=${msg.case_id}`}
+                                href={`/requests/detail-v2?id=${msg.case_id}`}
                                 className="text-[10px] text-blue-400 hover:underline flex items-center gap-0.5"
                                 onClick={(e) => e.stopPropagation()}
                               >
@@ -2548,7 +2548,7 @@ function MonitorPageContent() {
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] text-muted-foreground">Linked to:</span>
                               <Link
-                                href={`/requests/detail?id=${msg.case_id}`}
+                                href={`/requests/detail-v2?id=${msg.case_id}`}
                                 className="text-xs text-blue-400 hover:underline"
                               >
                                 #{msg.case_id} — {msg.case_name} ({msg.agency_name})
@@ -2809,7 +2809,7 @@ function MonitorPageContent() {
                           <div className="space-y-1 text-xs">
                             <div className="flex items-center gap-2">
                               <Link
-                                href={`/requests/detail?id=${task.case_id}`}
+                                href={`/requests/detail-v2?id=${task.case_id}`}
                                 className="text-blue-400 hover:underline flex items-center gap-1"
                               >
                                 #{task.case_id} {task.case_name || ""} <ArrowUpRight className="h-2.5 w-2.5" />

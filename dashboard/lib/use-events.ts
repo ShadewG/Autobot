@@ -40,7 +40,7 @@ export function useEventStream() {
         label: "Show Status Here",
         onClick: () => {
           if (!caseId) return;
-          window.location.href = `/requests/detail?id=${caseId}`;
+          window.location.href = `/requests/detail-v2?id=${caseId}`;
         },
       });
 

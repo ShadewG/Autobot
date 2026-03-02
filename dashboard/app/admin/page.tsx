@@ -518,7 +518,7 @@ function CasesTab() {
         {data.cases.map((c) => (
           <a
             key={c.id}
-            href={`/requests/detail?id=${c.id}`}
+            href={`/requests/detail-v2?id=${c.id}`}
             className="flex items-center justify-between p-2 hover:bg-muted/50 rounded text-xs transition-colors"
           >
             <div className="flex items-center gap-3 min-w-0">

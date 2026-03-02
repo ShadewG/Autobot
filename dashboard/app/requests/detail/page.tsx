@@ -3226,7 +3226,7 @@ function NotionWaiter() {
         const json = await res.json();
         if (!cancelled && json.success && json.case_id) {
           clearInterval(poll);
-          router.replace(`/requests/detail?id=${json.case_id}`);
+          router.replace(`/requests/detail-v2?id=${json.case_id}`);
         }
       } catch { /* keep polling */ }
     }, 3000);

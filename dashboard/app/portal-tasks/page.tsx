@@ -276,7 +276,7 @@ export default function PortalTasksPage() {
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">Task Details</CardTitle>
                     <Link
-                      href={`/requests/detail?id=${selectedTask.case_id}`}
+                      href={`/requests/detail-v2?id=${selectedTask.case_id}`}
                       className="text-sm text-primary hover:underline"
                     >
                       View Case

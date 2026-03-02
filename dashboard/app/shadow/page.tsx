@@ -401,7 +401,7 @@ export default function ShadowModePage() {
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-base">Review Proposal</CardTitle>
                     <Link
-                      href={`/requests/detail?id=${selectedProposal.case_id}`}
+                      href={`/requests/detail-v2?id=${selectedProposal.case_id}`}
                       className="text-sm text-primary hover:underline"
                     >
                       View Case

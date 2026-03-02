@@ -332,7 +332,7 @@ export default function EvalPage() {
                         <TableCell>
                           {ec.case_id ? (
                             <Link
-                              href={`/requests/detail?id=${ec.case_id}`}
+                              href={`/requests/detail-v2?id=${ec.case_id}`}
                               className="hover:underline text-primary text-sm"
                             >
                               {ec.case_name || ec.agency_name || `Case #${ec.case_id}`}

@@ -147,7 +147,7 @@ function ProposalCard({
             </div>
             <CardTitle className="text-base">
               <Link
-                href={`/requests/detail?id=${proposal.case_id}`}
+                href={`/requests/detail-v2?id=${proposal.case_id}`}
                 className="hover:underline"
               >
                 {proposal.case.name || proposal.case.subject_name}

@@ -318,7 +318,7 @@ export default function RunsPage() {
                       </TableCell>
                       <TableCell>
                         <Link
-                          href={`/requests/detail?id=${run.case_id}`}
+                          href={`/requests/detail-v2?id=${run.case_id}`}
                           className="hover:underline text-primary"
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -458,7 +458,7 @@ export default function RunsPage() {
                   <div>
                     <p className="text-sm text-muted-foreground">Case ID</p>
                     <Link
-                      href={`/requests/detail?id=${selectedRun.case_id}`}
+                      href={`/requests/detail-v2?id=${selectedRun.case_id}`}
                       className="text-primary hover:underline"
                     >
                       {selectedRun.case_id}

@@ -314,7 +314,7 @@ function AgencyDetailContent() {
                     key={req.id}
                     className="cursor-pointer"
                     onClick={() =>
-                      (window.location.href = `/requests/detail?id=${req.id}`)
+                      (window.location.href = `/requests/detail-v2?id=${req.id}`)
                     }
                   >
                     <TableCell className="font-medium">{req.id}</TableCell>

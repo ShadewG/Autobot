@@ -160,7 +160,7 @@ export function RequestRow({
   const hasCheckbox = onToggleSelect !== undefined;
 
   const handleClick = () => {
-    router.push(`/requests/detail?id=${request.id}`);
+    router.push(`/requests/detail-v2?id=${request.id}`);
   };
 
   const dueInfo = formatDueWithSeverity(request);
