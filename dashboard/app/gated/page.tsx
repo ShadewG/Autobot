@@ -2322,13 +2322,29 @@ function MonitorPageContent() {
 
           {/* Resolve — unified DecisionPanel */}
           <div className="border-t pt-4">
-            {reviewWorkspace?.request ? (
+            {reviewWorkspace?.request ? (() => {
+              // Gated queue items always need a decision — force DECISION_REQUIRED
+              // regardless of what resolveReviewState derives (it may return IDLE/WAITING_AGENCY
+              // for cases with NON_DECISION_HUMAN_PAUSES like PORTAL_FAILED).
+              // Also ensure review_reason is set so DecisionPanel enters the review branch.
+              const categoryToReviewReason: Record<ReviewCategory, string> = {
+                fee: "FEE_QUOTE",
+                portal: "PORTAL_FAILED",
+                denial: "DENIAL",
+                phone: "PHONE_CALL",
+                general: "GENERAL",
+              };
+              const wsRequest = reviewWorkspace.request;
+              const effectiveRequest = wsRequest.review_reason
+                ? wsRequest
+                : { ...wsRequest, review_reason: categoryToReviewReason[categorizeReview(selectedItem.data)] as any };
+              return (
               <DecisionPanel
-                request={reviewWorkspace.request}
+                request={effectiveRequest}
                 nextAction={reviewWorkspace.next_action_proposal || null}
                 agency={reviewWorkspace.agency_summary || { name: selectedItem.data.agency_name, email: null, portal_url: selectedItem.data.portal_url }}
                 lastInboundMessage={reviewWorkspace.thread_messages?.at(-1) || null}
-                reviewState={reviewWorkspace.review_state}
+                reviewState="DECISION_REQUIRED"
                 onProceed={async () => {}}
                 onNegotiate={() => {}}
                 onWithdraw={handleWithdraw}
@@ -2370,7 +2386,8 @@ function MonitorPageContent() {
                 }}
                 isLoading={isSubmitting}
               />
-            ) : (
+              );
+            })() : (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
