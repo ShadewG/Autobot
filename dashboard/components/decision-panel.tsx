@@ -174,7 +174,12 @@ function extractAgencyPoints(
     out.add(`Deposit required: $${request.fee_quote.deposit_amount.toLocaleString()}`);
   }
 
-  const text = lastMsg?.body ?? "";
+  const text =
+    typeof lastMsg?.body === "string"
+      ? lastMsg.body
+      : lastMsg?.body == null
+        ? ""
+        : String(lastMsg.body);
   const body = text.toLowerCase();
 
   if (!text) return Array.from(out).slice(0, 5);
