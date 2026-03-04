@@ -20,6 +20,7 @@ const triggerDispatch = require('../services/trigger-dispatch-service');
 const logger = require('../services/logger');
 const { emailExecutor } = require('../services/executor-adapter');
 const { transitionCaseRuntime } = require('../services/case-runtime');
+const { HUMAN_REVIEW_PROPOSAL_STATUSES, buildCaseTruth } = require('../lib/case-truth');
 
 // Trigger.dev queue + idempotency options for per-case concurrency control
 function triggerOpts(caseId, taskType, uniqueId) {
@@ -1026,12 +1027,15 @@ router.post('/followups/:id/trigger', async (req, res) => {
  * Used by the Approval Queue UI.
  *
  * Query params:
- * - status: Filter by status (default: 'PENDING_APPROVAL')
+ * - status: Filter by status (single or comma-separated; default: human-review statuses)
  * - case_id: Filter by case ID
  * - limit: Max results (default: 50)
  */
 router.get('/proposals', async (req, res) => {
-  const status = req.query.status || 'PENDING_APPROVAL';
+  const statusParam = typeof req.query.status === 'string' ? req.query.status : '';
+  const statuses = statusParam
+    ? statusParam.split(',').map((s) => String(s || '').trim().toUpperCase()).filter(Boolean)
+    : [...HUMAN_REVIEW_PROPOSAL_STATUSES];
   const caseId = req.query.case_id ? parseInt(req.query.case_id) : null;
   const limit = parseInt(req.query.limit) || 50;
 
@@ -1061,18 +1065,29 @@ router.get('/proposals', async (req, res) => {
         c.agency_name,
         c.state AS agency_state,
         c.status AS case_status,
+        c.requires_human AS case_requires_human,
+        c.pause_reason AS case_pause_reason,
         c.autopilot_mode,
+        ar.status AS active_run_status,
         ra.intent AS classification,
         ra.sentiment,
         ra.extracted_fee_amount
       FROM proposals p
       JOIN cases c ON p.case_id = c.id
+      LEFT JOIN LATERAL (
+        SELECT status
+        FROM agent_runs ar
+        WHERE ar.case_id = c.id
+          AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+        ORDER BY ar.started_at DESC NULLS LAST, ar.id DESC
+        LIMIT 1
+      ) ar ON TRUE
       LEFT JOIN response_analysis ra ON ra.case_id = c.id
         AND ra.id = (SELECT MAX(id) FROM response_analysis WHERE case_id = c.id)
-      WHERE p.status = $1
+      WHERE p.status = ANY($1::text[])
     `;
 
-    const params = [status];
+    const params = [statuses];
     let paramIndex = 2;
 
     if (caseId) {
@@ -1089,39 +1104,55 @@ router.get('/proposals', async (req, res) => {
     res.json({
       success: true,
       count: result.rows.length,
-      proposals: result.rows.map(row => ({
-        id: row.id,
-        case_id: row.case_id,
-        proposal_key: row.proposal_key,
-        action_type: row.action_type,
-        draft_subject: row.draft_subject,
-        draft_body_text: row.draft_body_text,
-        draft_body_html: row.draft_body_html,
-        reasoning: row.reasoning,
-        confidence: row.confidence,
-        risk_flags: row.risk_flags,
-        warnings: row.warnings,
-        can_auto_execute: row.can_auto_execute,
-        requires_human: row.requires_human,
-        pause_reason: row.pause_reason,
-        status: row.status,
-        human_decision: row.human_decision,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        case: {
-          name: row.case_name,
-          subject_name: row.subject_name,
-          agency_name: row.agency_name,
-          state: row.agency_state,
-          status: row.case_status,
-          autopilot_mode: row.autopilot_mode
-        },
-        analysis: {
-          classification: row.classification,
-          sentiment: row.sentiment,
-          extracted_fee_amount: row.extracted_fee_amount
-        }
-      }))
+      proposals: result.rows.map(row => {
+        const truth = buildCaseTruth({
+          caseData: {
+            id: row.case_id,
+            status: row.case_status,
+            requires_human: row.case_requires_human,
+            pause_reason: row.case_pause_reason,
+          },
+          activeProposal: {
+            id: row.id,
+            status: row.status,
+          },
+          activeRun: row.active_run_status ? { status: row.active_run_status } : null,
+        });
+        return {
+          id: row.id,
+          case_id: row.case_id,
+          proposal_key: row.proposal_key,
+          action_type: row.action_type,
+          draft_subject: row.draft_subject,
+          draft_body_text: row.draft_body_text,
+          draft_body_html: row.draft_body_html,
+          reasoning: row.reasoning,
+          confidence: row.confidence,
+          risk_flags: row.risk_flags,
+          warnings: row.warnings,
+          can_auto_execute: row.can_auto_execute,
+          requires_human: row.requires_human,
+          pause_reason: row.pause_reason,
+          status: row.status,
+          review_state: truth.review_state,
+          human_decision: row.human_decision,
+          created_at: row.created_at,
+          updated_at: row.updated_at,
+          case: {
+            name: row.case_name,
+            subject_name: row.subject_name,
+            agency_name: row.agency_name,
+            state: row.agency_state,
+            status: row.case_status,
+            autopilot_mode: row.autopilot_mode
+          },
+          analysis: {
+            classification: row.classification,
+            sentiment: row.sentiment,
+            extracted_fee_amount: row.extracted_fee_amount
+          }
+        };
+      })
     });
 
   } catch (error) {

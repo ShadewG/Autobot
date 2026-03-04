@@ -5,6 +5,10 @@ const {
     normalizeProposalReasoning,
     extractAttachmentInsights
 } = require('./_helpers');
+const {
+    HUMAN_REVIEW_PROPOSAL_STATUSES_SQL,
+    buildCaseTruth,
+} = require('../../lib/case-truth');
 
 function buildReadableResearchSummary(rawNotes) {
     if (!rawNotes) return null;
@@ -417,6 +421,7 @@ router.get('/live-overview', async (req, res) => {
                 p.id,
                 p.case_id,
                 p.action_type,
+                p.status AS proposal_status,
                 p.confidence,
                 p.created_at,
                 p.trigger_message_id,
@@ -467,7 +472,7 @@ router.get('/live-overview', async (req, res) => {
                 (SELECT COALESCE(m4.received_at, m4.created_at) FROM messages m4 WHERE m4.case_id = c.id AND m4.direction = 'inbound' ORDER BY COALESCE(m4.received_at, m4.created_at) DESC LIMIT 1) AS last_inbound_date
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
-            WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+            WHERE p.status IN (${HUMAN_REVIEW_PROPOSAL_STATUSES_SQL})
             AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
             ${caseUserFilter}
             ORDER BY
@@ -549,8 +554,22 @@ router.get('/live-overview', async (req, res) => {
             const messageId = Number(row.trigger_message_id);
             const attachments = attachmentsByMessage.get(messageId) || [];
             const reviewCtx = latestReviewByCase.get(Number(row.case_id)) || {};
+            const truth = buildCaseTruth({
+                caseData: {
+                    id: row.case_id,
+                    status: row.case_status,
+                    requires_human: true,
+                    pause_reason: row.case_pause_reason,
+                },
+                activeProposal: {
+                    id: row.id,
+                    status: row.proposal_status,
+                },
+                activeRun: null,
+            });
             return {
                 ...row,
+                review_state: truth.review_state,
                 reasoning: normalizeProposalReasoning(row, {
                     reviewAction: reviewCtx.review_action,
                     reviewInstruction: reviewCtx.review_instruction,
@@ -695,13 +714,7 @@ router.get('/live-overview', async (req, res) => {
             )
               AND NOT EXISTS (
                   SELECT 1 FROM proposals p WHERE p.case_id = c.id
-                  AND (
-                      p.status IN ('PENDING_APPROVAL', 'BLOCKED')
-                      OR (p.status = 'DECISION_RECEIVED'
-                          AND EXISTS (SELECT 1 FROM agent_runs ar
-                                      WHERE ar.case_id = c.id
-                                      AND ar.status IN ('created','queued','processing','running','waiting')))
-                  )
+                  AND p.status IN (${HUMAN_REVIEW_PROPOSAL_STATUSES_SQL})
               )
               AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
               ${caseUserFilter}
@@ -715,8 +728,19 @@ router.get('/live-overview', async (req, res) => {
         const humanReviewCases = (humanReviewResult.rows || []).map((row) => {
             const research_summary = buildReadableResearchSummary(row.contact_research_notes);
             const phone_call_plan = extractPhoneCallPlan(row.contact_research_notes, row);
+            const truth = buildCaseTruth({
+                caseData: {
+                    id: row.id,
+                    status: row.status,
+                    requires_human: true,
+                    pause_reason: row.pause_reason,
+                },
+                activeProposal: null,
+                activeRun: null,
+            });
             return {
                 ...row,
+                review_state: truth.review_state,
                 research_summary,
                 phone_call_plan,
             };

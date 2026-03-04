@@ -369,7 +369,7 @@ export default function QueuePage() {
   const [researchingCaseId, setResearchingCaseId] = useState<number | null>(null);
 
   const { data, error, isLoading, mutate } = useSWR<ProposalsListResponse>(
-    "/proposals",
+    "/proposals?status=PENDING_APPROVAL",
     fetcher,
     { refreshInterval: 15000 } // Poll every 15s
   );

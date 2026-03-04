@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff } = require('./_helpers');
+const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 
 /**
  * GET /api/requests
@@ -47,7 +48,7 @@ router.get('/', async (req, res) => {
                 SELECT status
                 FROM proposals
                 WHERE case_id = c.id
-                  AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+                  AND status IN (${ACTIVE_PROPOSAL_STATUSES_SQL})
                 ORDER BY created_at DESC
                 LIMIT 1
             ) pp ON TRUE
@@ -435,7 +436,7 @@ router.get('/:id/workspace', async (req, res) => {
         const pendingProposalResult = await db.query(`
             SELECT id, action_type, status, draft_subject, draft_body_text, reasoning, waitpoint_token, pause_reason, confidence, gate_options, action_chain, chain_id
             FROM proposals
-            WHERE case_id = $1 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+            WHERE case_id = $1 AND status IN (${ACTIVE_PROPOSAL_STATUSES_SQL})
             ORDER BY created_at DESC
             LIMIT 1
         `, [requestId]);
