@@ -4,6 +4,7 @@ import { memo, useState, useEffect } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LinkifiedText } from "@/components/linkified-text";
 import type { ThreadMessage } from "@/lib/types";
 import { formatDateTime, cn } from "@/lib/utils";
 import {
@@ -198,6 +199,12 @@ function parsePhoneCallBody(body: string) {
     }
   }
 
+  // Fallback for manually logged phone calls that store free-form notes
+  // instead of structured "Outcome/Operator notes/AI key points" lines.
+  if (!outcome && !operatorNotes && keyPoints.length === 0 && !followUp) {
+    operatorNotes = body.trim();
+  }
+
   return { outcome, operatorNotes, keyPoints, followUp };
 }
 
@@ -389,7 +396,10 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
       {/* Message bubble */}
       <div className={cn("p-3 w-full border-l-4 overflow-hidden", style.borderColor, style.bgColor)}>
         <p className="text-xs font-semibold mb-1.5">{message.subject}</p>
-        <p className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{displayBody}</p>
+        <LinkifiedText
+          text={displayBody || ""}
+          className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+        />
       </div>
 
       {/* Sending indicator for optimistic messages */}
