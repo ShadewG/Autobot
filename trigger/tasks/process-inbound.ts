@@ -382,28 +382,34 @@ export const processInbound = task({
 
     // If no action needed, commit and return — but detect decision spin
     if (decision.isComplete || decision.actionType === "NONE") {
-      // Decision spin detection: if 3+ consecutive NONE decisions for this case, escalate
-      const noneCount = await db.query(
-        `SELECT COUNT(*) as cnt FROM agent_decisions
-         WHERE case_id = $1 AND action_taken = 'NONE'
-           AND created_at > NOW() - INTERVAL '24 hours'`,
-        [caseId]
+      const noActionContext = `${classification.reasonNoResponse || ""} ${(decision.reasoning || []).join(" ")}`;
+      const isAutomatedNoReplyNotice = /automated|welcome to the records center|password assistance|do not reply|noreply|no-reply/i.test(
+        noActionContext.toLowerCase()
       );
-      const noneDecisions = parseInt(noneCount.rows[0]?.cnt || "0", 10);
-      if (noneDecisions >= 3) {
-        logger.warn("Decision spin detected: 3+ NONE decisions in 24h — escalating to human review", {
-          caseId, noneDecisions,
-        });
-        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
-          substatus: `Decision spin: ${noneDecisions} NONE decisions in 24h`,
-          pauseReason: "LOOP_DETECTED",
-        });
-        await db.logActivity("decision_spin_detected",
-          `${noneDecisions} consecutive NONE decisions in 24h — escalated to human review`,
-          { case_id: caseId }
+      // Decision spin detection: if 3+ consecutive NONE decisions for this case, escalate
+      if (!isAutomatedNoReplyNotice) {
+        const noneCount = await db.query(
+          `SELECT COUNT(*) as cnt FROM agent_decisions
+           WHERE case_id = $1 AND action_taken = 'NONE'
+             AND created_at > NOW() - INTERVAL '24 hours'`,
+          [caseId]
         );
-        await completeRun(caseId, runId);
-        return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
+        const noneDecisions = parseInt(noneCount.rows[0]?.cnt || "0", 10);
+        if (noneDecisions >= 3) {
+          logger.warn("Decision spin detected: 3+ NONE decisions in 24h — escalating to human review", {
+            caseId, noneDecisions,
+          });
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+            substatus: `Decision spin: ${noneDecisions} NONE decisions in 24h`,
+            pauseReason: "LOOP_DETECTED",
+          });
+          await db.logActivity("decision_spin_detected",
+            `${noneDecisions} consecutive NONE decisions in 24h — escalated to human review`,
+            { case_id: caseId }
+          );
+          await completeRun(caseId, runId);
+          return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
+        }
       }
 
       await markStep("commit_state", `Run #${runId}: no-action path, committing state`);

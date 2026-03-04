@@ -288,6 +288,8 @@ export const submitPortal = task({
     if (!caseData) {
       throw new Error(`Case ${caseId} not found`);
     }
+    const primaryCaseAgency = await db.getPrimaryCaseAgency(caseId);
+    const primaryPortalUrl = String(primaryCaseAgency?.portal_url || "").trim() || null;
 
     // ── Idempotency: skip if case already past submission stage ──
     const skipStatuses = ["sent", "awaiting_response", "responded", "completed", "needs_phone_call"];
@@ -420,7 +422,7 @@ export const submitPortal = task({
       }
     }
 
-    const targetUrl = portalUrl || caseData.portal_url || discoveredPortalUrl;
+    const targetUrl = portalUrl || caseData.portal_url || primaryPortalUrl || discoveredPortalUrl;
     if (!targetUrl) {
       logger.warn("Portal submission skipped — missing portal URL", { caseId });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {

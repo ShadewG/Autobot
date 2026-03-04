@@ -445,6 +445,7 @@ function categorizeReview(review: HumanReviewCase): ReviewCategory {
   }
   if (
     sub.includes("NO ONLINE PORTAL") ||
+    sub.includes("NO PORTAL URL AVAILABLE") ||
     portalStatus.includes("NOT_REAL_PORTAL") ||
     portalStatus.includes("PDF_FORM_PENDING") ||
     portalStatus.includes("CONTACT_INFO_ONLY") ||

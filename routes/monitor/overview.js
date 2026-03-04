@@ -153,18 +153,18 @@ function extractPhoneCallPlan(rawNotes, row = {}) {
 
     const agency_name =
         String(target.agency_name || '').trim() ||
+        String(row.agency_name || '').trim() ||
         String(contact.agency_name || contact.name || '').trim() ||
         String(topSuggested.name || '').trim() ||
-        String(row.agency_name || '').trim() ||
         null;
     const agency_phone =
         String(target.agency_phone || '').trim() ||
         String(contact.contact_phone || contact.phone || '').trim() ||
         null;
     const agency_email =
-        String(contact.contact_email || contact.email || row.agency_email || '').trim() || null;
+        String(row.agency_email || contact.contact_email || contact.email || '').trim() || null;
     const portal_url =
-        String(contact.portal_url || row.portal_url || '').trim() || null;
+        String(row.portal_url || contact.portal_url || '').trim() || null;
     const reason =
         String(target.reason || '').trim() ||
         (execution.outcome === 'phone_fallback_no_new_channel'

@@ -635,6 +635,7 @@ export async function executeAction(
 
       const buildPhoneFallbackPayload = async (params: {
         suggestedAgencyName?: string | null;
+        preferredAgencyName?: string | null;
         reasonLabel: string;
         reasonDetail: string;
         candidatePhone?: string | null;
@@ -642,6 +643,11 @@ export async function executeAction(
         newPhone?: string | null;
         newFax?: string | null;
       }) => {
+        const fallbackAgencyName =
+          String(params.preferredAgencyName || "").trim() ||
+          String(params.suggestedAgencyName || "").trim() ||
+          String(caseData?.agency_name || "").trim() ||
+          null;
         let existingCaseAgencyPhone: string | null = null;
         let existingCaseAgencyRows: Array<{ agency_name: string | null; phone: string | null; fax: string | null }> = [];
         try {
@@ -695,21 +701,21 @@ export async function executeAction(
           phone: params.candidatePhone || "",
           kind: "phone",
           source: "Research result",
-          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          agency_name: fallbackAgencyName,
           contact_name: contactResult?.records_officer || null,
         });
         pushCandidate({
           phone: params.candidateFax || "",
           kind: "fax",
           source: "Research result (fax)",
-          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          agency_name: fallbackAgencyName,
           contact_name: contactResult?.records_officer || null,
         });
         pushCandidate({
           phone: params.newPhone || "",
           kind: "phone",
           source: "New channel from research",
-          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          agency_name: fallbackAgencyName,
           contact_name: contactResult?.records_officer || null,
           is_new: true,
         });
@@ -717,7 +723,7 @@ export async function executeAction(
           phone: params.newFax || "",
           kind: "fax",
           source: "New channel from research (fax)",
-          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          agency_name: fallbackAgencyName,
           contact_name: contactResult?.records_officer || null,
           is_new: true,
         });
@@ -744,7 +750,7 @@ export async function executeAction(
         const notes = [
           params.reasonDetail,
           selectedPhone
-            ? `Call ${params.suggestedAgencyName || caseData?.agency_name || "agency"} at ${selectedPhone} to confirm the correct records intake channel and immediate next step.`
+            ? `Call ${fallbackAgencyName || "agency"} at ${selectedPhone} to confirm the correct records intake channel and immediate next step.`
             : "No phone number on file yet. Use Find Phone Number first, then call to confirm the right records channel and status."
         ]
           .concat(
@@ -777,7 +783,7 @@ export async function executeAction(
             ],
           },
           talking_points: [
-            `Confirm you are speaking with the correct public records/open records unit for ${params.suggestedAgencyName || caseData?.agency_name || "this request"}.`,
+            `Confirm you are speaking with the correct public records/open records unit for ${fallbackAgencyName || "this request"}.`,
             "Reference the existing request and ask for the best current submission/response channel (email, portal, fax, or phone extension).",
             "If a different email or portal is required, request the exact destination and any case/reference format required.",
             "Ask for current status and concrete next step with timeline.",
@@ -806,7 +812,7 @@ export async function executeAction(
           },
         };
 
-        return { selectedPhone, notes, briefing, phoneOptions };
+        return { selectedPhone, notes, briefing, phoneOptions, agencyName: fallbackAgencyName };
       };
 
       const enrichPhoneFallbackTask = async (
@@ -881,6 +887,7 @@ export async function executeAction(
         // to a phone call task so operator can proceed immediately.
         const fallback = await buildPhoneFallbackPayload({
           suggestedAgencyName: caseData?.agency_name || null,
+          preferredAgencyName: caseData?.agency_name || null,
           reasonLabel: "Research failed; direct phone follow-up required.",
           reasonDetail: `Agency research failed (${brief.summary || "unknown error"}).`,
         });
@@ -906,7 +913,7 @@ export async function executeAction(
           research_failed: true,
           research_failure_reason: brief.summary || "unknown error",
           phone_call_target: {
-            agency_name: caseData?.agency_name || "Agency",
+            agency_name: fallback.agencyName || caseData?.agency_name || "Agency",
             agency_phone: fallback.selectedPhone || null,
             reason: "Research failed; direct phone follow-up required",
           },
@@ -1100,6 +1107,7 @@ export async function executeAction(
         // blocking on a manual "retry research" gate.
         const fallback = await buildPhoneFallbackPayload({
           suggestedAgencyName: suggestedAgency.name || caseData?.agency_name || null,
+          preferredAgencyName: caseData?.agency_name || null,
           reasonLabel: "No new contact channel found from research.",
           reasonDetail: `Research identified ${suggestedAgency.name} but no NEW email/portal/phone/fax channel.`,
           candidatePhone,
@@ -1110,7 +1118,7 @@ export async function executeAction(
 
         const phoneTask = await db.createPhoneCallTask({
           case_id: caseId,
-          agency_name: suggestedAgency.name || caseData?.agency_name || "Agency",
+          agency_name: fallback.agencyName || caseData?.agency_name || "Agency",
           agency_phone: fallback.selectedPhone,
           agency_state: caseData?.state || null,
           reason: "clarification_needed",
@@ -1128,7 +1136,7 @@ export async function executeAction(
           outcome: "phone_fallback_no_new_channel",
           suggested_agency: suggestedAgency?.name || null,
           phone_call_target: {
-            agency_name: suggestedAgency.name || caseData?.agency_name || "Agency",
+            agency_name: fallback.agencyName || caseData?.agency_name || "Agency",
             agency_phone: fallback.selectedPhone || null,
             reason: "No new channels found (email/portal/phone/fax)",
           },
