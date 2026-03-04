@@ -467,6 +467,19 @@ interface ReviewConfig {
 }
 
 const REVIEW_CONFIGS: Record<ReviewReason, ReviewConfig> = {
+  PHONE_CALL: {
+    icon: <MessageSquare className="h-5 w-5" />,
+    color: "text-indigo-300",
+    bgColor: "bg-indigo-500/10",
+    borderColor: "border-indigo-700/50",
+    title: "Phone Follow-Up Needed",
+    question: "No reliable send path was found. How should we proceed with phone follow-up?",
+    actions: [
+      { id: "queue_phone_call", label: "Add to Phone Queue", description: "Create or confirm a phone task for manual follow-up", variant: "default", recommended: true },
+      { id: "reprocess", label: "Re-process", description: "Run research and decision flow again", variant: "outline" },
+      { id: "put_on_hold", label: "Put on Hold", description: "Pause and come back later", variant: "ghost" },
+    ],
+  },
   PORTAL_FAILED: {
     icon: <Globe className="h-5 w-5" />,
     color: "text-red-300",
@@ -671,6 +684,14 @@ export function DecisionPanel({
     const handleReviewAction = async (actionId: string) => {
       setReviewActionLoading(actionId);
       try {
+        if (actionId === "queue_phone_call") {
+          if (onAddToPhoneQueue) {
+            await onAddToPhoneQueue();
+            return;
+          }
+          await onResolveReview(actionId, customInstruction || undefined);
+          return;
+        }
         await onResolveReview(actionId, customInstruction || undefined);
       } finally {
         setReviewActionLoading(null);

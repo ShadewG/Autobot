@@ -336,6 +336,7 @@ export type PauseReason =
 export type ReviewReason =
   | 'PORTAL_FAILED'
   | 'PORTAL_STUCK'
+  | 'PHONE_CALL'
   | 'FEE_QUOTE'
   | 'DENIAL'
   | 'MISSING_INFO'

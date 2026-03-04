@@ -614,6 +614,7 @@ function detectReviewReason(caseData) {
     const pauseReason = (caseData.pause_reason || '').toUpperCase();
     if (pauseReason === 'FEE_QUOTE') return 'FEE_QUOTE';
     if (pauseReason === 'DENIAL') return 'DENIAL';
+    if (pauseReason.includes('PHONE') || pauseReason.includes('CALL')) return 'PHONE_CALL';
 
     const substatus = (caseData.substatus || '').toLowerCase();
     const status = (caseData.status || '').toLowerCase();
@@ -635,6 +636,7 @@ function detectReviewReason(caseData) {
     // Missing info indicators
     if (substatus.includes('missing') || substatus.includes('contact') || substatus.includes('info')) return 'MISSING_INFO';
     if (status === 'needs_contact_info') return 'MISSING_INFO';
+    if (status === 'needs_phone_call' || substatus.includes('phone') || substatus.includes('call')) return 'PHONE_CALL';
 
     return 'GENERAL';
 }
@@ -680,7 +682,7 @@ function toRequestDetail(caseData) {
         statutory_due_at: listItem.due_info.statutory_due_at,
         attachments: [], // Will be populated from messages
         substatus: caseData.substatus || null,
-        review_reason: caseData.requires_human
+        review_reason: (caseData.requires_human || REVIEW_DB_STATUSES.has(String(caseData.status || '').toLowerCase()))
             ? detectReviewReason(caseData)
             : undefined
     };
