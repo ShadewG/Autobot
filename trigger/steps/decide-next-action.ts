@@ -162,32 +162,65 @@ function buildAllowedActions(params: {
 }
 
 async function getWrongAgencyDirectAction(caseId: number): Promise<ActionType | null> {
-  const primaryAgency = await db.getPrimaryCaseAgency(caseId);
-  if (!primaryAgency) return null;
+  const [caseData, agencies, latestInbound] = await Promise.all([
+    db.getCaseById(caseId),
+    db.getCaseAgencies(caseId),
+    db.getLatestInboundMessage(caseId),
+  ]);
+  if (!agencies?.length) return null;
 
-  const source = String(primaryAgency.added_source || "").toLowerCase();
-  const canDirectSendFromSource = source === "wrong_agency_referral" || source === "research";
-  const hasDirectContact = Boolean(primaryAgency.agency_email || primaryAgency.portal_url);
-  const canDirectSend = canDirectSendFromSource || hasDirectContact;
-  if (!canDirectSend) return null;
-
-  // Safety check: don't direct-send to the same mailbox/domain that just sent the
-  // WRONG_AGENCY response; that likely indicates we haven't switched agencies yet.
-  const latestInbound = await db.getLatestInboundMessage(caseId);
   const inboundFrom = normalizeEmail(latestInbound?.from_email);
-  const primaryEmail = normalizeEmail(primaryAgency.agency_email);
-  if (primaryEmail && inboundFrom) {
-    const sameEmail = primaryEmail === inboundFrom;
-    const sameDomain = emailDomain(primaryEmail) && emailDomain(primaryEmail) === emailDomain(inboundFrom);
-    if (sameEmail || sameDomain) return null;
-  }
+  const inboundDomain = emailDomain(inboundFrom || "");
 
-  const hasPortal = hasAutomatablePortal(
-    primaryAgency.portal_url || null,
-    primaryAgency.portal_provider || null
-  );
-  if (hasPortal) return "SUBMIT_PORTAL";
-  if (primaryAgency.agency_email) return "SEND_INITIAL_REQUEST";
+  const sourceRank = (sourceRaw: string | null | undefined): number => {
+    const source = String(sourceRaw || "").toLowerCase();
+    if (source === "wrong_agency_referral") return 4;
+    if (source === "research") return 3;
+    if (source === "suggested_agency") return 2;
+    return 1;
+  };
+
+  const candidates = agencies
+    .map((agency: any) => {
+      const agencyEmail = normalizeEmail(agency.agency_email);
+      const agencyPortal = String(agency.portal_url || "").trim() || null;
+      const agencyDomain = emailDomain(agencyEmail || "");
+      const sameAsInbound =
+        !!agencyEmail &&
+        !!inboundFrom &&
+        (agencyEmail === inboundFrom || (!!agencyDomain && !!inboundDomain && agencyDomain === inboundDomain));
+
+      // Some case_agencies rows don't carry portal_provider. If this agency portal
+      // matches the case portal, inherit case-level provider so paper-only portals
+      // are correctly treated as non-automatable.
+      const provider =
+        agency.portal_provider ||
+        ((caseData?.portal_url || "").trim() === (agencyPortal || "").trim() ? caseData?.portal_provider : null);
+
+      return {
+        agency,
+        agencyEmail,
+        agencyPortal,
+        sameAsInbound,
+        hasAutomatablePortal: hasAutomatablePortal(agencyPortal, provider),
+        rank: sourceRank(agency.added_source),
+      };
+    })
+    .filter((c: any) => Boolean(c.agencyEmail || c.agencyPortal))
+    .filter((c: any) => !c.sameAsInbound)
+    .sort((a: any, b: any) => {
+      if (b.rank !== a.rank) return b.rank - a.rank;
+      const aCreated = new Date(a.agency.created_at || 0).getTime();
+      const bCreated = new Date(b.agency.created_at || 0).getTime();
+      if (bCreated !== aCreated) return bCreated - aCreated;
+      return Number(b.agency.id || 0) - Number(a.agency.id || 0);
+    });
+
+  if (!candidates.length) return null;
+
+  const best = candidates[0];
+  if (best.hasAutomatablePortal) return "SUBMIT_PORTAL";
+  if (best.agencyEmail) return "SEND_INITIAL_REQUEST";
   return null;
 }
 
