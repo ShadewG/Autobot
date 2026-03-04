@@ -626,6 +626,118 @@ export async function executeAction(
         }
       };
 
+      const buildPhoneFallbackPayload = async (params: {
+        suggestedAgencyName?: string | null;
+        reasonLabel: string;
+        reasonDetail: string;
+        candidatePhone?: string | null;
+        candidateFax?: string | null;
+        newPhone?: string | null;
+        newFax?: string | null;
+      }) => {
+        let existingCaseAgencyPhone: string | null = null;
+        try {
+          const existingCaseAgencies = await db.query(
+            `SELECT a.phone
+               FROM case_agencies ca
+               LEFT JOIN agencies a ON ca.agency_id = a.id
+              WHERE ca.case_id = $1
+              ORDER BY ca.id DESC
+              LIMIT 1`,
+            [caseId]
+          );
+          existingCaseAgencyPhone = existingCaseAgencies.rows?.[0]?.phone || null;
+        } catch (e: any) { /* non-fatal */ }
+
+        const selectedPhone =
+          params.newPhone ||
+          params.candidatePhone ||
+          existingCaseAgencyPhone ||
+          null;
+
+        const requestedRecords = Array.isArray(caseData?.requested_records)
+          ? caseData.requested_records.filter(Boolean).slice(0, 6)
+          : String(caseData?.requested_records || "")
+              .split(/\n|,/)
+              .map((v) => String(v).trim())
+              .filter(Boolean)
+              .slice(0, 6);
+
+        const daysWaiting = caseData?.send_date
+          ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
+          : null;
+
+        const notes = [
+          params.reasonDetail,
+          selectedPhone
+            ? `Call ${params.suggestedAgencyName || caseData?.agency_name || "agency"} at ${selectedPhone} to confirm the correct records intake channel and immediate next step.`
+            : "No phone number on file yet. Use Find Phone Number first, then call to confirm the right records channel and status."
+        ].join(" ");
+
+        const briefing = {
+          case_summary: `${caseData?.case_name || `Case #${caseId}`} is blocked on follow-up routing after contact research.`,
+          call_justification: params.reasonLabel,
+          key_details: {
+            dates: {
+              request_sent: caseData?.send_date || null,
+              days_waiting: daysWaiting,
+            },
+            records_requested: requestedRecords,
+            previous_responses: [
+              `Current agency: ${caseData?.agency_name || "Unknown agency"}`,
+              params.reasonDetail,
+            ],
+          },
+          talking_points: [
+            `Confirm you are speaking with the correct public records/open records unit for ${params.suggestedAgencyName || caseData?.agency_name || "this request"}.`,
+            "Reference the existing request and ask for the best current submission/response channel (email, portal, fax, or phone extension).",
+            "If a different email or portal is required, request the exact destination and any case/reference format required.",
+            "Ask for current status and concrete next step with timeline.",
+            "Capture contact name/title and direct callback details.",
+          ],
+        };
+
+        const phoneOptions = {
+          research: {
+            phone: params.candidatePhone || null,
+            fax: params.candidateFax || null,
+            source: "Research result",
+          },
+          discovered_new: {
+            phone: params.newPhone || null,
+            fax: params.newFax || null,
+            source: "New channel detection",
+          },
+          existing_case_agency: {
+            phone: existingCaseAgencyPhone || null,
+            source: "Current case agency",
+          },
+        };
+
+        return { selectedPhone, notes, briefing, phoneOptions };
+      };
+
+      const enrichPhoneFallbackTask = async (
+        phoneTaskId: number,
+        payload: { briefing: any; phoneOptions: any }
+      ) => {
+        try {
+          await db.updatePhoneCallBriefing(phoneTaskId, payload.briefing);
+          await db.query(
+            `UPDATE phone_call_queue
+             SET phone_options = $2, updated_at = NOW()
+             WHERE id = $1`,
+            [phoneTaskId, JSON.stringify(payload.phoneOptions || {})]
+          );
+        } catch (e: any) {
+          logger.warn("Failed to enrich phone fallback task", {
+            caseId,
+            phoneTaskId,
+            error: e?.message || String(e),
+          });
+        }
+      };
+
       // Auto-create follow-up proposal for new agency
       let contactResult = researchContactResult || null;
       let brief = researchBrief || null;
@@ -646,31 +758,27 @@ export async function executeAction(
       if (brief?.researchFailed) {
         // If research fails, do not block human queue with retry gates; fall back
         // to a phone call task so operator can proceed immediately.
-        let fallbackPhone: string | null = null;
-        try {
-          const existingCaseAgencies = await db.query(
-            `SELECT a.phone
-               FROM case_agencies ca
-               LEFT JOIN agencies a ON ca.agency_id = a.id
-              WHERE ca.case_id = $1
-              ORDER BY ca.id DESC
-              LIMIT 1`,
-            [caseId]
-          );
-          fallbackPhone = existingCaseAgencies.rows?.[0]?.phone || null;
-        } catch (e: any) { /* non-fatal */ }
+        const fallback = await buildPhoneFallbackPayload({
+          suggestedAgencyName: caseData?.agency_name || null,
+          reasonLabel: "Research failed; direct phone follow-up required.",
+          reasonDetail: `Agency research failed (${brief.summary || "unknown error"}).`,
+        });
 
-        await db.createPhoneCallTask({
+        const phoneTask = await db.createPhoneCallTask({
           case_id: caseId,
           agency_name: caseData?.agency_name || "Agency",
-          agency_phone: fallbackPhone,
+          agency_phone: fallback.selectedPhone,
           agency_state: caseData?.state || null,
           reason: "clarification_needed",
           priority: 1,
-          notes: `Agency research failed (${brief.summary || "unknown error"}). Fallback to phone call follow-up.`,
+          notes: fallback.notes,
           days_since_sent: caseData?.send_date
             ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
             : null,
+        });
+        await enrichPhoneFallbackTask(phoneTask.id, {
+          briefing: fallback.briefing,
+          phoneOptions: fallback.phoneOptions,
         });
         await persistResearchExecutionMeta({
           outcome: "research_failed_phone_fallback",
@@ -678,7 +786,7 @@ export async function executeAction(
           research_failure_reason: brief.summary || "unknown error",
           phone_call_target: {
             agency_name: caseData?.agency_name || "Agency",
-            agency_phone: fallbackPhone || null,
+            agency_phone: fallback.selectedPhone || null,
             reason: "Research failed; direct phone follow-up required",
           },
         });
@@ -841,38 +949,38 @@ export async function executeAction(
       if (!newEmail && !newPortalUrl && !newPhone && !newFax) {
         // No new channel found: continue with phone-call fallback instead of
         // blocking on a manual "retry research" gate.
-        let fallbackPhone: string | null = null;
-        try {
-          const existingCaseAgencies = await db.query(
-            `SELECT a.phone
-               FROM case_agencies ca
-               LEFT JOIN agencies a ON ca.agency_id = a.id
-              WHERE ca.case_id = $1
-              ORDER BY ca.id DESC
-              LIMIT 1`,
-            [caseId]
-          );
-          fallbackPhone = existingCaseAgencies.rows?.[0]?.phone || null;
-        } catch (e: any) { /* non-fatal */ }
+        const fallback = await buildPhoneFallbackPayload({
+          suggestedAgencyName: suggestedAgency.name || caseData?.agency_name || null,
+          reasonLabel: "No new contact channel found from research.",
+          reasonDetail: `Research identified ${suggestedAgency.name} but no NEW email/portal/phone/fax channel.`,
+          candidatePhone,
+          candidateFax,
+          newPhone,
+          newFax,
+        });
 
-        await db.createPhoneCallTask({
+        const phoneTask = await db.createPhoneCallTask({
           case_id: caseId,
           agency_name: suggestedAgency.name || caseData?.agency_name || "Agency",
-          agency_phone: fallbackPhone,
+          agency_phone: fallback.selectedPhone,
           agency_state: caseData?.state || null,
           reason: "clarification_needed",
           priority: 1,
-          notes: `Research identified ${suggestedAgency.name} but no NEW email/portal/phone/fax channel. Fallback to phone call follow-up.`,
+          notes: fallback.notes,
           days_since_sent: caseData?.send_date
             ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
             : null,
+        });
+        await enrichPhoneFallbackTask(phoneTask.id, {
+          briefing: fallback.briefing,
+          phoneOptions: fallback.phoneOptions,
         });
         await persistResearchExecutionMeta({
           outcome: "phone_fallback_no_new_channel",
           suggested_agency: suggestedAgency?.name || null,
           phone_call_target: {
             agency_name: suggestedAgency.name || caseData?.agency_name || "Agency",
-            agency_phone: fallbackPhone || null,
+            agency_phone: fallback.selectedPhone || null,
             reason: "No new channels found (email/portal/phone/fax)",
           },
         });
