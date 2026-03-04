@@ -582,7 +582,8 @@ class CronService {
                     try {
                         research = await pdContactService.lookupContact(
                             caseData.agency_name,
-                            caseData.state || caseData.incident_location
+                            caseData.state || caseData.incident_location,
+                            { forceSearch: true }
                         );
                     } catch (lookupErr) {
                         if (lookupErr.code === 'SERVICE_UNAVAILABLE') {
