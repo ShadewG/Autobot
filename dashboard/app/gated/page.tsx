@@ -140,6 +140,7 @@ interface HumanReviewCase {
   portal_url: string | null;
   last_portal_status: string | null;
   last_portal_task_url: string | null;
+  research_summary?: string | null;
   user_id?: number | null;
 }
 
@@ -2112,6 +2113,15 @@ function MonitorPageContent() {
               <SectionLabel>Review Reason</SectionLabel>
               <p className="text-xs text-purple-300">
                 {selectedItem.data.substatus}
+              </p>
+            </div>
+          )}
+
+          {selectedItem.data.research_summary && (
+            <div className="border border-sky-700/50 bg-sky-950/20 p-3">
+              <SectionLabel>Research Findings</SectionLabel>
+              <p className="text-xs text-sky-200 whitespace-pre-wrap">
+                {selectedItem.data.research_summary}
               </p>
             </div>
           )}

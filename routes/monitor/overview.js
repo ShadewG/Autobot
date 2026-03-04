@@ -469,6 +469,7 @@ router.get('/live-overview', async (req, res) => {
                 c.last_portal_run_id,
                 c.last_portal_status,
                 c.pause_reason,
+                c.contact_research_notes,
                 (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
                 c.agency_email,
                 c.user_id,
@@ -494,6 +495,26 @@ router.get('/live-overview', async (req, res) => {
                 c.updated_at ASC
             LIMIT $1
         `, [limit]);
+
+        const humanReviewCases = (humanReviewResult.rows || []).map((row) => {
+            let research_summary = null;
+            try {
+                // Stored as JSON string in many rows; tolerate object form too.
+                const raw = row.contact_research_notes;
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                const summary = parsed?.brief?.summary;
+                if (typeof summary === 'string' && summary.trim()) {
+                    // Keep this compact for the gated queue card.
+                    research_summary = summary.trim().slice(0, 700);
+                }
+            } catch (_) {
+                research_summary = null;
+            }
+            return {
+                ...row,
+                research_summary,
+            };
+        });
 
         res.json({
             success: true,
@@ -528,7 +549,7 @@ router.get('/live-overview', async (req, res) => {
             unmatched_inbound: unmatchedInboundResult.rows,
             unprocessed_inbound: unprocessedInboundResult.rows,
             stuck_runs: stuckRunsResult.rows,
-            human_review_cases: humanReviewResult.rows
+            human_review_cases: humanReviewCases
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
