@@ -599,20 +599,41 @@ export async function executeAction(
 
       // If AI research itself failed (timeout/error), surface honest messaging
       if (brief?.researchFailed) {
-        await ensureResearchHandoffProposal(
-          "research-failed",
-          "Agency research failed due to an error or timeout.",
-          `Agency research failed: ${brief.summary || "Unknown error"}. You can retry the research, provide an adjustment instruction with the correct agency name, or dismiss this proposal.`,
-          {
-            subject: `Research failed — case ${caseId}`,
-            gateOptions: ["RETRY_RESEARCH", "ADJUST", "DISMISS"],
-          }
-        );
+        // If research fails, do not block human queue with retry gates; fall back
+        // to a phone call task so operator can proceed immediately.
+        let fallbackPhone: string | null = null;
+        try {
+          const existingCaseAgencies = await db.query(
+            `SELECT a.phone
+               FROM case_agencies ca
+               LEFT JOIN agencies a ON ca.agency_id = a.id
+              WHERE ca.case_id = $1
+              ORDER BY ca.id DESC
+              LIMIT 1`,
+            [caseId]
+          );
+          fallbackPhone = existingCaseAgencies.rows?.[0]?.phone || null;
+        } catch (e: any) { /* non-fatal */ }
+
+        await db.createPhoneCallTask({
+          case_id: caseId,
+          agency_name: caseData?.agency_name || "Agency",
+          agency_phone: fallbackPhone,
+          agency_state: caseData?.state || null,
+          reason: "clarification_needed",
+          priority: 1,
+          notes: `Agency research failed (${brief.summary || "unknown error"}). Fallback to phone call follow-up.`,
+          days_since_sent: caseData?.send_date
+            ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
+            : null,
+        });
+
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          targetStatus: "needs_phone_call",
           substatus: "agency_research_failed",
           pauseReason: "RESEARCH_HANDOFF",
         });
-        executionResult = { action: "research_failed", followup: "needs_retry" };
+        executionResult = { action: "research_failed", followup: "phone_fallback" };
         break;
       }
 
