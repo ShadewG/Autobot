@@ -19,9 +19,10 @@ function buildReadableResearchSummary(rawNotes) {
     const contactResult = parsed.contactResult || {};
     const execution = parsed.execution || {};
 
-    if (brief.researchFailed) {
+    const isResearchFailed = !!brief.researchFailed;
+    if (isResearchFailed) {
         const msg = String(brief.summary || 'Research failed').trim();
-        return msg || 'Research failed';
+        lines.push(msg || 'Research failed');
     }
 
     const suggested = Array.isArray(brief.suggested_agencies) ? brief.suggested_agencies : [];
@@ -69,12 +70,23 @@ function buildReadableResearchSummary(rawNotes) {
     }
     if (execution.outcome === 'research_failed_phone_fallback') {
         const t = execution.phone_call_target || {};
-        lines.push(`Research failed: ${execution.research_failure_reason || 'unknown error'}`);
+        if (!isResearchFailed) {
+            lines.push(`Research failed: ${execution.research_failure_reason || 'unknown error'}`);
+        }
         if (t.agency_name || t.agency_phone || t.reason) {
             lines.push(
                 `Phone target: ${t.agency_name || 'Agency'}${t.agency_phone ? ` (${t.agency_phone})` : ''}` +
                 `${t.reason ? ` — ${t.reason}` : ''}`
             );
+        }
+    }
+
+    // Backward-compatible fallback for older research-failed notes without execution metadata.
+    if (isResearchFailed && execution.outcome !== 'research_failed_phone_fallback') {
+        const fallbackPhone = contactResult.contact_phone || contactResult.phone || null;
+        const fallbackAgency = contactResult.agency_name || 'Agency';
+        if (fallbackPhone) {
+            lines.push(`Phone target: ${fallbackAgency} (${fallbackPhone})`);
         }
     }
 

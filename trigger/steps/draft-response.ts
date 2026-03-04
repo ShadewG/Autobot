@@ -14,7 +14,14 @@ function collapseDuplicateClosingBlocks(text: string | null | undefined): string
   if (!text) return text;
   const normalized = text.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
-  const closingMarkers = new Set(["thank you,", "best regards,", "sincerely,"]);
+  const closingMarkers = new Set([
+    "thank you,",
+    "best regards,",
+    "warm regards,",
+    "kind regards,",
+    "sincerely,",
+    "respectfully,",
+  ]);
 
   let firstClosingIdx = -1;
   let secondClosingIdx = -1;
