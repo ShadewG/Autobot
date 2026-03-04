@@ -430,6 +430,11 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
     const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
     const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
     const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(String(pendingProposal.status || '').toUpperCase()));
+    const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
+    const isManualHandoffReview =
+        caseStatus === 'needs_phone_call' ||
+        pauseReason === 'RESEARCH_HANDOFF' ||
+        pauseReason === 'AGENCY_RESEARCH_COMPLETE';
 
     if (['completed', 'cancelled'].includes(caseStatus)) return 'DONE';
 
@@ -443,7 +448,7 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
     if (portalActive && !hasActiveRun) {
         mismatches.push('portal_active_without_active_run');
     }
-    if (reviewState === 'DECISION_REQUIRED' && !hasPendingProposal && runStatus !== 'waiting') {
+    if (reviewState === 'DECISION_REQUIRED' && !hasPendingProposal && runStatus !== 'waiting' && !isManualHandoffReview) {
         mismatches.push('decision_required_without_pending_proposal');
     }
     if (mismatches.length > 0) return 'OUT_OF_SYNC';
@@ -457,11 +462,17 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
 
 function detectControlMismatches({ caseData, reviewState, pendingProposal, activeRun, activePortalTaskStatus }) {
     const issues = [];
+    const caseStatus = String(caseData?.status || '').toLowerCase();
     const runStatus = String(activeRun?.status || '').toLowerCase();
     const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
     const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
     const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
     const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(String(pendingProposal.status || '').toUpperCase()));
+    const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
+    const isManualHandoffReview =
+        caseStatus === 'needs_phone_call' ||
+        pauseReason === 'RESEARCH_HANDOFF' ||
+        pauseReason === 'AGENCY_RESEARCH_COMPLETE';
 
     if ((reviewState === 'PROCESSING' || reviewState === 'DECISION_APPLYING') && Boolean(caseData?.requires_human)) {
         issues.push({
@@ -477,7 +488,7 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
             severity: 'warning',
         });
     }
-    if (reviewState === 'DECISION_REQUIRED' && !hasPendingProposal && runStatus !== 'waiting') {
+    if (reviewState === 'DECISION_REQUIRED' && !hasPendingProposal && runStatus !== 'waiting' && !isManualHandoffReview) {
         issues.push({
             code: 'decision_required_without_pending_proposal',
             message: 'Decision required but no pending proposal found',
