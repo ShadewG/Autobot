@@ -555,8 +555,11 @@ export async function executeAction(
         opts?: { subject?: string; gateOptions?: string[] }
       ) => {
         try {
+          // Include runId so a previously auto-dismissed handoff proposal from an older
+          // run cannot block creation of a fresh, actionable handoff proposal.
+          const handoffProposalKey = `${caseId}:research:handoff:${handoffKey}:${runId || "no-run"}`;
           await db.upsertProposal({
-            proposalKey: `${caseId}:research:handoff:${handoffKey}`,
+            proposalKey: handoffProposalKey,
             caseId,
             runId: runId || null,
             actionType: "RESEARCH_AGENCY",
