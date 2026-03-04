@@ -28,6 +28,7 @@ import type {
   DeadlineMilestone,
   StateDeadline,
   ScopeItem,
+  ThreadMessage,
 } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -36,6 +37,7 @@ interface CaseInfoTabProps {
   agencySummary: AgencySummary;
   deadlineMilestones?: DeadlineMilestone[];
   stateDeadline?: StateDeadline;
+  threadMessages?: ThreadMessage[];
 }
 
 function scopeStatusBadge(status: ScopeItem["status"]) {
@@ -66,7 +68,24 @@ function feeStatusBadge(status: string) {
   return <Badge variant={variant}>{status}</Badge>;
 }
 
-export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateDeadline }: CaseInfoTabProps) {
+export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateDeadline, threadMessages = [] }: CaseInfoTabProps) {
+  const attachmentRows = threadMessages.flatMap((message) =>
+    (message.attachments || []).map((att) => ({
+      id: att.id,
+      filename: att.filename,
+      content_type: att.content_type,
+      size_bytes: att.size_bytes,
+      url: att.url,
+      messageId: message.id,
+      messageSubject: message.subject,
+      messageTimestamp: message.sent_at || message.timestamp,
+    }))
+  );
+  const mentionsAttachmentWithoutFile = threadMessages.some((message) => {
+    const body = `${message.body || ""}\n${message.raw_body || ""}`.toLowerCase();
+    return body.includes("attach") && (!message.attachments || message.attachments.length === 0);
+  });
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {/* Section A: Case Details */}
@@ -78,6 +97,15 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {request.subject && (
+            <>
+              <div>
+                <p className="text-sm text-muted-foreground">Request Question</p>
+                <p className="font-medium">{request.subject}</p>
+              </div>
+              <Separator />
+            </>
+          )}
           <div className="grid grid-cols-2 gap-3">
             {request.case_name && (
               <div>
@@ -257,7 +285,52 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
         </CardContent>
       </Card>
 
-      {/* Section D: Fee Quote (only if exists) */}
+      {/* Section D: Correspondence & Attachments */}
+      <Card className={!request.fee_quote ? "lg:col-span-2" : ""}>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Correspondence & Attachments
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {attachmentRows.length > 0 ? (
+            <div className="space-y-2">
+              {attachmentRows.map((att) => (
+                <div key={att.id} className="flex items-center justify-between py-1.5 border-b last:border-b-0">
+                  <div className="min-w-0">
+                    <p className="text-sm truncate">{att.filename || "Unnamed attachment"}</p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      Msg #{att.messageId} · {att.messageSubject || "(No subject)"} · {formatDate(att.messageTimestamp)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {att.size_bytes != null && (
+                      <span className="text-xs text-muted-foreground">{Math.round(att.size_bytes / 1024)} KB</span>
+                    )}
+                    {att.url ? (
+                      <a href={att.url} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">
+                        Open
+                      </a>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">No file URL</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No attachments stored for this case.</p>
+          )}
+          {mentionsAttachmentWithoutFile && (
+            <p className="text-xs text-amber-400">
+              At least one message mentions an attachment, but no attachment file was ingested.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Section E: Fee Quote (only if exists) */}
       {request.fee_quote && (
         <Card>
           <CardHeader className="pb-3">
@@ -353,7 +426,7 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
         </Card>
       )}
 
-      {/* Section E: Deadlines */}
+      {/* Section F: Deadlines */}
       {(stateDeadline || (deadlineMilestones && deadlineMilestones.length > 0)) && (
         <Card className={!request.fee_quote ? "lg:col-span-2" : ""}>
           <CardHeader className="pb-3">
