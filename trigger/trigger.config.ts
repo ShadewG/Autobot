@@ -42,6 +42,7 @@ export default defineConfig({
           "SKYVERN_PROXY_LOCATION",
           "REQUESTS_INBOX",
           "AI_ROUTER_V2",
+          "FIRECRAWL_API_KEY",
         ];
         const result = vars
           .filter((name) => process.env[name])
