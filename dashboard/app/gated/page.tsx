@@ -26,6 +26,7 @@ import {
 import { cn, formatRelativeTime, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
+import { LinkifiedText } from "@/components/linkified-text";
 import {
   Loader2,
   CheckCircle,
@@ -681,6 +682,14 @@ function MonitorPageContent() {
   const isEscalateProposal =
     selectedItem?.type === "proposal" && selectedItem.data.action_type === "ESCALATE";
 
+  // Reset per-item UI state when switching items
+  useEffect(() => {
+    setShowCorrespondence(false);
+    setReasoningExpanded(false);
+    setReviewNotesExpanded(false);
+    setRiskFlagsExpanded(false);
+  }, [safeIndex]);
+
   // Deep link: on first load, jump to the case from ?case=XXXX
   useEffect(() => {
     if (initialCaseApplied.current || queue.length === 0) return;
@@ -778,7 +787,6 @@ function MonitorPageContent() {
   const navigate = useCallback(
     (delta: number) => {
       if (queue.length === 0) return;
-      setShowCorrespondence(false);
       setCurrentIndex((prev) => {
         const next = prev + delta;
         if (next < 0) return queue.length - 1;
@@ -1825,9 +1833,10 @@ function MonitorPageContent() {
                 </p>
               )}
               <div className="bg-background border p-2">
-                <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
-                  {selectedItem.data.last_inbound_preview}
-                </pre>
+                <LinkifiedText
+                  text={selectedItem.data.last_inbound_preview || ""}
+                  className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                />
               </div>
             </div>
           )}
@@ -2263,9 +2272,10 @@ function MonitorPageContent() {
                 </Button>
               </div>
               <div className="bg-background border p-2">
-                <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
-                  {selectedItem.data.last_inbound_preview}
-                </pre>
+                <LinkifiedText
+                  text={selectedItem.data.last_inbound_preview || ""}
+                  className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                />
               </div>
               {selectedItem.data.inbound_count > 0 && (
                 <p className="text-[10px] text-muted-foreground mt-1">
@@ -2700,9 +2710,10 @@ function MonitorPageContent() {
 
                           {/* Email body */}
                           <div className="bg-background border p-3 max-h-64 overflow-auto">
-                            <pre className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80">
-                              {msg.body_text || "(no body text)"}
-                            </pre>
+                            <LinkifiedText
+                              text={msg.body_text || "(no body text)"}
+                              className="text-xs whitespace-pre-wrap font-[inherit] text-foreground/80"
+                            />
                           </div>
 
                           {/* Match to case — only for unmatched */}
