@@ -1363,7 +1363,7 @@ function RequestDetailContent() {
     "NEEDS_REBUTTAL",
     "PENDING_FEE_DECISION",
   ].includes(statusValue);
-  const statusDisplay = isPausedStatus ? "PAUSED" : (request.status || "—");
+  const statusDisplay = isPausedStatus ? statusValue : (request.status || "—");
   const pauseReasonValue = String(request.pause_reason || "").toUpperCase();
   const shouldHidePauseReason =
     !request.pause_reason ||

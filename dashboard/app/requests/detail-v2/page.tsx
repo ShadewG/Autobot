@@ -1206,7 +1206,7 @@ function DetailV2Content() {
   const statusDisplay = staleReviewStatus
     ? "AWAITING_RESPONSE"
     : isPausedStatus && !hasExecutionInFlight
-      ? "PAUSED"
+      ? statusValue
       : isPausedStatus && hasExecutionInFlight
         ? "PROCESSING"
         : (request.status || "—");
