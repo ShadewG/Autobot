@@ -36,7 +36,7 @@ const ALL_ACTION_TYPES: ActionType[] = [
 ];
 
 const ALWAYS_GATE_ACTIONS: ActionType[] = [
-  "CLOSE_CASE", "ESCALATE", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW", "RESEARCH_AGENCY",
+  "CLOSE_CASE", "ESCALATE", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW",
 ];
 
 // Valid action chain pairs: primary → allowed follow-ups
@@ -510,10 +510,10 @@ ${allowedActionsSection}
 - PARTIAL_DELIVERY referencing another agency → SEND_FOLLOWUP + followUpAction=RESEARCH_AGENCY
 - DENIAL mentioning a specific other agency by name → SEND_REBUTTAL + followUpAction=RESEARCH_AGENCY (or standalone RESEARCH_AGENCY if rebuttal is not warranted)
 - Only propose RESEARCH_AGENCY when the response provides concrete signals (agency name, department reference, contact info, or "try X for those records") — do NOT speculatively research without evidence in the agency's message
-- RESEARCH_AGENCY always requires human approval — set requiresHuman=true
+- RESEARCH_AGENCY should run automatically when selected unless there is an explicit safety risk
 
 ### requiresHuman Rules
-- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW, RESEARCH_AGENCY
+- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW
 - Require human when confidence < 0.7
 - Require human in SUPERVISED mode for any email-sending action
 
@@ -612,7 +612,9 @@ async function makeAIDecisionV2(params: {
       }
 
       // Apply post-decision flags
-      const requiresHuman = ALWAYS_GATE_ACTIONS.includes(object.action as ActionType)
+      const requiresHuman = (object.action as ActionType) === "RESEARCH_AGENCY"
+        ? false
+        : ALWAYS_GATE_ACTIONS.includes(object.action as ActionType)
         ? true
         : object.confidence < 0.7
           ? true
@@ -632,8 +634,6 @@ async function makeAIDecisionV2(params: {
         return decision("RESEARCH_AGENCY", {
           pauseReason: "DENIAL",
           researchLevel: "deep",
-          canAutoExecute: false,
-          requiresHuman: true,
           reasoning: [
             "Body-cam/video is still a top requested record.",
             "Inbound message appears limited to 911/dispatch form workflow.",
@@ -807,10 +807,11 @@ function decision(
   actionType: ActionType,
   overrides: Partial<DecisionResult> = {}
 ): DecisionResult {
+  const isResearchAgency = actionType === "RESEARCH_AGENCY";
   return {
     actionType,
-    canAutoExecute: false,
-    requiresHuman: true,
+    canAutoExecute: isResearchAgency,
+    requiresHuman: !isResearchAgency,
     pauseReason: null,
     reasoning: [],
     adjustmentInstruction: null,
@@ -1103,10 +1104,10 @@ ${threadSummary || "No thread messages available."}
 - PARTIAL_DELIVERY referencing another agency → SEND_FOLLOWUP + followUpAction=RESEARCH_AGENCY
 - DENIAL mentioning a specific other agency by name → SEND_REBUTTAL + followUpAction=RESEARCH_AGENCY (or standalone RESEARCH_AGENCY if rebuttal is not warranted)
 - Only propose RESEARCH_AGENCY when the response provides concrete signals (agency name, department reference, contact info, or "try X for those records") — do NOT speculatively research without evidence in the agency's message
-- RESEARCH_AGENCY always requires human approval — set requiresHuman=true
+- RESEARCH_AGENCY should run automatically when selected unless there is an explicit safety risk
 
 ### requiresHuman Rules
-- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW, RESEARCH_AGENCY
+- ALWAYS require human for: CLOSE_CASE, ESCALATE, SEND_APPEAL, SEND_FEE_WAIVER_REQUEST, WITHDRAW
 - Require human when confidence < 0.7
 - Require human in SUPERVISED mode for any email-sending action
 
@@ -1389,6 +1390,8 @@ async function aiDecision(params: {
       ? true
       : object.action === "ESCALATE"
         ? true
+        : object.action === "RESEARCH_AGENCY"
+          ? false
         : object.requiresHuman;
 
     const canAutoExecute =
@@ -1406,8 +1409,6 @@ async function aiDecision(params: {
       return decision("RESEARCH_AGENCY", {
         pauseReason: "DENIAL",
         researchLevel: "deep",
-        canAutoExecute: false,
-        requiresHuman: true,
         reasoning: [
           "Body-cam/video is still a top requested record.",
           "Inbound message appears limited to 911/dispatch form workflow.",
@@ -1921,9 +1922,10 @@ export async function decideNextAction(
       const isDueOrOverdue = isFollowupTrigger || daysOverdue > 0 || isPastDeadline;
 
       if (isDueOrOverdue) {
+        const canAutoResearch = autopilotMode === "AUTO";
         return decision("RESEARCH_AGENCY", {
-          canAutoExecute: false,
-          requiresHuman: true,
+          canAutoExecute: canAutoResearch,
+          requiresHuman: !canAutoResearch,
           pauseReason: "SCOPE",
           researchLevel: "light",
           reasoning: [
