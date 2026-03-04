@@ -349,6 +349,36 @@ export const submitPortal = task({
       });
 
       if (!result || !result.success) {
+        // Late-result guard: if the case already advanced (e.g., fallback email
+        // sent successfully), do not let a stale portal failure overwrite it.
+        const latestCase = await db.getCaseById(caseId);
+        const advancedStatuses = new Set([
+          "sent",
+          "awaiting_response",
+          "responded",
+          "completed",
+          "cancelled",
+          "needs_phone_call",
+        ]);
+        if (advancedStatuses.has(String(latestCase?.status || "").toLowerCase())) {
+          logger.info("Ignoring failed portal result because case already advanced", {
+            caseId,
+            currentStatus: latestCase?.status || null,
+            portalResultStatus: result?.status || null,
+          });
+          await cancelPortalTask(
+            `Ignored stale portal result (${result?.status || "failed"}) because case is already ${latestCase?.status}`
+          );
+          await closeAgentRun("completed");
+          return {
+            success: true,
+            skipped: true,
+            reason: "case_already_advanced_after_portal_result",
+            priorStatus: latestCase?.status || null,
+            portalResultStatus: result?.status || null,
+          };
+        }
+
         // Approval gate: proposal created, waiting for human — not a failure
         if (result?.needsApproval) {
           logger.info("Portal submission blocked — needs approval", { caseId, reason: result.reason });
