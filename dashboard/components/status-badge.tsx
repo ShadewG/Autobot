@@ -9,6 +9,11 @@ const statusVariants: Record<RequestStatus, "default" | "secondary" | "destructi
   RECEIVED_RESPONSE: "success",
   CLOSED: "outline",
   NEEDS_HUMAN_REVIEW: "destructive",
+  NEEDS_CONTACT_INFO: "destructive",
+  NEEDS_HUMAN_FEE_APPROVAL: "destructive",
+  NEEDS_PHONE_CALL: "destructive",
+  NEEDS_REBUTTAL: "destructive",
+  PENDING_FEE_DECISION: "destructive",
   ID_STATE: "warning",
 };
 

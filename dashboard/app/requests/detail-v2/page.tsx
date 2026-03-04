@@ -1193,7 +1193,15 @@ function DetailV2Content() {
   const pendingDelivery = getDeliveryTarget(pendingActionType || null, request, agency_summary || null);
 
   const statusValue = String(request.status || "").toUpperCase();
-  const isPausedStatus = statusValue === "NEEDS_HUMAN_REVIEW" || statusValue === "PAUSED";
+  const isPausedStatus = [
+    "PAUSED",
+    "NEEDS_HUMAN_REVIEW",
+    "NEEDS_CONTACT_INFO",
+    "NEEDS_HUMAN_FEE_APPROVAL",
+    "NEEDS_PHONE_CALL",
+    "NEEDS_REBUTTAL",
+    "PENDING_FEE_DECISION",
+  ].includes(statusValue);
   const staleReviewStatus = isPausedStatus && !request.requires_human && review_state !== "DECISION_REQUIRED";
   const statusDisplay = staleReviewStatus
     ? "AWAITING_RESPONSE"

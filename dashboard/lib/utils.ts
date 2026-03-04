@@ -259,6 +259,11 @@ export const STATUS_LABELS: Record<string, string> = {
   RECEIVED_RESPONSE: 'Response Received',
   CLOSED: 'Closed',
   NEEDS_HUMAN_REVIEW: 'Paused',
+  NEEDS_CONTACT_INFO: 'Needs Contact Info',
+  NEEDS_HUMAN_FEE_APPROVAL: 'Needs Fee Approval',
+  NEEDS_PHONE_CALL: 'Needs Phone Call',
+  NEEDS_REBUTTAL: 'Needs Rebuttal',
+  PENDING_FEE_DECISION: 'Pending Fee Decision',
   ID_STATE: 'ID State',
 };
 

@@ -25,6 +25,11 @@ const STATUS_CONFIG: Record<RequestStatus, { label: string; variant: "default" |
   RECEIVED_RESPONSE: { label: "Response Received", variant: "default" },
   CLOSED: { label: "Closed", variant: "outline" },
   NEEDS_HUMAN_REVIEW: { label: "Paused", variant: "destructive" },
+  NEEDS_CONTACT_INFO: { label: "Needs Contact Info", variant: "destructive" },
+  NEEDS_HUMAN_FEE_APPROVAL: { label: "Needs Fee Approval", variant: "destructive" },
+  NEEDS_PHONE_CALL: { label: "Needs Phone Call", variant: "destructive" },
+  NEEDS_REBUTTAL: { label: "Needs Rebuttal", variant: "destructive" },
+  PENDING_FEE_DECISION: { label: "Pending Fee Decision", variant: "destructive" },
   ID_STATE: { label: "ID State", variant: "secondary" },
 };
 

@@ -321,6 +321,11 @@ export type RequestStatus =
   | 'RECEIVED_RESPONSE'
   | 'CLOSED'
   | 'NEEDS_HUMAN_REVIEW'
+  | 'NEEDS_CONTACT_INFO'
+  | 'NEEDS_HUMAN_FEE_APPROVAL'
+  | 'NEEDS_PHONE_CALL'
+  | 'NEEDS_REBUTTAL'
+  | 'PENDING_FEE_DECISION'
   | 'ID_STATE';
 
 export type PauseReason =

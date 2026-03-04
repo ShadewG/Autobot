@@ -1133,7 +1133,43 @@ function RequestDetailContent() {
     }
     return Array.from(dedup.values());
   }, [_activeCaseAgencies]);
-  const shouldShowConversationTabs = conversationAgencies.length > 1;
+  const conversationThreadBuckets = useMemo(() => {
+    const byThread = new Map<number, { messageIds: Set<number>; lastAt: number; label: string }>();
+    for (const message of _threadMessages) {
+      const threadId = Number(message.email_thread_id);
+      if (!Number.isFinite(threadId)) continue;
+      const existing = byThread.get(threadId);
+      const messageTime = new Date(message.sent_at || message.timestamp || 0).getTime();
+      const currentLabel = (message.subject || "").replace(/^re:\s*/i, "").trim();
+      if (!existing) {
+        byThread.set(threadId, {
+          messageIds: new Set([message.id]),
+          lastAt: Number.isFinite(messageTime) ? messageTime : 0,
+          label: currentLabel || `Conversation ${threadId}`,
+        });
+        continue;
+      }
+      existing.messageIds.add(message.id);
+      if (Number.isFinite(messageTime) && messageTime > existing.lastAt) {
+        existing.lastAt = messageTime;
+      }
+      if (!existing.label && currentLabel) {
+        existing.label = currentLabel;
+      }
+    }
+
+    return Array.from(byThread.entries())
+      .map(([threadId, value]) => ({
+        id: `thread-${threadId}`,
+        threadId,
+        label: value.label || `Conversation ${threadId}`,
+        count: value.messageIds.size,
+        messageIds: value.messageIds,
+        lastAt: value.lastAt,
+      }))
+      .sort((a, b) => a.lastAt - b.lastAt);
+  }, [_threadMessages]);
+  const shouldShowConversationTabs = conversationThreadBuckets.length > 1 || conversationAgencies.length > 1;
 
   const conversationBuckets = useMemo(() => {
     const allIds = new Set(_threadMessages.map((m) => m.id));
@@ -1141,6 +1177,18 @@ function RequestDetailContent() {
       { id: "all", label: "All", count: _threadMessages.length, messageIds: allIds },
     ];
     if (!shouldShowConversationTabs) return buckets;
+
+    if (conversationThreadBuckets.length > 1) {
+      for (const threadBucket of conversationThreadBuckets) {
+        buckets.push({
+          id: threadBucket.id,
+          label: threadBucket.label,
+          count: threadBucket.count,
+          messageIds: threadBucket.messageIds,
+        });
+      }
+      return buckets;
+    }
 
     const matchedMessageIds = new Set<number>();
     for (const agency of conversationAgencies) {
@@ -1166,7 +1214,7 @@ function RequestDetailContent() {
       buckets.push({ id: "other", label: "Other", count: otherIds.size, messageIds: otherIds });
     }
     return buckets;
-  }, [_threadMessages, conversationAgencies, shouldShowConversationTabs]);
+  }, [_threadMessages, conversationAgencies, conversationThreadBuckets, shouldShowConversationTabs]);
 
   // Per-agency message stats for the Agency tab cards
   const agencyMessageStats = useMemo(() => {
@@ -1306,7 +1354,15 @@ function RequestDetailContent() {
       : null;
 
   const statusValue = String(request.status || "").toUpperCase();
-  const isPausedStatus = statusValue === "NEEDS_HUMAN_REVIEW" || statusValue === "PAUSED";
+  const isPausedStatus = [
+    "PAUSED",
+    "NEEDS_HUMAN_REVIEW",
+    "NEEDS_CONTACT_INFO",
+    "NEEDS_HUMAN_FEE_APPROVAL",
+    "NEEDS_PHONE_CALL",
+    "NEEDS_REBUTTAL",
+    "PENDING_FEE_DECISION",
+  ].includes(statusValue);
   const statusDisplay = isPausedStatus ? "PAUSED" : (request.status || "—");
   const pauseReasonValue = String(request.pause_reason || "").toUpperCase();
   const shouldHidePauseReason =
@@ -2551,6 +2607,7 @@ function RequestDetailContent() {
             agencySummary={agency_summary}
             deadlineMilestones={deadline_milestones}
             stateDeadline={state_deadline}
+            threadMessages={thread_messages}
           />
         </TabsContent>
 

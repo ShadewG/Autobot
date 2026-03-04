@@ -18,12 +18,12 @@ const STATUS_MAP = {
     'completed': 'CLOSED',
     'error': 'NEEDS_HUMAN_REVIEW',
     'needs_human_review': 'NEEDS_HUMAN_REVIEW',
-    'needs_contact_info': 'NEEDS_HUMAN_REVIEW',
-    'needs_human_fee_approval': 'NEEDS_HUMAN_REVIEW',
+    'needs_contact_info': 'NEEDS_CONTACT_INFO',
+    'needs_human_fee_approval': 'NEEDS_HUMAN_FEE_APPROVAL',
     'portal_in_progress': 'AWAITING_RESPONSE',
-    'needs_phone_call': 'NEEDS_HUMAN_REVIEW',
-    'needs_rebuttal': 'NEEDS_HUMAN_REVIEW',
-    'pending_fee_decision': 'NEEDS_HUMAN_REVIEW',
+    'needs_phone_call': 'NEEDS_PHONE_CALL',
+    'needs_rebuttal': 'NEEDS_REBUTTAL',
+    'pending_fee_decision': 'PENDING_FEE_DECISION',
     'id_state': 'ID_STATE'
 };
 
