@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ThreadMessage } from "@/lib/types";
 import { formatDateTime, cn } from "@/lib/utils";
-import { Mail, Globe, Phone, Truck, FileText, FileCode, Loader2, Paperclip, Download, ExternalLink } from "lucide-react";
+import { Mail, Globe, Phone, Truck, FileText, FileCode, Loader2, Paperclip, Download, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
 
 const channelIcons: Record<string, React.ReactNode> = {
   EMAIL: <Mail className="h-3 w-3" />,
@@ -14,6 +14,111 @@ const channelIcons: Record<string, React.ReactNode> = {
   CALL: <Phone className="h-3 w-3" />,
   MAIL: <Truck className="h-3 w-3" />,
 };
+
+// ── Phone call body parser ──────────────────────────────────────────────────
+
+function parsePhoneCallBody(body: string) {
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  let outcome = "";
+  let operatorNotes = "";
+  let keyPoints: string[] = [];
+  let followUp = "";
+
+  for (const line of lines) {
+    if (line.startsWith("Outcome:")) {
+      outcome = line.replace("Outcome:", "").trim().replace(/\.$/, "");
+    } else if (line.startsWith("Operator notes:")) {
+      operatorNotes = line.replace("Operator notes:", "").trim();
+    } else if (line.startsWith("AI key points:")) {
+      keyPoints = line.replace("AI key points:", "").trim().split("|").map((s) => s.trim()).filter(Boolean);
+    } else if (line.startsWith("AI recommended follow-up:")) {
+      followUp = line.replace("AI recommended follow-up:", "").trim();
+    }
+  }
+
+  return { outcome, operatorNotes, keyPoints, followUp };
+}
+
+// ── Phone Call Bubble ───────────────────────────────────────────────────────
+
+const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: ThreadMessage }) {
+  const [expanded, setExpanded] = useState(false);
+  const parsed = parsePhoneCallBody(message.body);
+  const summary = message.summary || "";
+  // Extract outcome from subject ("Phone call update — connected")
+  const subjectOutcome = message.subject?.match(/—\s*(.+)$/)?.[1]?.trim() || parsed.outcome;
+
+  return (
+    <div className="w-full overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+        <Phone className="h-3 w-3 text-violet-400" />
+        <span className="font-medium text-violet-400">Phone Call</span>
+        {subjectOutcome && (
+          <Badge variant="outline" className="text-[10px] text-violet-400 border-violet-500/30">
+            {subjectOutcome}
+          </Badge>
+        )}
+        <span>•</span>
+        <span className="font-medium truncate max-w-[200px]">
+          {message.from_email || "Unknown"}
+        </span>
+        <span>•</span>
+        <span className="whitespace-nowrap">{formatDateTime(message.sent_at)}</span>
+      </div>
+
+      {/* Phone call card */}
+      <div className="p-3 w-full border-l-4 border-l-violet-500 bg-violet-500/5 overflow-hidden">
+        {/* AI Summary (always visible) */}
+        {summary && (
+          <p className="text-sm">{summary}</p>
+        )}
+
+        {/* Expand toggle */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground mt-2 transition-colors"
+        >
+          {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+          {expanded ? "Hide details" : "Show details"}
+        </button>
+
+        {/* Expanded details */}
+        {expanded && (
+          <div className="mt-2 pt-2 border-t border-border/30 space-y-2">
+            {parsed.operatorNotes && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Operator Notes</p>
+                <p className="text-xs mt-0.5">{parsed.operatorNotes}</p>
+              </div>
+            )}
+            {parsed.keyPoints.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Key Points</p>
+                <ul className="mt-0.5 space-y-0.5">
+                  {parsed.keyPoints.map((point, i) => (
+                    <li key={i} className="text-xs flex items-start gap-1.5">
+                      <span className="text-muted-foreground mt-0.5">•</span>
+                      <span>{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {parsed.followUp && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Recommended Follow-up</p>
+                <p className="text-xs mt-0.5">{parsed.followUp}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});
+
+// ── Email Message Bubble ────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
   message: ThreadMessage;
@@ -210,7 +315,9 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
       <ScrollArea className={cn(isFullHeight ? "flex-1 min-h-0" : (maxHeight || "h-[400px]"), "w-full")}>
         <div className="space-y-4 pr-2 w-full">
           {[...messages].reverse().map((message) => (
-            <MessageBubble key={message.id} message={message} showRaw={showRaw} />
+            message.channel === "CALL"
+              ? <PhoneCallBubble key={message.id} message={message} />
+              : <MessageBubble key={message.id} message={message} showRaw={showRaw} />
           ))}
         </div>
       </ScrollArea>
