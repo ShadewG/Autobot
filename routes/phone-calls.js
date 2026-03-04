@@ -416,9 +416,6 @@ router.post('/:id/complete', async (req, res) => {
             }
 
             const callTimestamp = new Date().toISOString();
-            const keyPoints = Array.isArray(callConversationSummary?.key_points)
-                ? callConversationSummary.key_points.filter(Boolean)
-                : [];
             const checkedPointsList = Array.isArray(checked_points) && checked_points.length > 0
                 ? checked_points.join(', ')
                 : null;
@@ -428,10 +425,8 @@ router.post('/:id/complete', async (req, res) => {
                 `Outcome: ${outcome}.`,
                 notes ? `Operator notes: ${notes}` : null,
                 checkedPointsList ? `Talking points covered: ${checkedPointsList}` : null,
-                callConversationSummary?.summary ? `AI summary: ${callConversationSummary.summary}` : null,
-                keyPoints.length > 0 ? `AI key points: ${keyPoints.join(' | ')}` : null,
                 callConversationSummary?.recommended_follow_up
-                    ? `AI recommended follow-up: ${callConversationSummary.recommended_follow_up}`
+                    ? `Recommended follow-up: ${callConversationSummary.recommended_follow_up}`
                     : null,
             ].filter(Boolean);
 
