@@ -101,6 +101,95 @@ export const submitPortal = task({
     const { caseId, portalUrl, provider, instructions, portalTaskId, agentRunId } = payload;
     const db = getDb();
 
+    const ensurePortalSubmissionMessage = async (
+      latestCase: any,
+      targetPortalUrl: string,
+      submissionResult: any
+    ) => {
+      try {
+        let thread = await db.getThreadByCaseId(caseId);
+        if (!thread) {
+          let host = "portal.local";
+          try { host = new URL(targetPortalUrl).hostname || host; } catch {}
+          thread = await db.createEmailThread({
+            case_id: caseId,
+            thread_id: `portal:${caseId}:${host}`,
+            subject: `Portal submission for case #${caseId}`,
+            agency_email: latestCase?.agency_email || latestCase?.alternate_agency_email || null,
+            initial_message_id: `<portal-thread-${caseId}-${Date.now()}@autobot.local>`,
+            status: "active",
+            case_agency_id: latestCase?.agency_id || null,
+          });
+        }
+
+        const stableRunToken =
+          String(submissionResult?.taskId || submissionResult?.runId || Date.now());
+        const syntheticMessageId = `<portal-submit-${caseId}-${stableRunToken}@autobot.local>`;
+        const existing = await db.getMessageByMessageIdentifier(syntheticMessageId);
+        if (existing) return existing;
+
+        const providerLabel =
+          provider || latestCase?.portal_provider || submissionResult?.provider || "portal";
+        const submittedAtIso = new Date().toISOString();
+        const confirmation = submissionResult?.confirmationNumber
+          ? `\nConfirmation number: ${submissionResult.confirmationNumber}`
+          : "";
+        const runRef = submissionResult?.taskId || submissionResult?.runId
+          ? `\nPortal run: ${submissionResult.taskId || submissionResult.runId}`
+          : "";
+        const engineRef = submissionResult?.engine
+          ? `\nEngine: ${submissionResult.engine}`
+          : "";
+
+        return await db.createMessage({
+          thread_id: thread?.id || null,
+          case_id: caseId,
+          message_id: syntheticMessageId,
+          sendgrid_message_id: null,
+          direction: "outbound",
+          from_email: process.env.REQUESTS_INBOX || "requests@foib-request.com",
+          to_email:
+            latestCase?.agency_email ||
+            latestCase?.alternate_agency_email ||
+            targetPortalUrl,
+          cc_emails: null,
+          subject: submissionResult?.confirmationNumber
+            ? `Portal submission completed (${submissionResult.confirmationNumber})`
+            : "Portal submission completed",
+          body_text:
+            `Portal request submitted.\n` +
+            `Submitted at: ${submittedAtIso}\n` +
+            `Portal URL: ${targetPortalUrl}\n` +
+            `Provider: ${providerLabel}${confirmation}${runRef}${engineRef}`,
+          body_html: null,
+          has_attachments: false,
+          attachment_count: 0,
+          message_type: "portal_submission",
+          portal_notification: false,
+          portal_notification_type: null,
+          portal_notification_provider: null,
+          sent_at: new Date(),
+          received_at: null,
+          summary: "System logged portal submission event",
+          metadata: {
+            source: "submit_portal_task",
+            portal_url: targetPortalUrl,
+            portal_provider: providerLabel,
+            confirmation_number: submissionResult?.confirmationNumber || null,
+            run_id: submissionResult?.runId || null,
+            task_id: submissionResult?.taskId || null,
+            engine: submissionResult?.engine || null,
+          },
+        });
+      } catch (messageErr: any) {
+        logger.warn("Failed to record portal submission correspondence", {
+          caseId,
+          error: messageErr?.message || String(messageErr),
+        });
+        return null;
+      }
+    };
+
     // Helper: mark the tracking agent_run as completed/failed
     const closeAgentRun = async (status: "completed" | "failed", error?: string) => {
       if (!agentRunId) return;
@@ -469,6 +558,10 @@ export const submitPortal = task({
         portal_url: targetUrl,
         portal_provider: provider || caseData.portal_provider || "Auto-detected",
       });
+
+      // Ensure there is a correspondence artifact for portal submissions so
+      // status/reply workflows don't look like they have no outbound contact.
+      await ensurePortalSubmissionMessage(caseData, targetUrl, result);
 
       try { await getNotion().syncStatusToNotion(caseId); } catch {}
       try { await getDiscord().notifyPortalSubmission(caseData, { success: true, portalUrl: targetUrl, steps: result.steps || 0 }); } catch {}
