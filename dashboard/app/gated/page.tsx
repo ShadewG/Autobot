@@ -105,6 +105,7 @@ interface PendingProposal {
   trigger_message_id: number | null;
   portal_url?: string | null;
   agency_email?: string | null;
+  effective_agency_email?: string | null;
   user_id?: number | null;
   attachments?: Array<{
     id: number;
@@ -1593,7 +1594,7 @@ function MonitorPageContent() {
               {selectedItem.data.action_type.startsWith("SEND") && (
                 <p className="text-xs text-emerald-300">
                   <Mail className="h-3 w-3 inline mr-1" />
-                  {selectedItem.data.agency_email || "No email on file"}
+                  {selectedItem.data.effective_agency_email || selectedItem.data.agency_email || "No email on file"}
                 </p>
               )}
               {selectedItem.data.action_type === "CLOSE_CASE" && (
@@ -1929,7 +1930,12 @@ function MonitorPageContent() {
           <div className="border-t pt-4 space-y-2">
             {/* Action explanation */}
             <p className="text-[10px] text-muted-foreground">
-              {getActionExplanation(selectedItem.data.action_type, !!draftBody, selectedItem.data.portal_url, selectedItem.data.agency_email)}
+              {getActionExplanation(
+                selectedItem.data.action_type,
+                !!draftBody,
+                selectedItem.data.portal_url,
+                selectedItem.data.effective_agency_email || selectedItem.data.agency_email
+              )}
             </p>
             {isEscalateProposal && (
               <div className="space-y-1">

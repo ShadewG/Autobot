@@ -307,6 +307,21 @@ router.get('/live-overview', async (req, res) => {
                 c.substatus AS case_substatus,
                 c.portal_url,
                 c.agency_email,
+                COALESCE(
+                    c.agency_email,
+                    (
+                        SELECT
+                            CASE
+                                WHEN m5.from_email ~ '<[^>]+>' THEN substring(m5.from_email from '<([^>]+)>')
+                                ELSE m5.from_email
+                            END
+                        FROM messages m5
+                        WHERE m5.case_id = c.id
+                          AND m5.direction = 'inbound'
+                        ORDER BY COALESCE(m5.received_at, m5.created_at) DESC
+                        LIMIT 1
+                    )
+                ) AS effective_agency_email,
                 c.user_id,
                 c.pause_reason AS case_pause_reason,
                 (c.fee_quote_jsonb->>'amount')::numeric AS last_fee_quote_amount,
