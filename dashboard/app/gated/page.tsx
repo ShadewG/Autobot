@@ -27,6 +27,8 @@ import { cn, formatRelativeTime, humanizeRiskFlag, condenseReviewNotes, formatRe
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
 import { LinkifiedText } from "@/components/linkified-text";
+import { DecisionPanel } from "@/components/decision-panel";
+import type { RequestWorkspaceResponse } from "@/lib/types";
 import {
   Loader2,
   CheckCircle,
@@ -258,6 +260,13 @@ interface PhoneCallTask {
   call_outcome?: string | null;
   created_at?: string;
   case_status?: string | null;
+  case_substatus?: string | null;
+  case_pause_reason?: string | null;
+  requested_records?: string[] | string | null;
+  additional_details?: string | null;
+  last_inbound_subject?: string | null;
+  last_inbound_from_email?: string | null;
+  last_inbound_preview?: string | null;
 }
 
 interface PhoneCallsResponse {
@@ -726,6 +735,12 @@ function MonitorPageContent() {
     selectedItem?.type === "proposal" ? selectedItem.data.id : null;
   const { data: proposalDetail } = useSWR<ProposalDetailResponse>(
     selectedProposalId ? `/api/proposals/${selectedProposalId}` : null
+  );
+
+  // Fetch workspace for selected review items (provides RequestDetail for DecisionPanel)
+  const selectedReviewCaseId = selectedItem?.type === "review" ? selectedItem.data.id : null;
+  const { data: reviewWorkspace } = useSWR<RequestWorkspaceResponse>(
+    selectedReviewCaseId ? `/api/requests/${selectedReviewCaseId}/workspace` : null
   );
 
   // Fetch audit trail for the selected case
@@ -2305,239 +2320,62 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Inline resolution actions */}
-          {(() => {
-            const category = categorizeReview(selectedItem.data);
-            return (
-              <div className="border-t pt-4 space-y-3">
-                <SectionLabel>Resolve</SectionLabel>
-
-                {/* Context-specific primary actions */}
-                {category === "fee" && (
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1 bg-green-700 hover:bg-green-600 text-white"
-                      onClick={() => handleResolveReview("accept_fee")}
-                      disabled={isSubmitting}
-                    >
-                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <CheckCircle className="h-3 w-3 mr-1.5" />}
-                      ACCEPT FEE
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => handleResolveReview("negotiate_fee")}
-                      disabled={isSubmitting}
-                    >
-                      NEGOTIATE
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleResolveReview("decline_fee")}
-                      disabled={isSubmitting}
-                    >
-                      DECLINE
-                    </Button>
-                  </div>
-                )}
-
-                {category === "portal" && (
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1 bg-blue-700 hover:bg-blue-600 text-white"
-                      onClick={() => handleResolveReview("retry_portal")}
-                      disabled={isSubmitting}
-                    >
-                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1.5" />}
-                      RETRY PORTAL
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => handleResolveReview("send_via_email")}
-                      disabled={isSubmitting}
-                    >
-                      <Mail className="h-3 w-3 mr-1" /> EMAIL INSTEAD
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleResolveReview("mark_sent")}
-                      disabled={isSubmitting}
-                    >
-                      MARK SENT
-                    </Button>
-                  </div>
-                )}
-
-                {category === "denial" && (
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1 bg-purple-700 hover:bg-purple-600 text-white"
-                      onClick={() => handleResolveReview("appeal")}
-                      disabled={isSubmitting}
-                    >
-                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <FileText className="h-3 w-3 mr-1.5" />}
-                      SEND APPEAL
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => handleResolveReview("narrow_scope")}
-                      disabled={isSubmitting}
-                    >
-                      NARROW & RETRY
-                    </Button>
-                  </div>
-                )}
-
-                {category === "general" && (
-                  <div className="flex gap-2">
-                    <Button
-                      className="flex-1 bg-purple-700 hover:bg-purple-600 text-white"
-                      onClick={() => handleResolveReview("reprocess")}
-                      disabled={isSubmitting}
-                    >
-                      {isSubmitting ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RefreshCw className="h-3 w-3 mr-1.5" />}
-                      RE-PROCESS
-                    </Button>
-                  </div>
-                )}
-
-                {category === "phone" && (
-                  <div className="space-y-2">
-                    <div className="border p-2 bg-amber-950/20 border-amber-700/40">
-                      <p className="text-xs text-amber-300 font-medium">Phone Call Proposal</p>
-                      <div className="mt-1 text-xs text-foreground/90 space-y-1">
-                        <p>
-                          <span className="text-muted-foreground">Who:</span>{" "}
-                          {selectedItem.data.phone_call_plan?.agency_name || deriveDisplayAgencyName(selectedItem.data)}
-                        </p>
-                        <p>
-                          <span className="text-muted-foreground">Phone:</span>{" "}
-                          {selectedItem.data.phone_call_plan?.agency_phone || "Not found yet"}
-                        </p>
-                        {selectedItem.data.phone_call_plan?.reason && (
-                          <p>
-                            <span className="text-muted-foreground">Why call:</span>{" "}
-                            {selectedItem.data.phone_call_plan.reason}
-                          </p>
-                        )}
-                        {selectedItem.data.phone_call_plan?.agency_email && (
-                          <p>
-                            <span className="text-muted-foreground">Known email:</span>{" "}
-                            {selectedItem.data.phone_call_plan.agency_email}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        className="flex-1 bg-amber-700 hover:bg-amber-600 text-white"
-                        onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "research_handoff")}
-                        disabled={addingToPhoneQueue || isSubmitting}
-                      >
-                        {addingToPhoneQueue ? (
-                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                        ) : (
-                          <Phone className="h-3 w-3 mr-1.5" />
-                        )}
-                        QUEUE PHONE CALL
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Custom instruction */}
-                <div className="flex gap-2">
-                  <Textarea
-                    placeholder="Custom instruction (optional)..."
-                    value={reviewInstruction}
-                    onChange={(e) => setReviewInstruction(e.target.value)}
-                    className="text-xs bg-background min-h-[60px] flex-1"
-                  />
-                  <Button
-                    variant="outline"
-                    className="self-end"
-                    onClick={() => handleResolveReview("custom", reviewInstruction)}
-                    disabled={isSubmitting || !reviewInstruction.trim()}
-                  >
-                    <Send className="h-3 w-3 mr-1" /> SEND
-                  </Button>
-                </div>
-
-                {/* Secondary actions */}
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => handleResolveReview("put_on_hold")}
-                    disabled={isSubmitting}
-                  >
-                    HOLD
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => {
-                      const item = selectedItem;
-                      setShowDestructiveConfirm({
-                        title: `Close case #${item.data.id}?`,
-                        description: "This marks the case as completed/closed. You have 5 seconds to undo after confirming.",
-                        onConfirm: () => {
-                          setShowDestructiveConfirm(null);
-                          scheduleUndoableAction(
-                            `Closed: case #${item.data.id}`,
-                            item,
-                            async () => {
-                              const res = await fetch(`/api/requests/${item.data.id}/resolve-review`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ action: "close" }),
-                              });
-                              const data = await res.json();
-                              if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
-                            },
-                          );
-                        },
-                      });
-                    }}
-                    disabled={isSubmitting}
-                  >
-                    CLOSE
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={handleWithdraw}
-                    disabled={isSubmitting}
-                  >
-                    <Ban className="h-3 w-3 mr-1" /> WITHDRAW
-                  </Button>
-                  <Link href={`/requests/detail-v2?id=${selectedItem.data.id}`}>
-                    <Button variant="ghost" className="text-xs text-muted-foreground">
-                      <ExternalLink className="h-3 w-3 mr-1" /> Full Case
-                    </Button>
-                  </Link>
-                </div>
-
-                {/* Add to phone queue — always available (except dedicated phone category) */}
-                {category !== "phone" && (
-                  <Button
-                    variant="outline"
-                    className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
-                    onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "clarification_needed")}
-                    disabled={addingToPhoneQueue || isSubmitting}
-                  >
-                    {addingToPhoneQueue ? (
-                      <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                    ) : (
-                      <Phone className="h-3 w-3 mr-1.5" />
-                    )}
-                    ADD TO PHONE QUEUE
-                  </Button>
-                )}
+          {/* Resolve — unified DecisionPanel */}
+          <div className="border-t pt-4">
+            {reviewWorkspace?.request ? (
+              <DecisionPanel
+                request={reviewWorkspace.request}
+                nextAction={reviewWorkspace.next_action_proposal || null}
+                agency={reviewWorkspace.agency_summary || { name: selectedItem.data.agency_name, email: null, portal_url: selectedItem.data.portal_url }}
+                lastInboundMessage={reviewWorkspace.thread_messages?.at(-1) || null}
+                reviewState={reviewWorkspace.review_state}
+                onProceed={async () => {}}
+                onNegotiate={() => {}}
+                onWithdraw={handleWithdraw}
+                onNarrowScope={() => handleResolveReview("narrow_scope")}
+                onAppeal={() => handleResolveReview("appeal")}
+                onAddToPhoneQueue={() => {
+                  const category = categorizeReview(selectedItem.data);
+                  handleAddToPhoneQueue(
+                    selectedItem.data.id,
+                    category === "phone" ? "research_handoff" : "clarification_needed"
+                  );
+                }}
+                onResolveReview={async (action, instruction) => {
+                  if (action === "close") {
+                    const item = selectedItem;
+                    setShowDestructiveConfirm({
+                      title: `Close case #${item.data.id}?`,
+                      description: "This marks the case as completed/closed. You have 5 seconds to undo after confirming.",
+                      onConfirm: () => {
+                        setShowDestructiveConfirm(null);
+                        scheduleUndoableAction(
+                          `Closed: case #${item.data.id}`,
+                          item,
+                          async () => {
+                            const res = await fetch(`/api/requests/${item.data.id}/resolve-review`, {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "close" }),
+                            });
+                            const data = await res.json();
+                            if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+                          },
+                        );
+                      },
+                    });
+                    return;
+                  }
+                  await handleResolveReview(action, instruction);
+                }}
+                isLoading={isSubmitting}
+              />
+            ) : (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
-            );
-          })()}
+            )}
+          </div>
         </div>
       )}
 
@@ -2973,6 +2811,13 @@ function MonitorPageContent() {
                         {/* Case details */}
                         <div className="border p-3 bg-background">
                           <SectionLabel>Case Details</SectionLabel>
+                          {(() => {
+                            const requestedRecords = Array.isArray(task.requested_records)
+                              ? task.requested_records
+                              : typeof task.requested_records === "string"
+                                ? task.requested_records.split(/\n|,/).map((v) => v.trim()).filter(Boolean)
+                                : [];
+                            return (
                           <div className="space-y-1 text-xs">
                             <div className="flex items-center gap-2">
                               <Link
@@ -2994,11 +2839,59 @@ function MonitorPageContent() {
                             {task.case_status && (
                               <p><span className="text-muted-foreground">Case status:</span> {task.case_status.replace(/_/g, " ")}</p>
                             )}
+                            {task.case_substatus && (
+                              <p><span className="text-muted-foreground">Case substatus:</span> {task.case_substatus}</p>
+                            )}
+                            {task.case_pause_reason && (
+                              <p><span className="text-muted-foreground">Pause reason:</span> {task.case_pause_reason.replace(/_/g, " ")}</p>
+                            )}
+                            {requestedRecords.length > 0 && (
+                              <div>
+                                <p className="text-muted-foreground">Requested records:</p>
+                                <div className="pl-2 space-y-0.5">
+                                  {requestedRecords.slice(0, 5).map((record, idx) => (
+                                    <p key={idx}>- {record}</p>
+                                  ))}
+                                  {requestedRecords.length > 5 && (
+                                    <p className="text-muted-foreground">+{requestedRecords.length - 5} more</p>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {task.additional_details && (
+                              <p><span className="text-muted-foreground">Additional details:</span> {task.additional_details}</p>
+                            )}
                             {task.notes && (
                               <p><span className="text-muted-foreground">Notes:</span> {task.notes}</p>
                             )}
                           </div>
+                            );
+                          })()}
                         </div>
+
+                        {(task.last_inbound_subject || task.last_inbound_preview) && (
+                          <div className="border p-3 bg-background">
+                            <SectionLabel>Latest Inbound Context</SectionLabel>
+                            {task.last_inbound_subject && (
+                              <p className="text-xs mb-1">
+                                <span className="text-muted-foreground">Subj:</span> {task.last_inbound_subject}
+                              </p>
+                            )}
+                            {task.last_inbound_from_email && (
+                              <p className="text-xs mb-1">
+                                <span className="text-muted-foreground">From:</span> {task.last_inbound_from_email}
+                              </p>
+                            )}
+                            {task.last_inbound_preview && (
+                              <div className="border p-2">
+                                <LinkifiedText
+                                  text={task.last_inbound_preview}
+                                  className="text-xs whitespace-pre-wrap text-foreground/80"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
 
                         {/* AI Briefing — parsed nicely */}
                         {briefing && (
