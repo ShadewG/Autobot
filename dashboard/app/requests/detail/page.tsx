@@ -539,6 +539,10 @@ function RequestDetailContent() {
     }
   };
 
+  const handleMakePhoneCall = () => {
+    setShowCorrespondenceDialog(true);
+  };
+
   const handleResolveReview = async (action: string, instruction?: string) => {
     if (!id) return;
     setIsResolving(true);
@@ -2329,6 +2333,7 @@ function RequestDetailContent() {
                     onWithdraw={() => setWithdrawDialogOpen(true)}
                     onNarrowScope={handleNarrowScope}
                     onAppeal={handleAppeal}
+                    onMakePhoneCall={handleMakePhoneCall}
                     onAddToPhoneQueue={handleAddToPhoneQueue}
                     onResolveReview={handleResolveReview}
                     onRepair={handleResetToLastInbound}

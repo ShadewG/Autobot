@@ -61,6 +61,7 @@ interface DecisionPanelProps {
   onAppeal: () => void;
   onOpenPortal?: () => void;
   onAddToPhoneQueue?: () => void;
+  onMakePhoneCall?: () => void;
   onResolveReview?: (action: string, instruction?: string) => Promise<void>;
   onRepair?: () => void;
   isLoading?: boolean;
@@ -583,6 +584,7 @@ export function DecisionPanel({
   onAppeal,
   onOpenPortal,
   onAddToPhoneQueue,
+  onMakePhoneCall,
   onResolveReview,
   onRepair,
   isLoading,
@@ -693,7 +695,9 @@ export function DecisionPanel({
     const handleAction = async (actionId: string) => {
       setReviewActionLoading(actionId);
       try {
-        if (actionId === "queue_phone_call" && onAddToPhoneQueue) {
+        if (actionId === "make_phone_call" && onMakePhoneCall) {
+          onMakePhoneCall();
+        } else if (actionId === "queue_phone_call" && onAddToPhoneQueue) {
           await onAddToPhoneQueue();
         } else {
           await onResolveReview(actionId, customInstruction || undefined);
@@ -837,7 +841,11 @@ export function DecisionPanel({
 
           {category === "phone" && (
             <div className="flex gap-2">
-              <Button className="flex-1 bg-amber-700 hover:bg-amber-600 text-white" onClick={() => handleAction("queue_phone_call")} disabled={actionLoading("queue_phone_call")}>
+              <Button className="flex-1 bg-amber-700 hover:bg-amber-600 text-white" onClick={() => handleAction("make_phone_call")} disabled={actionLoading("make_phone_call")}>
+                {spinnerFor("make_phone_call") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
+                MAKE PHONE CALL
+              </Button>
+              <Button variant="outline" className="flex-1" onClick={() => handleAction("queue_phone_call")} disabled={actionLoading("queue_phone_call")}>
                 {spinnerFor("queue_phone_call") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
                 QUEUE PHONE CALL
               </Button>

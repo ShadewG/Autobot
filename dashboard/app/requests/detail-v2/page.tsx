@@ -994,6 +994,10 @@ function DetailV2Content() {
     }
   };
 
+  const handleMakePhoneCall = () => {
+    setShowCorrespondenceDialog(true);
+  };
+
   // ── Multi-agency handlers ──────────────────────────────────────────────────
 
   const handleSetPrimaryAgency = async (caseAgencyId: number) => {
@@ -1689,6 +1693,7 @@ function DetailV2Content() {
                       onWithdraw={() => setWithdrawDialogOpen(true)}
                       onNarrowScope={() => handleRevise("Draft a response narrowing the scope of the request.")}
                       onAppeal={() => handleRevise("Draft an administrative appeal of the denial.")}
+                      onMakePhoneCall={handleMakePhoneCall}
                       onAddToPhoneQueue={handleAddToPhoneQueue}
                       onResolveReview={handleResolveReview}
                       onRepair={handleResetToLastInbound}
