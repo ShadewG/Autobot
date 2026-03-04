@@ -20,10 +20,6 @@ function buildReadableResearchSummary(rawNotes) {
     const execution = parsed.execution || {};
 
     const isResearchFailed = !!brief.researchFailed;
-    if (isResearchFailed) {
-        const msg = String(brief.summary || 'Research failed').trim();
-        lines.push(msg || 'Research failed');
-    }
 
     const suggested = Array.isArray(brief.suggested_agencies) ? brief.suggested_agencies : [];
     if (suggested.length > 0) {
@@ -35,6 +31,31 @@ function buildReadableResearchSummary(rawNotes) {
 
     const candidate = execution.candidate_channels || {};
     const discovered = execution.new_channels || {};
+    const fallbackChannelsExist = !!(
+        contactResult.contact_email ||
+        contactResult.email ||
+        contactResult.portal_url ||
+        contactResult.contact_phone ||
+        contactResult.phone ||
+        contactResult.contact_fax ||
+        contactResult.fax
+    );
+    const executionChannelsExist = !!(
+        candidate.email ||
+        candidate.portal ||
+        candidate.phone ||
+        candidate.fax ||
+        discovered.email ||
+        discovered.portal ||
+        discovered.phone ||
+        discovered.fax
+    );
+    if (isResearchFailed && !executionChannelsExist && !fallbackChannelsExist) {
+        const msg = String(brief.summary || 'Research failed').trim();
+        lines.push(msg || 'Research failed');
+    } else if (isResearchFailed && (executionChannelsExist || fallbackChannelsExist)) {
+        lines.push('Research partially failed, but usable contact channels were recovered.');
+    }
     const newChannels = [];
     if (discovered.email) newChannels.push(`email ${discovered.email}`);
     if (discovered.portal) newChannels.push(`portal ${discovered.portal}`);

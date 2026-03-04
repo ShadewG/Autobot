@@ -754,8 +754,14 @@ export async function executeAction(
         } catch (e: any) { /* non-fatal */ }
       }
 
+      const contactSignalEmail = contactResult?.contact_email || contactResult?.email || null;
+      const contactSignalPortal = contactResult?.portal_url || null;
+      const contactSignalPhone = contactResult?.contact_phone || contactResult?.phone || null;
+      const contactSignalFax = contactResult?.contact_fax || contactResult?.fax || null;
+      const hasContactSignals = !!(contactSignalEmail || contactSignalPortal || contactSignalPhone || contactSignalFax);
+
       // If AI research itself failed (timeout/error), surface honest messaging
-      if (brief?.researchFailed) {
+      if (brief?.researchFailed && !hasContactSignals) {
         // If research fails, do not block human queue with retry gates; fall back
         // to a phone call task so operator can proceed immediately.
         const fallback = await buildPhoneFallbackPayload({
@@ -800,9 +806,37 @@ export async function executeAction(
         break;
       }
 
-      const suggestedAgencies = Array.isArray(brief?.suggested_agencies)
+      if (brief?.researchFailed && hasContactSignals) {
+        await persistResearchExecutionMeta({
+          outcome: "research_partial_with_channels",
+          research_failed: true,
+          research_failure_reason: brief.summary || "unknown error",
+          candidate_channels_from_partial_research: {
+            email: contactSignalEmail,
+            portal: contactSignalPortal,
+            phone: contactSignalPhone,
+            fax: contactSignalFax,
+          },
+        });
+      }
+
+      let suggestedAgencies = Array.isArray(brief?.suggested_agencies)
         ? brief.suggested_agencies
         : [];
+      if (suggestedAgencies.length === 0) {
+        const fallbackSuggestedName =
+          String(contactResult?.agency_name || "").trim() ||
+          String(caseData?.agency_name || "").trim();
+        if (fallbackSuggestedName) {
+          suggestedAgencies = [{
+            name: fallbackSuggestedName,
+            reason: brief?.researchFailed
+              ? "Derived from partial contact research output."
+              : "Derived from existing case agency.",
+            confidence: brief?.researchFailed ? 0.5 : 0.4,
+          }];
+        }
+      }
       const inboundTextForAgencyHint = `${latestInbound?.subject || ""}\n${latestInbound?.body_text || ""}`.toLowerCase();
       const prefersIowaDCI = /iowa\s+dci|division of criminal investigation|department of public safety/.test(inboundTextForAgencyHint);
       const suggestedAgency = prefersIowaDCI
