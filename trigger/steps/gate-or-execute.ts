@@ -104,6 +104,20 @@ export async function createProposalAndGate(
   let effectivePauseReason = pauseReason;
   let effectiveSafety = { ...safety };
 
+  // Research-only steps are safe operational actions and should not block
+  // human queues. Any true ambiguity/failure is handled inside execute-action
+  // via explicit research handoff proposals.
+  if (actionType === "RESEARCH_AGENCY") {
+    effectiveDecisionCanAutoExecute = true;
+    effectiveDecisionRequiresHuman = false;
+    effectivePauseReason = null;
+    effectiveSafety = {
+      ...effectiveSafety,
+      canAutoExecute: true,
+      requiresHuman: false,
+    };
+  }
+
   // Never allow reviewable actions to gate as empty proposals.
   if (ACTIONS_REQUIRING_REVIEWABLE_DRAFT.has(actionType) && !hasDraftContent(effectiveDraft)) {
     effectiveDraft = buildFallbackDraft(actionType, reasoning);

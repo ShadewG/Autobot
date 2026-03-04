@@ -600,7 +600,8 @@ class CronService {
                     const isEmailCase = !caseData.portal_url || caseData.portal_url === '';
 
                     if (contactChanged && research) {
-                        // Contact info is WRONG — update case and route to human review
+                        // Contact info is WRONG — update case and continue with actionable fallback
+                        // (do not block on human approval for routine follow-up research).
                         const updates = {
                             contact_research_notes: [
                                 `Deadline sweep: contact info differs from research`,
@@ -623,30 +624,38 @@ class CronService {
                         }
                         await db.updateCase(caseData.id, updates);
 
-                        await db.upsertProposal({
-                            proposalKey: `${caseData.id}:deadline_sweep:RESEARCH_AGENCY`,
-                            caseId: caseData.id,
-                            actionType: 'RESEARCH_AGENCY',
-                            reasoning: [
-                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
-                                { step: 'Contact info differs', detail: updates.contact_research_notes }
-                            ],
-                            confidence: 0,
-                            requiresHuman: true,
-                            canAutoExecute: false,
-                            draftSubject: `Contact info update needed: ${caseData.case_name}`,
-                            draftBodyText: `Research found different contact info for ${caseData.agency_name}.\n\n${updates.contact_research_notes}`,
-                            status: 'PENDING_APPROVAL'
+                        let agencyPhone = research?.contact_phone || null;
+                        if (!agencyPhone && caseData.agency_id) {
+                            const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+                            if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
+                        }
+
+                        const phoneTask = await db.createPhoneCallTask({
+                            case_id: caseData.id,
+                            agency_name: caseData.agency_name,
+                            agency_phone: agencyPhone,
+                            agency_state: caseData.state,
+                            reason: 'deadline_passed',
+                            priority: daysOverdue > 14 ? 2 : (daysOverdue > 7 ? 1 : 0),
+                            notes: `Contact info changed during overdue research. ${updates.contact_research_notes}`,
+                            days_since_sent: daysSinceSent
                         });
 
+                        const aiService = require('./ai-service');
+                        db.getMessagesByCaseId(caseData.id, 20)
+                            .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
+                            .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
+                            .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
+
                         await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
-                            substatus: `Deadline passed + contact info changed (${daysOverdue}d overdue)`,
-                            pauseReason: 'DEADLINE_CONTACT_CHANGED',
+                            targetStatus: 'needs_phone_call',
+                            substatus: `Deadline passed + contact updated (${daysOverdue}d overdue)`,
+                            pauseReason: 'DEADLINE_PHONE_CALL',
                         });
 
                         contactUpdates++;
-                        humanReviews++;
-                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → RESEARCH_AGENCY (contact changed)`);
+                        phoneCalls++;
+                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (contact changed)`);
                     } else if (isEmailCase) {
                         // Contact correct (or no research result) + email case → phone call
                         let agencyPhone = research?.contact_phone || null;
