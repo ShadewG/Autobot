@@ -138,7 +138,7 @@ router.get('/:id', async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
         const rawCaseData = await db.getCaseById(requestId);
-        const caseData = await attachActivePortalTask(rawCaseData);
+        let caseData = await attachActivePortalTask(rawCaseData);
 
         if (!caseData) {
             return res.status(404).json({
@@ -146,6 +146,42 @@ router.get('/:id', async (req, res) => {
                 error: 'Request not found'
             });
         }
+
+        // Keep detail endpoint state in sync with workspace/queue by attaching
+        // active proposal/run truth before deriving review/control state.
+        const [activeRunResult, activeProposalResult] = await Promise.all([
+            db.query(
+                `SELECT
+                    status,
+                    trigger_type,
+                    started_at,
+                    COALESCE(metadata->>'triggerRunId', metadata->>'trigger_run_id') AS trigger_run_id
+                 FROM agent_runs
+                 WHERE case_id = $1
+                   AND status IN ('created', 'queued', 'processing', 'waiting', 'running')
+                 ORDER BY started_at DESC NULLS LAST, id DESC
+                 LIMIT 1`,
+                [requestId]
+            ),
+            db.query(
+                `SELECT status
+                 FROM proposals
+                 WHERE case_id = $1
+                   AND status IN (${ACTIVE_PROPOSAL_STATUSES_SQL})
+                 ORDER BY created_at DESC
+                 LIMIT 1`,
+                [requestId]
+            ),
+        ]);
+
+        caseData = {
+            ...caseData,
+            active_run_status: activeRunResult.rows[0]?.status || null,
+            active_run_trigger_type: activeRunResult.rows[0]?.trigger_type || null,
+            active_run_started_at: activeRunResult.rows[0]?.started_at || null,
+            active_run_trigger_run_id: activeRunResult.rows[0]?.trigger_run_id || null,
+            active_proposal_status: activeProposalResult.rows[0]?.status || null,
+        };
 
         res.json({
             success: true,

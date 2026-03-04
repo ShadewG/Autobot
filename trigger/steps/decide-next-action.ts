@@ -2058,6 +2058,54 @@ export async function decideNextAction(
           reasoning,
         }),
         reprocess: async () => {
+          // If research already completed and yielded channels, deterministically
+          // continue from that output instead of re-running broad routing.
+          let parsedResearch: any = null;
+          if (caseDataForReview?.contact_research_notes) {
+            if (typeof caseDataForReview.contact_research_notes === "string") {
+              try {
+                parsedResearch = JSON.parse(caseDataForReview.contact_research_notes);
+              } catch {
+                parsedResearch = null;
+              }
+            } else {
+              parsedResearch = caseDataForReview.contact_research_notes;
+            }
+          }
+          const executionMeta = parsedResearch?.execution || {};
+          const discovered = executionMeta?.new_channels || {};
+          const hasResearchState =
+            String(caseDataForReview?.substatus || "").includes("research_") ||
+            !!executionMeta?.outcome;
+          const discoveredPortal = discovered?.portal || null;
+          const discoveredEmail = discovered?.email || null;
+          const discoveredPhone = discovered?.phone || null;
+          const discoveredFax = discovered?.fax || null;
+          if (hasResearchState && (discoveredPortal || discoveredEmail || discoveredPhone || discoveredFax)) {
+            if (discoveredPortal) {
+              return decision("SUBMIT_PORTAL", {
+                adjustmentInstruction: `Use researched portal channel (${discoveredPortal}) for next submission.`,
+                reasoning: [...reasoning, "Reprocess fast-path: using researched portal channel"],
+              });
+            }
+            if (discoveredEmail) {
+              return decision("SEND_INITIAL_REQUEST", {
+                adjustmentInstruction: `Use researched contact email (${discoveredEmail}) for next submission.`,
+                reasoning: [...reasoning, "Reprocess fast-path: using researched email channel"],
+              });
+            }
+            if (discoveredPhone || discoveredFax) {
+              return decision("ESCALATE", {
+                pauseReason: "RESEARCH_HANDOFF",
+                reasoning: [
+                  ...reasoning,
+                  discoveredPhone ? "FOLLOWUP_CHANNEL:PHONE" : "FOLLOWUP_CHANNEL:FAX",
+                  "Reprocess fast-path: no email/portal discovered; route to phone follow-up handoff",
+                ],
+              });
+            }
+          }
+
           if (classification === "WRONG_AGENCY") {
             const wrongAgencyDecision = await deterministicRouting(
               caseId,
@@ -2240,6 +2288,31 @@ export async function decideNextAction(
               dismissedActionCounts: preComputed.dismissedActionCounts,
               canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
             });
+            // When a human provides explicit custom instructions, don't let an
+            // UNKNOWN-only escalate lockout block obvious execution paths.
+            // This keeps "resend by email" and similar directives actionable.
+            if (ri && allowedActions.length === 1 && allowedActions[0] === "ESCALATE") {
+              const lowerRi = ri.toLowerCase();
+              const relaxed = new Set<ActionType>(allowedActions);
+              if (/\b(send|resend|email|follow[\s-]?up)\b/.test(lowerRi)) {
+                relaxed.add("SEND_FOLLOWUP");
+              }
+              if (/\bclarif(y|ication)?\b|\bnarrow\b|\bscope\b/.test(lowerRi)) {
+                relaxed.add("SEND_CLARIFICATION");
+              }
+              if (/\bresearch\b|\bfind\b.*\bagency\b|\bwrong agency\b|\bcustodian\b/.test(lowerRi)) {
+                relaxed.add("RESEARCH_AGENCY");
+              }
+              if (relaxed.size > allowedActions.length) {
+                logger.info("Relaxed custom-review allowed actions from ESCALATE lockout", {
+                  caseId,
+                  classification,
+                  customInstruction: ri.slice(0, 180),
+                  allowedActions: Array.from(relaxed),
+                });
+                allowedActions.splice(0, allowedActions.length, ...Array.from(relaxed));
+              }
+            }
             const v2Result = await makeAIDecisionV2({
               caseId, classification, constraints, extractedFeeAmount,
               sentiment, autopilotMode, denialSubtype, jurisdictionLevel,

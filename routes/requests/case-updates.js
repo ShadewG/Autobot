@@ -27,7 +27,7 @@ router.patch('/:id', async (req, res) => {
         }
 
         if (req.body.pause_reason !== undefined) {
-            const validReasons = ['FEE_QUOTE', 'SCOPE', 'DENIAL', 'ID_REQUIRED', 'SENSITIVE', 'CLOSE_ACTION', null];
+            const validReasons = ['FEE_QUOTE', 'SCOPE', 'DENIAL', 'ID_REQUIRED', 'SENSITIVE', 'CLOSE_ACTION', 'RESEARCH_HANDOFF', null];
             if (!validReasons.includes(req.body.pause_reason)) {
                 return res.status(400).json({
                     success: false,

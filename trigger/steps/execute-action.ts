@@ -643,22 +643,89 @@ export async function executeAction(
         newFax?: string | null;
       }) => {
         let existingCaseAgencyPhone: string | null = null;
+        let existingCaseAgencyRows: Array<{ agency_name: string | null; phone: string | null; fax: string | null }> = [];
         try {
           const existingCaseAgencies = await db.query(
-            `SELECT a.phone
+            `SELECT COALESCE(ca.agency_name, a.name) AS agency_name, a.phone, a.fax
                FROM case_agencies ca
                LEFT JOIN agencies a ON ca.agency_id = a.id
               WHERE ca.case_id = $1
-              ORDER BY ca.id DESC
-              LIMIT 1`,
+              ORDER BY ca.is_primary DESC, ca.id DESC`,
             [caseId]
           );
-          existingCaseAgencyPhone = existingCaseAgencies.rows?.[0]?.phone || null;
+          existingCaseAgencyRows = existingCaseAgencies.rows || [];
+          existingCaseAgencyPhone = existingCaseAgencyRows.find((row) => normalizePhoneForCompare(row.phone))?.phone || null;
         } catch (e: any) { /* non-fatal */ }
+
+        type PhoneCandidate = {
+          phone: string;
+          kind: "phone" | "fax";
+          source: string;
+          agency_name?: string | null;
+          contact_name?: string | null;
+          is_new?: boolean;
+        };
+        const candidates: PhoneCandidate[] = [];
+        const seen = new Set<string>();
+        const pushCandidate = (candidate: PhoneCandidate | null) => {
+          if (!candidate?.phone) return;
+          const normalized = normalizePhoneForCompare(candidate.phone);
+          if (!normalized) return;
+          const key = `${candidate.kind}:${normalized}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          candidates.push(candidate);
+        };
+
+        for (const row of existingCaseAgencyRows) {
+          pushCandidate({
+            phone: row.phone || "",
+            kind: "phone",
+            source: "Current case agency",
+            agency_name: row.agency_name || null,
+          });
+          pushCandidate({
+            phone: row.fax || "",
+            kind: "fax",
+            source: "Current case agency (fax)",
+            agency_name: row.agency_name || null,
+          });
+        }
+        pushCandidate({
+          phone: params.candidatePhone || "",
+          kind: "phone",
+          source: "Research result",
+          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          contact_name: contactResult?.records_officer || null,
+        });
+        pushCandidate({
+          phone: params.candidateFax || "",
+          kind: "fax",
+          source: "Research result (fax)",
+          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          contact_name: contactResult?.records_officer || null,
+        });
+        pushCandidate({
+          phone: params.newPhone || "",
+          kind: "phone",
+          source: "New channel from research",
+          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          contact_name: contactResult?.records_officer || null,
+          is_new: true,
+        });
+        pushCandidate({
+          phone: params.newFax || "",
+          kind: "fax",
+          source: "New channel from research (fax)",
+          agency_name: params.suggestedAgencyName || caseData?.agency_name || null,
+          contact_name: contactResult?.records_officer || null,
+          is_new: true,
+        });
 
         const selectedPhone =
           params.newPhone ||
           params.candidatePhone ||
+          candidates.find((c) => c.kind === "phone")?.phone ||
           existingCaseAgencyPhone ||
           null;
 
@@ -679,7 +746,13 @@ export async function executeAction(
           selectedPhone
             ? `Call ${params.suggestedAgencyName || caseData?.agency_name || "agency"} at ${selectedPhone} to confirm the correct records intake channel and immediate next step.`
             : "No phone number on file yet. Use Find Phone Number first, then call to confirm the right records channel and status."
-        ].join(" ");
+        ]
+          .concat(
+            candidates.length > 0
+              ? [`Available contact numbers: ${candidates.map((c) => `${c.phone}${c.contact_name ? ` (${c.contact_name})` : ""} [${c.source}]`).join("; ")}`]
+              : []
+          )
+          .join(" ");
 
         const briefing = {
           case_summary: `${caseData?.case_name || `Case #${caseId}`} is blocked on follow-up routing after contact research.`,
@@ -689,6 +762,14 @@ export async function executeAction(
               request_sent: caseData?.send_date || null,
               days_waiting: daysWaiting,
             },
+            contact_options: candidates.map((c) => ({
+              phone: c.phone,
+              type: c.kind,
+              source: c.source,
+              agency_name: c.agency_name || null,
+              contact_name: c.contact_name || null,
+              is_new: !!c.is_new,
+            })),
             records_requested: requestedRecords,
             previous_responses: [
               `Current agency: ${caseData?.agency_name || "Unknown agency"}`,
@@ -705,15 +786,19 @@ export async function executeAction(
         };
 
         const phoneOptions = {
+          candidates,
+          selected: selectedPhone,
           research: {
             phone: params.candidatePhone || null,
             fax: params.candidateFax || null,
             source: "Research result",
+            contact_name: contactResult?.records_officer || null,
           },
           discovered_new: {
             phone: params.newPhone || null,
             fax: params.newFax || null,
             source: "New channel detection",
+            contact_name: contactResult?.records_officer || null,
           },
           existing_case_agency: {
             phone: existingCaseAgencyPhone || null,
