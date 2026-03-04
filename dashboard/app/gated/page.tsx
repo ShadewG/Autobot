@@ -304,7 +304,8 @@ function formatReasoning(reasoning: unknown): string[] {
 }
 
 function extractEscalationRequestedAction(reasoning: string[]): string | null {
-  for (const line of reasoning) {
+  for (const rawLine of reasoning) {
+    const line = typeof rawLine === "string" ? rawLine : String(rawLine ?? "");
     if (!line) continue;
     const match = line.match(/action\s*[:=]\s*([a-z_]+)/i);
     if (match?.[1]) {
@@ -335,12 +336,14 @@ const ACTION_LABELS: Record<string, string> = {
 };
 
 function getApproveLabel(actionType: string | null): string {
-  if (!actionType) return "APPROVE & EXECUTE";
-  return ACTION_LABELS[actionType] || `APPROVE: ${actionType.replace(/_/g, " ")}`;
+  const normalized = typeof actionType === "string" ? actionType : String(actionType ?? "");
+  if (!normalized) return "APPROVE & EXECUTE";
+  return ACTION_LABELS[normalized] || `APPROVE: ${normalized.replace(/_/g, " ")}`;
 }
 
 function getActionExplanation(actionType: string | null, hasDraft: boolean, portalUrl?: string | null, agencyEmail?: string | null): string {
-  if (!actionType) return "Approve this proposal to execute it.";
+  const normalized = typeof actionType === "string" ? actionType : String(actionType ?? "");
+  if (!normalized) return "Approve this proposal to execute it.";
   const explanations: Record<string, string> = {
     SEND_REBUTTAL: "Will send a rebuttal challenging the agency's denial, citing relevant statutes.",
     SEND_APPEAL: "Will file a formal appeal of the agency's denial.",
@@ -359,14 +362,14 @@ function getActionExplanation(actionType: string | null, hasDraft: boolean, port
     CLOSE_CASE: "Will close this case.",
     ESCALATE: "The system couldn't determine next steps. Review the reasoning and choose an action.",
   };
-  let explanation = explanations[actionType] || `Will execute: ${actionType.replace(/_/g, " ").toLowerCase()}.`;
-  if (!hasDraft && actionType.startsWith("SEND")) {
+  let explanation = explanations[normalized] || `Will execute: ${normalized.replace(/_/g, " ").toLowerCase()}.`;
+  if (!hasDraft && normalized.startsWith("SEND")) {
     explanation += " The AI will generate the draft before sending.";
   }
   // Add delivery target for clarity
-  if (actionType === "SUBMIT_PORTAL" && portalUrl) {
+  if (normalized === "SUBMIT_PORTAL" && portalUrl) {
     explanation += ` Target: ${portalUrl}`;
-  } else if (actionType.startsWith("SEND") && agencyEmail) {
+  } else if (normalized.startsWith("SEND") && agencyEmail) {
     explanation += ` To: ${agencyEmail}`;
   }
   return explanation;
