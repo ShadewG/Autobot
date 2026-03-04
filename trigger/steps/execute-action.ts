@@ -743,17 +743,41 @@ export async function executeAction(
         : null;
 
       if (!newEmail && !newPortalUrl && !newPhone && !newFax) {
-        await ensureResearchHandoffProposal(
-          "no-contact-info",
-          `Research identified ${suggestedAgency.name} but did not produce a new contact channel.`,
-          `Research identified ${suggestedAgency.name}, but no NEW email, portal, phone, or fax channel was found. Please add contact info or choose a different agency, then retry.`,
-          { gateOptions: ["RETRY_RESEARCH", "ADJUST", "DISMISS"] }
-        );
+        // No new channel found: continue with phone-call fallback instead of
+        // blocking on a manual "retry research" gate.
+        let fallbackPhone: string | null = null;
+        try {
+          const existingCaseAgencies = await db.query(
+            `SELECT a.phone
+               FROM case_agencies ca
+               LEFT JOIN agencies a ON ca.agency_id = a.id
+              WHERE ca.case_id = $1
+              ORDER BY ca.id DESC
+              LIMIT 1`,
+            [caseId]
+          );
+          fallbackPhone = existingCaseAgencies.rows?.[0]?.phone || null;
+        } catch (e: any) { /* non-fatal */ }
+
+        await db.createPhoneCallTask({
+          case_id: caseId,
+          agency_name: suggestedAgency.name || caseData?.agency_name || "Agency",
+          agency_phone: fallbackPhone,
+          agency_state: caseData?.state || null,
+          reason: "clarification_needed",
+          priority: 1,
+          notes: `Research identified ${suggestedAgency.name} but no NEW email/portal/phone/fax channel. Fallback to phone call follow-up.`,
+          days_since_sent: caseData?.send_date
+            ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
+            : null,
+        });
+
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          targetStatus: "needs_phone_call",
           substatus: "agency_research_complete",
           pauseReason: "RESEARCH_HANDOFF",
         });
-        executionResult = { action: "research_complete", followup: "no_contact_info" };
+        executionResult = { action: "research_complete", followup: "phone_fallback_no_new_channel" };
         break;
       }
 
