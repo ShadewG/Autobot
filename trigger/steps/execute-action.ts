@@ -333,11 +333,24 @@ export async function executeAction(
       throw new Error(`SUBMIT_PORTAL requested but no portal_url or email for case ${caseId}`);
     }
   }
-  const shouldForcePortal = hasPortal && (resolvedActionType.startsWith("SEND_") || resolvedActionType === "SUBMIT_PORTAL");
+  const isInitialSubmission =
+    resolvedActionType === "SEND_INITIAL_REQUEST" ||
+    resolvedActionType === "REFORMULATE_REQUEST";
+  // Portal policy:
+  // 1) Initial submissions should go through the portal when one exists.
+  // 2) Follow-ups/clarifications/rebuttals should use email when we have a mailbox.
+  // 3) If no email exists, fall back to portal.
+  const shouldForcePortal =
+    resolvedActionType === "SUBMIT_PORTAL" ||
+    (hasPortal && isInitialSubmission) ||
+    (hasPortal && !targetEmail);
   if (shouldForcePortal) {
     // For follow-ups on portals with existing request numbers,
     // use the request-specific URL instead of /requests/new
-    const isFollowup = resolvedActionType !== "SEND_INITIAL_REQUEST" && resolvedActionType !== "SUBMIT_PORTAL";
+    const isFollowup =
+      resolvedActionType !== "SEND_INITIAL_REQUEST" &&
+      resolvedActionType !== "SUBMIT_PORTAL" &&
+      resolvedActionType !== "REFORMULATE_REQUEST";
     const requestNumber = caseData?.portal_request_number;
     let portalInstructions = originalBodyText || originalBodyHtml || null;
 

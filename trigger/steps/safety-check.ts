@@ -271,6 +271,27 @@ export async function safetyCheck(
     }
   }
 
+  // Guardrail: AI can over-trigger jurisdiction mismatch from place names
+  // (e.g., apartment complex names) even when statute/law checks are otherwise valid.
+  // Keep explicit regex-detected law mismatch signals, but suppress heuristic-only
+  // mismatch flags/warnings when they are not backed by concrete citation conflicts.
+  const regexLawMismatch = regexResult.riskFlags.includes("LAW_JURISDICTION_MISMATCH");
+  const hasHeuristicJurisdictionWarnings = mergedWarnings.some((w) =>
+    /(possible agency mismatch|confirm the correct agency\/state|suggestive of)/i.test(String(w))
+  );
+  if (!regexLawMismatch && hasHeuristicJurisdictionWarnings) {
+    const filteredFlags = mergedRiskFlags.filter(
+      (f) => f !== "LAW_JURISDICTION_MISMATCH" && f !== "CONTRADICTS_JURISDICTION"
+    );
+    const filteredWarnings = mergedWarnings.filter(
+      (w) => !/(possible agency mismatch|confirm the correct agency\/state|suggestive of)/i.test(String(w))
+    );
+    mergedRiskFlags.length = 0;
+    mergedRiskFlags.push(...filteredFlags);
+    mergedWarnings.length = 0;
+    mergedWarnings.push(...filteredWarnings);
+  }
+
   const aiHasCriticalRisk = aiResult
     ? (!aiResult.safe || aiResult.riskFlags.length > 0)
     : false;

@@ -44,6 +44,18 @@ export function buildClassificationPrompt(
     research?: any;
   }
 ): string {
+  const toPromptText = (input: any): string => {
+    if (!input) return "";
+    const raw = String(input);
+    // Keep prompt context readable when only HTML is stored.
+    return raw.replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
   const threadContext = threadMessages
     .slice(0, 10)
     .reverse()
@@ -54,7 +66,8 @@ export function buildClassificationPrompt(
       const date = m.sent_at || m.received_at || m.created_at;
       const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
       const sender = m.direction === "inbound" ? (m.from_email || "unknown") : (m.to_email || "unknown");
-      return `[${label} | ${dateStr} | ${sender}] ${m.subject || ""}\n${(m.body_text || "").substring(0, 800)}`;
+      const messageText = toPromptText(m.body_text || m.body_html || m.summary || "");
+      return `[${label} | ${dateStr} | ${sender}] ${m.subject || ""}\n${messageText.substring(0, 800)}`;
     })
     .join("\n---\n");
 
