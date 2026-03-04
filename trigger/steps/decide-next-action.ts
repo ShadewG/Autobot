@@ -1174,8 +1174,9 @@ async function validateDecision(
     }
   }
 
-  // SEND_INITIAL_REQUEST is only valid for process-initial-request, not inbound routing
-  if (aiDecisionResult.action === "SEND_INITIAL_REQUEST") {
+  // SEND_INITIAL_REQUEST is generally only valid for process-initial-request.
+  // Exception: WRONG_AGENCY reroutes with a verified alternate custodian/contact.
+  if (aiDecisionResult.action === "SEND_INITIAL_REQUEST" && classification !== "WRONG_AGENCY") {
     return { valid: false, reason: "SEND_INITIAL_REQUEST is not valid for inbound message routing" };
   }
 
@@ -1187,9 +1188,18 @@ async function validateDecision(
     return { valid: false, reason: "UNKNOWN classification must escalate" };
   }
 
-  // WRONG_AGENCY must always route to RESEARCH_AGENCY — never follow up with the wrong agency
-  if (classification === "WRONG_AGENCY" && aiDecisionResult.action !== "RESEARCH_AGENCY") {
-    return { valid: false, reason: "WRONG_AGENCY classification must route to RESEARCH_AGENCY" };
+  // WRONG_AGENCY: allow direct reroute actions only when we have a verified
+  // alternate custodian/channel; otherwise require RESEARCH_AGENCY.
+  if (classification === "WRONG_AGENCY") {
+    const directAction = await getWrongAgencyDirectAction(caseId);
+    const allowed = new Set<ActionType>(["RESEARCH_AGENCY"]);
+    if (directAction) allowed.add(directAction);
+    if (!allowed.has(aiDecisionResult.action as ActionType)) {
+      return {
+        valid: false,
+        reason: `WRONG_AGENCY must route to ${Array.from(allowed).join(" or ")}`,
+      };
+    }
   }
 
   // PORTAL_REDIRECT is handled entirely by deterministic portal-task creation — reject ALL AI decisions
@@ -2006,6 +2016,25 @@ export async function decideNextAction(
           reasoning,
         }),
         reprocess: async () => {
+          if (classification === "WRONG_AGENCY") {
+            const wrongAgencyDecision = await deterministicRouting(
+              caseId,
+              classification,
+              extractedFeeAmount,
+              sentiment,
+              autopilotMode,
+              triggerType,
+              requiresResponse,
+              portalUrl,
+              denialSubtype,
+              inlineKeyPoints
+            );
+            return {
+              ...wrongAgencyDecision,
+              reasoning: [...reasoning, ...(wrongAgencyDecision.reasoning || [])],
+            };
+          }
+
           // AI Router v2: single AI call with pre-filtered actions
           if (useAIRouter(caseId)) {
             const preComputed = await preComputeDecisionContext(
@@ -2128,6 +2157,25 @@ export async function decideNextAction(
         },
         custom: async () => {
           if (!ri) return noAction([...reasoning, "Custom action with no instruction"]);
+
+          if (classification === "WRONG_AGENCY") {
+            const wrongAgencyDecision = await deterministicRouting(
+              caseId,
+              classification,
+              extractedFeeAmount,
+              sentiment,
+              autopilotMode,
+              triggerType,
+              requiresResponse,
+              portalUrl,
+              denialSubtype,
+              inlineKeyPoints
+            );
+            return {
+              ...wrongAgencyDecision,
+              reasoning: [...reasoning, ...(wrongAgencyDecision.reasoning || [])],
+            };
+          }
 
           // AI Router v2: let AI interpret the custom instruction
           if (useAIRouter(caseId)) {
@@ -2272,6 +2320,23 @@ export async function decideNextAction(
             reasoning: [`Unknown human decision: ${humanDecision.action}`],
           });
       }
+    }
+
+    // WRONG_AGENCY is handled deterministically first so AI router cannot
+    // deadlock on constrained action sets when we already have a verified reroute.
+    if (classification === "WRONG_AGENCY") {
+      return deterministicRouting(
+        caseId,
+        classification,
+        extractedFeeAmount,
+        sentiment,
+        autopilotMode,
+        triggerType,
+        requiresResponse,
+        portalUrl,
+        denialSubtype,
+        inlineKeyPoints
+      );
     }
 
     // === AI Router v2 vs Legacy routing ===

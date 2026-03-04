@@ -11,8 +11,6 @@ const triggerDispatch = require('./trigger-dispatch-service');
 const discordService = require('./discord-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 
-// Feature flag: Use new Run Engine follow-up scheduler
-const USE_RUN_ENGINE_FOLLOWUPS = process.env.USE_RUN_ENGINE_FOLLOWUPS !== 'false';
 
 class CronService {
     constructor() {
@@ -46,19 +44,10 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        // Start follow-up scheduler (Phase 6: Run Engine integration)
-        // Can be disabled with DISABLE_EMAIL_FOLLOWUPS=true when using deadline escalation mode
-        if (process.env.DISABLE_EMAIL_FOLLOWUPS === 'true') {
-            console.log('✓ Email follow-ups DISABLED (deadline escalation mode)');
-        } else if (USE_RUN_ENGINE_FOLLOWUPS) {
-            followupScheduler.start();
-            console.log('✓ Follow-up scheduler (Run Engine): Every 15 minutes');
-        } else {
-            // Legacy mode: direct email sending
-            const followUpService = require('./follow-up-service');
-            followUpService.start();
-            console.log('✓ Follow-ups (legacy): Daily at 9 AM');
-        }
+        // Start follow-up scheduler (Run Engine) unconditionally.
+        // Overdue escalation/research flow is always active as well.
+        followupScheduler.start();
+        console.log('✓ Follow-up scheduler (Run Engine): Every 15 minutes');
 
         // Clean up old activity logs every day at midnight
         this.jobs.cleanup = new CronJob('0 0 * * *', async () => {
@@ -197,8 +186,9 @@ class CronService {
             }
         }, 30000);
 
-        // Deadline escalation: sweep for overdue cases, research contacts, route to phone/human review (daily at 10 AM)
-        this.jobs.deadlineEscalationSweep = new CronJob('0 10 * * *', async () => {
+        // Deadline escalation: sweep overdue cases continuously, research contacts,
+        // and route to phone/proposals/human review.
+        this.jobs.deadlineEscalationSweep = new CronJob('*/15 * * * *', async () => {
             try {
                 console.log('Running deadline escalation sweep...');
                 const result = await this.sweepOverdueCases();
@@ -468,7 +458,7 @@ class CronService {
         console.log('✓ Operational alerts: Every 15 minutes');
         console.log('✓ Stuck response check: Every 30 minutes');
         console.log('✓ Agency sync: Every hour + on startup');
-        console.log('✓ Deadline escalation sweep: Daily at 10 AM');
+        console.log('✓ Deadline escalation sweep: Every 15 minutes');
         console.log('✓ Stuck portal sweep: Every 30 minutes');
         console.log('✓ Stale run reaper: Every 15 minutes');
         console.log('✓ Loop breaker: Every 30 minutes');
@@ -539,7 +529,10 @@ class CronService {
                 WHERE c.status IN ('sent', 'awaiting_response')
                   AND c.deadline_date IS NOT NULL
                   AND c.deadline_date < CURRENT_DATE
-                  AND c.last_contact_research_at IS NULL
+                  AND (
+                    c.last_contact_research_at IS NULL
+                    OR c.last_contact_research_at < NOW() - INTERVAL '7 days'
+                  )
                   AND NOT EXISTS (
                     SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
                   )
@@ -1554,14 +1547,7 @@ class CronService {
         Object.values(this.jobs).forEach(job => job.stop());
 
         // Stop follow-up scheduler
-        if (process.env.DISABLE_EMAIL_FOLLOWUPS !== 'true') {
-            if (USE_RUN_ENGINE_FOLLOWUPS) {
-                followupScheduler.stop();
-            } else {
-                const followUpService = require('./follow-up-service');
-                followUpService.stop();
-            }
-        }
+        followupScheduler.stop();
 
         console.log('All cron jobs stopped');
     }
@@ -1570,20 +1556,9 @@ class CronService {
      * Get status of all jobs
      */
     getStatus() {
-        // Get follow-up status based on which scheduler is active
-        let followUpStatus = false;
-        let followUpEngine = 'disabled';
-        if (process.env.DISABLE_EMAIL_FOLLOWUPS === 'true') {
-            followUpStatus = false;
-            followUpEngine = 'disabled (deadline escalation)';
-        } else if (USE_RUN_ENGINE_FOLLOWUPS) {
-            followUpStatus = followupScheduler.cronJob?.running || false;
-            followUpEngine = 'run_engine';
-        } else {
-            const followUpService = require('./follow-up-service');
-            followUpStatus = followUpService.cronJob?.running || false;
-            followUpEngine = 'legacy';
-        }
+        // Follow-up scheduling is always run via Run Engine.
+        const followUpStatus = followupScheduler.cronJob?.running || false;
+        const followUpEngine = 'run_engine';
 
         return {
             notionSync: this.jobs.notionSync?.running || false,
