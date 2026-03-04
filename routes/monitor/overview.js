@@ -6,6 +6,54 @@ const {
     extractAttachmentInsights
 } = require('./_helpers');
 
+function buildReadableResearchSummary(rawNotes) {
+    if (!rawNotes) return null;
+    let parsed = rawNotes;
+    if (typeof rawNotes === 'string') {
+        try { parsed = JSON.parse(rawNotes); } catch (_) { return null; }
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const lines = [];
+    const brief = parsed.brief || {};
+    const contactResult = parsed.contactResult || {};
+
+    if (brief.researchFailed) {
+        const msg = String(brief.summary || 'Research failed').trim();
+        return msg || 'Research failed';
+    }
+
+    const suggested = Array.isArray(brief.suggested_agencies) ? brief.suggested_agencies : [];
+    if (suggested.length > 0) {
+        const top = suggested[0] || {};
+        if (top.name) lines.push(`Suggested agency: ${top.name}`);
+        if (top.reason) lines.push(`Why: ${String(top.reason).trim()}`);
+        if (top.confidence != null) lines.push(`Confidence: ${top.confidence}`);
+    }
+
+    const email = contactResult.contact_email || contactResult.email || null;
+    const portal = contactResult.portal_url || null;
+    const phone = contactResult.contact_phone || null;
+    const fax = contactResult.contact_fax || null;
+    const channels = [];
+    if (email) channels.push(`email ${email}`);
+    if (portal) channels.push(`portal ${portal}`);
+    if (phone) channels.push(`phone ${phone}`);
+    if (fax) channels.push(`fax ${fax}`);
+    if (channels.length > 0) lines.push(`New contact channels found: ${channels.join(', ')}`);
+
+    const summary = typeof brief.summary === 'string' ? brief.summary.trim().replace(/\s+/g, ' ') : '';
+    if (summary && lines.length === 0) {
+        if (summary.length <= 1200) return summary;
+        const clipped = summary.slice(0, 1200);
+        const boundary = Math.max(clipped.lastIndexOf('. '), clipped.lastIndexOf('; '), clipped.lastIndexOf(' — '));
+        return `${(boundary > 200 ? clipped.slice(0, boundary + 1) : clipped).trim()}…`;
+    }
+
+    if (lines.length === 0) return null;
+    return lines.join('\n');
+}
+
 /**
  * GET /api/monitor
  * Returns all inbound, outbound, activity logs for monitoring
@@ -497,19 +545,7 @@ router.get('/live-overview', async (req, res) => {
         `, [limit]);
 
         const humanReviewCases = (humanReviewResult.rows || []).map((row) => {
-            let research_summary = null;
-            try {
-                // Stored as JSON string in many rows; tolerate object form too.
-                const raw = row.contact_research_notes;
-                const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                const summary = parsed?.brief?.summary;
-                if (typeof summary === 'string' && summary.trim()) {
-                    // Keep this compact for the gated queue card.
-                    research_summary = summary.trim().slice(0, 700);
-                }
-            } catch (_) {
-                research_summary = null;
-            }
+            const research_summary = buildReadableResearchSummary(row.contact_research_notes);
             return {
                 ...row,
                 research_summary,
