@@ -142,6 +142,15 @@ interface HumanReviewCase {
   last_portal_status: string | null;
   last_portal_task_url: string | null;
   research_summary?: string | null;
+  phone_call_plan?: {
+    agency_name?: string | null;
+    agency_phone?: string | null;
+    agency_email?: string | null;
+    portal_url?: string | null;
+    reason?: string | null;
+    outcome?: string | null;
+    suggested_agency?: string | null;
+  } | null;
   user_id?: number | null;
 }
 
@@ -234,6 +243,14 @@ interface PhoneCallTask {
   days_since_sent?: number | null;
   notes?: string | null;
   phone_options?: {
+    candidates?: Array<{
+      phone: string;
+      kind?: "phone" | "fax";
+      source?: string;
+      agency_name?: string | null;
+      contact_name?: string | null;
+      is_new?: boolean;
+    }>;
     notion?: { phone: string; source: string; pd_page_url?: string };
     web_search?: { phone: string; source: string; confidence?: string; reasoning?: string };
   } | null;
@@ -396,7 +413,7 @@ function deriveDisplayAgencyName(review: {
   return current || "Unknown agency";
 }
 
-type ReviewCategory = "fee" | "portal" | "denial" | "general";
+type ReviewCategory = "fee" | "portal" | "denial" | "phone" | "general";
 
 function categorizeReview(review: HumanReviewCase): ReviewCategory {
   const pr = (review.pause_reason || "").toUpperCase();
@@ -406,7 +423,10 @@ function categorizeReview(review: HumanReviewCase): ReviewCategory {
 
   // Research handoff / phone-call cases are not portal retries, even if
   // a historical portal URL exists on the case record.
-  if (pr.includes("RESEARCH") || sub.includes("RESEARCH") || status.includes("PHONE_CALL")) {
+  if (status.includes("PHONE_CALL") || pr.includes("RESEARCH_HANDOFF")) {
+    return "phone";
+  }
+  if (pr.includes("RESEARCH") || sub.includes("RESEARCH")) {
     return "general";
   }
   if (
@@ -2366,6 +2386,59 @@ function MonitorPageContent() {
                   </div>
                 )}
 
+                {category === "phone" && (
+                  <div className="space-y-2">
+                    <div className="border p-2 bg-amber-950/20 border-amber-700/40">
+                      <p className="text-xs text-amber-300 font-medium">Phone Call Proposal</p>
+                      <div className="mt-1 text-xs text-foreground/90 space-y-1">
+                        <p>
+                          <span className="text-muted-foreground">Who:</span>{" "}
+                          {selectedItem.data.phone_call_plan?.agency_name || deriveDisplayAgencyName(selectedItem.data)}
+                        </p>
+                        <p>
+                          <span className="text-muted-foreground">Phone:</span>{" "}
+                          {selectedItem.data.phone_call_plan?.agency_phone || "Not found yet"}
+                        </p>
+                        {selectedItem.data.phone_call_plan?.reason && (
+                          <p>
+                            <span className="text-muted-foreground">Why call:</span>{" "}
+                            {selectedItem.data.phone_call_plan.reason}
+                          </p>
+                        )}
+                        {selectedItem.data.phone_call_plan?.agency_email && (
+                          <p>
+                            <span className="text-muted-foreground">Known email:</span>{" "}
+                            {selectedItem.data.phone_call_plan.agency_email}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        className="flex-1 bg-amber-700 hover:bg-amber-600 text-white"
+                        onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "research_handoff")}
+                        disabled={addingToPhoneQueue || isSubmitting}
+                      >
+                        {addingToPhoneQueue ? (
+                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                        ) : (
+                          <Phone className="h-3 w-3 mr-1.5" />
+                        )}
+                        QUEUE PHONE CALL
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => handleResolveReview("reprocess")}
+                        disabled={isSubmitting}
+                      >
+                        <RefreshCw className="h-3 w-3 mr-1.5" />
+                        RE-PROCESS
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Custom instruction */}
                 <div className="flex gap-2">
                   <Textarea
@@ -2438,20 +2511,22 @@ function MonitorPageContent() {
                   </Link>
                 </div>
 
-                {/* Add to phone queue — always available */}
-                <Button
-                  variant="outline"
-                  className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
-                  onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "clarification_needed")}
-                  disabled={addingToPhoneQueue || isSubmitting}
-                >
-                  {addingToPhoneQueue ? (
-                    <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                  ) : (
-                    <Phone className="h-3 w-3 mr-1.5" />
-                  )}
-                  ADD TO PHONE QUEUE
-                </Button>
+                {/* Add to phone queue — always available (except dedicated phone category) */}
+                {category !== "phone" && (
+                  <Button
+                    variant="outline"
+                    className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+                    onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "clarification_needed")}
+                    disabled={addingToPhoneQueue || isSubmitting}
+                  >
+                    {addingToPhoneQueue ? (
+                      <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                    ) : (
+                      <Phone className="h-3 w-3 mr-1.5" />
+                    )}
+                    ADD TO PHONE QUEUE
+                  </Button>
+                )}
               </div>
             );
           })()}
@@ -2855,12 +2930,26 @@ function MonitorPageContent() {
                           {/* Phone options if available */}
                           {task.phone_options && (
                             <div className="mt-2 space-y-1">
-                              {task.phone_options.notion?.phone && task.phone_options.notion.phone !== task.agency_phone && (
+                              {Array.isArray(task.phone_options.candidates) && task.phone_options.candidates.length > 0 && (
+                                <div className="space-y-1">
+                                  {task.phone_options.candidates.map((candidate, idx) => (
+                                    <p key={`${candidate.phone}-${idx}`} className="text-[10px] text-muted-foreground">
+                                      {candidate.is_new ? "New" : "Alt"} {candidate.kind === "fax" ? "fax" : "phone"}:
+                                      {" "}
+                                      <span className="font-mono">{candidate.phone}</span>
+                                      {candidate.agency_name ? ` • ${candidate.agency_name}` : ""}
+                                      {candidate.contact_name ? ` • ${candidate.contact_name}` : ""}
+                                      {candidate.source ? ` • ${candidate.source}` : ""}
+                                    </p>
+                                  ))}
+                                </div>
+                              )}
+                              {(!Array.isArray(task.phone_options.candidates) || task.phone_options.candidates.length === 0) && task.phone_options.notion?.phone && task.phone_options.notion.phone !== task.agency_phone && (
                                 <p className="text-[10px] text-muted-foreground">
                                   Notion: <span className="font-mono">{task.phone_options.notion.phone}</span>
                                 </p>
                               )}
-                              {task.phone_options.web_search?.phone && task.phone_options.web_search.phone !== task.agency_phone && (
+                              {(!Array.isArray(task.phone_options.candidates) || task.phone_options.candidates.length === 0) && task.phone_options.web_search?.phone && task.phone_options.web_search.phone !== task.agency_phone && (
                                 <p className="text-[10px] text-muted-foreground">
                                   Web: <span className="font-mono">{task.phone_options.web_search.phone}</span>
                                   {task.phone_options.web_search.confidence && (
