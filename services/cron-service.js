@@ -682,30 +682,69 @@ class CronService {
                         phoneCalls++;
                         console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (${daysOverdue}d overdue)`);
                     } else {
-                        // Portal case or research returned null → human review
-                        await db.upsertProposal({
-                            proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
-                            caseId: caseData.id,
-                            actionType: 'ESCALATE',
-                            reasoning: [
-                                { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
-                                { step: 'Portal case', detail: caseData.portal_url ? `Portal: ${caseData.portal_url}` : 'No contact research results' }
-                            ],
-                            confidence: 0,
-                            requiresHuman: true,
-                            canAutoExecute: false,
-                            draftSubject: `Deadline overdue: ${caseData.case_name}`,
-                            draftBodyText: `${daysOverdue} days past statutory deadline. ${caseData.portal_url ? `Portal case: ${caseData.portal_url}` : 'Contact research returned no results.'}`,
-                            status: 'PENDING_APPROVAL'
-                        });
+                        // Portal/no-contact path:
+                        // Prefer phone-call action over generic human escalation so
+                        // overdue cases keep moving without manual triage.
+                        try {
+                            let agencyPhone = research?.contact_phone || null;
+                            if (!agencyPhone && caseData.agency_id) {
+                                const agency = await db.query('SELECT phone FROM agencies WHERE id = $1', [caseData.agency_id]);
+                                if (agency.rows[0]?.phone) agencyPhone = agency.rows[0].phone;
+                            }
 
-                        await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
-                            substatus: `Deadline passed ${daysOverdue}d ago — ${caseData.portal_url ? 'portal case' : 'no contact info'}`,
-                            pauseReason: 'DEADLINE_NO_CONTACT',
-                        });
+                            const phoneTask = await db.createPhoneCallTask({
+                                case_id: caseData.id,
+                                agency_name: caseData.agency_name,
+                                agency_phone: agencyPhone,
+                                agency_state: caseData.state,
+                                reason: 'deadline_passed',
+                                priority: daysOverdue > 14 ? 2 : (daysOverdue > 7 ? 1 : 0),
+                                notes: `Statutory deadline passed ${daysOverdue} days ago (deadline: ${caseData.deadline_date}). ${caseData.portal_url ? `Existing portal: ${caseData.portal_url}` : 'No portal/email contact available.'}`,
+                                days_since_sent: daysSinceSent
+                            });
 
-                        humanReviews++;
-                        console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → human review (${caseData.portal_url ? 'portal' : 'no contact'})`);
+                            // Auto-generate briefing (fire-and-forget)
+                            const aiService = require('./ai-service');
+                            db.getMessagesByCaseId(caseData.id, 20)
+                                .then(messages => aiService.generatePhoneCallBriefing(phoneTask, caseData, messages))
+                                .then(briefing => db.updatePhoneCallBriefing(phoneTask.id, briefing))
+                                .catch(err => console.error(`Auto-briefing failed for call #${phoneTask.id}:`, err.message));
+
+                            await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                                targetStatus: 'needs_phone_call',
+                                substatus: `Deadline passed ${daysOverdue}d ago — portal/no-contact fallback to phone`,
+                                pauseReason: 'DEADLINE_PHONE_CALL',
+                            });
+
+                            phoneCalls++;
+                            console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → phone call (${caseData.portal_url ? 'portal fallback' : 'no contact fallback'})`);
+                        } catch (phoneErr) {
+                            // Last resort only: if we cannot create a phone task, ask for manual escalation.
+                            await db.upsertProposal({
+                                proposalKey: `${caseData.id}:deadline_sweep:ESCALATE`,
+                                caseId: caseData.id,
+                                actionType: 'ESCALATE',
+                                reasoning: [
+                                    { step: 'Deadline passed', detail: `${daysOverdue} days overdue (deadline: ${caseData.deadline_date})` },
+                                    { step: 'Fallback failed', detail: `Phone escalation failed: ${phoneErr.message}` },
+                                    { step: 'Portal case', detail: caseData.portal_url ? `Portal: ${caseData.portal_url}` : 'No contact research results' }
+                                ],
+                                confidence: 0,
+                                requiresHuman: true,
+                                canAutoExecute: false,
+                                draftSubject: `Deadline overdue: ${caseData.case_name}`,
+                                draftBodyText: `${daysOverdue} days past statutory deadline. Automated phone fallback failed: ${phoneErr.message}`,
+                                status: 'PENDING_APPROVAL'
+                            });
+
+                            await transitionCaseRuntime(caseData.id, 'CASE_ESCALATED', {
+                                substatus: `Deadline passed ${daysOverdue}d ago — phone fallback failed`,
+                                pauseReason: 'DEADLINE_NO_CONTACT',
+                            });
+
+                            humanReviews++;
+                            console.log(`Deadline escalation: case ${caseData.id} (${caseData.case_name}) → human review (phone fallback failed)`);
+                        }
                     }
 
                     await db.logActivity('deadline_escalation',
