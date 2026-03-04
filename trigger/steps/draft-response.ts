@@ -14,20 +14,20 @@ function collapseDuplicateClosingBlocks(text: string | null | undefined): string
   if (!text) return text;
   const normalized = text.replace(/\r\n/g, "\n");
   const lines = normalized.split("\n");
-  const closingMarkers = new Set([
-    "thank you,",
-    "best regards,",
-    "warm regards,",
-    "kind regards,",
-    "sincerely,",
-    "respectfully,",
-  ]);
+  const closingPrefixes = [
+    "thank you",
+    "best regards",
+    "warm regards",
+    "kind regards",
+    "sincerely",
+    "respectfully",
+  ];
 
   let firstClosingIdx = -1;
   let secondClosingIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const v = lines[i].trim().toLowerCase();
-    if (!closingMarkers.has(v)) continue;
+    if (!closingPrefixes.some((prefix) => v.startsWith(prefix))) continue;
     if (firstClosingIdx === -1) {
       firstClosingIdx = i;
       continue;
