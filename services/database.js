@@ -8,10 +8,10 @@ const { emitDataUpdate } = require('./event-bus');
 
 const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
 const HUMAN_REVIEW_CASE_STATUSES = ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call'];
-const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled', 'needs_phone_call'];
+const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'completed', 'cancelled', 'needs_phone_call'];
 // CLEAR is used when a case transitions INTO one of these statuses — dismiss stale proposals.
 // Excludes needs_phone_call because that is still a human review state where proposals may be relevant.
-const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled'];
+const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'completed', 'cancelled'];
 const FOLLOWUP_ELIGIBLE_CASE_STATUSES = ['sent', 'awaiting_response'];
 const FOLLOWUP_TERMINAL_CASE_STATUSES = ['completed', 'cancelled', 'needs_phone_call'];
 
@@ -474,11 +474,11 @@ class DatabaseService {
 
     // Email Threads
     async createEmailThread(threadData) {
+        const normalizedThreadId = threadData.thread_id || threadData.initial_message_id || `<case-${threadData.case_id}-${Date.now()}@autobot.local>`;
         const query = `
             INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status, case_agency_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (case_id) DO UPDATE SET
-              thread_id = COALESCE(EXCLUDED.thread_id, email_threads.thread_id),
+            ON CONFLICT (case_id, thread_id) DO UPDATE SET
               subject = COALESCE(EXCLUDED.subject, email_threads.subject),
               agency_email = COALESCE(EXCLUDED.agency_email, email_threads.agency_email),
               case_agency_id = COALESCE(email_threads.case_agency_id, EXCLUDED.case_agency_id),
@@ -487,7 +487,7 @@ class DatabaseService {
         `;
         const values = [
             threadData.case_id,
-            threadData.thread_id,
+            normalizedThreadId,
             threadData.subject,
             threadData.agency_email,
             threadData.initial_message_id,
@@ -504,8 +504,47 @@ class DatabaseService {
     }
 
     async getThreadByCaseId(caseId) {
-        const result = await this.query('SELECT * FROM email_threads WHERE case_id = $1', [caseId]);
+        const result = await this.query(
+            'SELECT * FROM email_threads WHERE case_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1',
+            [caseId]
+        );
         return result.rows[0];
+    }
+
+    async getThreadsByCaseId(caseId) {
+        const result = await this.query(
+            'SELECT * FROM email_threads WHERE case_id = $1 ORDER BY created_at ASC, id ASC',
+            [caseId]
+        );
+        return result.rows;
+    }
+
+    async getThreadByThreadIdentifier(caseId, threadIdentifier) {
+        if (!threadIdentifier) return null;
+        const result = await this.query(
+            `SELECT *
+             FROM email_threads
+             WHERE case_id = $1
+               AND (thread_id = $2 OR initial_message_id = $2)
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1`,
+            [caseId, threadIdentifier]
+        );
+        return result.rows[0] || null;
+    }
+
+    async getThreadByMessageIdentifier(caseId, messageIdentifier) {
+        if (!messageIdentifier) return null;
+        const result = await this.query(
+            `SELECT t.*
+             FROM messages m
+             JOIN email_threads t ON t.id = m.thread_id
+             WHERE m.case_id = $1 AND m.message_id = $2
+             ORDER BY m.id DESC
+             LIMIT 1`,
+            [caseId, messageIdentifier]
+        );
+        return result.rows[0] || null;
     }
 
     async updateThread(threadId, updates) {
@@ -1600,7 +1639,18 @@ class DatabaseService {
                 && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
             const isSystemSweepProposal =
                 proposalData.proposalKey && proposalData.proposalKey.includes(':deadline_sweep:');
-            if (caseRow && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status) && !allowInboundProposal && !isSystemSweepProposal) {
+            const isInitialRequestProposal =
+                proposalData.proposalKey && proposalData.proposalKey.includes(':initial:');
+            const isResearchProposal =
+                proposalData.proposalKey && proposalData.proposalKey.includes(':research:');
+            if (
+                caseRow
+                && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status)
+                && !allowInboundProposal
+                && !isSystemSweepProposal
+                && !isInitialRequestProposal
+                && !isResearchProposal
+            ) {
                 console.warn(
                     `[DB] Auto-dismissing proposal for case ${proposalData.caseId} in status ${caseRow.status}`
                 );
