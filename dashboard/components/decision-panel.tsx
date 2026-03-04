@@ -42,6 +42,8 @@ import {
   XCircle,
   Search,
   Star,
+  Phone,
+  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -675,6 +677,132 @@ export function DecisionPanel({
     ? UNKNOWN_GATE_CONFIG
     : (GATE_CONFIGS[normalized] || UNKNOWN_GATE_CONFIG);
 
+  // Phone call — dedicated panel matching gated queue layout
+  if (request.review_reason === "PHONE_CALL" && onResolveReview) {
+    const plan = request.phone_call_plan;
+
+    const handlePhoneQueue = async () => {
+      setReviewActionLoading("queue_phone_call");
+      try {
+        if (onAddToPhoneQueue) {
+          await onAddToPhoneQueue();
+        } else {
+          await onResolveReview("queue_phone_call");
+        }
+      } finally {
+        setReviewActionLoading(null);
+      }
+    };
+
+    const handleAdjust = async () => {
+      if (!customInstruction.trim()) return;
+      setReviewActionLoading("custom");
+      try {
+        await onResolveReview("custom", customInstruction);
+        setCustomInstruction("");
+      } finally {
+        setReviewActionLoading(null);
+      }
+    };
+
+    return (
+      <Card className="border-2 border-amber-700/50 bg-amber-500/10">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2 text-amber-300">
+            <Phone className="h-5 w-5" />
+            Phone Call Proposal
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* Call info */}
+          <div className="border border-amber-700/40 bg-amber-950/20 rounded-md p-3 space-y-1">
+            <p className="text-sm">
+              <span className="text-muted-foreground">Who:</span>{" "}
+              {plan?.agency_name || request.agency_name || "Unknown"}
+            </p>
+            <p className="text-sm">
+              <span className="text-muted-foreground">Phone:</span>{" "}
+              {plan?.agency_phone ? (
+                <a href={`tel:${plan.agency_phone}`} className="font-mono font-semibold hover:text-blue-400 transition-colors">
+                  {plan.agency_phone}
+                </a>
+              ) : "Not found yet"}
+            </p>
+            {plan?.reason && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">Why call:</span>{" "}
+                {plan.reason}
+              </p>
+            )}
+            {plan?.agency_email && (
+              <p className="text-sm">
+                <span className="text-muted-foreground">Known email:</span>{" "}
+                {plan.agency_email}
+              </p>
+            )}
+          </div>
+
+          {/* Primary action */}
+          <Button
+            className="w-full bg-amber-700 hover:bg-amber-600 text-white"
+            onClick={handlePhoneQueue}
+            disabled={isLoading || reviewActionLoading !== null}
+          >
+            {reviewActionLoading === "queue_phone_call" ? (
+              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+            ) : (
+              <Phone className="h-3 w-3 mr-1.5" />
+            )}
+            QUEUE PHONE CALL
+          </Button>
+
+          {/* Adjust — custom instruction */}
+          <div className="flex gap-2">
+            <Textarea
+              placeholder="Custom instruction (optional)..."
+              value={customInstruction}
+              onChange={(e) => setCustomInstruction(e.target.value)}
+              className="text-xs bg-background min-h-[60px] flex-1"
+            />
+            <Button
+              variant="outline"
+              className="self-end"
+              onClick={handleAdjust}
+              disabled={isLoading || reviewActionLoading !== null || !customInstruction.trim()}
+            >
+              {reviewActionLoading === "custom" ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3 mr-1" />
+              )}
+              SEND
+            </Button>
+          </div>
+
+          {/* Secondary actions */}
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => onResolveReview("put_on_hold")}
+              disabled={isLoading || reviewActionLoading !== null}
+            >
+              HOLD
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => onResolveReview("reprocess")}
+              disabled={isLoading || reviewActionLoading !== null}
+            >
+              RE-PROCESS
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   // If we have a review_reason, show the review-specific panel with action buttons
   if (request.review_reason && onResolveReview) {
     const reviewConfig = REVIEW_CONFIGS[request.review_reason] || REVIEW_CONFIGS.GENERAL;
@@ -733,37 +861,6 @@ export function DecisionPanel({
                 >
                   {request.portal_url}
                 </a>
-              )}
-            </div>
-          )}
-
-          {/* Phone call plan details */}
-          {request.review_reason === "PHONE_CALL" && request.phone_call_plan && (
-            <div className="bg-amber-950/20 border border-amber-700/40 rounded-md p-3 space-y-1">
-              <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-2">Phone Call Info</p>
-              <p className="text-sm">
-                <span className="text-muted-foreground">Who:</span>{" "}
-                {request.phone_call_plan.agency_name || request.agency_name || "Unknown"}
-              </p>
-              <p className="text-sm">
-                <span className="text-muted-foreground">Phone:</span>{" "}
-                {request.phone_call_plan.agency_phone ? (
-                  <a href={`tel:${request.phone_call_plan.agency_phone}`} className="font-mono hover:text-blue-400 transition-colors">
-                    {request.phone_call_plan.agency_phone}
-                  </a>
-                ) : "Not found yet"}
-              </p>
-              {request.phone_call_plan.reason && (
-                <p className="text-sm">
-                  <span className="text-muted-foreground">Why call:</span>{" "}
-                  {request.phone_call_plan.reason}
-                </p>
-              )}
-              {request.phone_call_plan.agency_email && (
-                <p className="text-sm">
-                  <span className="text-muted-foreground">Known email:</span>{" "}
-                  {request.phone_call_plan.agency_email}
-                </p>
               )}
             </div>
           )}
