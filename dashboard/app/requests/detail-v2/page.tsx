@@ -88,6 +88,7 @@ import {
   ChevronRight,
   ArrowRight,
   GripVertical,
+  Search,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { SnoozeModal } from "@/components/snooze-modal";
@@ -1182,6 +1183,8 @@ function DetailV2Content() {
   const isEmailLikePendingAction = [
     "SEND_INITIAL_REQUEST", "SEND_FOLLOWUP", "SEND_CLARIFICATION", "SEND_REBUTTAL",
     "NEGOTIATE_FEE", "ACCEPT_FEE", "DECLINE_FEE", "SEND_PDF_EMAIL",
+    "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "SEND_STATUS_UPDATE",
+    "RESPOND_PARTIAL_APPROVAL", "REFORMULATE_REQUEST",
   ].includes(pendingActionType);
   const hasChain = (pending_proposal?.action_chain?.length ?? 0) > 1;
   const pendingApproveLabel = hasChain
@@ -1460,69 +1463,105 @@ function DetailV2Content() {
                       )}
                     </div>
 
-                    {/* Editable draft */}
-                    {(pending_proposal.draft_body_text || pending_proposal.draft_subject) ? (
-                      <div className="space-y-1.5">
-                        {(pending_proposal.draft_subject || editedSubject) && (
-                          <input
-                            className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
-                            value={editedSubject}
-                            onChange={(e) => setEditedSubject(e.target.value)}
-                            placeholder="Subject"
-                          />
-                        )}
-                        <textarea
-                          className="w-full bg-background border border-border/50 rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
-                          rows={8}
-                          value={editedBody}
-                          onChange={(e) => setEditedBody(e.target.value)}
-                        />
-                        {(editedBody !== (pending_proposal.draft_body_text || "") || editedSubject !== (pending_proposal.draft_subject || "")) && (
-                          <button
-                            className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
-                            onClick={() => {
-                              setEditedBody(pending_proposal.draft_body_text || "");
-                              setEditedSubject(pending_proposal.draft_subject || "");
-                            }}
-                          >
-                            <RotateCcw className="h-2.5 w-2.5" /> Reset to AI draft
-                          </button>
-                        )}
-                        {/* Chain follow-up */}
-                        {pending_proposal.action_chain && pending_proposal.action_chain.length > 1 && (
-                          <div className="border-t border-dashed pt-2 mt-2 space-y-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
-                                <ArrowRight className="h-2.5 w-2.5" /> Then: {ACTION_TYPE_LABELS[pending_proposal.action_chain[1].actionType]?.label || pending_proposal.action_chain[1].actionType}
-                              </span>
-                              {(() => {
-                                const chainTarget = getDeliveryTarget(pending_proposal.action_chain[1].actionType, request, agency_summary || null);
-                                return chainTarget ? (
-                                  <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
-                                    {chainTarget.method} → {chainTarget.target || "not set"}
-                                  </span>
-                                ) : null;
-                              })()}
-                            </div>
-                            {pending_proposal.action_chain[1].draftSubject && (
-                              <input
-                                className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs"
-                                value={editedChainSubject}
-                                onChange={(e) => setEditedChainSubject(e.target.value)}
-                                placeholder="Follow-up Subject"
-                              />
-                            )}
-                            <textarea
-                              className="w-full bg-background border border-border/50 rounded p-2 text-xs leading-relaxed resize-y"
-                              rows={4}
-                              value={editedChainBody}
-                              onChange={(e) => setEditedChainBody(e.target.value)}
+                    {/* Proposal content: email draft vs action card */}
+                    {isEmailLikePendingAction ? (
+                      /* ── Email draft: editable subject + body ── */
+                      (pending_proposal.draft_body_text || pending_proposal.draft_subject) ? (
+                        <div className="space-y-1.5">
+                          {(pending_proposal.draft_subject || editedSubject) && (
+                            <input
+                              className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
+                              value={editedSubject}
+                              onChange={(e) => setEditedSubject(e.target.value)}
+                              placeholder="Subject"
                             />
-                          </div>
+                          )}
+                          <textarea
+                            className="w-full bg-background border border-border/50 rounded p-2 text-xs font-[inherit] leading-relaxed resize-y"
+                            rows={8}
+                            value={editedBody}
+                            onChange={(e) => setEditedBody(e.target.value)}
+                          />
+                          {(editedBody !== (pending_proposal.draft_body_text || "") || editedSubject !== (pending_proposal.draft_subject || "")) && (
+                            <button
+                              className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+                              onClick={() => {
+                                setEditedBody(pending_proposal.draft_body_text || "");
+                                setEditedSubject(pending_proposal.draft_subject || "");
+                              }}
+                            >
+                              <RotateCcw className="h-2.5 w-2.5" /> Reset to AI draft
+                            </button>
+                          )}
+                          {/* Chain follow-up */}
+                          {pending_proposal.action_chain && pending_proposal.action_chain.length > 1 && (
+                            <div className="border-t border-dashed pt-2 mt-2 space-y-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-medium text-amber-400 uppercase tracking-wide flex items-center gap-1">
+                                  <ArrowRight className="h-2.5 w-2.5" /> Then: {ACTION_TYPE_LABELS[pending_proposal.action_chain[1].actionType]?.label || pending_proposal.action_chain[1].actionType}
+                                </span>
+                                {(() => {
+                                  const chainTarget = getDeliveryTarget(pending_proposal.action_chain[1].actionType, request, agency_summary || null);
+                                  return chainTarget ? (
+                                    <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
+                                      {chainTarget.method} → {chainTarget.target || "not set"}
+                                    </span>
+                                  ) : null;
+                                })()}
+                              </div>
+                              {pending_proposal.action_chain[1].draftSubject && (
+                                <input
+                                  className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs"
+                                  value={editedChainSubject}
+                                  onChange={(e) => setEditedChainSubject(e.target.value)}
+                                  placeholder="Follow-up Subject"
+                                />
+                              )}
+                              <textarea
+                                className="w-full bg-background border border-border/50 rounded p-2 text-xs leading-relaxed resize-y"
+                                rows={4}
+                                value={editedChainBody}
+                                onChange={(e) => setEditedChainBody(e.target.value)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground">No draft. Approve to continue processing.</p>
+                      )
+                    ) : (
+                      /* ── Non-email action: proposal card ── */
+                      <div className={cn(
+                        "rounded-md border p-3 space-y-2",
+                        pendingActionType === "SUBMIT_PORTAL" && "border-cyan-700/40 bg-cyan-500/5",
+                        pendingActionType === "RESEARCH_AGENCY" && "border-violet-700/40 bg-violet-500/5",
+                        pendingActionType === "CLOSE_CASE" && "border-gray-700/40 bg-muted/50",
+                        pendingActionType === "WITHDRAW" && "border-red-700/40 bg-red-500/5",
+                        pendingActionType === "ESCALATE" && "border-yellow-700/40 bg-yellow-500/5",
+                        pendingActionType === "REFORMULATE_REQUEST" && "border-fuchsia-700/40 bg-fuchsia-500/5",
+                        !["SUBMIT_PORTAL", "RESEARCH_AGENCY", "CLOSE_CASE", "WITHDRAW", "ESCALATE", "REFORMULATE_REQUEST"].includes(pendingActionType) && "border-border/60 bg-muted/30",
+                      )}>
+                        <div className="flex items-center gap-2">
+                          {pendingActionType === "SUBMIT_PORTAL" && <Globe className="h-4 w-4 text-cyan-400" />}
+                          {pendingActionType === "RESEARCH_AGENCY" && <Search className="h-4 w-4 text-violet-400" />}
+                          {pendingActionType === "CLOSE_CASE" && <CheckCircle className="h-4 w-4 text-gray-400" />}
+                          {pendingActionType === "WITHDRAW" && <XCircle className="h-4 w-4 text-red-400" />}
+                          {pendingActionType === "ESCALATE" && <AlertTriangle className="h-4 w-4 text-yellow-400" />}
+                          {pendingActionType === "REFORMULATE_REQUEST" && <RotateCcw className="h-4 w-4 text-fuchsia-400" />}
+                          {!["SUBMIT_PORTAL", "RESEARCH_AGENCY", "CLOSE_CASE", "WITHDRAW", "ESCALATE", "REFORMULATE_REQUEST"].includes(pendingActionType) && <Bot className="h-4 w-4 text-muted-foreground" />}
+                          <span className="text-xs font-medium">
+                            {ACTION_TYPE_LABELS[pendingActionType]?.label || pendingActionType.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        {pending_proposal.draft_body_text && (
+                          <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                            {pending_proposal.draft_body_text}
+                          </p>
+                        )}
+                        {!pending_proposal.draft_body_text && (
+                          <p className="text-[10px] text-muted-foreground italic">Approve to proceed with this action.</p>
                         )}
                       </div>
-                    ) : (
-                      <p className="text-[10px] text-muted-foreground">No draft. Approve to continue processing.</p>
                     )}
 
                     {/* Reasoning (collapsible) */}
@@ -1678,7 +1717,13 @@ function DetailV2Content() {
             /* ── CASE INFO VIEW ────────────────────────────────────────────── */
             <ScrollArea className="flex-1 h-0">
               <div className="p-3">
-                <CaseInfoTab request={request} agencySummary={agency_summary} deadlineMilestones={deadline_milestones} stateDeadline={state_deadline} />
+                <CaseInfoTab
+                  request={request}
+                  agencySummary={agency_summary}
+                  deadlineMilestones={deadline_milestones}
+                  stateDeadline={state_deadline}
+                  threadMessages={_threadMessages}
+                />
               </div>
             </ScrollArea>
           ) : (
