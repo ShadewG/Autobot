@@ -142,11 +142,10 @@ export function AddCorrespondenceDialog({
         setIsPolling(true);
       }
 
-      // Reset form but keep dialog open for status
-      setSummary("");
-      setContactName("");
-
       onSuccess?.();
+      // Close after successful submit so the case view can update in-place
+      // without making the dialog feel like it reopened.
+      handleClose();
     } catch (err: any) {
       console.error('Error logging correspondence:', err);
       setError(err.message || 'Failed to log correspondence');
@@ -165,6 +164,14 @@ export function AddCorrespondenceDialog({
     setResult(null);
     setIsPolling(false);
     onOpenChange(false);
+  };
+
+  const handleDialogOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) {
+      onOpenChange(true);
+      return;
+    }
+    handleClose();
   };
 
   const getStatusDisplay = (status: string) => {
@@ -189,7 +196,7 @@ export function AddCorrespondenceDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
