@@ -383,7 +383,7 @@ export const processInbound = task({
     // If no action needed, commit and return — but detect decision spin
     if (decision.isComplete || decision.actionType === "NONE") {
       const noActionContext = `${classification.reasonNoResponse || ""} ${(decision.reasoning || []).join(" ")}`;
-      const isAutomatedNoReplyNotice = /automated|welcome to the records center|password assistance|do not reply|noreply|no-reply/i.test(
+      const isAutomatedNoReplyNotice = /automated|auto-generated|unmonitored|welcome to the records center|portal welcome email|password assistance|do not reply|noreply|no-reply/i.test(
         noActionContext.toLowerCase()
       );
       // Decision spin detection: if 3+ consecutive NONE decisions for this case, escalate
