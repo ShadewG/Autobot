@@ -196,6 +196,8 @@ export interface ThreadMessage {
   classification?: string;
   summary?: string;
   sentiment?: string;
+  call_contact_info?: string | null;
+  call_phone?: string | null;
   attachments: Attachment[];
 }
 

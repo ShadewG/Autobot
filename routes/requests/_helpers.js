@@ -772,6 +772,15 @@ function toThreadMessage(message, attachments = []) {
 
     const messageType = String(message.message_type || '').toLowerCase();
     const isCallMessage = messageType === 'phone_call' || messageType === 'call';
+    const contactInfo = typeof meta.contact_info === 'string' ? meta.contact_info.trim() : null;
+    const contactPhoneRaw =
+        (typeof meta.contact_phone === 'string' && meta.contact_phone.trim())
+        || (typeof meta.agency_phone === 'string' && meta.agency_phone.trim())
+        || null;
+    const extractedPhoneFromInfo = !contactPhoneRaw && contactInfo
+        ? (contactInfo.match(/(\+?\d[\d\s().-]{6,}\d)/)?.[1] || null)
+        : null;
+    const callPhone = contactPhoneRaw || extractedPhoneFromInfo;
 
     return {
         id: message.id,  // Numeric ID for API calls
@@ -790,6 +799,8 @@ function toThreadMessage(message, attachments = []) {
         case_agency_id: caseAgencyId,
         email_thread_id: Number.isFinite(Number(message.thread_id)) ? Number(message.thread_id) : null,
         summary: message.summary || null,
+        call_contact_info: isCallMessage ? contactInfo : null,
+        call_phone: isCallMessage ? callPhone : null,
         attachments: attachments
     };
 }

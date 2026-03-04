@@ -215,6 +215,9 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
   const parsed = parsePhoneCallBody(message.body);
   const summary = message.summary || "";
   const subjectOutcome = message.subject?.match(/—\s*(.+)$/)?.[1]?.trim() || parsed.outcome;
+  const callPhone = message.call_phone?.trim() || "";
+  const callContactInfo = message.call_contact_info?.trim() || "";
+  const telHref = callPhone ? `tel:${callPhone.replace(/[^\d+]/g, "")}` : "";
 
   return (
     <div className="w-full overflow-hidden">
@@ -247,6 +250,20 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
 
         {expanded && (
           <div className="mt-2 pt-2 border-t border-border/30 space-y-2">
+            {(callPhone || callContactInfo) && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Contact</p>
+                {callPhone && (
+                  <p className="text-xs mt-0.5">
+                    Phone:{" "}
+                    <a href={telHref} className="text-primary hover:underline">
+                      {callPhone}
+                    </a>
+                  </p>
+                )}
+                {callContactInfo && <p className="text-xs mt-0.5">Info: {callContactInfo}</p>}
+              </div>
+            )}
             {parsed.operatorNotes && (
               <div>
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Operator Notes</p>

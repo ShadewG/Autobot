@@ -449,6 +449,8 @@ router.post('/:id/complete', async (req, res) => {
                 metadata: {
                     source: 'phone_call_queue',
                     phone_call_task_id: id,
+                    agency_phone: task.agency_phone || null,
+                    contact_phone: task.agency_phone || null,
                     outcome,
                     completed_by: completedBy || 'unknown',
                     checked_points: checked_points || [],
