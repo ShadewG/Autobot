@@ -17,6 +17,7 @@ function buildReadableResearchSummary(rawNotes) {
     const lines = [];
     const brief = parsed.brief || {};
     const contactResult = parsed.contactResult || {};
+    const execution = parsed.execution || {};
 
     if (brief.researchFailed) {
         const msg = String(brief.summary || 'Research failed').trim();
@@ -31,16 +32,51 @@ function buildReadableResearchSummary(rawNotes) {
         if (top.confidence != null) lines.push(`Confidence: ${top.confidence}`);
     }
 
-    const email = contactResult.contact_email || contactResult.email || null;
-    const portal = contactResult.portal_url || null;
-    const phone = contactResult.contact_phone || null;
-    const fax = contactResult.contact_fax || null;
-    const channels = [];
-    if (email) channels.push(`email ${email}`);
-    if (portal) channels.push(`portal ${portal}`);
-    if (phone) channels.push(`phone ${phone}`);
-    if (fax) channels.push(`fax ${fax}`);
-    if (channels.length > 0) lines.push(`New contact channels found: ${channels.join(', ')}`);
+    const candidate = execution.candidate_channels || {};
+    const discovered = execution.new_channels || {};
+    const newChannels = [];
+    if (discovered.email) newChannels.push(`email ${discovered.email}`);
+    if (discovered.portal) newChannels.push(`portal ${discovered.portal}`);
+    if (discovered.phone) newChannels.push(`phone ${discovered.phone}`);
+    if (discovered.fax) newChannels.push(`fax ${discovered.fax}`);
+    if (newChannels.length > 0) {
+        lines.push(`New contact channels found: ${newChannels.join(', ')}`);
+    } else {
+        // Backward-compatible fallback for notes written before execution metadata.
+        const email = contactResult.contact_email || contactResult.email || null;
+        const portal = contactResult.portal_url || null;
+        const phone = contactResult.contact_phone || null;
+        const fax = contactResult.contact_fax || null;
+        const candidateChannels = [];
+        if (email) candidateChannels.push(`email ${email}`);
+        if (portal) candidateChannels.push(`portal ${portal}`);
+        if (phone) candidateChannels.push(`phone ${phone}`);
+        if (fax) candidateChannels.push(`fax ${fax}`);
+        if (candidateChannels.length > 0) {
+            lines.push(`Contact channels discovered (may already exist on case): ${candidateChannels.join(', ')}`);
+        }
+    }
+
+    if (execution.outcome === 'phone_fallback_no_new_channel') {
+        const t = execution.phone_call_target || {};
+        lines.push('No new email/portal channel found after research; phone fallback selected.');
+        if (t.agency_name || t.agency_phone || t.reason) {
+            lines.push(
+                `Phone target: ${t.agency_name || 'Agency'}${t.agency_phone ? ` (${t.agency_phone})` : ''}` +
+                `${t.reason ? ` — ${t.reason}` : ''}`
+            );
+        }
+    }
+    if (execution.outcome === 'research_failed_phone_fallback') {
+        const t = execution.phone_call_target || {};
+        lines.push(`Research failed: ${execution.research_failure_reason || 'unknown error'}`);
+        if (t.agency_name || t.agency_phone || t.reason) {
+            lines.push(
+                `Phone target: ${t.agency_name || 'Agency'}${t.agency_phone ? ` (${t.agency_phone})` : ''}` +
+                `${t.reason ? ` — ${t.reason}` : ''}`
+            );
+        }
+    }
 
     const summary = typeof brief.summary === 'string' ? brief.summary.trim().replace(/\s+/g, ' ') : '';
     if (summary && lines.length === 0) {

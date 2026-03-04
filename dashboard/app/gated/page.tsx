@@ -384,16 +384,38 @@ function getPauseReason(item: QueueItem): string | null {
   return item.data.status || null;
 }
 
+function deriveDisplayAgencyName(review: {
+  agency_name?: string | null;
+  research_summary?: string | null;
+}): string {
+  const current = (review.agency_name || "").trim();
+  if (current && !/^police department$/i.test(current)) return current;
+  const summary = review.research_summary || "";
+  const match = summary.match(/^Suggested agency:\s*(.+)$/mi);
+  if (match?.[1]) return match[1].trim();
+  return current || "Unknown agency";
+}
+
 type ReviewCategory = "fee" | "portal" | "denial" | "general";
 
 function categorizeReview(review: HumanReviewCase): ReviewCategory {
   const pr = (review.pause_reason || "").toUpperCase();
   const sub = (review.substatus || "").toUpperCase();
   const status = (review.status || "").toUpperCase();
+  const portalStatus = (review.last_portal_status || "").toUpperCase();
 
   // Research handoff / phone-call cases are not portal retries, even if
   // a historical portal URL exists on the case record.
   if (pr.includes("RESEARCH") || sub.includes("RESEARCH") || status.includes("PHONE_CALL")) {
+    return "general";
+  }
+  if (
+    sub.includes("NO ONLINE PORTAL") ||
+    portalStatus.includes("NOT_REAL_PORTAL") ||
+    portalStatus.includes("PDF_FORM_PENDING") ||
+    portalStatus.includes("CONTACT_INFO_ONLY") ||
+    portalStatus.includes("ALTERNATIVE PATH REQUIRED")
+  ) {
     return "general";
   }
 
@@ -1478,7 +1500,7 @@ function MonitorPageContent() {
                 </div>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <span className="text-xs text-muted-foreground">
-                    {selectedItem.data.agency_name}
+                    {deriveDisplayAgencyName(selectedItem.data)}
                   </span>
                   {selectedItem.data.user_id && (
                     <Badge variant="outline" className="text-[10px] text-cyan-400 border-cyan-700/50">

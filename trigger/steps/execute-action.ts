@@ -598,6 +598,34 @@ export async function executeAction(
         }
       };
 
+      const persistResearchExecutionMeta = async (meta: any) => {
+        try {
+          const freshCase = await db.getCaseById(caseId);
+          let current: any = {};
+          if (freshCase?.contact_research_notes) {
+            current = typeof freshCase.contact_research_notes === "string"
+              ? JSON.parse(freshCase.contact_research_notes)
+              : freshCase.contact_research_notes;
+          }
+          await db.updateCase(caseId, {
+            contact_research_notes: JSON.stringify({
+              ...(current || {}),
+              execution: {
+                ...(current?.execution || {}),
+                ...meta,
+                updated_at: new Date().toISOString(),
+              },
+            }),
+            last_contact_research_at: new Date(),
+          });
+        } catch (e: any) {
+          logger.warn("Failed to persist research execution metadata", {
+            caseId,
+            error: e?.message || String(e),
+          });
+        }
+      };
+
       // Auto-create follow-up proposal for new agency
       let contactResult = researchContactResult || null;
       let brief = researchBrief || null;
@@ -643,6 +671,16 @@ export async function executeAction(
           days_since_sent: caseData?.send_date
             ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
             : null,
+        });
+        await persistResearchExecutionMeta({
+          outcome: "research_failed_phone_fallback",
+          research_failed: true,
+          research_failure_reason: brief.summary || "unknown error",
+          phone_call_target: {
+            agency_name: caseData?.agency_name || "Agency",
+            agency_phone: fallbackPhone || null,
+            reason: "Research failed; direct phone follow-up required",
+          },
         });
 
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
@@ -783,6 +821,23 @@ export async function executeAction(
         ? candidateFax
         : null;
 
+      await persistResearchExecutionMeta({
+        outcome: "research_channel_evaluated",
+        suggested_agency: suggestedAgency?.name || null,
+        candidate_channels: {
+          email: candidateEmail || null,
+          portal: candidatePortalUrl || null,
+          phone: candidatePhone || null,
+          fax: candidateFax || null,
+        },
+        new_channels: {
+          email: newEmail || null,
+          portal: newPortalUrl || null,
+          phone: newPhone || null,
+          fax: newFax || null,
+        },
+      });
+
       if (!newEmail && !newPortalUrl && !newPhone && !newFax) {
         // No new channel found: continue with phone-call fallback instead of
         // blocking on a manual "retry research" gate.
@@ -811,6 +866,15 @@ export async function executeAction(
           days_since_sent: caseData?.send_date
             ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
             : null,
+        });
+        await persistResearchExecutionMeta({
+          outcome: "phone_fallback_no_new_channel",
+          suggested_agency: suggestedAgency?.name || null,
+          phone_call_target: {
+            agency_name: suggestedAgency.name || caseData?.agency_name || "Agency",
+            agency_phone: fallbackPhone || null,
+            reason: "No new channels found (email/portal/phone/fax)",
+          },
         });
 
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
@@ -852,6 +916,10 @@ export async function executeAction(
         : newEmail
           ? "SEND_INITIAL_REQUEST"
           : "ESCALATE";
+      await persistResearchExecutionMeta({
+        outcome: "research_followup_proposed",
+        followup_action_type: followupActionType,
+      });
 
       let foiaRequestText: string | null = null;
       if (followupActionType !== "ESCALATE") {

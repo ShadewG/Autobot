@@ -10,6 +10,31 @@ import db, { aiService, decisionMemory, logger } from "../lib/db";
 import type { DraftResult, ActionType, ResearchContext } from "../lib/types";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
+function collapseDuplicateClosingBlocks(text: string | null | undefined): string | null | undefined {
+  if (!text) return text;
+  const normalized = text.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const closingMarkers = new Set(["thank you,", "best regards,", "sincerely,"]);
+
+  let firstClosingIdx = -1;
+  let secondClosingIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const v = lines[i].trim().toLowerCase();
+    if (!closingMarkers.has(v)) continue;
+    if (firstClosingIdx === -1) {
+      firstClosingIdx = i;
+      continue;
+    }
+    secondClosingIdx = i;
+    break;
+  }
+
+  if (firstClosingIdx === -1 || secondClosingIdx === -1) return normalized;
+
+  // Keep the first closing/signature block and drop duplicate trailing close.
+  return lines.slice(0, secondClosingIdx).join("\n").trim();
+}
+
 export async function draftResponse(
   caseId: number,
   actionType: ActionType,
@@ -496,6 +521,8 @@ export async function draftResponse(
     draft.body_html = null; // Rebuild from sanitized text.
     logger.warn("Removed attachment claim from generated draft", { caseId, actionType });
   }
+
+  draft.body_text = collapseDuplicateClosingBlocks(draft.body_text);
 
   // Convert text to HTML if missing, handling any markdown formatting
   if (!draft.body_html && draft.body_text) {
