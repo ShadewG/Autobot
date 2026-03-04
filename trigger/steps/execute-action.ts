@@ -300,7 +300,11 @@ export async function executeAction(
     }
   }
 
-  const hasPortal = hasAutomatablePortal(targetPortalUrl, caseData?.portal_provider);
+  const hasPortal = hasAutomatablePortal(
+    targetPortalUrl,
+    caseData?.portal_provider,
+    caseData?.last_portal_status
+  );
 
   // Portal check for SEND_ actions or explicit SUBMIT_PORTAL
   // If SUBMIT_PORTAL but no portal, downgrade to email send (common after agency redirect)

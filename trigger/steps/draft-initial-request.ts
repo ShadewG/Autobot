@@ -17,6 +17,7 @@ function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean): 
 export interface InitialDraftResult {
   proposalId: number;
   proposalKey: string;
+  proposalStatus: string;
   actionType: "SEND_INITIAL_REQUEST" | "SUBMIT_PORTAL";
   subject: string;
   bodyText: string;
@@ -34,7 +35,11 @@ export async function draftInitialRequest(
   const caseData = await db.getCaseById(caseId);
   if (!caseData) throw new Error(`Case ${caseId} not found`);
 
-  const hasPortal = hasAutomatablePortal(caseData.portal_url, caseData.portal_provider);
+  const hasPortal = hasAutomatablePortal(
+    caseData.portal_url,
+    caseData.portal_provider,
+    caseData.last_portal_status
+  );
   const actionType = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
   const proposalKey = generateInitialRequestProposalKey(caseId, hasPortal);
 
@@ -52,6 +57,7 @@ export async function draftInitialRequest(
       return {
         proposalId: existing.id,
         proposalKey,
+        proposalStatus: existing.status,
         actionType,
         subject: existing.draft_subject,
         bodyText: existing.draft_body_text,
@@ -121,12 +127,13 @@ export async function draftInitialRequest(
   return {
     proposalId: proposal.id,
     proposalKey,
+    proposalStatus: proposal.status,
     actionType,
     subject,
     bodyText,
     bodyHtml,
-    canAutoExecute,
-    requiresHuman,
+    canAutoExecute: !!proposal.can_auto_execute,
+    requiresHuman: !!proposal.requires_human,
     reasoning,
   };
 }

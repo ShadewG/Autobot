@@ -196,13 +196,17 @@ async function getWrongAgencyDirectAction(caseId: number): Promise<ActionType | 
       const provider =
         agency.portal_provider ||
         ((caseData?.portal_url || "").trim() === (agencyPortal || "").trim() ? caseData?.portal_provider : null);
+      const lastPortalStatus =
+        (caseData?.portal_url || "").trim() === (agencyPortal || "").trim()
+          ? caseData?.last_portal_status
+          : null;
 
       return {
         agency,
         agencyEmail,
         agencyPortal,
         sameAsInbound,
-        hasAutomatablePortal: hasAutomatablePortal(agencyPortal, provider),
+        hasAutomatablePortal: hasAutomatablePortal(agencyPortal, provider, lastPortalStatus),
         rank: sourceRank(agency.added_source),
       };
     })
@@ -2079,7 +2083,9 @@ export async function decideNextAction(
               caseId, classification, denialSubtype, constraints, inlineKeyPoints
             );
             const portalAvailable = hasAutomatablePortal(
-              preComputed.caseData?.portal_url, preComputed.caseData?.portal_provider
+              preComputed.caseData?.portal_url,
+              preComputed.caseData?.portal_provider,
+              preComputed.caseData?.last_portal_status
             );
             const allowedActions = buildAllowedActions({
               classification, denialSubtype, constraints,
@@ -2221,7 +2227,9 @@ export async function decideNextAction(
               caseId, classification, denialSubtype, constraints, inlineKeyPoints
             );
             const portalAvailable = hasAutomatablePortal(
-              preComputed.caseData?.portal_url, preComputed.caseData?.portal_provider
+              preComputed.caseData?.portal_url,
+              preComputed.caseData?.portal_provider,
+              preComputed.caseData?.last_portal_status
             );
             const allowedActions = buildAllowedActions({
               classification, denialSubtype, constraints,
@@ -2259,7 +2267,10 @@ export async function decideNextAction(
         },
         retry_portal: async () => {
           const caseData = await db.getCaseById(caseId);
-          if (caseData?.portal_url && hasAutomatablePortal(caseData.portal_url, caseData.portal_provider)) {
+          if (
+            caseData?.portal_url &&
+            hasAutomatablePortal(caseData.portal_url, caseData.portal_provider, caseData?.last_portal_status)
+          ) {
             await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "Portal retry" });
             try {
               const task = await createPortalTask({
@@ -2386,7 +2397,9 @@ export async function decideNextAction(
       );
 
       const portalAvailable = hasAutomatablePortal(
-        preComputed.caseData?.portal_url, preComputed.caseData?.portal_provider
+        preComputed.caseData?.portal_url,
+        preComputed.caseData?.portal_provider,
+        preComputed.caseData?.last_portal_status
       );
 
       const allowedActions = buildAllowedActions({
