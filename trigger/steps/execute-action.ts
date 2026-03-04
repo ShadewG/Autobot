@@ -752,21 +752,41 @@ export async function executeAction(
         try {
           const freshCase = await db.getCaseById(caseId);
           if (freshCase?.contact_research_notes) {
-            const parsed = typeof freshCase.contact_research_notes === "string"
-              ? JSON.parse(freshCase.contact_research_notes)
-              : freshCase.contact_research_notes;
+            let parsed: any = {};
+            if (typeof freshCase.contact_research_notes === "string") {
+              try {
+                parsed = JSON.parse(freshCase.contact_research_notes);
+              } catch {
+                parsed = {};
+              }
+            } else {
+              parsed = freshCase.contact_research_notes;
+            }
             contactResult = contactResult || parsed.contactResult || null;
             brief = parsed.brief || null;
           }
         } catch (e: any) { /* non-fatal */ }
       }
 
+      // Re-read live case channels (not just load-context snapshot) before
+      // deciding whether research failed without usable contact options.
+      let caseSignalsSource: any = caseData;
+      try {
+        const freshSignalsCase = await db.getCaseById(caseId);
+        if (freshSignalsCase) caseSignalsSource = freshSignalsCase;
+      } catch { /* non-fatal */ }
+
       const contactSignalEmail = contactResult?.contact_email || contactResult?.email || null;
       const contactSignalPortal = contactResult?.portal_url || null;
       const contactSignalPhone = contactResult?.contact_phone || contactResult?.phone || null;
       const contactSignalFax = contactResult?.contact_fax || contactResult?.fax || null;
-      const knownCaseEmailSignal = caseData?.alternate_agency_email || caseData?.agency_email || null;
-      const knownCasePortalSignal = caseData?.portal_url || null;
+      const knownCaseEmailSignal =
+        caseSignalsSource?.alternate_agency_email ||
+        caseSignalsSource?.agency_email ||
+        caseData?.alternate_agency_email ||
+        caseData?.agency_email ||
+        null;
+      const knownCasePortalSignal = caseSignalsSource?.portal_url || caseData?.portal_url || null;
       const hasContactSignals = !!(contactSignalEmail || contactSignalPortal || contactSignalPhone || contactSignalFax);
       const hasKnownCaseSignals = !!(knownCaseEmailSignal || knownCasePortalSignal);
 
