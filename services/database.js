@@ -8,10 +8,10 @@ const { emitDataUpdate } = require('./event-bus');
 
 const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
 const HUMAN_REVIEW_CASE_STATUSES = ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call'];
-const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'completed', 'cancelled', 'needs_phone_call'];
+const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled', 'needs_phone_call'];
 // CLEAR is used when a case transitions INTO one of these statuses — dismiss stale proposals.
 // Excludes needs_phone_call because that is still a human review state where proposals may be relevant.
-const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'completed', 'cancelled'];
+const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled'];
 const FOLLOWUP_ELIGIBLE_CASE_STATUSES = ['sent', 'awaiting_response'];
 const FOLLOWUP_TERMINAL_CASE_STATUSES = ['completed', 'cancelled', 'needs_phone_call'];
 
@@ -377,20 +377,46 @@ class DatabaseService {
         }
     }
 
+    _sanitizePortalStatusPayload(portalData = {}, existingCase = null) {
+        const cleaned = { ...portalData };
+        const normalize = (value, maxLen) => {
+            if (value == null) return value;
+            const str = String(value).trim();
+            if (!str) return null;
+            return str.length > maxLen ? str.slice(0, maxLen) : str;
+        };
+
+        cleaned.portal_url = normalize(cleaned.portal_url, 1000);
+        cleaned.portal_provider = normalize(cleaned.portal_provider, 100);
+        cleaned.last_portal_status = normalize(cleaned.last_portal_status, 255);
+        cleaned.portal_request_number = normalize(cleaned.portal_request_number, 255);
+        cleaned.last_portal_run_id = normalize(cleaned.last_portal_run_id, 255);
+        cleaned.last_portal_account_email = normalize(cleaned.last_portal_account_email, 255);
+
+        // Ignore common email-tracking click wrappers; keep existing portal URL when available.
+        if (cleaned.portal_url && /sendgrid\.net\/ls\/click/i.test(cleaned.portal_url)) {
+            cleaned.portal_url = existingCase?.portal_url || null;
+        }
+
+        return cleaned;
+    }
+
     async updateCasePortalStatus(caseId, portalData = {}) {
+        const currentCase = await this.getCaseById(caseId);
+        const safePortalData = this._sanitizePortalStatusPayload(portalData, currentCase);
         const fields = {
-            portal_url: portalData.portal_url,
-            portal_provider: portalData.portal_provider,
-            last_portal_status: portalData.last_portal_status,
-            last_portal_status_at: portalData.last_portal_status_at,
-            last_portal_engine: portalData.last_portal_engine,
-            last_portal_run_id: portalData.last_portal_run_id,
-            last_portal_details: portalData.last_portal_details,
-            last_portal_task_url: portalData.last_portal_task_url,
-            last_portal_recording_url: portalData.last_portal_recording_url,
-            last_portal_account_email: portalData.last_portal_account_email,
-            portal_request_number: portalData.portal_request_number,
-            last_portal_screenshot_url: portalData.last_portal_screenshot_url
+            portal_url: safePortalData.portal_url,
+            portal_provider: safePortalData.portal_provider,
+            last_portal_status: safePortalData.last_portal_status,
+            last_portal_status_at: safePortalData.last_portal_status_at,
+            last_portal_engine: safePortalData.last_portal_engine,
+            last_portal_run_id: safePortalData.last_portal_run_id,
+            last_portal_details: safePortalData.last_portal_details,
+            last_portal_task_url: safePortalData.last_portal_task_url,
+            last_portal_recording_url: safePortalData.last_portal_recording_url,
+            last_portal_account_email: safePortalData.last_portal_account_email,
+            portal_request_number: safePortalData.portal_request_number,
+            last_portal_screenshot_url: safePortalData.last_portal_screenshot_url
         };
 
         const entries = Object.entries(fields).filter(([, value]) => value !== undefined);
@@ -449,6 +475,18 @@ class DatabaseService {
         const query = `UPDATE cases SET ${setClauseParts.join(', ')} WHERE id = $1 RETURNING *`;
         const result = await this.query(query, values);
         const updated = result.rows[0];
+        if (updated && updates.status && CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS.includes(updates.status)) {
+            await this.query(
+                `UPDATE proposals
+                 SET status = 'DISMISSED',
+                     updated_at = NOW(),
+                     human_decision = COALESCE(human_decision, '{}'::jsonb)
+                       || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+                 WHERE case_id = $1
+                   AND status = ANY($3::text[])`,
+                [caseId, `case_status:${updates.status}`, ACTIVE_PROPOSAL_STATUSES]
+            );
+        }
         if (updated && (updates.status || updates.requires_human != null || updates.substatus)) {
             emitDataUpdate('case_update', {
                 case_id: caseId,

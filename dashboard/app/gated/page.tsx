@@ -1592,10 +1592,21 @@ function MonitorPageContent() {
                 </>
               )}
               {selectedItem.data.action_type.startsWith("SEND") && (
-                <p className="text-xs text-emerald-300">
-                  <Mail className="h-3 w-3 inline mr-1" />
-                  {selectedItem.data.effective_agency_email || selectedItem.data.agency_email || "No email on file"}
-                </p>
+                <>
+                  {(selectedItem.data.effective_agency_email || selectedItem.data.agency_email) ? (
+                    <p className="text-xs text-emerald-300">
+                      <Mail className="h-3 w-3 inline mr-1" />
+                      {selectedItem.data.effective_agency_email || selectedItem.data.agency_email}
+                    </p>
+                  ) : selectedItem.data.portal_url ? (
+                    <p className="text-xs text-cyan-300">
+                      <ExternalLink className="h-3 w-3 inline mr-1" />
+                      Sending via portal: {selectedItem.data.portal_url}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No delivery target on file</p>
+                  )}
+                </>
               )}
               {selectedItem.data.action_type === "CLOSE_CASE" && (
                 <p className="text-xs text-muted-foreground">Will mark this case as closed/denial accepted.</p>
