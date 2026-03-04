@@ -352,7 +352,75 @@ export const submitPortal = task({
       return { success: true, skipped: true, reason: "recent_success" };
     }
 
-    const targetUrl = portalUrl || caseData.portal_url;
+    let discoveredPortalUrl: string | null = null;
+    if (!portalUrl && !caseData.portal_url) {
+      // Fallback 1: use most recent non-empty portal_url recorded on prior portal tasks.
+      const portalFromTask = await db.query(
+        `SELECT NULLIF(portal_url, '') AS portal_url
+         FROM portal_tasks
+         WHERE case_id = $1
+           AND portal_url IS NOT NULL
+           AND portal_url <> ''
+         ORDER BY COALESCE(updated_at, created_at) DESC
+         LIMIT 1`,
+        [caseId]
+      );
+      discoveredPortalUrl = (portalFromTask.rows[0]?.portal_url || '').trim() || null;
+
+      // Fallback 2: recover from activity log metadata if task table has no URL.
+      if (!discoveredPortalUrl) {
+        const portalFromActivity = await db.query(
+          `SELECT
+              COALESCE(
+                NULLIF(metadata->>'portal_url', ''),
+                NULLIF(metadata->>'portalUrl', '')
+              ) AS portal_url
+           FROM activity_log
+           WHERE case_id = $1
+             AND (
+               event_type = 'portal_notification'
+               OR event_type LIKE 'portal_%'
+             )
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [caseId]
+        );
+        discoveredPortalUrl = (portalFromActivity.rows[0]?.portal_url || '').trim() || null;
+      }
+
+      // Fallback 3: recover from recent inbound portal notifications.
+      if (!discoveredPortalUrl) {
+        const portalFromMessages = await db.query(
+          `SELECT
+              COALESCE(
+                NULLIF(m.metadata->>'portal_url', ''),
+                NULLIF(m.metadata->>'portalUrl', '')
+              ) AS portal_url
+           FROM messages m
+           WHERE m.case_id = $1
+             AND m.direction = 'inbound'
+             AND (
+               m.portal_notification = true
+               OR m.from_email ILIKE '%@govqa.%'
+               OR m.subject ILIKE '%records center%'
+             )
+           ORDER BY COALESCE(m.received_at, m.created_at) DESC
+           LIMIT 1`,
+          [caseId]
+        );
+        discoveredPortalUrl = (portalFromMessages.rows[0]?.portal_url || '').trim() || null;
+      }
+
+      if (discoveredPortalUrl) {
+        await db.updateCase(caseId, {
+          portal_url: discoveredPortalUrl,
+          last_portal_status: `Recovered portal URL from inbound notification`,
+          last_portal_status_at: new Date(),
+        });
+      }
+    }
+
+    const targetUrl = portalUrl || caseData.portal_url || discoveredPortalUrl;
     if (!targetUrl) {
       logger.warn("Portal submission skipped — missing portal URL", { caseId });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
