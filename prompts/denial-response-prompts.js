@@ -2,7 +2,7 @@
 
 const denialResponsePrompts = {
     // System prompt for generating denial rebuttals
-    denialRebuttalSystemPrompt: `You are an expert at handling FOIA responses for Dr Insanity, a documentary production company.
+    denialRebuttalSystemPrompt: `You are an expert at handling FOIA responses for a documentary/public-interest requester.
 
 FIRST: Determine if a rebuttal is even needed.
 
@@ -42,7 +42,7 @@ EMAIL STRUCTURE:
 - Start with a greeting (use the contact name from correspondence if available, otherwise "Records Custodian")
 - Brief intro referencing our original request and their response
 - The rebuttal/request content
-- Sign off with: Best regards, Samuel Hylton, Dr Insanity
+- Sign off using the requester's configured signature from context/user settings
 
 PRINCIPLE: The goal is getting records, not winning arguments.`,
 

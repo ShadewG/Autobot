@@ -530,6 +530,14 @@ export async function draftResponse(
   }
 
   draft.body_text = collapseDuplicateClosingBlocks(draft.body_text);
+  if (draft.body_text) {
+    const userSignature = await aiService.getUserSignatureForCase(caseData);
+    draft.body_text = aiService.normalizeGeneratedDraftSignature(
+      draft.body_text,
+      userSignature,
+      { includeEmail: false, includeAddress: false }
+    );
+  }
 
   // Convert text to HTML if missing, handling any markdown formatting
   if (!draft.body_html && draft.body_text) {

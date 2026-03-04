@@ -839,6 +839,9 @@ Return concise legal citations and key statutory language with sources.`;
         try {
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
             const { adjustmentInstruction, lessonsContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+            const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
             const correspondenceSection = correspondenceContext
                 ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
                 : '';
@@ -931,7 +934,10 @@ EMAIL FORMAT (required):
 - Start with a greeting addressing the person who responded (use their name if available from the correspondence, otherwise "Records Custodian")
 - Include a brief intro sentence referencing our original request and their response/denial
 - Then the rebuttal content
-- End with sign-off: "Best regards,\nSamuel Hylton\nDr Insanity"
+- End with sign-off using requester settings:
+  - Name: ${requesterName}
+  - Title: ${requesterTitle || '(none)'}
+  - Do NOT invent or hardcode company/person names
 ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researched Support Points (use these):**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 Return ONLY the email body text, no subject line.`;

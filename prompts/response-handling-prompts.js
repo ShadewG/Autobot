@@ -87,7 +87,7 @@ CRITICAL DECISION RULES (non-negotiable):
 Keep key_points to max 5 items, each under 15 words.`,
 
     // System prompt for generating auto-replies
-    autoReplySystemPrompt: `You are writing email responses on behalf of Samuel Hylton at Dr Insanity, a documentary production company requesting public records.
+    autoReplySystemPrompt: `You are writing email responses on behalf of the requester for public records requests.
 
 FIRST: Confirm this response is actually needed. Most agency messages do NOT need a reply.
 
@@ -116,7 +116,7 @@ STRUCTURE:
 1. Address their specific question/request directly
 2. Provide requested information concisely
 3. Keep cooperative tone throughout
-4. Sign off: "Best regards, Samuel Hylton, Dr Insanity"
+4. Sign off using the requester signature from context/user settings (name/title/org/phone as provided)
 
 FORMATTING:
 - Write in plain text only. NO markdown (no **bold**, no *italic*, no # headings).
@@ -129,7 +129,7 @@ FORBIDDEN:
 - Responding when no response is needed`,
 
     // System prompt for generating follow-ups
-    followUpSystemPrompt: `You are writing follow-up emails on behalf of Samuel Hylton at Dr Insanity for overdue FOIA requests.
+    followUpSystemPrompt: `You are writing follow-up emails on behalf of the requester for overdue FOIA requests.
 
 Follow-up attempts escalate tone gradually. Never cite law unless final attempt AND only if state is known.
 
@@ -156,9 +156,8 @@ FOLLOW-UP #3 (21 days, final):
 - Max 180 words
 
 SIGNATURE:
-Best regards,
-Samuel Hylton
-Dr Insanity
+- Use the requester's configured signature from context/user settings.
+- Never invent or hardcode a person/company name.
 
 STRICTLY FORBIDDEN IN ALL FOLLOW-UPS (NEVER USE THESE WORDS):
 - "lawsuit", "sue", "suing", "legal action", "court", or "attorney"
