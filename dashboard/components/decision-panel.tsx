@@ -677,24 +677,33 @@ export function DecisionPanel({
     ? UNKNOWN_GATE_CONFIG
     : (GATE_CONFIGS[normalized] || UNKNOWN_GATE_CONFIG);
 
-  // Phone call — dedicated panel matching gated queue layout
-  if (request.review_reason === "PHONE_CALL" && onResolveReview) {
+  // Review reason panel — matches gated queue layout exactly
+  if (request.review_reason && onResolveReview) {
+    const reason = request.review_reason;
     const plan = request.phone_call_plan;
 
-    const handlePhoneQueue = async () => {
-      setReviewActionLoading("queue_phone_call");
+    // Map review_reason to gated queue category
+    const category: "fee" | "portal" | "denial" | "phone" | "general" =
+      reason === "FEE_QUOTE" ? "fee"
+      : reason === "PORTAL_FAILED" || reason === "PORTAL_STUCK" ? "portal"
+      : reason === "DENIAL" ? "denial"
+      : reason === "PHONE_CALL" ? "phone"
+      : "general";
+
+    const handleAction = async (actionId: string) => {
+      setReviewActionLoading(actionId);
       try {
-        if (onAddToPhoneQueue) {
+        if (actionId === "queue_phone_call" && onAddToPhoneQueue) {
           await onAddToPhoneQueue();
         } else {
-          await onResolveReview("queue_phone_call");
+          await onResolveReview(actionId, customInstruction || undefined);
         }
       } finally {
         setReviewActionLoading(null);
       }
     };
 
-    const handleAdjust = async () => {
+    const handleCustomSend = async () => {
       if (!customInstruction.trim()) return;
       setReviewActionLoading("custom");
       try {
@@ -705,58 +714,146 @@ export function DecisionPanel({
       }
     };
 
+    const actionLoading = (id: string) => isLoading || reviewActionLoading !== null;
+    const spinnerFor = (id: string) => reviewActionLoading === id;
+
     return (
-      <Card className="border-2 border-amber-700/50 bg-amber-500/10">
+      <Card className="border-2 border-purple-700/50 bg-purple-500/10">
         <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2 text-amber-300">
-            <Phone className="h-5 w-5" />
-            Phone Call Proposal
+          <CardTitle className="text-base flex items-center gap-2 text-purple-300">
+            <AlertTriangle className="h-5 w-5" />
+            Decision Required
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {/* Call info */}
-          <div className="border border-amber-700/40 bg-amber-950/20 rounded-md p-3 space-y-1">
-            <p className="text-sm">
-              <span className="text-muted-foreground">Who:</span>{" "}
-              {plan?.agency_name || request.agency_name || "Unknown"}
-            </p>
-            <p className="text-sm">
-              <span className="text-muted-foreground">Phone:</span>{" "}
-              {plan?.agency_phone ? (
-                <a href={`tel:${plan.agency_phone}`} className="font-mono font-semibold hover:text-blue-400 transition-colors">
-                  {plan.agency_phone}
-                </a>
-              ) : "Not found yet"}
-            </p>
-            {plan?.reason && (
-              <p className="text-sm">
-                <span className="text-muted-foreground">Why call:</span>{" "}
-                {plan.reason}
-              </p>
-            )}
-            {plan?.agency_email && (
-              <p className="text-sm">
-                <span className="text-muted-foreground">Known email:</span>{" "}
-                {plan.agency_email}
-              </p>
-            )}
-          </div>
+          {/* Substatus context */}
+          {request.substatus && (
+            <div className="border border-purple-700/50 bg-purple-950/20 p-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Review Reason</p>
+              <p className="text-xs text-purple-300">{request.substatus}</p>
+            </div>
+          )}
 
-          {/* Primary action */}
-          <Button
-            className="w-full bg-amber-700 hover:bg-amber-600 text-white"
-            onClick={handlePhoneQueue}
-            disabled={isLoading || reviewActionLoading !== null}
-          >
-            {reviewActionLoading === "queue_phone_call" ? (
-              <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-            ) : (
-              <Phone className="h-3 w-3 mr-1.5" />
-            )}
-            QUEUE PHONE CALL
-          </Button>
+          {/* Fee info */}
+          {category === "fee" && request.fee_quote && (
+            <div className="border border-yellow-700/50 bg-yellow-950/20 p-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Fee Quote</p>
+              <p className="text-sm font-semibold text-yellow-300">
+                ${Number(request.fee_quote.amount).toFixed(2)}
+              </p>
+            </div>
+          )}
 
-          {/* Adjust — custom instruction */}
+          {/* Portal info */}
+          {category === "portal" && request.portal_url && (
+            <div className="border p-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">Portal</p>
+              <a href={request.portal_url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-400 hover:underline">
+                {request.portal_url}
+              </a>
+              {request.last_portal_status && (
+                <Badge variant="outline" className="ml-2 text-[10px] text-red-400 border-red-700/50">
+                  {request.last_portal_status}
+                </Badge>
+              )}
+            </div>
+          )}
+
+          {/* Phone call info */}
+          {category === "phone" && (
+            <div className="border p-2 bg-amber-950/20 border-amber-700/40">
+              <p className="text-xs text-amber-300 font-medium">Phone Call Proposal</p>
+              <div className="mt-1 text-xs text-foreground/90 space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Who:</span>{" "}
+                  {plan?.agency_name || request.agency_name || "Unknown"}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Phone:</span>{" "}
+                  {plan?.agency_phone ? (
+                    <a href={`tel:${plan.agency_phone}`} className="font-mono font-semibold hover:text-blue-400 transition-colors">
+                      {plan.agency_phone}
+                    </a>
+                  ) : "Not found yet"}
+                </p>
+                {plan?.reason && (
+                  <p>
+                    <span className="text-muted-foreground">Why call:</span>{" "}
+                    {plan.reason}
+                  </p>
+                )}
+                {plan?.agency_email && (
+                  <p>
+                    <span className="text-muted-foreground">Known email:</span>{" "}
+                    {plan.agency_email}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Category-specific primary actions — matches gated queue */}
+          {category === "fee" && (
+            <div className="flex gap-2">
+              <Button className="flex-1 bg-green-700 hover:bg-green-600 text-white" onClick={() => handleAction("accept_fee")} disabled={actionLoading("accept_fee")}>
+                {spinnerFor("accept_fee") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <CheckCircle className="h-3 w-3 mr-1.5" />}
+                ACCEPT FEE
+              </Button>
+              <Button variant="outline" className="flex-1" onClick={() => handleAction("negotiate_fee")} disabled={actionLoading("negotiate_fee")}>
+                NEGOTIATE
+              </Button>
+              <Button variant="outline" onClick={() => handleAction("decline_fee")} disabled={actionLoading("decline_fee")}>
+                DECLINE
+              </Button>
+            </div>
+          )}
+
+          {category === "portal" && (
+            <div className="flex gap-2">
+              <Button className="flex-1 bg-blue-700 hover:bg-blue-600 text-white" onClick={() => handleAction("retry_portal")} disabled={actionLoading("retry_portal")}>
+                {spinnerFor("retry_portal") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RotateCcw className="h-3 w-3 mr-1.5" />}
+                RETRY PORTAL
+              </Button>
+              <Button variant="outline" className="flex-1" onClick={() => handleAction("send_via_email")} disabled={actionLoading("send_via_email")}>
+                <Mail className="h-3 w-3 mr-1" /> EMAIL INSTEAD
+              </Button>
+              <Button variant="outline" onClick={() => handleAction("mark_sent")} disabled={actionLoading("mark_sent")}>
+                MARK SENT
+              </Button>
+            </div>
+          )}
+
+          {category === "denial" && (
+            <div className="flex gap-2">
+              <Button className="flex-1 bg-purple-700 hover:bg-purple-600 text-white" onClick={() => handleAction("appeal")} disabled={actionLoading("appeal")}>
+                {spinnerFor("appeal") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <FileText className="h-3 w-3 mr-1.5" />}
+                SEND APPEAL
+              </Button>
+              <Button variant="outline" className="flex-1" onClick={() => handleAction("narrow_scope")} disabled={actionLoading("narrow_scope")}>
+                NARROW & RETRY
+              </Button>
+            </div>
+          )}
+
+          {category === "phone" && (
+            <div className="flex gap-2">
+              <Button className="flex-1 bg-amber-700 hover:bg-amber-600 text-white" onClick={() => handleAction("queue_phone_call")} disabled={actionLoading("queue_phone_call")}>
+                {spinnerFor("queue_phone_call") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
+                QUEUE PHONE CALL
+              </Button>
+            </div>
+          )}
+
+          {category === "general" && (
+            <div className="flex gap-2">
+              <Button className="flex-1 bg-purple-700 hover:bg-purple-600 text-white" onClick={() => handleAction("reprocess")} disabled={actionLoading("reprocess")}>
+                {spinnerFor("reprocess") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <RotateCcw className="h-3 w-3 mr-1.5" />}
+                RE-PROCESS
+              </Button>
+            </div>
+          )}
+
+          {/* Custom instruction — always visible */}
           <div className="flex gap-2">
             <Textarea
               placeholder="Custom instruction (optional)..."
@@ -767,200 +864,39 @@ export function DecisionPanel({
             <Button
               variant="outline"
               className="self-end"
-              onClick={handleAdjust}
-              disabled={isLoading || reviewActionLoading !== null || !customInstruction.trim()}
+              onClick={handleCustomSend}
+              disabled={actionLoading("custom") || !customInstruction.trim()}
             >
-              {reviewActionLoading === "custom" ? (
-                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-              ) : (
-                <Send className="h-3 w-3 mr-1" />
-              )}
+              {spinnerFor("custom") ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Send className="h-3 w-3 mr-1" />}
               SEND
             </Button>
           </div>
 
-          {/* Secondary actions */}
+          {/* Secondary actions — same for all categories */}
           <div className="flex gap-2">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => onResolveReview("put_on_hold")}
-              disabled={isLoading || reviewActionLoading !== null}
-            >
+            <Button variant="outline" className="flex-1" onClick={() => handleAction("put_on_hold")} disabled={actionLoading("put_on_hold")}>
               HOLD
             </Button>
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={() => onResolveReview("reprocess")}
-              disabled={isLoading || reviewActionLoading !== null}
-            >
-              RE-PROCESS
+            <Button variant="outline" className="flex-1" onClick={() => handleAction("close")} disabled={actionLoading("close")}>
+              CLOSE
+            </Button>
+            <Button variant="destructive" onClick={() => onWithdraw()} disabled={actionLoading("withdraw")}>
+              <Ban className="h-3 w-3 mr-1" /> WITHDRAW
             </Button>
           </div>
-        </CardContent>
-      </Card>
-    );
-  }
 
-  // If we have a review_reason, show the review-specific panel with action buttons
-  if (request.review_reason && onResolveReview) {
-    const reviewConfig = REVIEW_CONFIGS[request.review_reason] || REVIEW_CONFIGS.GENERAL;
-    const substatus = String(request.substatus || "");
-    const hasPendingProposalContext = /proposal\s*#?\d+\s+pending review/i.test(substatus);
-
-    const handleReviewAction = async (actionId: string) => {
-      setReviewActionLoading(actionId);
-      try {
-        if (actionId === "queue_phone_call") {
-          if (onAddToPhoneQueue) {
-            await onAddToPhoneQueue();
-            return;
-          }
-          await onResolveReview(actionId, customInstruction || undefined);
-          return;
-        }
-        await onResolveReview(actionId, customInstruction || undefined);
-      } finally {
-        setReviewActionLoading(null);
-      }
-    };
-
-    return (
-      <Card className={cn("border-2", reviewConfig.borderColor, reviewConfig.bgColor)}>
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <CardTitle className={cn("text-base flex items-center gap-2", reviewConfig.color)}>
-              {reviewConfig.icon}
-              Decision Required
-            </CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Reason badge */}
-          <Badge
-            variant="outline"
-            className={cn("font-semibold text-sm px-3 py-1", reviewConfig.color, reviewConfig.borderColor)}
-          >
-            {reviewConfig.title}
-          </Badge>
-
-          {/* Substatus context */}
-          {request.substatus && (
-            <div className="bg-muted rounded-md p-3">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-1">
-                Context
-              </p>
-              <p className="text-sm">{request.substatus}</p>
-              {request.portal_url && (request.review_reason === "PORTAL_FAILED" || request.review_reason === "PORTAL_STUCK") && (
-                <a
-                  href={request.portal_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-primary hover:underline mt-1 block truncate"
-                >
-                  {request.portal_url}
-                </a>
-              )}
-            </div>
-          )}
-
-          {hasPendingProposalContext && (
-            <div className="bg-blue-500/10 border border-blue-700/50 rounded-md p-3">
-              <p className="text-xs text-blue-300">
-                A proposal is already pending review. Use the proposal approval controls first.
-                Re-process is for repair/recovery only.
-              </p>
-            </div>
-          )}
-
-          {/* The explicit decision question */}
-          <p className="text-sm font-semibold">
-            {reviewConfig.question}
-          </p>
-
-          <Separator className="bg-border" />
-
-          {/* Action buttons — stacked */}
-          <div className="space-y-2">
-            {reviewConfig.actions.map((action) => (
-              <Button
-                key={action.id}
-                onClick={() => handleReviewAction(action.id)}
-                variant={action.variant}
-                className={cn(
-                  "w-full justify-between",
-                  action.variant === "ghost" && "text-muted-foreground"
-                )}
-                disabled={isLoading || reviewActionLoading !== null}
-              >
-                <span className="flex items-center gap-2 text-left">
-                  {reviewActionLoading === action.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <span className="text-sm">{action.label}</span>
-                  )}
-                  {action.recommended && !hasPendingProposalContext && (
-                    <Badge variant="secondary" className="ml-1 text-[10px]">Recommended</Badge>
-                  )}
-                </span>
-                <ArrowRight className="h-4 w-4 flex-shrink-0" />
-              </Button>
-            ))}
-          </div>
-
-          {onRepair && (
+          {/* Add to phone queue — for non-phone categories */}
+          {category !== "phone" && (
             <Button
-              onClick={onRepair}
               variant="outline"
-              className="w-full justify-between"
-              disabled={isLoading || reviewActionLoading !== null}
+              className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+              onClick={() => handleAction("queue_phone_call")}
+              disabled={actionLoading("queue_phone_call")}
             >
-              <span className="text-sm">Repair (Reset + Reprocess Latest Inbound)</span>
-              <RotateCcw className="h-4 w-4 flex-shrink-0" />
+              {spinnerFor("queue_phone_call") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
+              ADD TO PHONE QUEUE
             </Button>
           )}
-
-          {/* Custom instructions textarea — collapsible */}
-          <Collapsible open={showCustomInstruction} onOpenChange={setShowCustomInstruction}>
-            <CollapsibleTrigger asChild>
-              <button className="w-full flex items-center justify-between text-xs text-primary hover:text-primary/80 py-2 border-t border-border">
-                <span className="flex items-center gap-1.5">
-                  <FileText className="h-3.5 w-3.5" />
-                  Custom instructions
-                </span>
-                {showCustomInstruction ? (
-                  <ChevronUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="space-y-2">
-                <Textarea
-                  value={customInstruction}
-                  onChange={(e) => setCustomInstruction(e.target.value)}
-                  placeholder="Add specific instructions for the agent (e.g., 'cite public interest exception', 'limit to 2023 records only')"
-                  className="bg-background text-sm min-h-[80px]"
-                />
-                {customInstruction && (
-                  <Button
-                    onClick={() => handleReviewAction("custom")}
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    disabled={isLoading || reviewActionLoading !== null}
-                  >
-                    {reviewActionLoading === "custom" ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : null}
-                    Send Custom Instruction
-                  </Button>
-                )}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
         </CardContent>
       </Card>
     );
