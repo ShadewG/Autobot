@@ -104,7 +104,7 @@ YOUR TASK:
 5. ${dryRun ? 'STOP before clicking the final submit button (this is a test)' : 'Submit the request'}
 
 REQUEST INFORMATION:
-- Requester Name: ${caseData.subject_name || 'Samuel Hylton'}
+- Requester Name: ${process.env.REQUESTER_NAME || 'Requester'}
 - Case Name: ${caseData.case_name || 'Records Request'}
 - Agency: ${caseData.agency_name || 'Unknown Agency'}
 - State: ${caseData.state || 'Unknown'}

@@ -445,8 +445,7 @@ class NotionService {
         const rawName = String(assignedPerson).trim();
         if (!rawName) return null;
 
-        const nameMap = { 'Samuel Hylton': 'Sam' };
-        const localName = nameMap[rawName] || rawName;
+        const localName = rawName;
 
         // Preferred: explicit user.notion_name mapping from Settings.
         let user = await db.getUserByNotionName(rawName);

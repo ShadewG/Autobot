@@ -186,18 +186,18 @@ async function _getRequesterInfo(caseData) {
         }
     }
     return {
-        name: user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Samuel Hylton',
+        name: user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Requester',
         email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
         phone: user?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702',
         organization: user
             ? (user.signature_organization ?? '')
-            : (process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team'),
-        title: user?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher',
-        address: user?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
-        addressLine2: user?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
-        city: user?.address_city || process.env.REQUESTER_CITY || 'Seattle',
-        state: user?.address_state || process.env.REQUESTER_STATE || caseData.state || 'WA',
-        zip: user?.address_zip || process.env.REQUESTER_ZIP || '98199'
+            : (process.env.REQUESTER_ORG || ''),
+        title: user?.signature_title || process.env.REQUESTER_TITLE || '',
+        address: user?.address_street || process.env.REQUESTER_ADDRESS || '',
+        addressLine2: user?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || '',
+        city: user?.address_city || process.env.REQUESTER_CITY || '',
+        state: user?.address_state || process.env.REQUESTER_STATE || caseData.state || '',
+        zip: user?.address_zip || process.env.REQUESTER_ZIP || ''
     };
 }
 

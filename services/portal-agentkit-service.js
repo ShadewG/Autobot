@@ -64,7 +64,7 @@ class PortalAgentKitService {
                     : 'Fill the form completely and submit the request when ready.',
                 'Use the following requester information:',
                 JSON.stringify({
-                    name: caseData.subject_name || 'Samuel Hylton',
+                    name: process.env.REQUESTER_NAME || 'Requester',
                     email: process.env.REQUESTS_INBOX || 'requests@foib-request.com',
                     phone: caseData.phone || '(555) 555-1212',
                     address: caseData.address || '3021 21st Ave W, Apt 202, Seattle, WA 98199'

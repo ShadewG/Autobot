@@ -847,7 +847,7 @@ class PortalAgentServiceSkyvern {
 
     _buildWorkflowPersonalInfo(caseData, caseOwner = null) {
         // Use case owner's info if available, fall back to env vars / defaults
-        const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Requester';
         // Important: requestor contact email should be the case owner's identity,
         // not the shared portal login inbox (REQUESTS_INBOX). Portal confirmations
         // sent to REQUESTS_INBOX don't route to cases properly.
@@ -855,8 +855,8 @@ class PortalAgentServiceSkyvern {
         const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
         const ownerOrg = caseOwner
             ? (caseOwner.signature_organization ?? '')
-            : (process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team');
-        const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
+            : (process.env.REQUESTER_ORG || '');
+        const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || '';
 
         return {
             name: ownerName,
@@ -865,11 +865,11 @@ class PortalAgentServiceSkyvern {
             organization: ownerOrg,
             title: ownerTitle,
             address: {
-                line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
-                line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
-                city: caseOwner?.address_city || process.env.REQUESTER_CITY || 'Seattle',
-                state: caseOwner?.address_state || process.env.REQUESTER_STATE || 'WA',
-                zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || '98199'
+                line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '',
+                line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || '',
+                city: caseOwner?.address_city || process.env.REQUESTER_CITY || '',
+                state: caseOwner?.address_state || process.env.REQUESTER_STATE || '',
+                zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || ''
             },
             preferred_delivery: 'electronic',
             fee_waiver: {
@@ -2216,9 +2216,9 @@ SCOUT INSTRUCTIONS:
    a. Create an account using EXACTLY these credentials:
       - Email: ${email}
       - Password: ${password}
-      - Name: Samuel Hylton
-      - Phone: 209-800-7702
-      - Address: 3021 21st Ave W, Apt 202, Seattle, WA 98199
+      - Name: ${process.env.REQUESTER_NAME || 'Requester'}
+      - Phone: ${process.env.REQUESTER_PHONE || '(555) 555-1212'}
+      - Address: ${process.env.REQUESTER_ADDRESS || ''}
    b. Fill in ALL required profile fields.
    c. If the portal says "email already exists" or "account already exists", that is fine — set account_already_existed=true.
 3. If the portal does NOT require an account (e.g., guest/anonymous submissions allowed), set requires_account=false and stop immediately.
@@ -2241,18 +2241,18 @@ Use Set Extracted Information to return this JSON:
             account_email: email,
             account_password: password,
             account_password_confirm: password,
-            first_name: 'Samuel',
-            last_name: 'Hylton',
+            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
+            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
             email: email,
-            phone: '209-800-7702',
-            phone_number: '209-800-7702',
-            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
-            street_address: '3021 21st Ave W, Apt 202',
-            city: 'Seattle',
-            state_abbr: 'WA',
-            zip: '98199',
-            zip_code: '98199',
-            organization: 'Dr Insanity / FOIA Request Team'
+            phone: process.env.REQUESTER_PHONE || '',
+            phone_number: process.env.REQUESTER_PHONE || '',
+            address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
+            street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
+            city: process.env.REQUESTER_CITY || '',
+            state_abbr: process.env.REQUESTER_STATE || '',
+            zip: process.env.REQUESTER_ZIP || '',
+            zip_code: process.env.REQUESTER_ZIP || '',
+            organization: process.env.REQUESTER_ORG || ''
         };
     }
 
@@ -2270,18 +2270,18 @@ INSTRUCTIONS:
         return {
             // Requester Information (person making the FOIA request)
             email: process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
-            requester_name: 'Samuel Hylton',
+            requester_name: process.env.REQUESTER_NAME || 'Requester',
             requester_email: process.env.REQUESTER_EMAIL || 'sam@foib-request.com',
-            first_name: 'Samuel',
-            last_name: 'Hylton',
-            phone: '209-800-7702',
-            phone_number: '209-800-7702',
-            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
-            street_address: '3021 21st Ave W, Apt 202',
-            city: 'Seattle',
-            state_abbr: 'WA',
-            zip: '98199',
-            zip_code: '98199',
+            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
+            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
+            phone: process.env.REQUESTER_PHONE || '',
+            phone_number: process.env.REQUESTER_PHONE || '',
+            address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
+            street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
+            city: process.env.REQUESTER_CITY || '',
+            state_abbr: process.env.REQUESTER_STATE || '',
+            zip: process.env.REQUESTER_ZIP || '',
+            zip_code: process.env.REQUESTER_ZIP || '',
 
             // Case/Subject Information (the person involved in the case)
             case_name: caseData.case_name || 'Records Request',
@@ -2311,18 +2311,18 @@ INSTRUCTIONS:
 
             // Requester Contact Information (person making the FOIA request)
             email: existingAccount.email,
-            requester_name: 'Samuel Hylton',
+            requester_name: process.env.REQUESTER_NAME || 'Requester',
             requester_email: existingAccount.email,
-            first_name: 'Samuel',
-            last_name: 'Hylton',
-            phone: '209-800-7702',
-            phone_number: '209-800-7702',
-            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
-            street_address: '3021 21st Ave W, Apt 202',
-            city: 'Seattle',
-            state_abbr: 'WA',
-            zip: '98199',
-            zip_code: '98199',
+            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
+            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
+            phone: process.env.REQUESTER_PHONE || '',
+            phone_number: process.env.REQUESTER_PHONE || '',
+            address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
+            street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
+            city: process.env.REQUESTER_CITY || '',
+            state_abbr: process.env.REQUESTER_STATE || '',
+            zip: process.env.REQUESTER_ZIP || '',
+            zip_code: process.env.REQUESTER_ZIP || '',
 
             // Case/Subject Information (the person involved in the case)
             case_name: caseData.case_name || 'Records Request',
@@ -2352,21 +2352,21 @@ INSTRUCTIONS:
             account_email: email,
             account_password: password,
             account_password_confirm: password,
-            first_name: 'Samuel',
-            last_name: 'Hylton',
+            first_name: (process.env.REQUESTER_NAME || 'Requester').split(' ')[0] || 'Requester',
+            last_name: (process.env.REQUESTER_NAME || 'Requester').split(' ').slice(1).join(' '),
 
             // Requester Contact Information (person making the FOIA request)
             email: email,
-            requester_name: 'Samuel Hylton',
+            requester_name: process.env.REQUESTER_NAME || 'Requester',
             requester_email: email,
-            phone: '209-800-7702',
-            phone_number: '209-800-7702',
-            address: '3021 21st Ave W, Apt 202, Seattle, WA 98199',
-            street_address: '3021 21st Ave W, Apt 202',
-            city: 'Seattle',
-            state_abbr: 'WA',
-            zip: '98199',
-            zip_code: '98199',
+            phone: process.env.REQUESTER_PHONE || '',
+            phone_number: process.env.REQUESTER_PHONE || '',
+            address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2, process.env.REQUESTER_CITY, process.env.REQUESTER_STATE, process.env.REQUESTER_ZIP].filter(Boolean).join(', '),
+            street_address: [process.env.REQUESTER_ADDRESS, process.env.REQUESTER_ADDRESS_LINE2].filter(Boolean).join(', '),
+            city: process.env.REQUESTER_CITY || '',
+            state_abbr: process.env.REQUESTER_STATE || '',
+            zip: process.env.REQUESTER_ZIP || '',
+            zip_code: process.env.REQUESTER_ZIP || '',
 
             // Case/Subject Information (the person involved in the case)
             case_name: caseData.case_name || 'Records Request',
@@ -2456,7 +2456,7 @@ SUBMISSION STAGE OBJECTIVE:
             submission_url: submissionUrl,
             contact_info: contactInfo,
             requester: {
-                name: 'Samuel Hylton',
+                name: process.env.REQUESTER_NAME || 'Requester',
                 email,
                 phone: contactInfo.phone,
                 title: 'Documentary Researcher'

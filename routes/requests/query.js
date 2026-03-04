@@ -445,13 +445,13 @@ router.get('/:id/workspace', async (req, res) => {
         let portalHelper = null;
         if (pendingProposal?.action_type === 'SUBMIT_PORTAL') {
             const caseOwner = caseData.user_id ? await db.getUserById(caseData.user_id) : null;
-            const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+            const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Requester';
             const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
             const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
             const ownerOrg = caseOwner
                 ? (caseOwner.signature_organization ?? '')
-                : (process.env.REQUESTER_ORG || 'Dr Insanity / FOIA Request Team');
-            const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || 'Documentary Researcher';
+                : (process.env.REQUESTER_ORG || '');
+            const ownerTitle = caseOwner?.signature_title || process.env.REQUESTER_TITLE || '';
 
             const rawRecords = caseData.requested_records;
             let recordsList = [];
@@ -472,11 +472,11 @@ router.get('/:id/workspace', async (req, res) => {
                     title: ownerTitle,
                 },
                 address: {
-                    line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
-                    line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
-                    city: caseOwner?.address_city || process.env.REQUESTER_CITY || 'Seattle',
-                    state: caseOwner?.address_state || process.env.REQUESTER_STATE || 'WA',
-                    zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || '98199',
+                    line1: caseOwner?.address_street || process.env.REQUESTER_ADDRESS || '',
+                    line2: caseOwner?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || '',
+                    city: caseOwner?.address_city || process.env.REQUESTER_CITY || '',
+                    state: caseOwner?.address_state || process.env.REQUESTER_STATE || '',
+                    zip: caseOwner?.address_zip || process.env.REQUESTER_ZIP || '',
                 },
                 case_info: {
                     subject_name: caseData.subject_name || caseData.case_name || null,

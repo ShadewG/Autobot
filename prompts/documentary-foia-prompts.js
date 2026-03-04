@@ -8,7 +8,7 @@ STYLE GUIDELINES:
 - Keep it simple and professional
 - Use natural, conversational language - don't force specific phrases
 - NO legal jargon or excessive citations
-- Use "Dr Insanity" only (never "DR INSANITY LEGAL DEPARTMENT")
+ - Use only the requester's configured identity/signature from settings/context
 - Focus on getting video footage first, reports second
 - Be polite and respectful
 - Keep requests short and organized (200-400 words total)

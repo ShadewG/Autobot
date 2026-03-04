@@ -50,7 +50,7 @@ class AIService {
             user = await db.getUserById(caseData.user_id);
         }
 
-        const name = user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const name = user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Requester';
         const title = user?.signature_title || process.env.REQUESTER_TITLE || '';
         const organization = user?.signature_organization || '';
         const phone = user?.signature_phone || process.env.REQUESTER_PHONE || '';
@@ -148,7 +148,7 @@ class AIService {
      */
     sanitizeSignaturePlaceholders(text, userSignature) {
         if (!text) return text;
-        const name = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const name = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
         const title = userSignature?.title || process.env.REQUESTER_TITLE || '';
         const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
 
@@ -393,7 +393,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
         }
 
         // Get requester info from user signature, env, or defaults
-        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
         const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
         const requesterPhone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
 
@@ -840,7 +840,7 @@ Return concise legal citations and key statutory language with sources.`;
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
             const { adjustmentInstruction, lessonsContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
             const userSignature = await this.getUserSignatureForCase(caseData);
-            const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+            const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
             const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
             const correspondenceSection = correspondenceContext
                 ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
@@ -1999,7 +1999,7 @@ Return ONLY valid JSON.`;
 
         // Load requester info for signature
         const userSignature = await this.getUserSignatureForCase(caseData);
-        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Samuel Hylton';
+        const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
         const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
         const requesterEmail = userSignature?.email || process.env.SENDGRID_FROM_EMAIL || '';
 

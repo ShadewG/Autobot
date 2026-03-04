@@ -309,7 +309,7 @@ class PortalService {
                 return caseData.subject_name || caseData.case_name;
             }
             // Otherwise default to requester name (most forms ask for YOUR name)
-            return process.env.REQUESTER_NAME || 'Samuel Hylton';
+            return process.env.REQUESTER_NAME || 'Requester';
         }
 
         // Description/Details/Request
