@@ -90,7 +90,7 @@ function buildReadableResearchSummary(rawNotes) {
 
     if (execution.outcome === 'phone_fallback_no_new_channel') {
         const t = execution.phone_call_target || {};
-        lines.push('No new email/portal channel found after research; phone fallback selected.');
+        lines.push('No new channels beyond existing case contacts were found; phone follow-up selected.');
         if (t.agency_name || t.agency_phone || t.reason) {
             lines.push(
                 `Phone target: ${t.agency_name || 'Agency'}${t.agency_phone ? ` (${t.agency_phone})` : ''}` +
@@ -164,7 +164,7 @@ function extractPhoneCallPlan(rawNotes, row = {}) {
     const reason =
         String(target.reason || '').trim() ||
         (execution.outcome === 'phone_fallback_no_new_channel'
-            ? 'No new email/portal channel found'
+            ? 'No new channels beyond existing case contacts; use phone follow-up'
             : null);
 
     if (!agency_name && !agency_phone && !agency_email && !portal_url && !reason) return null;

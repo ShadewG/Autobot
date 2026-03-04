@@ -420,10 +420,16 @@ function categorizeReview(review: HumanReviewCase): ReviewCategory {
   const sub = (review.substatus || "").toUpperCase();
   const status = (review.status || "").toUpperCase();
   const portalStatus = (review.last_portal_status || "").toUpperCase();
+  const phoneOutcome = (review.phone_call_plan?.outcome || "").toUpperCase();
 
   // Research handoff / phone-call cases are not portal retries, even if
   // a historical portal URL exists on the case record.
-  if (status.includes("PHONE_CALL") || pr.includes("RESEARCH_HANDOFF")) {
+  if (
+    status.includes("PHONE_CALL") ||
+    pr.includes("RESEARCH_HANDOFF") ||
+    sub.includes("AGENCY_RESEARCH_COMPLETE") ||
+    phoneOutcome.includes("PHONE_FALLBACK")
+  ) {
     return "phone";
   }
   if (pr.includes("RESEARCH") || sub.includes("RESEARCH")) {
@@ -2187,7 +2193,7 @@ function MonitorPageContent() {
             );
           })()}
 
-          {selectedItem.data.research_summary && (
+          {categorizeReview(selectedItem.data) !== "phone" && selectedItem.data.research_summary && (
             <div className="border border-sky-700/50 bg-sky-950/20 p-3">
               <SectionLabel>Research Findings</SectionLabel>
               <p className="text-xs text-sky-200 whitespace-pre-wrap">
@@ -2207,7 +2213,8 @@ function MonitorPageContent() {
           )}
 
           {/* Portal info */}
-          {(selectedItem.data.portal_url || selectedItem.data.last_portal_task_url) && (
+          {categorizeReview(selectedItem.data) !== "phone" &&
+            (selectedItem.data.portal_url || selectedItem.data.last_portal_task_url) && (
             <div className="border p-3">
               <SectionLabel>Portal</SectionLabel>
               <div className="flex items-center gap-2 flex-wrap">
@@ -2425,15 +2432,6 @@ function MonitorPageContent() {
                           <Phone className="h-3 w-3 mr-1.5" />
                         )}
                         QUEUE PHONE CALL
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="flex-1"
-                        onClick={() => handleResolveReview("reprocess")}
-                        disabled={isSubmitting}
-                      >
-                        <RefreshCw className="h-3 w-3 mr-1.5" />
-                        RE-PROCESS
                       </Button>
                     </div>
                   </div>
