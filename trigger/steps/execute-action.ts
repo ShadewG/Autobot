@@ -603,9 +603,16 @@ export async function executeAction(
           const freshCase = await db.getCaseById(caseId);
           let current: any = {};
           if (freshCase?.contact_research_notes) {
-            current = typeof freshCase.contact_research_notes === "string"
-              ? JSON.parse(freshCase.contact_research_notes)
-              : freshCase.contact_research_notes;
+            if (typeof freshCase.contact_research_notes === "string") {
+              try {
+                current = JSON.parse(freshCase.contact_research_notes);
+              } catch {
+                // Backward compatibility: older rows stored plain text here.
+                current = { legacy_note_text: freshCase.contact_research_notes };
+              }
+            } else {
+              current = freshCase.contact_research_notes;
+            }
           }
           await db.updateCase(caseId, {
             contact_research_notes: JSON.stringify({
@@ -758,10 +765,13 @@ export async function executeAction(
       const contactSignalPortal = contactResult?.portal_url || null;
       const contactSignalPhone = contactResult?.contact_phone || contactResult?.phone || null;
       const contactSignalFax = contactResult?.contact_fax || contactResult?.fax || null;
+      const knownCaseEmailSignal = caseData?.alternate_agency_email || caseData?.agency_email || null;
+      const knownCasePortalSignal = caseData?.portal_url || null;
       const hasContactSignals = !!(contactSignalEmail || contactSignalPortal || contactSignalPhone || contactSignalFax);
+      const hasKnownCaseSignals = !!(knownCaseEmailSignal || knownCasePortalSignal);
 
       // If AI research itself failed (timeout/error), surface honest messaging
-      if (brief?.researchFailed && !hasContactSignals) {
+      if (brief?.researchFailed && !hasContactSignals && !hasKnownCaseSignals) {
         // If research fails, do not block human queue with retry gates; fall back
         // to a phone call task so operator can proceed immediately.
         const fallback = await buildPhoneFallbackPayload({
@@ -806,14 +816,14 @@ export async function executeAction(
         break;
       }
 
-      if (brief?.researchFailed && hasContactSignals) {
+      if (brief?.researchFailed && (hasContactSignals || hasKnownCaseSignals)) {
         await persistResearchExecutionMeta({
           outcome: "research_partial_with_channels",
           research_failed: true,
           research_failure_reason: brief.summary || "unknown error",
           candidate_channels_from_partial_research: {
-            email: contactSignalEmail,
-            portal: contactSignalPortal,
+            email: contactSignalEmail || knownCaseEmailSignal || null,
+            portal: contactSignalPortal || knownCasePortalSignal || null,
             phone: contactSignalPhone,
             fax: contactSignalFax,
           },

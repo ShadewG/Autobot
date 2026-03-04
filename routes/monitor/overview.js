@@ -28,17 +28,24 @@ function buildReadableResearchSummary(rawNotes) {
         if (top.reason) lines.push(`Why: ${String(top.reason).trim()}`);
         if (top.confidence != null) lines.push(`Confidence: ${top.confidence}`);
     }
+    const suggestedName = String(suggested?.[0]?.name || '').trim().toLowerCase();
+    const contactAgencyName = String(contactResult?.agency_name || contactResult?.name || '').trim().toLowerCase();
+    const contactMatchesSuggested = !suggestedName || !contactAgencyName
+        || contactAgencyName.includes(suggestedName)
+        || suggestedName.includes(contactAgencyName);
 
     const candidate = execution.candidate_channels || {};
     const discovered = execution.new_channels || {};
     const fallbackChannelsExist = !!(
-        contactResult.contact_email ||
-        contactResult.email ||
-        contactResult.portal_url ||
-        contactResult.contact_phone ||
-        contactResult.phone ||
-        contactResult.contact_fax ||
-        contactResult.fax
+        contactMatchesSuggested && (
+            contactResult.contact_email ||
+            contactResult.email ||
+            contactResult.portal_url ||
+            contactResult.contact_phone ||
+            contactResult.phone ||
+            contactResult.contact_fax ||
+            contactResult.fax
+        )
     );
     const executionChannelsExist = !!(
         candidate.email ||
@@ -65,10 +72,10 @@ function buildReadableResearchSummary(rawNotes) {
         lines.push(`New contact channels found: ${newChannels.join(', ')}`);
     } else {
         // Backward-compatible fallback for notes written before execution metadata.
-        const email = contactResult.contact_email || contactResult.email || null;
-        const portal = contactResult.portal_url || null;
-        const phone = contactResult.contact_phone || null;
-        const fax = contactResult.contact_fax || null;
+        const email = contactMatchesSuggested ? (contactResult.contact_email || contactResult.email || null) : null;
+        const portal = contactMatchesSuggested ? (contactResult.portal_url || null) : null;
+        const phone = contactMatchesSuggested ? (contactResult.contact_phone || null) : null;
+        const fax = contactMatchesSuggested ? (contactResult.contact_fax || null) : null;
         const candidateChannels = [];
         if (email) candidateChannels.push(`email ${email}`);
         if (portal) candidateChannels.push(`portal ${portal}`);
@@ -76,6 +83,8 @@ function buildReadableResearchSummary(rawNotes) {
         if (fax) candidateChannels.push(`fax ${fax}`);
         if (candidateChannels.length > 0) {
             lines.push(`Contact channels discovered (may already exist on case): ${candidateChannels.join(', ')}`);
+        } else if (!contactMatchesSuggested && contactAgencyName && suggestedName) {
+            lines.push('Recovered channels belonged to a different agency and were ignored.');
         }
     }
 
