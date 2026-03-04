@@ -21,12 +21,16 @@ const STATUS_MAP = {
     'needs_contact_info': 'NEEDS_HUMAN_REVIEW',
     'needs_human_fee_approval': 'NEEDS_HUMAN_REVIEW',
     'portal_in_progress': 'AWAITING_RESPONSE',
+    'needs_phone_call': 'NEEDS_HUMAN_REVIEW',
+    'needs_rebuttal': 'NEEDS_HUMAN_REVIEW',
+    'pending_fee_decision': 'NEEDS_HUMAN_REVIEW',
     'id_state': 'ID_STATE'
 };
 
 const REVIEW_DB_STATUSES = new Set([
     'needs_human_review',
     'needs_human_fee_approval',
+    'needs_contact_info',
     'needs_phone_call',
     'needs_rebuttal',
     'pending_fee_decision',
