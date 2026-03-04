@@ -980,17 +980,20 @@ function DetailV2Content() {
   const handleAddToPhoneQueue = async () => {
     if (!id) return;
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/phone-calls`, {
+      const res = await fetch("/api/phone-calls", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ case_id: Number(id), reason: "manual_add", notes: "Added from case detail page" }),
       });
       const data = await res.json();
+      if (!res.ok || data?.success === false) {
+        throw new Error(data?.error || "Failed to add to phone call queue");
+      }
       if (data.already_exists) toast.info("Already in the phone call queue");
       else toast.success("Added to phone call queue");
       mutate();
-    } catch (error) {
-      toast.error("Failed to add to phone queue");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to add to phone queue");
     }
   };
 
