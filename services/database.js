@@ -1634,6 +1634,23 @@ class DatabaseService {
         // Guardrail: do not create queue-active proposals for cases that are already advanced/closed.
         if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
             const caseRow = await this.getCaseById(proposalData.caseId);
+            const isResearchAction = proposalData.actionType === 'RESEARCH_AGENCY';
+            let hasActivePhoneFallback = false;
+            if (isResearchAction) {
+                try {
+                    const phoneActive = await this.query(
+                        `SELECT 1
+                           FROM phone_call_queue
+                          WHERE case_id = $1
+                            AND status IN ('pending','claimed')
+                          LIMIT 1`,
+                        [proposalData.caseId]
+                    );
+                    hasActivePhoneFallback = phoneActive.rows.length > 0;
+                } catch (e) {
+                    hasActivePhoneFallback = false;
+                }
+            }
             const allowInboundProposal =
                 !!proposalData.triggerMessageId
                 && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
@@ -1643,6 +1660,25 @@ class DatabaseService {
                 proposalData.proposalKey && proposalData.proposalKey.includes(':initial:');
             const isResearchProposal =
                 proposalData.proposalKey && proposalData.proposalKey.includes(':research:');
+            const blockResearchBecausePhoneFallback =
+                isResearchAction
+                && (
+                    caseRow?.status === 'needs_phone_call'
+                    || hasActivePhoneFallback
+                );
+            if (blockResearchBecausePhoneFallback) {
+                console.warn(
+                    `[DB] Auto-dismissing RESEARCH_AGENCY proposal for case ${proposalData.caseId}: phone fallback already active`
+                );
+                proposalData.status = 'DISMISSED';
+                proposalData.requiresHuman = false;
+                proposalData.canAutoExecute = false;
+                proposalData.warnings = [
+                    ...(proposalData.warnings || []),
+                    'auto_dismissed_research_phone_fallback_active'
+                ];
+                incomingStatus = 'DISMISSED';
+            }
             if (
                 caseRow
                 && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status)
