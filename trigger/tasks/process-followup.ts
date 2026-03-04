@@ -18,7 +18,7 @@ import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
-import type { FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
+import type { ActionType, FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -238,16 +238,26 @@ export const processFollowup = task({
     }
 
     // Step 7: Execute
-    await markStep("execute_action", `Run #${runId}: executing follow-up action`, { action_type: decision.actionType });
+    const currentProposal = await db.getProposalById(gate.proposalId);
+    const executionActionType = (currentProposal?.action_type || decision.actionType) as ActionType;
+    if (executionActionType !== decision.actionType) {
+      logger.warn("Follow-up execution action diverged from decision; using proposal action", {
+        caseId,
+        proposalId: gate.proposalId,
+        decisionAction: decision.actionType,
+        proposalAction: executionActionType,
+      });
+    }
+    await markStep("execute_action", `Run #${runId}: executing follow-up action`, { action_type: executionActionType });
     const execution = await executeAction(
-      caseId, gate.proposalId, decision.actionType, runId,
+      caseId, gate.proposalId, executionActionType, runId,
       draft, null, decision.reasoning
     );
 
     // Step 8: Commit
     await markStep("commit_state", `Run #${runId}: committing follow-up state`);
     await commitState(
-      caseId, runId, decision.actionType, decision.reasoning,
+      caseId, runId, executionActionType, decision.reasoning,
       1.0, "SCHEDULED_FOLLOWUP", execution.actionExecuted, execution.executionResult
     );
 
@@ -255,7 +265,7 @@ export const processFollowup = task({
     return {
       status: "completed",
       proposalId: gate.proposalId,
-      actionType: decision.actionType,
+      actionType: executionActionType,
       executed: execution.actionExecuted,
     };
   },

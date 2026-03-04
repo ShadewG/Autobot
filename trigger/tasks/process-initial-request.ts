@@ -19,7 +19,7 @@ import { commitState } from "../steps/commit-state";
 import { researchContext, emptyResearchContext } from "../steps/research-context";
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
-import type { HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
+import type { ActionType, HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
 
 const RESEARCH_INSTRUCTION_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
 
@@ -220,9 +220,11 @@ export const processInitialRequest = task({
 
           // APPROVE: execute
           await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
-          await markStep("execute_action", `Run #${runId}: executing adjusted initial action`, { action_type: originalActionType });
+          const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
+          const adjustedExecutionActionType = (adjustedProposalRow?.action_type || originalActionType) as ActionType;
+          await markStep("execute_action", `Run #${runId}: executing adjusted initial action`, { action_type: adjustedExecutionActionType });
           const execution = await executeAction(
-            caseId, adjustedGate.proposalId, originalActionType as any, runId,
+            caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
             adjustedDraft, null, adjustmentReasoning
           );
 
@@ -233,7 +235,7 @@ export const processInitialRequest = task({
 
           await markStep("commit_state", `Run #${runId}: committing adjusted initial state`);
           await commitState(
-            caseId, runId, originalActionType as any,
+            caseId, runId, adjustedExecutionActionType,
             adjustmentReasoning,
             0.9, "ADJUSTMENT", execution.actionExecuted, execution.executionResult
           );

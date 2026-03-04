@@ -251,9 +251,11 @@ export const processInbound = task({
 
           // APPROVE: execute the adjusted action
           await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
-          await markStep("execute_action", `Run #${runId}: executing approved adjusted action`, { action_type: originalActionType });
+          const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
+          const adjustedExecutionActionType = (adjustedProposalRow?.action_type || originalActionType) as ActionType;
+          await markStep("execute_action", `Run #${runId}: executing approved adjusted action`, { action_type: adjustedExecutionActionType });
           const execution = await executeAction(
-            caseId, adjustedGate.proposalId, originalActionType as any, runId,
+            caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
             adjustedDraft, null, adjustmentReasoning,
             undefined, undefined,
             null // classification: fast-path skips classify; side effects ran in original run
@@ -266,7 +268,7 @@ export const processInbound = task({
 
           await markStep("commit_state", `Run #${runId}: committing adjusted decision state`);
           await commitState(
-            caseId, runId, originalActionType,
+            caseId, runId, adjustedExecutionActionType,
             adjustmentReasoning,
             0.9, "ADJUSTMENT", execution.actionExecuted, execution.executionResult
           );

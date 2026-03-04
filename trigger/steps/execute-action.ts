@@ -137,6 +137,18 @@ export async function executeAction(
 
   // IDEMPOTENCY CHECK
   const existingProposal = await db.getProposalById(proposalId);
+  const proposalActionType = existingProposal?.action_type as ActionType | undefined;
+  let effectiveActionType: ActionType = actionType;
+  if (proposalActionType && proposalActionType !== actionType) {
+    logger.error("executeAction action mismatch; enforcing proposal action_type", {
+      caseId,
+      proposalId,
+      requestedActionType: actionType,
+      proposalActionType,
+      runId,
+    });
+    effectiveActionType = proposalActionType;
+  }
   if (existingProposal?.status === "EXECUTED") {
     return {
       actionExecuted: true,
@@ -166,7 +178,7 @@ export async function executeAction(
     logger.info("Skipping duplicate executeAction; proposal already has execution", {
       caseId,
       proposalId,
-      actionType,
+      actionType: effectiveActionType,
       existingExecutionId: prior.id,
       existingExecutionStatus: prior.status,
     });
@@ -184,7 +196,7 @@ export async function executeAction(
     "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
     "REFORMULATE_REQUEST", "SUBMIT_PORTAL",
   ];
-  if (OUTBOUND_ACTIONS.includes(actionType)) {
+  if (OUTBOUND_ACTIONS.includes(effectiveActionType)) {
     // Skip rate limit for chain follow-ups (pre-approved as part of chain)
     const isChainFollowUp = options?.chainId != null;
     if (!isChainFollowUp) {
@@ -219,7 +231,7 @@ export async function executeAction(
   const originalBodyHtml = draft.bodyHtml || existingProposal?.draft_body_html;
 
   // Claim execution
-  const executionKey = generateExecutionKey(caseId, actionType, proposalId);
+  const executionKey = generateExecutionKey(caseId, effectiveActionType, proposalId);
   const claimed = await db.claimProposalExecution(proposalId, executionKey);
   if (!claimed) {
     // Throw so Trigger.dev retries — a claim race is transient
@@ -292,8 +304,8 @@ export async function executeAction(
 
   // Portal check for SEND_ actions or explicit SUBMIT_PORTAL
   // If SUBMIT_PORTAL but no portal, downgrade to email send (common after agency redirect)
-  let resolvedActionType: ActionType = actionType;
-  if (actionType === "SUBMIT_PORTAL" && !hasPortal) {
+  let resolvedActionType: ActionType = effectiveActionType;
+  if (effectiveActionType === "SUBMIT_PORTAL" && !hasPortal) {
     if (isNonAutomatablePortalProvider(caseData?.portal_provider)) {
       logger.info("SUBMIT_PORTAL downgraded to email — provider marked as non-automatable", {
         caseId,
@@ -304,6 +316,15 @@ export async function executeAction(
     if (targetEmail) {
       logger.info("SUBMIT_PORTAL downgraded to email — no portal_url after agency override", { caseId, targetEmail });
       resolvedActionType = "SEND_INITIAL_REQUEST";
+      try {
+        await db.updateProposal(proposalId, { actionType: resolvedActionType });
+      } catch (err: any) {
+        logger.warn("Failed to update proposal action_type after SUBMIT_PORTAL downgrade", {
+          caseId,
+          proposalId,
+          error: err?.message || String(err),
+        });
+      }
     } else {
       throw new Error(`SUBMIT_PORTAL requested but no portal_url or email for case ${caseId}`);
     }
@@ -327,16 +348,16 @@ export async function executeAction(
         `Message to send:\n${portalInstructions}`;
     }
 
-    const portalResult = await portalExecutor.createPortalTask({
-      caseId,
-      caseData,
-      proposalId,
-      runId,
-      actionType,
-      subject,
-      bodyText: isFollowup && requestNumber ? portalInstructions : originalBodyText,
-      bodyHtml: originalBodyHtml,
-    });
+      const portalResult = await portalExecutor.createPortalTask({
+        caseId,
+        caseData,
+        proposalId,
+        runId,
+        actionType: resolvedActionType,
+        subject,
+        bodyText: isFollowup && requestNumber ? portalInstructions : originalBodyText,
+        bodyHtml: originalBodyHtml,
+      });
     await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_TASK_CREATED", {
       proposalId,
       portalTaskId: portalResult.portalTaskId,
