@@ -282,6 +282,150 @@ class SendGridService {
             .filter((token) => token.length >= 4 && !['police', 'department', 'office', 'county', 'city', 'records'].includes(token));
     }
 
+    extractPortalHost(url) {
+        if (!url) return null;
+        try {
+            return new URL(url).hostname.toLowerCase();
+        } catch (_) {
+            return null;
+        }
+    }
+
+    parseStateSuffixHint(value) {
+        if (!value) return null;
+        const lower = String(value).toLowerCase();
+        const m = lower.match(/^([a-z]{4,})([a-z]{2})$/);
+        if (!m) return lower;
+        const stateCodes = new Set([
+            'al', 'ak', 'az', 'ar', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 'hi', 'id', 'il',
+            'in', 'ia', 'ks', 'ky', 'la', 'me', 'md', 'ma', 'mi', 'mn', 'ms', 'mo', 'mt',
+            'ne', 'nv', 'nh', 'nj', 'nm', 'ny', 'nc', 'nd', 'oh', 'ok', 'or', 'pa', 'ri',
+            'sc', 'sd', 'tn', 'tx', 'ut', 'vt', 'va', 'wa', 'wv', 'wi', 'wy', 'dc'
+        ]);
+        return stateCodes.has(m[2]) ? m[1] : lower;
+    }
+
+    normalizeContactEmail(rawEmail) {
+        if (!rawEmail) return null;
+        const candidate = String(rawEmail).trim().toLowerCase().replace(/^mailto:/, '');
+        return candidate.includes('@') ? candidate : null;
+    }
+
+    async reconcileCaseAgencyFromPortalSignals(caseData, thread, { fromEmail = null, portalUrl = null, provider = null } = {}) {
+        if (!caseData?.id) return null;
+
+        const normalizedPortalUrl = normalizePortalUrl(portalUrl || caseData.portal_url || null);
+        const portalHost = this.extractPortalHost(normalizedPortalUrl);
+        const fromDomain = this.emailDomain(fromEmail || '');
+        const portalSubdomain = portalHost ? portalHost.split('.')[0] : '';
+        const cityHint = this.parseStateSuffixHint(portalSubdomain);
+
+        if (!portalHost && !fromDomain) return null;
+
+        const candidates = await db.query(
+            `SELECT
+                id, name, state, email_main, email_foia, portal_url, portal_url_alt,
+                (
+                  CASE
+                    WHEN $1::text IS NOT NULL AND (
+                      LOWER(COALESCE(portal_url, '')) LIKE '%' || $1 || '%'
+                      OR LOWER(COALESCE(portal_url_alt, '')) LIKE '%' || $1 || '%'
+                    ) THEN 6 ELSE 0
+                  END
+                  + CASE
+                    WHEN $2::text IS NOT NULL AND (
+                      LOWER(COALESCE(email_main, '')) LIKE '%' || $2
+                      OR LOWER(COALESCE(email_foia, '')) LIKE '%' || $2
+                    ) THEN 4 ELSE 0
+                  END
+                  + CASE
+                    WHEN $3::text <> '' AND LOWER(name) LIKE '%' || $3 || '%' THEN 5 ELSE 0
+                  END
+                  + CASE
+                    WHEN $4::text <> '' AND LOWER(name) LIKE '%' || $4 || '%' THEN 2 ELSE 0
+                  END
+                ) AS score
+             FROM agencies
+             WHERE
+               ($1::text IS NOT NULL AND (
+                 LOWER(COALESCE(portal_url, '')) LIKE '%' || $1 || '%'
+                 OR LOWER(COALESCE(portal_url_alt, '')) LIKE '%' || $1 || '%'
+               ))
+               OR ($2::text IS NOT NULL AND (
+                 LOWER(COALESCE(email_main, '')) LIKE '%' || $2
+                 OR LOWER(COALESCE(email_foia, '')) LIKE '%' || $2
+               ))
+             ORDER BY score DESC, id DESC
+             LIMIT 10`,
+            [
+                portalHost || null,
+                fromDomain || null,
+                cityHint || '',
+                portalSubdomain || ''
+            ]
+        );
+
+        const chosen = (candidates.rows || [])[0];
+        if (!chosen || Number(chosen.score || 0) <= 0) return null;
+
+        const agencyEmail =
+            this.normalizeContactEmail(fromEmail) ||
+            this.normalizeContactEmail(chosen.email_main) ||
+            this.normalizeContactEmail(chosen.email_foia) ||
+            null;
+        const agencyPortalUrl = normalizedPortalUrl || chosen.portal_url || chosen.portal_url_alt || null;
+        const agencyProvider = provider || detectPortalProviderByUrl(agencyPortalUrl)?.name || null;
+
+        let caseAgency = (await db.query(
+            `SELECT * FROM case_agencies
+             WHERE case_id = $1 AND agency_id = $2 AND is_active = true
+             ORDER BY is_primary DESC, id DESC
+             LIMIT 1`,
+            [caseData.id, chosen.id]
+        )).rows[0] || null;
+
+        if (!caseAgency) {
+            caseAgency = await db.addCaseAgency(caseData.id, {
+                agency_id: chosen.id,
+                agency_name: chosen.name,
+                agency_email: agencyEmail,
+                portal_url: agencyPortalUrl,
+                portal_provider: agencyProvider,
+                is_primary: false,
+                added_source: 'portal_signal_reconciliation',
+                status: 'active',
+                notes: `Reconciled from inbound portal/email signal (${fromEmail || 'unknown'})`
+            });
+        } else {
+            await db.updateCaseAgency(caseAgency.id, {
+                agency_name: chosen.name,
+                agency_email: agencyEmail || caseAgency.agency_email || null,
+                portal_url: agencyPortalUrl || caseAgency.portal_url || null,
+                portal_provider: agencyProvider || caseAgency.portal_provider || null
+            });
+            caseAgency = await db.getCaseAgencyById(caseAgency.id);
+        }
+
+        if (!caseAgency.is_primary) {
+            await db.switchPrimaryAgency(caseData.id, caseAgency.id);
+            caseAgency = await db.getCaseAgencyById(caseAgency.id);
+        }
+
+        if (thread?.id && thread.case_agency_id !== caseAgency.id) {
+            await db.updateThread(thread.id, { case_agency_id: caseAgency.id });
+        }
+
+        await db.logActivity('agency_signal_reconciled', `Reconciled case agency from inbound portal/email signals to ${chosen.name}`, {
+            case_id: caseData.id,
+            portal_host: portalHost,
+            from_email: fromEmail,
+            agency_id: chosen.id,
+            agency_name: chosen.name
+        });
+
+        return caseAgency;
+    }
+
     async resolveCaseAgencyForMessage(caseId, { fromEmail = null, toEmail = null, subject = '', text = '' } = {}) {
         try {
             const agencies = await db.getCaseAgencies(caseId, false);
@@ -643,6 +787,18 @@ class SendGridService {
                     caseData.portal_url = portalUrl;
                 }
 
+                const reconciledAgency = await this.reconcileCaseAgencyFromPortalSignals(caseData, thread, {
+                    fromEmail,
+                    portalUrl,
+                    provider: portalDetection.provider
+                });
+                if (reconciledAgency) {
+                    caseData.agency_name = reconciledAgency.agency_name;
+                    caseData.agency_email = reconciledAgency.agency_email;
+                    caseData.portal_url = reconciledAgency.portal_url || caseData.portal_url;
+                    caseData.portal_provider = reconciledAgency.portal_provider || caseData.portal_provider;
+                }
+
                 await db.logActivity('portal_notification', `Portal update (${portalDetection.provider}) received for ${caseData.case_name}`, {
                     case_id: caseData.id,
                     message_id: message.id,
@@ -680,6 +836,16 @@ class SendGridService {
                 await transitionCaseRuntimeWithRetry(caseData.id, 'PORTAL_STARTED', {
                     substatus: 'Confirmation link received - retrying portal submission',
                 });
+
+                const reconciledAgency = await this.reconcileCaseAgencyFromPortalSignals(caseData, thread, {
+                    fromEmail,
+                    portalUrl: confirmationUrl,
+                    provider: 'nextrequest'
+                });
+                if (reconciledAgency) {
+                    caseData.agency_name = reconciledAgency.agency_name;
+                    caseData.agency_email = reconciledAgency.agency_email;
+                }
 
                 caseData.portal_url = confirmationUrl;
 
