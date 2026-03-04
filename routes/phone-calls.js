@@ -373,10 +373,12 @@ router.post('/:id/complete', async (req, res) => {
 
         // Fire-and-forget: AI suggests next step based on call outcome
         let nextStepSuggestion = null;
+        let callConversationSummary = null;
+        let callConversationMessageId = null;
+        const caseData = await db.getCaseById(task.case_id);
         if (notes && (outcome === 'connected' || outcome === 'resolved' || outcome === 'transferred')) {
             try {
                 const aiService = require('../services/ai-service');
-                const caseData = await db.getCaseById(task.case_id);
                 nextStepSuggestion = await aiService.suggestNextStepAfterCall({
                     outcome,
                     notes,
@@ -390,11 +392,87 @@ router.post('/:id/complete', async (req, res) => {
             }
         }
 
+        // Persist this phone-call outcome into the case conversation thread so it
+        // appears alongside inbound/outbound correspondence in the UI.
+        try {
+            const aiService = require('../services/ai-service');
+            callConversationSummary = await aiService.summarizePhoneCallForConversation({
+                outcome,
+                notes: notes || '',
+                checked_points: checked_points || [],
+                case_name: caseData?.case_name,
+                agency_name: caseData?.agency_name,
+            });
+
+            let thread = await db.getThreadByCaseId(task.case_id);
+            if (!thread) {
+                const threadResult = await db.query(`
+                    INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+                    VALUES ($1, $2, NOW(), NOW())
+                    ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
+                    RETURNING *
+                `, [task.case_id, `Correspondence for case ${task.case_id}`]);
+                thread = threadResult.rows[0];
+            }
+
+            const callTimestamp = new Date().toISOString();
+            const keyPoints = Array.isArray(callConversationSummary?.key_points)
+                ? callConversationSummary.key_points.filter(Boolean)
+                : [];
+            const checkedPointsList = Array.isArray(checked_points) && checked_points.length > 0
+                ? checked_points.join(', ')
+                : null;
+
+            const bodyLines = [
+                `Phone call completed at ${callTimestamp}.`,
+                `Outcome: ${outcome}.`,
+                notes ? `Operator notes: ${notes}` : null,
+                checkedPointsList ? `Talking points covered: ${checkedPointsList}` : null,
+                callConversationSummary?.summary ? `AI summary: ${callConversationSummary.summary}` : null,
+                keyPoints.length > 0 ? `AI key points: ${keyPoints.join(' | ')}` : null,
+                callConversationSummary?.recommended_follow_up
+                    ? `AI recommended follow-up: ${callConversationSummary.recommended_follow_up}`
+                    : null,
+            ].filter(Boolean);
+
+            const conversationMessage = await db.createMessage({
+                thread_id: thread.id,
+                case_id: task.case_id,
+                message_id: `phone-call:${id}:${Date.now()}`,
+                sendgrid_message_id: null,
+                direction: 'inbound',
+                from_email: task.agency_name || 'Agency Contact',
+                to_email: 'Our Team',
+                subject: `Phone call update — ${outcome.replace(/_/g, ' ')}`,
+                body_text: bodyLines.join('\n\n'),
+                body_html: null,
+                message_type: 'phone_call',
+                portal_notification: false,
+                sent_at: null,
+                received_at: new Date(),
+                summary: callConversationSummary?.summary || null,
+                metadata: {
+                    source: 'phone_call_queue',
+                    phone_call_task_id: id,
+                    outcome,
+                    completed_by: completedBy || 'unknown',
+                    checked_points: checked_points || [],
+                    ai_summary: callConversationSummary || null,
+                    next_step: nextStepSuggestion || null,
+                },
+            });
+            callConversationMessageId = conversationMessage?.id || null;
+        } catch (err) {
+            console.warn('Failed to write phone call summary into conversation:', err.message);
+        }
+
         res.json({
             success: true,
             message: 'Task completed',
             task: updated,
             next_step: nextStepSuggestion,
+            call_summary: callConversationSummary,
+            conversation_message_id: callConversationMessageId,
             outcome
         });
     } catch (error) {

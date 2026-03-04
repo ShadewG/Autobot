@@ -700,10 +700,13 @@ function toThreadMessage(message, attachments = []) {
     const caseAgencyIdRaw = meta.case_agency_id;
     const caseAgencyId = Number.isFinite(Number(caseAgencyIdRaw)) ? Number(caseAgencyIdRaw) : null;
 
+    const messageType = String(message.message_type || '').toLowerCase();
+    const isCallMessage = messageType === 'phone_call' || messageType === 'call';
+
     return {
         id: message.id,  // Numeric ID for API calls
         direction: message.direction === 'outbound' ? 'OUTBOUND' : 'INBOUND',
-        channel: message.portal_notification ? 'PORTAL' : 'EMAIL',
+        channel: message.portal_notification ? 'PORTAL' : (isCallMessage ? 'CALL' : 'EMAIL'),
         from_email: message.from_email || '—',
         to_email: message.to_email || '—',
         subject: message.subject || '(No subject)',
@@ -714,6 +717,7 @@ function toThreadMessage(message, attachments = []) {
         processed_at: message.processed_at || null,  // When this message was processed by the agent
         case_agency_id: caseAgencyId,
         email_thread_id: Number.isFinite(Number(message.thread_id)) ? Number(message.thread_id) : null,
+        summary: message.summary || null,
         attachments: attachments
     };
 }

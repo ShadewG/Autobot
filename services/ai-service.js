@@ -1436,6 +1436,43 @@ Respond with JSON:
     }
 
     /**
+     * Summarize a phone call outcome into a concise conversation entry.
+     * This is used to append call context into the case message thread.
+     */
+    async summarizePhoneCallForConversation({ outcome, notes, checked_points, case_name, agency_name }) {
+        try {
+            const prompt = `Summarize this FOIA phone call update for the case conversation log.
+
+Case: ${case_name || 'Unknown'}
+Agency: ${agency_name || 'Unknown'}
+Outcome: ${outcome || 'unknown'}
+Operator notes: ${notes || 'none'}
+${checked_points?.length ? `Talking points covered: ${checked_points.join(', ')}` : ''}
+
+Return JSON only:
+{
+  "summary": "2-4 sentence factual summary of what happened and what it means for the case",
+  "key_points": ["short bullet", "short bullet"],
+  "recommended_follow_up": "single sentence next step"
+}`;
+
+            const response = await this.openai.responses.create({
+                model: 'gpt-4o-mini',
+                input: [{ role: 'user', content: prompt }],
+                text: { format: { type: 'json_object' } },
+            });
+
+            const raw = response.output_text?.trim();
+            const jsonMatch = raw?.match(/\{[\s\S]*\}/);
+            if (jsonMatch) return JSON.parse(jsonMatch[0]);
+            return null;
+        } catch (error) {
+            console.warn('Error summarizing phone call for conversation:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Triage a stuck case in needs_human_review.
      * Looks at case context, recent messages, and prior proposals to recommend the right action.
      */
