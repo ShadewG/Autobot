@@ -2147,14 +2147,25 @@ function MonitorPageContent() {
           </div>
 
           {/* Substatus / reason */}
-          {selectedItem.data.substatus && (
+          {(() => {
+            const rawReason = selectedItem.data.substatus || "";
+            const summary = selectedItem.data.research_summary || "";
+            const hasRecoveredChannels =
+              /Contact channels discovered|New contact channels found|Phone target:/i.test(summary);
+            const displayReason =
+              /agency_research_failed/i.test(rawReason) && hasRecoveredChannels
+                ? "agency_research_complete"
+                : rawReason;
+            if (!displayReason) return null;
+            return (
             <div className="border border-purple-700/50 bg-purple-950/20 p-3">
               <SectionLabel>Review Reason</SectionLabel>
               <p className="text-xs text-purple-300">
-                {selectedItem.data.substatus}
+                {displayReason}
               </p>
             </div>
-          )}
+            );
+          })()}
 
           {selectedItem.data.research_summary && (
             <div className="border border-sky-700/50 bg-sky-950/20 p-3">
