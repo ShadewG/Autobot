@@ -92,14 +92,15 @@ class AIService {
         if (signatureLines.length === 0) return cleaned;
 
         const lines = cleaned.replace(/\r\n/g, '\n').split('\n');
-        const closingRegex = /^\s*(thank you(?: for your assistance)?|sincerely|best regards|regards)\s*[,.!]*\s*$/i;
-        let closingIdx = -1;
-        for (let i = lines.length - 1; i >= 0; i--) {
+        const closingRegex = /^\s*(thank you(?:\b.*)?|sincerely|best regards|warm regards|kind regards|regards|respectfully)\s*[,.!]*\s*$/i;
+        const closingMatches = [];
+        for (let i = 0; i < lines.length; i++) {
             if (closingRegex.test(lines[i])) {
-                closingIdx = i;
-                break;
+                closingMatches.push(i);
             }
         }
+        // Keep the earliest detected closing and rebuild a single canonical signature block.
+        const closingIdx = closingMatches.length > 0 ? closingMatches[0] : -1;
 
         const rebuilt = closingIdx >= 0
             ? [...lines.slice(0, closingIdx + 1), '', ...signatureLines]
