@@ -7,7 +7,15 @@ const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
 
 const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
-const HUMAN_REVIEW_CASE_STATUSES = ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call'];
+const HUMAN_REVIEW_CASE_STATUSES = [
+    'needs_human_review',
+    'needs_human_fee_approval',
+    'needs_phone_call',
+    'needs_contact_info',
+    'needs_rebuttal',
+    'pending_fee_decision',
+    'id_state'
+];
 const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled', 'needs_phone_call'];
 // CLEAR is used when a case transitions INTO one of these statuses — dismiss stale proposals.
 // Excludes needs_phone_call because that is still a human review state where proposals may be relevant.
@@ -41,6 +49,39 @@ class DatabaseService {
             return res;
         } catch (error) {
             console.error('Database query error:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Acquire a session-level advisory lock.
+     * Returns an async release function when lock is acquired, or null if lock is already held.
+     */
+    async acquireAdvisoryLock(lockKey) {
+        const client = await this.pool.connect();
+        try {
+            const result = await client.query(
+                'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+                [String(lockKey)]
+            );
+
+            if (!result.rows[0]?.locked) {
+                client.release();
+                return null;
+            }
+
+            let released = false;
+            return async () => {
+                if (released) return;
+                released = true;
+                try {
+                    await client.query('SELECT pg_advisory_unlock(hashtext($1))', [String(lockKey)]);
+                } finally {
+                    client.release();
+                }
+            };
+        } catch (error) {
+            client.release();
             throw error;
         }
     }

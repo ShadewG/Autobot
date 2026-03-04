@@ -575,15 +575,26 @@ router.get('/:id/workspace', async (req, res) => {
         }
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
+        const dbStatus = String(rawCaseData?.status || '').toLowerCase();
+        const isHumanReviewStatus = [
+            'needs_human_review',
+            'needs_human_fee_approval',
+            'needs_phone_call',
+            'needs_contact_info',
+            'needs_rebuttal',
+            'pending_fee_decision',
+            'id_state'
+        ].includes(dbStatus);
         requestDetail.review_state = review_state;
         requestDetail.control_state = control_state;
         requestDetail.control_mismatches = control_mismatches;
-        requestDetail.requires_human = review_state === 'DECISION_REQUIRED';
-        if (review_state !== 'DECISION_REQUIRED') {
+        let effectiveRequiresHuman =
+            review_state === 'DECISION_REQUIRED' ||
+            Boolean(rawCaseData?.requires_human) ||
+            isHumanReviewStatus;
+        if (review_state !== 'DECISION_REQUIRED' && !isHumanReviewStatus) {
             requestDetail.pause_reason = null;
         }
-        const dbStatus = String(rawCaseData?.status || '').toLowerCase();
-        const isHumanReviewStatus = ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call', 'needs_rebuttal', 'pending_fee_decision'].includes(dbStatus);
         const runStatus = String(activeRun?.status || '').toLowerCase();
         const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
         const portalStatus = String(caseData.active_portal_task_status || '').toUpperCase();
@@ -599,6 +610,8 @@ router.get('/:id/workspace', async (req, res) => {
         if (shouldNormalizeStaleReviewStatus) {
             requestDetail.status = 'AWAITING_RESPONSE';
             requestDetail.substatus = requestDetail.substatus || 'Recovered from stale human-review status';
+            effectiveRequiresHuman = false;
+            requestDetail.pause_reason = null;
             db.query(
                 `UPDATE cases
                  SET status = 'awaiting_response',
@@ -607,7 +620,7 @@ router.get('/:id/workspace', async (req, res) => {
                  WHERE id = $1
                    AND status = ANY($2::text[])
                    AND (requires_human = false OR requires_human IS NULL)`,
-                [requestId, ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call', 'needs_rebuttal', 'pending_fee_decision']]
+                [requestId, ['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call', 'needs_contact_info', 'needs_rebuttal', 'pending_fee_decision']]
             ).catch((err) => {
                 logger.warn('[workspace] failed to normalize stale review status', {
                     case_id: requestId,
@@ -615,6 +628,7 @@ router.get('/:id/workspace', async (req, res) => {
                 });
             });
         }
+        requestDetail.requires_human = effectiveRequiresHuman;
 
         res.json({
             success: true,
