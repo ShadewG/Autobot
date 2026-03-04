@@ -707,6 +707,8 @@ function toThreadMessage(message, attachments = []) {
         id: message.id,  // Numeric ID for API calls
         direction: message.direction === 'outbound' ? 'OUTBOUND' : 'INBOUND',
         channel: message.portal_notification ? 'PORTAL' : (isCallMessage ? 'CALL' : 'EMAIL'),
+        message_type: messageType || null,
+        portal_notification_type: message.portal_notification_type || null,
         from_email: message.from_email || '—',
         to_email: message.to_email || '—',
         subject: message.subject || '(No subject)',

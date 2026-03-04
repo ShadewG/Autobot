@@ -6,14 +6,176 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { ThreadMessage } from "@/lib/types";
 import { formatDateTime, cn } from "@/lib/utils";
-import { Mail, Globe, Phone, Truck, FileText, FileCode, Loader2, Paperclip, Download, ExternalLink, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  Mail, Globe, Phone, Truck, FileText, FileCode, Loader2,
+  Paperclip, Download, ExternalLink, ChevronDown, ChevronRight,
+  Send, DollarSign, Scale, RotateCcw, Search, AlertTriangle,
+  Bot,
+} from "lucide-react";
 
-const channelIcons: Record<string, React.ReactNode> = {
-  EMAIL: <Mail className="h-3 w-3" />,
-  PORTAL: <Globe className="h-3 w-3" />,
-  CALL: <Phone className="h-3 w-3" />,
-  MAIL: <Truck className="h-3 w-3" />,
+// ── Message type config ─────────────────────────────────────────────────────
+
+interface MessageStyle {
+  label: string;
+  icon: React.ReactNode;
+  borderColor: string;
+  bgColor: string;
+  labelColor: string;
+}
+
+const OUTBOUND_STYLES: Record<string, MessageStyle> = {
+  initial_request: {
+    label: "Initial Request",
+    icon: <Send className="h-3 w-3" />,
+    borderColor: "border-l-blue-500",
+    bgColor: "bg-blue-500/5",
+    labelColor: "text-blue-400",
+  },
+  send_pdf_email: {
+    label: "PDF Submission",
+    icon: <FileText className="h-3 w-3" />,
+    borderColor: "border-l-blue-500",
+    bgColor: "bg-blue-500/5",
+    labelColor: "text-blue-400",
+  },
+  reformulate_request: {
+    label: "Reformulated Request",
+    icon: <RotateCcw className="h-3 w-3" />,
+    borderColor: "border-l-sky-500",
+    bgColor: "bg-sky-500/5",
+    labelColor: "text-sky-400",
+  },
+  negotiate_fee: {
+    label: "Fee Negotiation",
+    icon: <DollarSign className="h-3 w-3" />,
+    borderColor: "border-l-amber-500",
+    bgColor: "bg-amber-500/5",
+    labelColor: "text-amber-400",
+  },
+  accept_fee: {
+    label: "Fee Accepted",
+    icon: <DollarSign className="h-3 w-3" />,
+    borderColor: "border-l-green-500",
+    bgColor: "bg-green-500/5",
+    labelColor: "text-green-400",
+  },
+  decline_fee: {
+    label: "Fee Declined",
+    icon: <DollarSign className="h-3 w-3" />,
+    borderColor: "border-l-red-500",
+    bgColor: "bg-red-500/5",
+    labelColor: "text-red-400",
+  },
+  appeal: {
+    label: "Appeal",
+    icon: <Scale className="h-3 w-3" />,
+    borderColor: "border-l-orange-500",
+    bgColor: "bg-orange-500/5",
+    labelColor: "text-orange-400",
+  },
+  rebuttal: {
+    label: "Rebuttal",
+    icon: <AlertTriangle className="h-3 w-3" />,
+    borderColor: "border-l-orange-500",
+    bgColor: "bg-orange-500/5",
+    labelColor: "text-orange-400",
+  },
+  followup: {
+    label: "Follow-up",
+    icon: <RotateCcw className="h-3 w-3" />,
+    borderColor: "border-l-indigo-500",
+    bgColor: "bg-indigo-500/5",
+    labelColor: "text-indigo-400",
+  },
+  follow_up: {
+    label: "Follow-up",
+    icon: <RotateCcw className="h-3 w-3" />,
+    borderColor: "border-l-indigo-500",
+    bgColor: "bg-indigo-500/5",
+    labelColor: "text-indigo-400",
+  },
+  clarification: {
+    label: "Clarification",
+    icon: <Search className="h-3 w-3" />,
+    borderColor: "border-l-cyan-500",
+    bgColor: "bg-cyan-500/5",
+    labelColor: "text-cyan-400",
+  },
+  fee_waiver_request: {
+    label: "Fee Waiver Request",
+    icon: <DollarSign className="h-3 w-3" />,
+    borderColor: "border-l-amber-500",
+    bgColor: "bg-amber-500/5",
+    labelColor: "text-amber-400",
+  },
+  other: {
+    label: "Manual Entry",
+    icon: <FileText className="h-3 w-3" />,
+    borderColor: "border-l-gray-500",
+    bgColor: "bg-muted/50",
+    labelColor: "text-muted-foreground",
+  },
 };
+
+const OUTBOUND_DEFAULT: MessageStyle = {
+  label: "Sent",
+  icon: <Mail className="h-3 w-3" />,
+  borderColor: "border-l-primary",
+  bgColor: "bg-primary/5",
+  labelColor: "text-primary",
+};
+
+const PORTAL_STYLE: MessageStyle = {
+  label: "Portal Notification",
+  icon: <Globe className="h-3 w-3" />,
+  borderColor: "border-l-cyan-500",
+  bgColor: "bg-cyan-500/5",
+  labelColor: "text-cyan-400",
+};
+
+const PORTAL_SUBMISSION_STYLE: MessageStyle = {
+  label: "Portal — Action Required",
+  icon: <Globe className="h-3 w-3" />,
+  borderColor: "border-l-cyan-500",
+  bgColor: "bg-cyan-500/8",
+  labelColor: "text-cyan-400",
+};
+
+const PORTAL_STATUS_STYLE: MessageStyle = {
+  label: "Portal Status Update",
+  icon: <Globe className="h-3 w-3" />,
+  borderColor: "border-l-teal-500",
+  bgColor: "bg-teal-500/5",
+  labelColor: "text-teal-400",
+};
+
+const INBOUND_DEFAULT: MessageStyle = {
+  label: "Email",
+  icon: <Mail className="h-3 w-3" />,
+  borderColor: "border-l-amber-500",
+  bgColor: "bg-muted",
+  labelColor: "text-amber-400",
+};
+
+function getMessageStyle(message: ThreadMessage): MessageStyle {
+  const isOutbound = message.direction === "OUTBOUND";
+
+  // Portal messages
+  if (message.channel === "PORTAL") {
+    if (message.portal_notification_type === "submission_required") return PORTAL_SUBMISSION_STYLE;
+    if (message.portal_notification_type === "status_update") return PORTAL_STATUS_STYLE;
+    return PORTAL_STYLE;
+  }
+
+  // Outbound — style by message_type
+  if (isOutbound) {
+    const mt = message.message_type || "";
+    return OUTBOUND_STYLES[mt] || OUTBOUND_DEFAULT;
+  }
+
+  // Inbound email
+  return INBOUND_DEFAULT;
+}
 
 // ── Phone call body parser ──────────────────────────────────────────────────
 
@@ -45,12 +207,10 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
   const [expanded, setExpanded] = useState(false);
   const parsed = parsePhoneCallBody(message.body);
   const summary = message.summary || "";
-  // Extract outcome from subject ("Phone call update — connected")
   const subjectOutcome = message.subject?.match(/—\s*(.+)$/)?.[1]?.trim() || parsed.outcome;
 
   return (
     <div className="w-full overflow-hidden">
-      {/* Header */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
         <Phone className="h-3 w-3 text-violet-400" />
         <span className="font-medium text-violet-400">Phone Call</span>
@@ -67,14 +227,9 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
         <span className="whitespace-nowrap">{formatDateTime(message.sent_at)}</span>
       </div>
 
-      {/* Phone call card */}
       <div className="p-3 w-full border-l-4 border-l-violet-500 bg-violet-500/5 overflow-hidden">
-        {/* AI Summary (always visible) */}
-        {summary && (
-          <p className="text-sm">{summary}</p>
-        )}
+        {summary && <p className="text-sm">{summary}</p>}
 
-        {/* Expand toggle */}
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground mt-2 transition-colors"
@@ -83,7 +238,6 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
           {expanded ? "Hide details" : "Show details"}
         </button>
 
-        {/* Expanded details */}
         {expanded && (
           <div className="mt-2 pt-2 border-t border-border/30 space-y-2">
             {parsed.operatorNotes && (
@@ -118,7 +272,52 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
   );
 });
 
-// ── Email Message Bubble ────────────────────────────────────────────────────
+// ── Attachments ─────────────────────────────────────────────────────────────
+
+function AttachmentList({ attachments }: { attachments: ThreadMessage["attachments"] }) {
+  if (!attachments || attachments.length === 0) return null;
+
+  return (
+    <div className="mt-2 space-y-1">
+      {attachments.map((att, i) => {
+        const isPdf = att.content_type === "application/pdf" || att.filename?.toLowerCase().endsWith(".pdf");
+        const downloadUrl = `/api/monitor/attachments/${att.id}/download`;
+        const sizeLabel = att.size_bytes
+          ? att.size_bytes > 1024 * 1024
+            ? `${(att.size_bytes / (1024 * 1024)).toFixed(1)} MB`
+            : `${Math.round(att.size_bytes / 1024)} KB`
+          : null;
+
+        return (
+          <div key={i} className="flex items-center gap-2 rounded border border-border/60 bg-muted/30 px-2.5 py-1.5">
+            <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs font-medium truncate flex-1 min-w-0">{att.filename}</span>
+            {sizeLabel && <span className="text-[10px] text-muted-foreground shrink-0">{sizeLabel}</span>}
+            {isPdf && (
+              <a
+                href={downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+              >
+                <ExternalLink className="h-3 w-3" /> View
+              </a>
+            )}
+            <a
+              href={downloadUrl}
+              download={att.filename}
+              className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+            >
+              <Download className="h-3 w-3" /> Download
+            </a>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Message Bubble ──────────────────────────────────────────────────────────
 
 interface MessageBubbleProps {
   message: ThreadMessage;
@@ -127,19 +326,22 @@ interface MessageBubbleProps {
 
 const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageBubbleProps) {
   const isOutbound = message.direction === "OUTBOUND";
+  const style = getMessageStyle(message);
 
-  // Determine which body content to show
   const displayBody = showRaw && message.raw_body ? message.raw_body : message.body;
   const hasRawVersion = message.raw_body && message.raw_body !== message.body;
 
   return (
     <div className="w-full overflow-hidden">
-      {/* Header - always full width */}
+      {/* Header */}
       <div className={cn(
         "flex items-center gap-1.5 text-xs text-muted-foreground mb-1",
         isOutbound ? "justify-end" : "justify-start"
       )}>
-        {channelIcons[message.channel]}
+        <span className={style.labelColor}>{style.icon}</span>
+        <Badge variant="outline" className={cn("text-[10px] border-current/20", style.labelColor)}>
+          {style.label}
+        </Badge>
         <span className="shrink-0">{isOutbound ? "To:" : "From:"}</span>
         <span className="font-medium truncate max-w-[200px]">
           {isOutbound ? (message.to_email || "Unknown") : (message.from_email || "records@agency.gov")}
@@ -184,15 +386,8 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
         </div>
       )}
 
-      {/* Message bubble - full width, colored border to indicate direction */}
-      <div
-        className={cn(
-          "p-3 w-full border-l-4 overflow-hidden",
-          isOutbound
-            ? "bg-primary/5 border-l-primary"
-            : "bg-muted border-l-amber-500"
-        )}
-      >
+      {/* Message bubble */}
+      <div className={cn("p-3 w-full border-l-4 overflow-hidden", style.borderColor, style.bgColor)}>
         <p className="text-xs font-semibold mb-1.5">{message.subject}</p>
         <p className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{displayBody}</p>
       </div>
@@ -205,48 +400,12 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
         </div>
       )}
 
-      {/* Attachments */}
-      {message.attachments.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {message.attachments.map((att, i) => {
-            const isPdf = att.content_type === "application/pdf" || att.filename?.toLowerCase().endsWith(".pdf");
-            const downloadUrl = `/api/monitor/attachments/${att.id}/download`;
-            const sizeLabel = att.size_bytes
-              ? att.size_bytes > 1024 * 1024
-                ? `${(att.size_bytes / (1024 * 1024)).toFixed(1)} MB`
-                : `${Math.round(att.size_bytes / 1024)} KB`
-              : null;
-
-            return (
-              <div key={i} className="flex items-center gap-2 rounded border border-border/60 bg-muted/30 px-2.5 py-1.5">
-                <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs font-medium truncate flex-1 min-w-0">{att.filename}</span>
-                {sizeLabel && <span className="text-[10px] text-muted-foreground shrink-0">{sizeLabel}</span>}
-                {isPdf && (
-                  <a
-                    href={downloadUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
-                  >
-                    <ExternalLink className="h-3 w-3" /> View
-                  </a>
-                )}
-                <a
-                  href={downloadUrl}
-                  download={att.filename}
-                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
-                >
-                  <Download className="h-3 w-3" /> Download
-                </a>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <AttachmentList attachments={message.attachments} />
     </div>
   );
 });
+
+// ── Thread ───────────────────────────────────────────────────────────────────
 
 interface ThreadProps {
   messages: ThreadMessage[];
@@ -258,7 +417,6 @@ const STORAGE_KEY = 'email-view-mode';
 export function Thread({ messages, maxHeight }: ThreadProps) {
   const [showRaw, setShowRaw] = useState(false);
 
-  // Load preference from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'raw') {
@@ -266,13 +424,11 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
     }
   }, []);
 
-  // Save preference to localStorage when changed
   const handleToggle = (raw: boolean) => {
     setShowRaw(raw);
     localStorage.setItem(STORAGE_KEY, raw ? 'raw' : 'clean');
   };
 
-  // Check if any messages have raw versions
   const hasAnyRawContent = messages.some(
     (m) => m.raw_body && m.raw_body !== m.body
   );
@@ -289,7 +445,6 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
 
   return (
     <div className={cn(isFullHeight ? "flex flex-col h-full" : "space-y-2")}>
-      {/* Toggle buttons - only show if any message has raw content */}
       {hasAnyRawContent && (
         <div className={cn("flex items-center gap-1 justify-end", isFullHeight && "shrink-0 px-2 pt-1")}>
           <Button

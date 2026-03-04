@@ -171,8 +171,11 @@ export interface AIAudit {
 export interface ThreadMessage {
   id: number;          // Numeric ID for API calls
   case_agency_id?: number | null;
+  email_thread_id?: number | null;
   direction: 'INBOUND' | 'OUTBOUND';
   channel: 'EMAIL' | 'PORTAL' | 'MAIL' | 'CALL';
+  message_type?: string | null;
+  portal_notification_type?: string | null;
   from_email: string;
   to_email: string;
   subject: string;
