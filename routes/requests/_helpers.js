@@ -646,6 +646,58 @@ function detectReviewReason(caseData) {
 }
 
 /**
+ * Extract phone call plan from contact_research_notes.
+ * Mirrors the logic in routes/monitor/overview.js so the case detail page
+ * can display the same phone-call context as the gated queue.
+ */
+function extractPhoneCallPlan(rawNotes, row = {}) {
+    if (!rawNotes) return null;
+    let parsed = rawNotes;
+    if (typeof rawNotes === 'string') {
+        try { parsed = JSON.parse(rawNotes); } catch (_) { return null; }
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const brief = parsed.brief || {};
+    const execution = parsed.execution || {};
+    const contact = parsed.contactResult || {};
+    const suggested = Array.isArray(brief.suggested_agencies) ? brief.suggested_agencies : [];
+    const topSuggested = suggested[0] || {};
+    const target = execution.phone_call_target || {};
+
+    const agency_name =
+        String(target.agency_name || '').trim() ||
+        String(contact.agency_name || contact.name || '').trim() ||
+        String(topSuggested.name || '').trim() ||
+        String(row.agency_name || '').trim() ||
+        null;
+    const agency_phone =
+        String(target.agency_phone || '').trim() ||
+        String(contact.contact_phone || contact.phone || '').trim() ||
+        null;
+    const agency_email =
+        String(contact.contact_email || contact.email || row.agency_email || '').trim() || null;
+    const portal_url =
+        String(contact.portal_url || row.portal_url || '').trim() || null;
+    const reason =
+        String(target.reason || '').trim() ||
+        (execution.outcome === 'phone_fallback_no_new_channel'
+            ? 'No new channels beyond existing case contacts; use phone follow-up'
+            : null);
+
+    if (!agency_name && !agency_phone && !agency_email && !portal_url && !reason) return null;
+    return {
+        agency_name,
+        agency_phone,
+        agency_email,
+        portal_url,
+        reason,
+        outcome: execution.outcome || null,
+        suggested_agency: topSuggested?.name || null,
+    };
+}
+
+/**
  * Transform case data to RequestDetail format
  */
 function toRequestDetail(caseData) {
@@ -688,7 +740,8 @@ function toRequestDetail(caseData) {
         substatus: caseData.substatus || null,
         review_reason: (caseData.requires_human || REVIEW_DB_STATUSES.has(String(caseData.status || '').toLowerCase()))
             ? detectReviewReason(caseData)
-            : undefined
+            : undefined,
+        phone_call_plan: extractPhoneCallPlan(caseData.contact_research_notes, caseData),
     };
 }
 

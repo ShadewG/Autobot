@@ -130,6 +130,15 @@ export interface RequestDetail extends RequestListItem {
   notion_url: string | null;
   // Human review fields
   review_reason?: ReviewReason;
+  phone_call_plan?: {
+    agency_name?: string | null;
+    agency_phone?: string | null;
+    agency_email?: string | null;
+    portal_url?: string | null;
+    reason?: string | null;
+    outcome?: string | null;
+    suggested_agency?: string | null;
+  } | null;
 }
 
 // Timeline Event for the timeline column

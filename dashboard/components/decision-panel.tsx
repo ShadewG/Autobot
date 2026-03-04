@@ -737,6 +737,37 @@ export function DecisionPanel({
             </div>
           )}
 
+          {/* Phone call plan details */}
+          {request.review_reason === "PHONE_CALL" && request.phone_call_plan && (
+            <div className="bg-amber-950/20 border border-amber-700/40 rounded-md p-3 space-y-1">
+              <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide mb-2">Phone Call Info</p>
+              <p className="text-sm">
+                <span className="text-muted-foreground">Who:</span>{" "}
+                {request.phone_call_plan.agency_name || request.agency_name || "Unknown"}
+              </p>
+              <p className="text-sm">
+                <span className="text-muted-foreground">Phone:</span>{" "}
+                {request.phone_call_plan.agency_phone ? (
+                  <a href={`tel:${request.phone_call_plan.agency_phone}`} className="font-mono hover:text-blue-400 transition-colors">
+                    {request.phone_call_plan.agency_phone}
+                  </a>
+                ) : "Not found yet"}
+              </p>
+              {request.phone_call_plan.reason && (
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Why call:</span>{" "}
+                  {request.phone_call_plan.reason}
+                </p>
+              )}
+              {request.phone_call_plan.agency_email && (
+                <p className="text-sm">
+                  <span className="text-muted-foreground">Known email:</span>{" "}
+                  {request.phone_call_plan.agency_email}
+                </p>
+              )}
+            </div>
+          )}
+
           {hasPendingProposalContext && (
             <div className="bg-blue-500/10 border border-blue-700/50 rounded-md p-3">
               <p className="text-xs text-blue-300">
