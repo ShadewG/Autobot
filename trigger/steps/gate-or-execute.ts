@@ -11,6 +11,49 @@
 import db, { logger, caseRuntime } from "../lib/db";
 import type { ActionType, ProposalRecord, ChainAction } from "../lib/types";
 
+const ACTIONS_REQUIRING_REVIEWABLE_DRAFT = new Set<ActionType>([
+  "SEND_INITIAL_REQUEST",
+  "SUBMIT_PORTAL",
+  "SEND_FOLLOWUP",
+  "SEND_REBUTTAL",
+  "SEND_CLARIFICATION",
+  "SEND_APPEAL",
+  "SEND_FEE_WAIVER_REQUEST",
+  "SEND_STATUS_UPDATE",
+  "RESPOND_PARTIAL_APPROVAL",
+  "ACCEPT_FEE",
+  "NEGOTIATE_FEE",
+  "DECLINE_FEE",
+  "REFORMULATE_REQUEST",
+]);
+
+function hasDraftContent(draft: { subject: string | null; bodyText: string | null; bodyHtml: string | null }): boolean {
+  const subject = (draft.subject || "").trim();
+  const bodyText = (draft.bodyText || "").trim();
+  const bodyHtml = (draft.bodyHtml || "").trim();
+  return subject.length > 0 || bodyText.length > 0 || bodyHtml.length > 0;
+}
+
+function buildFallbackDraft(
+  actionType: ActionType,
+  reasoning: string[]
+): { subject: string | null; bodyText: string | null; bodyHtml: string | null } {
+  const reason = reasoning?.[0] || "System generated this fallback after draft generation failed.";
+  const bodyText = [
+    "System fallback draft generated.",
+    "",
+    `Requested action: ${actionType}`,
+    `Reason: ${reason}`,
+    "",
+    "Please review and adjust before sending.",
+  ].join("\n");
+  return {
+    subject: `Review required: ${actionType.replaceAll("_", " ")}`,
+    bodyText,
+    bodyHtml: null,
+  };
+}
+
 function generateProposalKey(
   caseId: number,
   messageId: number | null,
@@ -55,6 +98,31 @@ export async function createProposalAndGate(
     return { proposalId: 0, proposalKey: "", shouldWait: false, waitpointTokenId: null, chainId: null };
   }
 
+  let effectiveDraft = { ...draft };
+  let effectiveDecisionCanAutoExecute = decisionCanAutoExecute;
+  let effectiveDecisionRequiresHuman = decisionRequiresHuman;
+  let effectivePauseReason = pauseReason;
+  let effectiveSafety = { ...safety };
+
+  // Never allow reviewable actions to gate as empty proposals.
+  if (ACTIONS_REQUIRING_REVIEWABLE_DRAFT.has(actionType) && !hasDraftContent(effectiveDraft)) {
+    effectiveDraft = buildFallbackDraft(actionType, reasoning);
+    effectiveDecisionCanAutoExecute = false;
+    effectiveDecisionRequiresHuman = true;
+    effectivePauseReason = effectivePauseReason || "MISSING_DRAFT_AUTOFALLBACK";
+    effectiveSafety = {
+      ...effectiveSafety,
+      canAutoExecute: false,
+      requiresHuman: true,
+      warnings: [...(effectiveSafety.warnings || []), "Draft content was missing; fallback draft generated automatically."],
+    };
+    logger.error("Missing draft content for reviewable action; generated fallback draft", {
+      caseId,
+      runId,
+      actionType,
+    });
+  }
+
   // Confidence-based auto-execution tiers (even in SUPERVISED mode)
   // Safe actions with high confidence can auto-execute without human review
   const SAFE_AUTO_ACTIONS: string[] = ["CLOSE_CASE", "RESEARCH_AGENCY"];
@@ -62,7 +130,7 @@ export async function createProposalAndGate(
   const effectiveConfidence = confidence ?? 0.8;
 
   let confidenceAutoExecute = false;
-  if (!decisionRequiresHuman && safety.canAutoExecute) {
+  if (!effectiveDecisionRequiresHuman && effectiveSafety.canAutoExecute) {
     if (SAFE_AUTO_ACTIONS.includes(actionType) && effectiveConfidence >= 0.90) {
       confidenceAutoExecute = true;
     } else if (MEDIUM_AUTO_ACTIONS.includes(actionType) && effectiveConfidence >= 0.85) {
@@ -71,8 +139,8 @@ export async function createProposalAndGate(
   }
 
   // Merge safety into auto-execute decision
-  const canAutoExecute = (decisionCanAutoExecute || confidenceAutoExecute) && safety.canAutoExecute;
-  const requiresHuman = decisionRequiresHuman || safety.requiresHuman;
+  const canAutoExecute = (effectiveDecisionCanAutoExecute || confidenceAutoExecute) && effectiveSafety.canAutoExecute;
+  const requiresHuman = effectiveDecisionRequiresHuman || effectiveSafety.requiresHuman;
 
   const proposalKey = generateProposalKey(
     caseId,
@@ -94,13 +162,13 @@ export async function createProposalAndGate(
     runId,
     triggerMessageId: messageId,
     actionType,
-    draftSubject: draft.subject,
-    draftBodyText: draft.bodyText,
-    draftBodyHtml: draft.bodyHtml,
+    draftSubject: effectiveDraft.subject,
+    draftBodyText: effectiveDraft.bodyText,
+    draftBodyHtml: effectiveDraft.bodyHtml,
     reasoning,
     confidence: confidence ?? 0.8,
-    riskFlags: safety.riskFlags || [],
-    warnings: safety.warnings || [],
+    riskFlags: effectiveSafety.riskFlags || [],
+    warnings: effectiveSafety.warnings || [],
     canAutoExecute,
     requiresHuman,
     status: canAutoExecute ? "APPROVED" : "PENDING_APPROVAL",
@@ -220,7 +288,7 @@ export async function createProposalAndGate(
   await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_GATED", {
     proposalId: proposal.id,
     runId,
-    pauseReason: pauseReason || "PENDING_APPROVAL",
+    pauseReason: effectivePauseReason || "PENDING_APPROVAL",
   });
 
   return {
