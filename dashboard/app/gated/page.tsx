@@ -2334,10 +2334,15 @@ function MonitorPageContent() {
                 phone: "PHONE_CALL",
                 general: "GENERAL",
               };
+              // Always use categorizeReview — it matches the gated queue's own
+              // classification logic. The workspace's detectReviewReason can diverge
+              // (e.g. RESEARCH_HANDOFF → GENERAL instead of phone).
               const wsRequest = reviewWorkspace.request;
-              const effectiveRequest = wsRequest.review_reason
-                ? wsRequest
-                : { ...wsRequest, review_reason: categoryToReviewReason[categorizeReview(selectedItem.data)] as any };
+              const gatedCategory = categorizeReview(selectedItem.data);
+              const effectiveRequest = {
+                ...wsRequest,
+                review_reason: categoryToReviewReason[gatedCategory] as any,
+              };
               return (
               <DecisionPanel
                 request={effectiveRequest}
