@@ -207,7 +207,10 @@ async function getWrongAgencyDirectAction(caseId: number): Promise<ActionType | 
       };
     })
     .filter((c: any) => Boolean(c.agencyEmail || c.agencyPortal))
-    .filter((c: any) => !c.sameAsInbound)
+    // Keep strict same-sender guard only for weak/manual legacy rows.
+    // Trusted reroute sources (wrong_agency_referral/research) can legitimately
+    // point back to the same domain/mailbox and should not be discarded.
+    .filter((c: any) => (c.rank >= 3 ? true : !c.sameAsInbound))
     .sort((a: any, b: any) => {
       if (b.rank !== a.rank) return b.rank - a.rank;
       const aCreated = new Date(a.agency.created_at || 0).getTime();
