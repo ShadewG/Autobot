@@ -1733,15 +1733,17 @@ class DatabaseService {
             const allowInboundProposal =
                 !!proposalData.triggerMessageId
                 && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
+            const proposalKeyForChecks = String(
+                proposalData.proposalKey || proposalData.proposal_key || ''
+            );
             const isSystemSweepProposal =
-                proposalData.proposalKey && proposalData.proposalKey.includes(':deadline_sweep:');
+                proposalKeyForChecks.includes(':deadline_sweep:');
             const isInitialRequestProposal =
-                proposalData.proposalKey && proposalData.proposalKey.includes(':initial:');
+                proposalKeyForChecks.includes(':initial:');
             const isResearchProposal =
-                proposalData.proposalKey && proposalData.proposalKey.includes(':research:');
+                proposalKeyForChecks.includes(':research:');
             const isResearchHandoffProposal =
-                typeof proposalData.proposalKey === 'string'
-                && proposalData.proposalKey.includes(':research:handoff:');
+                proposalKeyForChecks.includes(':research:handoff:');
             const blockResearchBecausePhoneFallback =
                 isResearchAction
                 && !isResearchHandoffProposal
