@@ -3077,7 +3077,7 @@ function MonitorPageContent() {
                                 </div>
                               </div>
                             )}
-                            {task.additional_details && (
+                            {task.additional_details && !task.additional_details.startsWith("--- Notion Fields ---") && (
                               <p><span className="text-muted-foreground">Additional details:</span> {task.additional_details}</p>
                             )}
                             {task.notes && (
