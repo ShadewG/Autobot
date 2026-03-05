@@ -84,8 +84,33 @@ class AIService {
         return lines;
     }
 
+    sanitizeLegacyIdentityMentions(text, userSignature) {
+        if (!text) return text;
+        const allowedIdentity = [
+            userSignature?.name || '',
+            userSignature?.title || '',
+            userSignature?.organization || ''
+        ].join(' ').toLowerCase();
+        const allowsLegacyBrand = /dr\s+insanity/.test(allowedIdentity);
+        if (allowsLegacyBrand) return text;
+
+        let result = text;
+        // Strip legacy hardcoded org references that should come only from user settings.
+        result = result.replace(/\bDr\s+Insanity(?:\s+Media)?\b/gi, '');
+        result = result.replace(/\bDR\s+INSANITY(?:\s+LEGAL\s+DEPARTMENT)?\b/gi, '');
+        // Clean up common remnants like "on behalf of".
+        result = result.replace(/\bon behalf of\s*[,\-:]?\s*(?:the requester)?\s*(?=[\.\,\;\n]|$)/gi, '');
+        // Normalize spacing after removals.
+        result = result.replace(/[ \t]{2,}/g, ' ');
+        result = result.replace(/\n{3,}/g, '\n\n');
+        return result.trim();
+    }
+
     normalizeGeneratedDraftSignature(text, userSignature, { includeEmail = false, includeAddress = false } = {}) {
-        const cleaned = this.sanitizeSignaturePlaceholders(text, userSignature);
+        const cleaned = this.sanitizeLegacyIdentityMentions(
+            this.sanitizeSignaturePlaceholders(text, userSignature),
+            userSignature
+        );
         if (!cleaned) return cleaned;
 
         const signatureLines = this.buildCanonicalSignatureLines(userSignature, { includeEmail, includeAddress });
@@ -725,6 +750,8 @@ Return ONLY the email body text, no subject line or metadata.`;
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            replyText = this.normalizeGeneratedDraftSignature(replyText, userSignature, { includeEmail: false, includeAddress: false });
 
             // Guardrail: if intent requires response but model says "no response needed", fallback
             if (responseIntents.includes(analysis.intent) && /no response needed|no reply needed/i.test(replyText || '')) {
@@ -946,15 +973,16 @@ Return ONLY the email body text, no subject line.`;
                 `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const normalizedRebuttalText = this.normalizeGeneratedDraftSignature(rebuttalText, userSignature, { includeEmail: false, includeAddress: false });
 
-            console.log(`✅ Generated ${denialSubtype} rebuttal (${rebuttalText.length} chars) with GPT-5`);
+            console.log(`✅ Generated ${denialSubtype} rebuttal (${normalizedRebuttalText.length} chars) with GPT-5`);
 
             const shortReference = this.getShortCaseReference(caseData);
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
                 subject: `RE: Public Records Request - ${shortReference}`,
-                body_text: rebuttalText,
+                body_text: normalizedRebuttalText,
                 body_html: null,
                 // Metadata
                 should_auto_reply: true,
@@ -1096,11 +1124,13 @@ Return ONLY the email body text.`;
                 `${responseHandlingPrompts.followUpSystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
                 subject: `Follow-up: Public Records Request - ${caseData.subject_name || 'Request'}`,
-                body_text: bodyText,
+                body_text: normalizedBodyText,
                 body_html: null
             };
         } catch (error) {
@@ -1208,11 +1238,13 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {
                 subject: `RE: Fee Response - ${shortReference}`,
-                body_text: bodyText,
+                body_text: normalizedBodyText,
                 body_html: null,
                 // Metadata
                 model: 'gpt-5.2-2025-12-11',
@@ -1791,12 +1823,14 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
             const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
 
             return {
                 subject: subject,
-                body_text: bodyText,
-                body_html: `<p>${bodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
+                body_text: normalizedBodyText,
+                body_html: `<p>${normalizedBodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
                 model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11'
             };
         } catch (error) {
@@ -1852,10 +1886,12 @@ Generate a formal appeal letter under 300 words. Return ONLY the letter body, no
                 `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
 
             return {
                 subject: `Administrative Appeal - ${caseData.subject_name || caseData.case_name || 'Records Request'}`,
-                body_text: bodyText,
+                body_text: normalizedBodyText,
                 body_html: null,
                 is_appeal: true,
                 denial_subtype: denialSubtype
@@ -1898,12 +1934,14 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
+            const userSignature = await this.getUserSignatureForCase(caseData);
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
             const subject = `RE: Fee Acceptance - ${caseData.subject_name || caseData.case_name || 'Records Request'}`;
 
             return {
                 subject: subject,
-                body_text: bodyText,
-                body_html: `<p>${bodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
+                body_text: normalizedBodyText,
+                body_html: `<p>${normalizedBodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
                 model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11'
             };
         } catch (error) {
