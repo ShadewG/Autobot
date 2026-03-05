@@ -37,6 +37,7 @@ export interface ResearchContext {
   record_type_handoff_notes: string | null;
   rebuttal_support_points: string[];
   clarification_answer_support: string | null;
+  case_context_notes: string | null;
   cached_at: string | null;
 }
 

@@ -182,7 +182,7 @@ router.post('/', async (req, res) => {
 
                     const phoneOptions = {
                         notion: { phone: notion.phone || null, source: 'Notion PD Card' },
-                        web_search: { phone: web.phone || null, source: 'Web Search (GPT)', confidence: web.confidence || null },
+                        web_search: { phone: web.phone || null, source: 'Web Search (Firecrawl+AI)', confidence: web.confidence || null },
                         firecrawl: firecrawl ? { phone: firecrawl.contact_phone || null, source: 'Firecrawl' } : null
                     };
 
@@ -594,7 +594,7 @@ router.post('/:id/find-phone', async (req, res) => {
             },
             web_search: {
                 phone: web.phone || null,
-                source: 'Web Search (GPT)',
+                source: 'Web Search (Firecrawl+AI)',
                 confidence: web.confidence || null,
                 reasoning: web.reasoning || null
             },

@@ -24,6 +24,7 @@ export function emptyResearchContext(): ResearchContext {
     record_type_handoff_notes: null,
     rebuttal_support_points: [],
     clarification_answer_support: null,
+    case_context_notes: null,
     cached_at: null,
   };
 }
@@ -164,6 +165,7 @@ export async function researchContext(
         record_type_handoff_notes: referralContact.notes,
         rebuttal_support_points: [],
         clarification_answer_support: null,
+        case_context_notes: null,
         cached_at: new Date().toISOString(),
       };
 
@@ -231,6 +233,7 @@ export async function researchContext(
       record_type_handoff_notes: null,
       rebuttal_support_points: [],
       clarification_answer_support: null,
+      case_context_notes: null,
       cached_at: new Date().toISOString(),
     };
 
@@ -247,16 +250,33 @@ export async function researchContext(
       return result;
     }
 
-    // === MEDIUM: light + state law research + structured context ===
+    // === MEDIUM: light + state law research + case context research + structured context ===
     let lawResearch: string | null = null;
-    try {
-      lawResearch = await aiService.researchStateLaws(state, denialSubtype || classification.toLowerCase());
-    } catch (e: any) {
-      logger.warn("researchStateLaws failed", { caseId, error: e.message });
+    let caseContextNotes: string | null = null;
+
+    // Run law research and case context research in parallel
+    const [lawResult, caseContextResult] = await Promise.allSettled([
+      aiService.researchStateLaws(state, denialSubtype || classification.toLowerCase()),
+      researchCaseContext(caseData, agencyName, state, requestedRecords),
+    ]);
+
+    if (lawResult.status === "fulfilled" && lawResult.value) {
+      lawResearch = lawResult.value;
+    } else if (lawResult.status === "rejected") {
+      logger.warn("researchStateLaws failed", { caseId, error: lawResult.reason?.message });
+    }
+
+    if (caseContextResult.status === "fulfilled" && caseContextResult.value) {
+      caseContextNotes = caseContextResult.value;
+    } else if (caseContextResult.status === "rejected") {
+      logger.warn("Case context research failed", { caseId, error: caseContextResult.reason?.message });
     }
 
     if (lawResearch) {
       result.state_law_notes = lawResearch;
+    }
+    if (caseContextNotes) {
+      result.case_context_notes = caseContextNotes;
     }
 
     // Use generateObject to extract structured research points
@@ -278,6 +298,9 @@ ${contactResult ? JSON.stringify(contactResult, null, 2) : "No contact research 
 
 ## State Law Research
 ${lawResearch || "No law research available"}
+
+## Case Context Research
+${caseContextNotes || "No case context research available"}
 
 Extract the most useful structured information for drafting a response.`,
         providerOptions: researchOptions,
@@ -333,6 +356,80 @@ Extract the most useful structured information for drafting a response.`,
   } catch (error: any) {
     logger.error("Research context step failed, returning empty", { caseId, error: error.message });
     return emptyResearchContext();
+  }
+}
+
+/**
+ * Use Parallel API to research case context — incident details, news coverage,
+ * subject info, and relevant public records that help the AI draft better responses.
+ */
+async function researchCaseContext(
+  caseData: any,
+  agencyName: string,
+  state: string,
+  requestedRecords: string,
+): Promise<string | null> {
+  const parallelApiKey = process.env.PARALLEL_API_KEY;
+  if (!parallelApiKey) return null;
+
+  const subjectName = caseData?.subject_name || "";
+  const incidentDate = caseData?.incident_date || "";
+  const incidentLocation = caseData?.incident_location || "";
+  const caseName = caseData?.case_name || "";
+  const additionalDetails = (caseData?.additional_details || "").substring(0, 300);
+
+  // Build targeted search queries based on case details
+  const searchQueries: string[] = [];
+  if (subjectName && incidentLocation) {
+    searchQueries.push(`${subjectName} ${incidentLocation} ${state} ${incidentDate}`);
+  }
+  if (caseName) {
+    searchQueries.push(`${caseName} ${state} ${incidentDate}`);
+  }
+  searchQueries.push(`${agencyName} ${requestedRecords} ${incidentLocation || state}`);
+
+  if (searchQueries.length === 0) return null;
+
+  try {
+    const parallelRes = await fetch("https://api.parallel.ai/v1beta/search", {
+      method: "POST",
+      headers: {
+        "x-api-key": parallelApiKey,
+        "Content-Type": "application/json",
+        "parallel-beta": "search-extract-2025-10-10",
+      },
+      body: JSON.stringify({
+        objective: `Find public information about this incident/case: ${caseName || subjectName || requestedRecords}. Location: ${incidentLocation || state}. Date: ${incidentDate || "unknown"}. Look for news coverage, court records, official reports, or any public details about the incident or subject.`,
+        search_queries: searchQueries.slice(0, 3),
+        max_results: 8,
+        excerpts: { max_chars_per_result: 2000 },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!parallelRes.ok) {
+      logger.warn("Parallel case context search failed", { status: parallelRes.status });
+      return null;
+    }
+
+    const parallelData = await parallelRes.json();
+    const results = parallelData?.search?.results || parallelData?.results || [];
+    if (results.length === 0) return null;
+
+    const formatted = results
+      .slice(0, 6)
+      .map((r: any) => `[${r.title || "No title"}] ${r.url || ""}\n${r.excerpt || r.snippets?.join("\n") || ""}`)
+      .join("\n---\n");
+
+    logger.info("Parallel case context search returned results", {
+      count: results.length,
+      caseName,
+    });
+
+    return formatted;
+  } catch (err: any) {
+    logger.warn("Parallel case context search error", { error: err.message });
+    return null;
   }
 }
 

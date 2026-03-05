@@ -809,53 +809,72 @@ Focus on:
 
 Return concise legal citations and key statutory language with sources.`;
 
-        // Try OpenAI with web search first (45s timeout to prevent task-level timeout)
-        try {
-            console.log(`🔍 Researching ${state} public records laws for ${denialType} denials using GPT-5 + web search...`);
+        // Use Parallel search + Anthropic synthesis
+        let searchResults = [];
+        const parallelApiKey = process.env.PARALLEL_API_KEY;
 
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 45_000);
+        if (parallelApiKey) {
             try {
-                const response = await this.openai.responses.create({
-                    model: 'gpt-5.2-2025-12-11',
-                    reasoning: { effort: 'medium' },
-                    text: { verbosity: 'medium' },
-                    tools: [{ type: 'web_search' }],
-                    input: researchPrompt
-                }, { signal: controller.signal });
+                console.log(`🔍 Researching ${state} public records laws for ${denialType} denials using Parallel search...`);
+                const searchQueries = [
+                    `${state} public records law FOIA statute ${denialType} exemption`,
+                    `${state} open records act ${denialType} denial case law precedent`,
+                    `${state} FOIA segregability requirements response timeline fee waiver`,
+                ];
 
-                clearTimeout(timeout);
-                const research = response.output_text;
-                console.log(`✅ Legal research complete (${research.length} chars) with live web search`);
-                return research;
-            } catch (e) {
-                clearTimeout(timeout);
-                throw e;
-            }
-        } catch (error) {
-            console.warn('GPT-5 legal research failed, falling back to Anthropic:', error.message);
-
-            // Fallback to Anthropic (reliable, no web search but has strong legal knowledge)
-            try {
-                if (!this.anthropic) {
-                    console.warn('Anthropic fallback unavailable: ANTHROPIC_API_KEY not configured');
-                    return null;
-                }
-                const response = await this.anthropic.messages.create({
-                    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
-                    max_tokens: 1500,
-                    messages: [{
-                        role: 'user',
-                        content: `You are a legal research expert specializing in state public records laws and FOIA litigation.\n\n${researchPrompt}`
-                    }],
+                const parallelRes = await fetch('https://api.parallel.ai/v1beta/search', {
+                    method: 'POST',
+                    headers: {
+                        'x-api-key': parallelApiKey,
+                        'Content-Type': 'application/json',
+                        'parallel-beta': 'search-extract-2025-10-10',
+                    },
+                    body: JSON.stringify({
+                        objective: `Find ${state} state public records law statutes, exemptions related to "${denialType}", segregability requirements, recent case law, response deadlines, and fee waiver provisions.`,
+                        search_queries: searchQueries,
+                        max_results: 10,
+                        excerpts: { max_chars_per_result: 3000 },
+                    }),
+                    signal: AbortSignal.timeout(45_000),
                 });
-                const research = response.content[0].text?.trim() || '';
-                console.log(`✅ Legal research complete via Anthropic (${research.length} chars)`);
-                return research;
-            } catch (fallbackError) {
-                console.error('Anthropic research fallback also failed:', fallbackError.message);
+
+                if (parallelRes.ok) {
+                    const parallelData = await parallelRes.json();
+                    const results = parallelData?.search?.results || parallelData?.results || [];
+                    searchResults = results.map(r => `[${r.title || 'No title'}] ${r.url || ''}\n${r.excerpt || r.snippets?.join('\n') || ''}`);
+                    console.log(`Parallel search returned ${searchResults.length} results for ${state} ${denialType} law`);
+                } else {
+                    console.warn(`Parallel search failed (${parallelRes.status}):`, await parallelRes.text().catch(() => ''));
+                }
+            } catch (parallelErr) {
+                console.warn('Parallel search error:', parallelErr.message);
+            }
+        }
+
+        // Synthesize with Anthropic
+        const searchContext = searchResults.length > 0
+            ? `\n\nWEB SEARCH RESULTS:\n${searchResults.slice(0, 8).join('\n---\n')}`
+            : '\n\n(No web search results available — use your training knowledge of state public records laws.)';
+
+        try {
+            if (!this.anthropic) {
+                console.warn('Anthropic unavailable: ANTHROPIC_API_KEY not configured');
                 return null;
             }
+            const response = await this.anthropic.messages.create({
+                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                max_tokens: 1500,
+                messages: [{
+                    role: 'user',
+                    content: `You are a legal research expert specializing in state public records laws and FOIA litigation.${searchContext}\n\n${researchPrompt}`
+                }],
+            });
+            const research = response.content[0].text?.trim() || '';
+            console.log(`✅ Legal research complete via Parallel+Anthropic (${research.length} chars, ${searchResults.length} search results)`);
+            return research;
+        } catch (fallbackError) {
+            console.error('Anthropic research synthesis failed:', fallbackError.message);
+            return null;
         }
     }
 
@@ -1031,32 +1050,54 @@ Return a JSON object with:
 If nothing better is found, set the relevant fields to null but explain in notes.
 Respond with JSON ONLY.`;
 
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 45_000);
+            // Use Firecrawl search + Anthropic synthesis
+            let searchContext = '';
+            const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+
+            if (firecrawlApiKey) {
+                try {
+                    const query = `${caseData.agency_name} ${caseData.state} public records FOIA portal contact email phone`;
+                    const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${firecrawlApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ query, limit: 6 }),
+                        signal: AbortSignal.timeout(30_000),
+                    });
+                    if (firecrawlRes.ok) {
+                        const firecrawlData = await firecrawlRes.json();
+                        const results = firecrawlData?.data || [];
+                        if (results.length > 0) {
+                            const formatted = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
+                            searchContext = `\n\nWEB SEARCH RESULTS:\n${formatted.join('\n---\n')}`;
+                            console.log(`Firecrawl returned ${results.length} results for alternate contacts of "${caseData.agency_name}"`);
+                        }
+                    } else {
+                        console.warn(`Firecrawl alternate contacts search failed (${firecrawlRes.status})`);
+                    }
+                } catch (fcErr) {
+                    console.warn('Firecrawl alternate contacts error:', fcErr.message);
+                }
+            }
+
+            if (!this.anthropic) {
+                console.warn('Anthropic unavailable for alternate contacts');
+                return null;
+            }
+
             let raw;
             try {
-                const response = await this.openai.responses.create({
-                    model: 'gpt-5.2-2025-12-11',
-                    reasoning: { effort: 'low' },
-                    text: { verbosity: 'low' },
-                    tools: [{ type: 'web_search' }],
-                    input: prompt
-                }, { signal: controller.signal });
-                clearTimeout(timeout);
-                raw = response.output_text?.trim();
-            } catch (openaiError) {
-                clearTimeout(timeout);
-                console.warn('OpenAI alternate contacts failed, falling back to Anthropic:', openaiError.message);
-                if (!this.anthropic) {
-                    console.warn('Anthropic fallback unavailable for alternate contacts');
-                    return null;
-                }
                 const response = await this.anthropic.messages.create({
                     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
                     max_tokens: 800,
-                    messages: [{ role: 'user', content: prompt }],
+                    messages: [{ role: 'user', content: prompt + searchContext }],
                 });
                 raw = response.content[0].text?.trim();
+            } catch (anthropicError) {
+                console.warn('Anthropic alternate contacts failed:', anthropicError.message);
+                return null;
             }
 
             if (!raw) {

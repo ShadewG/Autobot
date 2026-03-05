@@ -460,7 +460,7 @@ class FollowupScheduler {
       },
       web_search: {
         phone: web.phone || null,
-        source: 'Web Search (GPT)',
+        source: 'Web Search (Firecrawl+AI)',
         confidence: web.confidence || null,
         reasoning: web.reasoning || null
       },
@@ -479,7 +479,7 @@ class FollowupScheduler {
       const candidates = [];
       if (notion.phone) candidates.push({ phone: notion.phone, source: 'Notion PD Card', kind: 'phone' });
       if (firecrawl?.contact_phone) candidates.push({ phone: firecrawl.contact_phone, source: 'Firecrawl Deep Search', kind: 'phone' });
-      if (web.phone) candidates.push({ phone: web.phone, source: 'Web Search (GPT)', kind: 'phone' });
+      if (web.phone) candidates.push({ phone: web.phone, source: 'Web Search (Firecrawl+AI)', kind: 'phone' });
       if (candidates.length > 0) {
         phoneOptions.candidates = candidates;
       }

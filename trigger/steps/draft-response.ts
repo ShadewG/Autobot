@@ -124,6 +124,7 @@ export async function draftResponse(
       if (research.rebuttal_support_points?.length) {
         briefParts.push(`- Rebuttal points: ${research.rebuttal_support_points.slice(0, 5).join("; ")}`);
       }
+      if (research.case_context_notes) briefParts.push(`- Case context: ${String(research.case_context_notes).substring(0, 500)}`);
     }
 
     const caseBrief = briefParts.join("\n");

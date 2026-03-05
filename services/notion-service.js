@@ -286,30 +286,21 @@ class NotionService {
                     }
                 }
 
-                // GPT web search fallback: confirm existing portal URL or discover one
+                // Unified Firecrawl contact search fallback: find portal, email, phone in one call
                 if (!pdContactHandled && enrichedCase.agency_name) {
-                    const searchResult = await this.searchForPortalUrl(
-                        enrichedCase.agency_name,
-                        enrichedCase.state,
-                        enrichedCase.portal_url
-                    );
-                    if (searchResult?.portal_url && searchResult.confidence !== 'low') {
-                        const normalized = normalizePortalUrl(searchResult.portal_url);
+                    const contacts = await this.searchForAgencyContacts(enrichedCase.agency_name, enrichedCase.state);
+                    if (contacts?.portal_url && contacts.portal_confidence !== 'low') {
+                        const normalized = normalizePortalUrl(contacts.portal_url);
                         if (normalized && isSupportedPortalUrl(normalized)) {
                             enrichedCase.portal_url = normalized;
-                            if (searchResult.provider && searchResult.provider !== 'other') {
-                                enrichedCase.portal_provider = searchResult.provider;
+                            if (contacts.provider && contacts.provider !== 'other') {
+                                enrichedCase.portal_provider = contacts.provider;
                             }
                         }
                     }
-                }
-
-                // If still no portal and no email, search for an email as last resort
-                if (!enrichedCase.portal_url && !enrichedCase.agency_email && enrichedCase.agency_name) {
-                    const emailResult = await this.searchForAgencyEmail(enrichedCase.agency_name, enrichedCase.state);
-                    if (emailResult?.email) {
-                        enrichedCase.agency_email = emailResult.email;
-                        console.log(`AI email search found: ${emailResult.email}`);
+                    if (!enrichedCase.agency_email && contacts?.email && contacts.email_confidence !== 'low') {
+                        enrichedCase.agency_email = contacts.email;
+                        console.log(`Unified contact search found email: ${contacts.email}`);
                     }
                 }
 
@@ -1105,53 +1096,152 @@ Respond with JSON:
     }
 
     /**
-     * Use GPT web search to find or verify a portal URL for an agency.
-     * Returns { portal_url, provider, confidence } or null values on failure.
+     * Unified Firecrawl search for all agency contact info (portal, email, phone).
+     * One search call returns everything; individual functions delegate here.
+     * Caches results per agency+state for the lifetime of this service instance.
      */
-    async searchForPortalUrl(agencyName, state, existingPortalUrl = null) {
+    async searchForAgencyContacts(agencyName, state) {
+        const cacheKey = `${agencyName}||${state || ''}`.toLowerCase();
+        if (this._contactSearchCache?.has(cacheKey)) {
+            return this._contactSearchCache.get(cacheKey);
+        }
+
+        const result = { portal_url: null, provider: null, portal_confidence: 'low', email: null, email_confidence: 'low', phone: null, phone_confidence: 'low', reasoning: '' };
+
         try {
-            const OpenAI = require('openai');
-            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+            let searchContext = '';
 
-            let instruction;
-            if (existingPortalUrl) {
-                instruction = `Verify and find the official online public records request portal URL for: ${agencyName}${state ? `, ${state}` : ''}.
-We currently have this URL on file: ${existingPortalUrl}
-Confirm if this is the correct records request submission portal, or find the correct one.
-Look for GovQA, NextRequest, JustFOIA portals, or the agency's own online records request form.
-Only return a URL you are confident is the correct records request submission page.`;
-            } else {
-                instruction = `Find the official online public records request portal URL for: ${agencyName}${state ? `, ${state}` : ''}.
-Look for GovQA, NextRequest, JustFOIA portals, or the agency's own online records request form.
-Only return a URL you are confident is the correct records request submission page, not a general info page.`;
-            }
-
-            const response = await openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                tools: [{ type: 'web_search_preview' }],
-                input: [
-                    {
-                        role: 'system',
-                        content: `You search the web to find official public records request portal URLs for US law enforcement agencies.
-Return ONLY valid JSON, nothing else. Format:
-{"portal_url": "https://...", "provider": "govqa|nextrequest|justfoia|other|null", "confidence": "high|medium|low", "reasoning": "one sentence"}
-If you cannot find a portal, return: {"portal_url": null, "provider": null, "confidence": "low", "reasoning": "..."}`
-                    },
-                    { role: 'user', content: instruction }
-                ],
-            });
-
-            let text = '';
-            for (const item of response.output) {
-                if (item.type === 'message') {
-                    for (const c of item.content) {
-                        if (c.type === 'output_text') {
-                            text += c.text;
+            if (firecrawlApiKey) {
+                try {
+                    const query = `${agencyName} ${state || ''} public records FOIA request portal email phone contact`;
+                    const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${firecrawlApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ query, limit: 6 }),
+                        signal: AbortSignal.timeout(20_000),
+                    });
+                    if (firecrawlRes.ok) {
+                        const firecrawlData = await firecrawlRes.json();
+                        const results = firecrawlData?.data || [];
+                        if (results.length > 0) {
+                            const formatted = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
+                            searchContext = `\n\nWEB SEARCH RESULTS:\n${formatted.join('\n---\n')}`;
+                            console.log(`Firecrawl unified search returned ${results.length} results for "${agencyName}"`);
                         }
+                    } else {
+                        console.warn(`Firecrawl unified search failed (${firecrawlRes.status})`);
                     }
+                } catch (fcErr) {
+                    console.warn('Firecrawl unified search error:', fcErr.message);
                 }
             }
 
+            const Anthropic = require('@anthropic-ai/sdk');
+            const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+            const response = await anthropic.messages.create({
+                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                max_tokens: 500,
+                messages: [{
+                    role: 'user',
+                    content: `Find all contact information for submitting public records / FOIA requests to: ${agencyName}${state ? `, ${state}` : ''}.${searchContext}
+
+Return ONLY valid JSON with ALL of these fields:
+{
+  "portal_url": "https://..." or null,
+  "provider": "govqa|nextrequest|justfoia|other" or null,
+  "portal_confidence": "high|medium|low",
+  "email": "records@agency.gov" or null,
+  "email_confidence": "high|medium|low",
+  "phone": "+1XXXXXXXXXX" or null,
+  "phone_confidence": "high|medium|low",
+  "reasoning": "brief explanation of what was found"
+}
+
+Only include contacts you are confident about. Set confidence to "low" if uncertain.`
+                }],
+            });
+
+            const text = response.content[0].text?.trim() || '';
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                const parsed = JSON.parse(jsonMatch[0]);
+                Object.assign(result, parsed);
+                console.log(`Unified contact search for "${agencyName}": portal=${result.portal_url || 'none'} email=${result.email || 'none'} phone=${result.phone || 'none'}`);
+            }
+        } catch (error) {
+            console.error(`Unified contact search failed for "${agencyName}":`, error.message);
+            result.reasoning = error.message;
+        }
+
+        if (!this._contactSearchCache) this._contactSearchCache = new Map();
+        this._contactSearchCache.set(cacheKey, result);
+        return result;
+    }
+
+    /**
+     * Use Firecrawl search + Anthropic to find or verify a portal URL for an agency.
+     * Returns { portal_url, provider, confidence, reasoning } or null values on failure.
+     */
+    async searchForPortalUrl(agencyName, state, existingPortalUrl = null) {
+        try {
+            const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+            let searchContext = '';
+
+            if (firecrawlApiKey) {
+                try {
+                    const query = `${agencyName} ${state || ''} public records portal GovQA NextRequest JustFOIA request`;
+                    const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${firecrawlApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ query, limit: 6 }),
+                        signal: AbortSignal.timeout(20_000),
+                    });
+                    if (firecrawlRes.ok) {
+                        const firecrawlData = await firecrawlRes.json();
+                        const results = firecrawlData?.data || [];
+                        if (results.length > 0) {
+                            const formatted = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
+                            searchContext = `\n\nWEB SEARCH RESULTS:\n${formatted.join('\n---\n')}`;
+                            console.log(`Firecrawl returned ${results.length} results for portal search of "${agencyName}"`);
+                        }
+                    } else {
+                        console.warn(`Firecrawl portal search failed (${firecrawlRes.status})`);
+                    }
+                } catch (fcErr) {
+                    console.warn('Firecrawl portal search error:', fcErr.message);
+                }
+            }
+
+            const Anthropic = require('@anthropic-ai/sdk');
+            const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+            const existingContext = existingPortalUrl
+                ? `\nWe currently have this URL on file: ${existingPortalUrl}\nConfirm if this is the correct records request submission portal, or find the correct one.`
+                : '';
+
+            const response = await anthropic.messages.create({
+                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                max_tokens: 400,
+                messages: [{
+                    role: 'user',
+                    content: `Find the official online public records request portal URL for: ${agencyName}${state ? `, ${state}` : ''}.${existingContext}
+Look for GovQA, NextRequest, JustFOIA portals, or the agency's own online records request form.
+Only return a URL you are confident is the correct records request submission page, not a general info page.${searchContext}
+
+Return ONLY valid JSON: {"portal_url": "https://...", "provider": "govqa|nextrequest|justfoia|other|null", "confidence": "high|medium|low", "reasoning": "one sentence"}
+If you cannot find a portal, return: {"portal_url": null, "provider": null, "confidence": "low", "reasoning": "..."}`
+                }],
+            });
+
+            const text = response.content[0].text?.trim() || '';
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const result = JSON.parse(jsonMatch[0]);
@@ -1193,45 +1283,61 @@ If you cannot find a portal, return: {"portal_url": null, "provider": null, "con
     }
 
     /**
-     * Use GPT web search to find a phone number for an agency.
-     * Follows the same pattern as searchForAgencyEmail.
+     * Use Firecrawl search + Anthropic to find a phone number for an agency.
      * @param {string} agencyName
      * @param {string} state
      * @returns {{ phone: string|null, confidence: string, reasoning: string }}
      */
     async searchForAgencyPhone(agencyName, state) {
         try {
-            const OpenAI = require('openai');
-            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+            let searchContext = '';
 
-            const response = await openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                tools: [{ type: 'web_search_preview' }],
-                input: [
-                    {
-                        role: 'system',
-                        content: `You search the web to find phone numbers for submitting public records requests to US law enforcement agencies.
-Return ONLY valid JSON, nothing else. Format:
-{"phone": "+1XXXXXXXXXX", "confidence": "high|medium|low", "reasoning": "one sentence"}
-If you cannot find a phone number, return: {"phone": null, "confidence": "low", "reasoning": "..."}`
-                    },
-                    {
-                        role: 'user',
-                        content: `Find the phone number for the records division or main line of: ${agencyName}${state ? `, ${state}` : ''}.
-Look for a records division phone number, FOIA phone number, or general agency phone number.`
+            if (firecrawlApiKey) {
+                try {
+                    const query = `${agencyName} ${state || ''} records division FOIA phone number contact`;
+                    const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${firecrawlApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ query, limit: 5 }),
+                        signal: AbortSignal.timeout(20_000),
+                    });
+                    if (firecrawlRes.ok) {
+                        const firecrawlData = await firecrawlRes.json();
+                        const results = firecrawlData?.data || [];
+                        if (results.length > 0) {
+                            const formatted = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
+                            searchContext = `\n\nWEB SEARCH RESULTS:\n${formatted.join('\n---\n')}`;
+                            console.log(`Firecrawl returned ${results.length} results for phone search of "${agencyName}"`);
+                        }
+                    } else {
+                        console.warn(`Firecrawl phone search failed (${firecrawlRes.status})`);
                     }
-                ],
-            });
-
-            let text = '';
-            for (const item of response.output) {
-                if (item.type === 'message') {
-                    for (const c of item.content) {
-                        if (c.type === 'output_text') text += c.text;
-                    }
+                } catch (fcErr) {
+                    console.warn('Firecrawl phone search error:', fcErr.message);
                 }
             }
 
+            const Anthropic = require('@anthropic-ai/sdk');
+            const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+            const response = await anthropic.messages.create({
+                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                max_tokens: 300,
+                messages: [{
+                    role: 'user',
+                    content: `Find the phone number for the records division or main line of: ${agencyName}${state ? `, ${state}` : ''}.
+Look for a records division phone number, FOIA phone number, or general agency phone number.${searchContext}
+
+Return ONLY valid JSON: {"phone": "+1XXXXXXXXXX", "confidence": "high|medium|low", "reasoning": "one sentence"}
+If you cannot find a phone number, return: {"phone": null, "confidence": "low", "reasoning": "..."}`
+                }],
+            });
+
+            const text = response.content[0].text?.trim() || '';
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const result = JSON.parse(jsonMatch[0]);
@@ -1249,42 +1355,59 @@ Look for a records division phone number, FOIA phone number, or general agency p
     }
 
     /**
-     * Use GPT web search to find a records request email for an agency.
+     * Use Firecrawl search + Anthropic to find a records request email for an agency.
      * Used as fallback when no portal URL or email is found.
      */
     async searchForAgencyEmail(agencyName, state) {
         try {
-            const OpenAI = require('openai');
-            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+            const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+            let searchContext = '';
 
-            const response = await openai.responses.create({
-                model: 'gpt-5.2-2025-12-11',
-                tools: [{ type: 'web_search_preview' }],
-                input: [
-                    {
-                        role: 'system',
-                        content: `You search the web to find email addresses for submitting public records requests to US law enforcement agencies.
-Return ONLY valid JSON, nothing else. Format:
-{"email": "address@example.gov", "confidence": "high|medium|low", "reasoning": "one sentence"}
-If you cannot find an email, return: {"email": null, "confidence": "low", "reasoning": "..."}`
-                    },
-                    {
-                        role: 'user',
-                        content: `Find the email address for submitting public records / FOIA requests to: ${agencyName}${state ? `, ${state}` : ''}.
-Look for a records division email, FOIA email, or general agency email that accepts records requests.`
+            if (firecrawlApiKey) {
+                try {
+                    const query = `${agencyName} ${state || ''} records request FOIA email address contact`;
+                    const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${firecrawlApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ query, limit: 5 }),
+                        signal: AbortSignal.timeout(20_000),
+                    });
+                    if (firecrawlRes.ok) {
+                        const firecrawlData = await firecrawlRes.json();
+                        const results = firecrawlData?.data || [];
+                        if (results.length > 0) {
+                            const formatted = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
+                            searchContext = `\n\nWEB SEARCH RESULTS:\n${formatted.join('\n---\n')}`;
+                            console.log(`Firecrawl returned ${results.length} results for email search of "${agencyName}"`);
+                        }
+                    } else {
+                        console.warn(`Firecrawl email search failed (${firecrawlRes.status})`);
                     }
-                ],
-            });
-
-            let text = '';
-            for (const item of response.output) {
-                if (item.type === 'message') {
-                    for (const c of item.content) {
-                        if (c.type === 'output_text') text += c.text;
-                    }
+                } catch (fcErr) {
+                    console.warn('Firecrawl email search error:', fcErr.message);
                 }
             }
 
+            const Anthropic = require('@anthropic-ai/sdk');
+            const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+            const response = await anthropic.messages.create({
+                model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                max_tokens: 300,
+                messages: [{
+                    role: 'user',
+                    content: `Find the email address for submitting public records / FOIA requests to: ${agencyName}${state ? `, ${state}` : ''}.
+Look for a records division email, FOIA email, or general agency email that accepts records requests.${searchContext}
+
+Return ONLY valid JSON: {"email": "address@example.gov", "confidence": "high|medium|low", "reasoning": "one sentence"}
+If you cannot find an email, return: {"email": null, "confidence": "low", "reasoning": "..."}`
+                }],
+            });
+
+            const text = response.content[0].text?.trim() || '';
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const result = JSON.parse(jsonMatch[0]);

@@ -426,6 +426,7 @@ function buildEnrichedDecisionPrompt(params: {
     if (research.likely_record_custodians?.length) parts.push(`Likely Record Custodians:\n${research.likely_record_custodians.map((c: string) => `- ${c}`).join("\n")}`);
     if (research.official_records_submission_methods?.length) parts.push(`Official Submission Methods:\n${research.official_records_submission_methods.map((m: string) => `- ${m}`).join("\n")}`);
     if (research.record_type_handoff_notes) parts.push(`Record Type Notes: ${String(research.record_type_handoff_notes).substring(0, 500)}`);
+    if (research.case_context_notes) parts.push(`Case Context (web research):\n${String(research.case_context_notes).substring(0, 1000)}`);
     if (parts.length) researchSection = `\n## Research Context (previously gathered)\n${parts.join("\n\n")}`;
   }
 
@@ -1077,6 +1078,7 @@ function buildDecisionPrompt(params: {
     if (research.likely_record_custodians?.length) parts.push(`Likely Record Custodians:\n${research.likely_record_custodians.map((c: string) => `- ${c}`).join("\n")}`);
     if (research.official_records_submission_methods?.length) parts.push(`Official Submission Methods:\n${research.official_records_submission_methods.map((m: string) => `- ${m}`).join("\n")}`);
     if (research.record_type_handoff_notes) parts.push(`Record Type Notes: ${String(research.record_type_handoff_notes).substring(0, 500)}`);
+    if (research.case_context_notes) parts.push(`Case Context (web research):\n${String(research.case_context_notes).substring(0, 1000)}`);
     if (parts.length) researchSection = `\n## Research Context (previously gathered)\n${parts.join("\n\n")}`;
   }
 
