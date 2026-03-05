@@ -524,27 +524,16 @@ export async function executeAction(
         urgency: "medium",
         suggestedAction,
       });
-      let phoneTaskId: number | null = null;
-      if (hasPhoneFollowupMarker) {
-        try {
-          // @ts-ignore
-          const followupScheduler = require("../../services/followup-scheduler");
-          const phoneTask = await followupScheduler.escalateToPhoneQueue(caseId, "no_email_response", {
-            notes: draft?.bodyText || "Research found a new phone contact for overdue follow-up.",
-          });
-          phoneTaskId = phoneTask?.id || null;
-        } catch (e: any) {
-          logger.warn("Failed to create phone call task during escalation", {
-            caseId,
-            proposalId,
-            error: e?.message || String(e),
-          });
-        }
-      }
+      const phoneTaskId: number | null = null;
       await createExecutionRecord({
         caseId, proposalId, runId, executionKey, actionType: "ESCALATE",
         status: "SENT", provider: "none",
-        providerPayload: { escalationId: escalation.id, wasNew: escalation.wasInserted, phoneTaskId },
+        providerPayload: {
+          escalationId: escalation.id,
+          wasNew: escalation.wasInserted,
+          phoneTaskId,
+          requiresQueueAction: hasPhoneFollowupMarker,
+        },
       });
       if (escalation.wasInserted) {
         try {
@@ -553,8 +542,21 @@ export async function executeAction(
           await discordService.sendCaseEscalation(caseData, escalation);
         } catch (e: any) { /* non-fatal */ }
       }
-      executionResult = { action: "escalated", escalationId: escalation.id, phoneTaskId };
-      await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
+      executionResult = {
+        action: "escalated",
+        escalationId: escalation.id,
+        phoneTaskId,
+        requiresQueueAction: hasPhoneFollowupMarker,
+      };
+      if (hasPhoneFollowupMarker) {
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          targetStatus: "needs_phone_call",
+          substatus: "phone_followup_proposed",
+          pauseReason: "RESEARCH_HANDOFF",
+        });
+      } else {
+        await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
+      }
       break;
     }
 
@@ -816,27 +818,6 @@ export async function executeAction(
         return { selectedPhone, notes, briefing, phoneOptions, agencyName: fallbackAgencyName };
       };
 
-      const enrichPhoneFallbackTask = async (
-        phoneTaskId: number,
-        payload: { briefing: any; phoneOptions: any }
-      ) => {
-        try {
-          await db.updatePhoneCallBriefing(phoneTaskId, payload.briefing);
-          await db.query(
-            `UPDATE phone_call_queue
-             SET phone_options = $2, updated_at = NOW()
-             WHERE id = $1`,
-            [phoneTaskId, JSON.stringify(payload.phoneOptions || {})]
-          );
-        } catch (e: any) {
-          logger.warn("Failed to enrich phone fallback task", {
-            caseId,
-            phoneTaskId,
-            error: e?.message || String(e),
-          });
-        }
-      };
-
       // Auto-create follow-up proposal for new agency
       let contactResult = researchContactResult || null;
       let brief = researchBrief || null;
@@ -906,24 +887,8 @@ export async function executeAction(
           break;
         }
 
-        const phoneTask = await db.createPhoneCallTask({
-          case_id: caseId,
-          agency_name: caseData?.agency_name || "Agency",
-          agency_phone: fallback.selectedPhone,
-          agency_state: caseData?.state || null,
-          reason: "clarification_needed",
-          priority: 1,
-          notes: fallback.notes,
-          days_since_sent: caseData?.send_date
-            ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
-            : null,
-        });
-        await enrichPhoneFallbackTask(phoneTask.id, {
-          briefing: fallback.briefing,
-          phoneOptions: fallback.phoneOptions,
-        });
         await persistResearchExecutionMeta({
-          outcome: "research_failed_phone_fallback",
+          outcome: "research_failed_phone_handoff_required",
           research_failed: true,
           research_failure_reason: brief.summary || "unknown error",
           phone_call_target: {
@@ -938,7 +903,7 @@ export async function executeAction(
           substatus: "agency_research_failed",
           pauseReason: "RESEARCH_HANDOFF",
         });
-        executionResult = { action: "research_failed", followup: "phone_fallback" };
+        executionResult = { action: "research_failed", followup: "phone_handoff_required" };
         break;
       }
 
@@ -1143,24 +1108,8 @@ export async function executeAction(
           break;
         }
 
-        const phoneTask = await db.createPhoneCallTask({
-          case_id: caseId,
-          agency_name: fallback.agencyName || caseData?.agency_name || "Agency",
-          agency_phone: fallback.selectedPhone,
-          agency_state: caseData?.state || null,
-          reason: "clarification_needed",
-          priority: 1,
-          notes: fallback.notes,
-          days_since_sent: caseData?.send_date
-            ? Math.floor((Date.now() - new Date(caseData.send_date).getTime()) / 86400000)
-            : null,
-        });
-        await enrichPhoneFallbackTask(phoneTask.id, {
-          briefing: fallback.briefing,
-          phoneOptions: fallback.phoneOptions,
-        });
         await persistResearchExecutionMeta({
-          outcome: "phone_fallback_no_new_channel",
+          outcome: "phone_handoff_no_new_channel",
           suggested_agency: suggestedAgency?.name || null,
           phone_call_target: {
             agency_name: fallback.agencyName || caseData?.agency_name || "Agency",
@@ -1174,7 +1123,7 @@ export async function executeAction(
           substatus: "agency_research_complete",
           pauseReason: "RESEARCH_HANDOFF",
         });
-        executionResult = { action: "research_complete", followup: "phone_fallback_no_new_channel" };
+        executionResult = { action: "research_complete", followup: "phone_handoff_no_new_channel" };
         break;
       }
 
