@@ -1744,8 +1744,10 @@ class DatabaseService {
                 proposalKeyForChecks.includes(':research:');
             const isResearchHandoffProposal =
                 proposalKeyForChecks.includes(':research:handoff:');
+            const disableResearchAutoDismiss = proposalData.disableResearchAutoDismiss === true;
             const blockResearchBecausePhoneFallback =
                 isResearchAction
+                && !disableResearchAutoDismiss
                 && !isResearchHandoffProposal
                 && (
                     caseRow?.status === 'needs_phone_call'

@@ -580,6 +580,7 @@ export async function executeAction(
             caseId,
             runId: runId || null,
             actionType: "RESEARCH_AGENCY",
+            disableResearchAutoDismiss: true,
             draftSubject: opts?.subject || `Research handoff needed - case ${caseId}`,
             draftBodyText: body,
             reasoning: [handoffReason],
