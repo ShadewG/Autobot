@@ -703,7 +703,7 @@ router.get('/live-overview', async (req, res) => {
                     LIMIT 1
                 ) AS last_inbound_preview
             FROM cases c
-            WHERE c.status IN (
+            WHERE LOWER(c.status) IN (
                 'needs_human_review',
                 'needs_phone_call',
                 'needs_contact_info',
