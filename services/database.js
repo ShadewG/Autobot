@@ -1739,8 +1739,12 @@ class DatabaseService {
                 proposalData.proposalKey && proposalData.proposalKey.includes(':initial:');
             const isResearchProposal =
                 proposalData.proposalKey && proposalData.proposalKey.includes(':research:');
+            const isResearchHandoffProposal =
+                typeof proposalData.proposalKey === 'string'
+                && proposalData.proposalKey.includes(':research:handoff:');
             const blockResearchBecausePhoneFallback =
                 isResearchAction
+                && !isResearchHandoffProposal
                 && (
                     caseRow?.status === 'needs_phone_call'
                     || hasActivePhoneFallback

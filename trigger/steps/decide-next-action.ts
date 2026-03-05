@@ -1967,7 +1967,9 @@ export async function decideNextAction(
     // Overdue / scheduled follow-up policy:
     // Route through research first so we can propose the best *new* channel
     // (new portal/new email/phone/fax) instead of repeatedly emailing stale contacts.
-    if (classification === "NO_RESPONSE" || isFollowupTrigger) {
+    const isHumanReviewResolutionTrigger =
+      triggerType === "HUMAN_REVIEW_RESOLUTION" && Boolean(reviewAction);
+    if ((classification === "NO_RESPONSE" || isFollowupTrigger) && !isHumanReviewResolutionTrigger) {
       const [followupSchedule, caseSnapshot] = await Promise.all([
         db.getFollowUpScheduleByCaseId(caseId),
         db.getCaseById(caseId),
