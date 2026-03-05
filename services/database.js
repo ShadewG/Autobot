@@ -205,7 +205,24 @@ class DatabaseService {
     }
 
     // Cases
+    normalizeNotionPageId(notionPageId) {
+        const raw = String(notionPageId || '').trim();
+        if (!raw) return null;
+
+        // Canonicalize UUID-style Notion page IDs to 32-char lowercase (no dashes).
+        if (/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(raw)) {
+            return raw.replace(/-/g, '').toLowerCase();
+        }
+
+        return raw;
+    }
+
     async createCase(caseData) {
+        const normalizedNotionId = this.normalizeNotionPageId(caseData?.notion_page_id);
+        if (!normalizedNotionId) {
+            throw new Error('createCase requires notion_page_id');
+        }
+
         // Try to find matching agency first
         let agencyId = caseData.agency_id || null;
         if (!agencyId && caseData.agency_name) {
@@ -241,10 +258,12 @@ class DatabaseService {
                 portal_url, portal_provider, alternate_agency_email,
                 tags, priority, user_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-            RETURNING *
+            ON CONFLICT (notion_page_id) DO UPDATE
+            SET notion_page_id = EXCLUDED.notion_page_id
+            RETURNING *, (xmax = 0) AS _inserted
         `;
         const values = [
-            caseData.notion_page_id,
+            normalizedNotionId,
             caseData.case_name,
             caseData.subject_name,
             caseData.agency_name,
@@ -267,6 +286,13 @@ class DatabaseService {
         ];
         const result = await this.query(query, values);
         const created = result.rows[0];
+        const inserted = Boolean(created._inserted);
+        delete created._inserted;
+
+        if (!inserted) {
+            console.log(`[DB] Duplicate case create prevented for notion_page_id=${normalizedNotionId}; returning existing case ${created.id}`);
+            return created;
+        }
 
         // Reactive dispatch for newly created cases
         if (created.status) {
@@ -284,8 +310,19 @@ class DatabaseService {
     }
 
     async getCaseByNotionId(notionPageId) {
-        const result = await this.query('SELECT * FROM cases WHERE notion_page_id = $1', [notionPageId]);
-        return result.rows[0];
+        const normalized = this.normalizeNotionPageId(notionPageId);
+        if (!normalized) return null;
+
+        const result = await this.query('SELECT * FROM cases WHERE notion_page_id = $1', [normalized]);
+        if (result.rows[0]) return result.rows[0];
+
+        // Compatibility fallback for any legacy non-normalized IDs.
+        if (String(notionPageId).trim() !== normalized) {
+            const legacy = await this.query('SELECT * FROM cases WHERE notion_page_id = $1', [String(notionPageId).trim()]);
+            return legacy.rows[0] || null;
+        }
+
+        return null;
     }
 
     async getCasesByStatus(status) {

@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
-CREATE INDEX IF NOT EXISTS idx_cases_notion_id ON cases(notion_page_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cases_notion_id_unique ON cases(notion_page_id);
 CREATE INDEX IF NOT EXISTS idx_email_threads_case ON email_threads(case_id);
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction);
