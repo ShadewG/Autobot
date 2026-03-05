@@ -16,7 +16,11 @@ WITH ranked AS (
 UPDATE phone_call_queue pcq
 SET
     status = 'skipped',
-    skip_reason = COALESCE(pcq.skip_reason, 'duplicate_cleanup'),
+    call_outcome = COALESCE(pcq.call_outcome, 'duplicate_cleanup'),
+    call_notes = CASE
+        WHEN pcq.call_notes IS NULL OR pcq.call_notes = '' THEN 'Auto-skipped duplicate active phone task during migration 056.'
+        ELSE pcq.call_notes
+    END,
     completed_at = COALESCE(pcq.completed_at, NOW()),
     updated_at = NOW()
 FROM ranked r
