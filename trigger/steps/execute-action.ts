@@ -891,6 +891,19 @@ export async function executeAction(
           reasonLabel: "Research failed; direct phone follow-up required.",
           reasonDetail: `Agency research failed (${brief.summary || "unknown error"}).`,
         });
+        if (!fallback.selectedPhone) {
+          await ensureResearchHandoffProposal(
+            "phone-fallback-missing-number",
+            "Research failed and no callable phone number is available.",
+            "No phone number is available for manual follow-up. Re-run contact research focused on phone discovery or add a direct number before queuing a call."
+          );
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+            substatus: "agency_research_failed",
+            pauseReason: "RESEARCH_HANDOFF",
+          });
+          executionResult = { action: "research_failed", followup: "phone_fallback_missing_number" };
+          break;
+        }
 
         const phoneTask = await db.createPhoneCallTask({
           case_id: caseId,
@@ -1115,6 +1128,19 @@ export async function executeAction(
           newPhone,
           newFax,
         });
+        if (!fallback.selectedPhone) {
+          await ensureResearchHandoffProposal(
+            "phone-fallback-missing-number",
+            "Research completed but no callable phone number is available.",
+            "No phone number is available for manual follow-up. Re-run contact research focused on phone discovery or add a direct number before queuing a call."
+          );
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+            substatus: "agency_research_complete",
+            pauseReason: "RESEARCH_HANDOFF",
+          });
+          executionResult = { action: "research_complete", followup: "phone_fallback_missing_number" };
+          break;
+        }
 
         const phoneTask = await db.createPhoneCallTask({
           case_id: caseId,

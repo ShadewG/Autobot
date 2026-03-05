@@ -1947,6 +1947,37 @@ export async function decideNextAction(
         db.getFollowUpScheduleByCaseId(caseId),
         db.getCaseById(caseId),
       ]);
+      // If a recent manual phone-call note indicates "resend by email", prefer an email follow-up
+      // over re-running research/phone fallback.
+      try {
+        const latestInbound = await db.query(
+          `SELECT subject, body_text
+           FROM messages
+           WHERE case_id = $1 AND direction = 'inbound'
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [caseId]
+        );
+        const latestBody = String(latestInbound.rows[0]?.body_text || "");
+        const latestSubject = String(latestInbound.rows[0]?.subject || "");
+        const combined = `${latestSubject}\n${latestBody}`.toLowerCase();
+        const asksToResendEmail =
+          /resend|send/.test(combined) &&
+          /email/.test(combined) &&
+          /(records|request|address|follow-up|follow up)/.test(combined);
+        if (asksToResendEmail) {
+          return decision("SEND_FOLLOWUP", {
+            requiresHuman: true,
+            pauseReason: "SCOPE",
+            reasoning: [
+              "Recent manual contact indicates agency requested email resend",
+              "Prioritizing direct follow-up email over additional research/phone routing",
+            ],
+          });
+        }
+      } catch {
+        // non-fatal; continue default overdue routing
+      }
       const followupCount = followupSchedule?.followup_count || 0;
       if (followupCount >= MAX_FOLLOWUPS) {
         return decision("ESCALATE", {
