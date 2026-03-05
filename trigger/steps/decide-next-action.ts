@@ -110,26 +110,33 @@ function buildAllowedActions(params: {
   triggerType: string;
   dismissedActionCounts: Record<string, number>;
   canDirectWrongAgencySend?: boolean;
+  researchAttemptCount?: number;
 }): ActionType[] {
   const {
     classification, denialSubtype, constraints, followupCount,
     maxFollowups, hasAutomatablePortal: hasPortal, triggerType, dismissedActionCounts,
   } = params;
 
+  // Cap RESEARCH_AGENCY after 2 attempts to prevent infinite loop
+  const researchCapped = (params.researchAttemptCount || 0) >= 2;
+  const maybeFilterResearch = (actions: ActionType[]): ActionType[] =>
+    researchCapped ? actions.filter(a => a !== "RESEARCH_AGENCY") : actions;
+
   // Hard constraints — AI cannot override these
   if (classification === "HOSTILE" || classification === "UNKNOWN") return ["ESCALATE"];
   if (classification === "WRONG_AGENCY") {
     if (params.canDirectWrongAgencySend) {
-      return hasPortal
+      return maybeFilterResearch(hasPortal
         ? ["SUBMIT_PORTAL", "SEND_INITIAL_REQUEST", "RESEARCH_AGENCY", "ESCALATE"]
-        : ["SEND_INITIAL_REQUEST", "RESEARCH_AGENCY", "ESCALATE"];
+        : ["SEND_INITIAL_REQUEST", "RESEARCH_AGENCY", "ESCALATE"]);
     }
-    return ["RESEARCH_AGENCY", "ESCALATE"];
+    const actions = maybeFilterResearch(["RESEARCH_AGENCY", "ESCALATE"]);
+    return actions.length > 0 ? actions : ["ESCALATE"];
   }
-  if (classification === "PARTIAL_APPROVAL") return ["RESPOND_PARTIAL_APPROVAL", "RESEARCH_AGENCY", "ESCALATE"];
+  if (classification === "PARTIAL_APPROVAL") return maybeFilterResearch(["RESPOND_PARTIAL_APPROVAL", "RESEARCH_AGENCY", "ESCALATE"]);
   if (classification === "RECORDS_READY") return ["NONE", "CLOSE_CASE"];
   if (classification === "ACKNOWLEDGMENT") return ["NONE"];
-  if (classification === "PARTIAL_DELIVERY") return ["NONE", "SEND_FOLLOWUP", "RESEARCH_AGENCY"];
+  if (classification === "PARTIAL_DELIVERY") return maybeFilterResearch(["NONE", "SEND_FOLLOWUP", "RESEARCH_AGENCY"]);
   if (followupCount >= maxFollowups) return ["ESCALATE"];
 
   // Citizenship/residency restriction — force escalate for human handling
@@ -155,6 +162,11 @@ function buildAllowedActions(params: {
   // Remove actions dismissed 2+ times
   for (const [action, count] of Object.entries(dismissedActionCounts)) {
     if (count >= 2) removeAction(base, action as ActionType);
+  }
+
+  // Also apply research cap to the broad action set
+  if (researchCapped) {
+    removeAction(base, "RESEARCH_AGENCY");
   }
 
   // Classification-specific narrowing
@@ -259,6 +271,7 @@ interface PreComputedContext {
   caseData: any;
   threadMessages: any[];
   canDirectWrongAgencySend: boolean;
+  researchAttemptCount: number;
 }
 
 async function preComputeDecisionContext(
@@ -276,6 +289,7 @@ async function preComputeDecisionContext(
     humanDirectivesResult,
     phoneNotesResult,
     followupSchedule,
+    researchAttemptResult,
   ] = await Promise.all([
     db.getCaseById(caseId),
     db.getMessagesByCaseId(caseId),
@@ -303,6 +317,13 @@ async function preComputeDecisionContext(
       [caseId]
     ).then((r: any) => r.rows),
     db.getFollowUpScheduleByCaseId(caseId),
+    db.query(
+      `SELECT COUNT(*)::int AS cnt FROM proposals
+       WHERE case_id = $1
+         AND action_type = 'RESEARCH_AGENCY'
+         AND status IN ('EXECUTED', 'DISMISSED')`,
+      [caseId]
+    ).then((r: any) => r.rows?.[0]?.cnt || 0),
   ]);
 
   // Pre-compute denial strength
@@ -337,6 +358,7 @@ async function preComputeDecisionContext(
     caseData,
     threadMessages: Array.isArray(threadMessages) ? threadMessages : [],
     canDirectWrongAgencySend,
+    researchAttemptCount: researchAttemptResult,
   };
 }
 
@@ -2182,6 +2204,7 @@ export async function decideNextAction(
               triggerType: "INITIAL_REQUEST", // Allow full action set for reprocess
               dismissedActionCounts: preComputed.dismissedActionCounts,
               canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
+              researchAttemptCount: preComputed.researchAttemptCount,
             });
             const v2Result = await makeAIDecisionV2({
               caseId, classification, constraints, extractedFeeAmount,
@@ -2326,6 +2349,7 @@ export async function decideNextAction(
               triggerType: "INITIAL_REQUEST", // Allow full action set for custom instruction
               dismissedActionCounts: preComputed.dismissedActionCounts,
               canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
+              researchAttemptCount: preComputed.researchAttemptCount,
             });
             // When a human provides explicit custom instructions, don't let an
             // UNKNOWN-only escalate lockout block obvious execution paths.
@@ -2535,6 +2559,7 @@ export async function decideNextAction(
         triggerType,
         dismissedActionCounts: preComputed.dismissedActionCounts,
         canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
+        researchAttemptCount: preComputed.researchAttemptCount,
       });
 
       // Special handling for classifications with side effects that happen at decision time

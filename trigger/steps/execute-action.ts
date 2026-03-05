@@ -907,6 +907,16 @@ export async function executeAction(
         break;
       }
 
+      // When research failed but Firecrawl/contact lookup DID find signals,
+      // use those signals directly instead of relying on brief.suggested_agencies
+      // (which will be empty because the OpenAI research timed out).
+      let candidateEmail: string | null = null;
+      let candidatePortalUrl: string | null = null;
+      let candidatePhone: string | null = null;
+      let candidateFax: string | null = null;
+      let suggestedAgency: { name: string; reason: string; confidence: number } | null = null;
+      let skipNormalDerivation = false;
+
       if (brief?.researchFailed && (hasContactSignals || hasKnownCaseSignals)) {
         await persistResearchExecutionMeta({
           outcome: "research_partial_with_channels",
@@ -919,33 +929,81 @@ export async function executeAction(
             fax: contactSignalFax,
           },
         });
+
+        // Use contact signals directly as candidates — don't require agency name match
+        candidateEmail = contactSignalEmail || knownCaseEmailSignal || null;
+        candidatePortalUrl = contactSignalPortal || knownCasePortalSignal || null;
+        candidatePhone = contactSignalPhone || null;
+        candidateFax = contactSignalFax || null;
+
+        // Build synthetic suggested agency from the case's corrected agency name
+        const agencyName = String(caseData?.agency_name || "").trim();
+        if (agencyName) {
+          suggestedAgency = {
+            name: agencyName,
+            reason: "Derived from Firecrawl contact lookup (research brief failed).",
+            confidence: 0.6,
+          };
+        }
+        skipNormalDerivation = true;
+
+        logger.info("Using Firecrawl contact signals directly (research brief failed)", {
+          caseId,
+          candidateEmail,
+          candidatePortalUrl,
+          candidatePhone,
+          candidateFax,
+          suggestedAgencyName: agencyName || null,
+        });
       }
 
-      let suggestedAgencies = Array.isArray(brief?.suggested_agencies)
-        ? brief.suggested_agencies
-        : [];
-      if (suggestedAgencies.length === 0) {
-        const fallbackSuggestedName =
-          String(contactResult?.agency_name || "").trim() ||
-          String(caseData?.agency_name || "").trim();
-        if (fallbackSuggestedName) {
-          suggestedAgencies = [{
-            name: fallbackSuggestedName,
-            reason: brief?.researchFailed
-              ? "Derived from partial contact research output."
-              : "Derived from existing case agency.",
-            confidence: brief?.researchFailed ? 0.5 : 0.4,
-          }];
+      if (!skipNormalDerivation) {
+        let suggestedAgencies = Array.isArray(brief?.suggested_agencies)
+          ? brief.suggested_agencies
+          : [];
+        if (suggestedAgencies.length === 0) {
+          const fallbackSuggestedName =
+            String(contactResult?.agency_name || "").trim() ||
+            String(caseData?.agency_name || "").trim();
+          if (fallbackSuggestedName) {
+            suggestedAgencies = [{
+              name: fallbackSuggestedName,
+              reason: brief?.researchFailed
+                ? "Derived from partial contact research output."
+                : "Derived from existing case agency.",
+              confidence: brief?.researchFailed ? 0.5 : 0.4,
+            }];
+          }
+        }
+        const inboundTextForAgencyHint = `${latestInbound?.subject || ""}\n${latestInbound?.body_text || ""}`.toLowerCase();
+        const prefersIowaDCI = /iowa\s+dci|division of criminal investigation|department of public safety/.test(inboundTextForAgencyHint);
+        suggestedAgency = prefersIowaDCI
+          ? (suggestedAgencies.find((a: any) => {
+              const n = String(a?.name || "").toLowerCase();
+              return n.includes("iowa") && (n.includes("dci") || n.includes("division of criminal investigation") || n.includes("department of public safety"));
+            }) || suggestedAgencies[0] || null)
+          : (suggestedAgencies[0] || null);
+
+        // Never bind generic contact lookup output to a different suggested agency.
+        const contactName = String(contactResult?.agency_name || contactResult?.name || "").trim().toLowerCase();
+        const suggestedName = String(suggestedAgency?.name || "").trim().toLowerCase();
+        const contactMatchesSuggested = !!contactName && (
+          contactName.includes(suggestedName) || suggestedName.includes(contactName)
+        );
+        if (contactResult && contactMatchesSuggested) {
+          candidateEmail = contactResult.contact_email || null;
+          candidatePortalUrl = contactResult.portal_url || null;
+          candidatePhone = contactResult.contact_phone || null;
+          candidateFax = contactResult.contact_fax || null;
+        } else if (contactResult && !contactMatchesSuggested) {
+          logger.warn("Skipping mismatched contactResult for suggested agency", {
+            caseId,
+            suggestedAgency: suggestedAgency?.name || null,
+            contactAgency: contactResult?.agency_name || contactResult?.name || null,
+          });
         }
       }
-      const inboundTextForAgencyHint = `${latestInbound?.subject || ""}\n${latestInbound?.body_text || ""}`.toLowerCase();
-      const prefersIowaDCI = /iowa\s+dci|division of criminal investigation|department of public safety/.test(inboundTextForAgencyHint);
-      const suggestedAgency = prefersIowaDCI
-        ? (suggestedAgencies.find((a: any) => {
-            const n = String(a?.name || "").toLowerCase();
-            return n.includes("iowa") && (n.includes("dci") || n.includes("division of criminal investigation") || n.includes("department of public safety"));
-          }) || suggestedAgencies[0] || null)
-        : (suggestedAgencies[0] || null);
+
       if (!suggestedAgency?.name) {
         await ensureResearchHandoffProposal(
           "no-suggested-agency",
@@ -959,30 +1017,6 @@ export async function executeAction(
         });
         executionResult = { action: "research_complete", followup: "none" };
         break;
-      }
-
-      // Never bind generic contact lookup output to a different suggested agency.
-      // Example failure mode: contactResult for Milford accidentally applied to DCI.
-      let candidateEmail: string | null = null;
-      let candidatePortalUrl: string | null = null;
-      let candidatePhone: string | null = null;
-      let candidateFax: string | null = null;
-      const contactName = String(contactResult?.agency_name || contactResult?.name || "").trim().toLowerCase();
-      const suggestedName = String(suggestedAgency?.name || "").trim().toLowerCase();
-      const contactMatchesSuggested = !!contactName && (
-        contactName.includes(suggestedName) || suggestedName.includes(contactName)
-      );
-      if (contactResult && contactMatchesSuggested) {
-        candidateEmail = contactResult.contact_email || null;
-        candidatePortalUrl = contactResult.portal_url || null;
-        candidatePhone = contactResult.contact_phone || null;
-        candidateFax = contactResult.contact_fax || null;
-      } else if (contactResult && !contactMatchesSuggested) {
-        logger.warn("Skipping mismatched contactResult for suggested agency", {
-          caseId,
-          suggestedAgency: suggestedAgency?.name || null,
-          contactAgency: contactResult?.agency_name || contactResult?.name || null,
-        });
       }
       let agencyId = null;
       let knownAgencyPhone: string | null = null;
@@ -1138,6 +1172,23 @@ export async function executeAction(
           added_source: "research",
           notes: suggestedAgency.reason || brief?.summary || null,
         });
+
+        // Also update primary case fields when current email is a placeholder
+        // so the next pipeline run doesn't see placeholder → RESEARCH_AGENCY loop
+        const currentEmail = caseData?.agency_email || "";
+        if (/placeholder\.invalid/i.test(currentEmail) || !currentEmail.trim()) {
+          const primaryUpdates: Record<string, any> = {};
+          if (newEmail) primaryUpdates.agency_email = newEmail;
+          if (newPortalUrl) primaryUpdates.portal_url = newPortalUrl;
+          if (suggestedAgency?.name) primaryUpdates.agency_name = suggestedAgency.name;
+          if (Object.keys(primaryUpdates).length > 0) {
+            await db.updateCase(caseId, primaryUpdates);
+            logger.info("Updated primary case fields from research (was placeholder)", {
+              caseId,
+              updates: primaryUpdates,
+            });
+          }
+        }
       } catch (e: any) {
         await ensureResearchHandoffProposal(
           "add-agency-failed",
