@@ -419,25 +419,34 @@ class FollowupScheduler {
   }
 
   /**
-   * Async phone lookup: run Notion and web search in parallel.
-   * Builds phone_options JSONB with both results and auto-selects best default.
+   * Async phone lookup: run Notion, web search, and Firecrawl in parallel.
+   * Builds phone_options JSONB with all results and auto-selects best default.
    * Updates phone_call_queue, and agencies table if found.
    */
   async _asyncPhoneLookup(caseData, phoneTaskId) {
     const notionService = require('./notion-service');
+    const pdContactService = require('./pd-contact-service');
 
-    // Run both lookups in parallel
-    const [notionResult, webResult] = await Promise.allSettled([
+    // Run all lookups in parallel
+    const [notionResult, webResult, firecrawlResult] = await Promise.allSettled([
       caseData.notion_page_id
         ? notionService.lookupPhoneFromNotion(caseData.notion_page_id)
         : Promise.resolve({ phone: null, pdPageId: null }),
       caseData.agency_name
         ? notionService.searchForAgencyPhone(caseData.agency_name, caseData.state)
-        : Promise.resolve({ phone: null, confidence: 'low', reasoning: 'No agency name' })
+        : Promise.resolve({ phone: null, confidence: 'low', reasoning: 'No agency name' }),
+      caseData.agency_name
+        ? pdContactService.lookupContact(
+            caseData.agency_name,
+            caseData.state || caseData.incident_location,
+            { forceSearch: true }
+          )
+        : Promise.resolve(null)
     ]);
 
     const notion = notionResult.status === 'fulfilled' ? notionResult.value : { phone: null, pdPageId: null };
     const web = webResult.status === 'fulfilled' ? webResult.value : { phone: null, confidence: 'low', reasoning: 'lookup failed' };
+    const firecrawl = firecrawlResult.status === 'fulfilled' ? firecrawlResult.value : null;
 
     // Build phone_options JSONB
     const phoneOptions = {
@@ -454,16 +463,36 @@ class FollowupScheduler {
         source: 'Web Search (GPT)',
         confidence: web.confidence || null,
         reasoning: web.reasoning || null
+      },
+      firecrawl: firecrawl ? {
+        phone: firecrawl.contact_phone || null,
+        source: 'Firecrawl Deep Search',
+        confidence: firecrawl.confidence || null,
+        portal_url: firecrawl.portal_url || null,
+        contact_email: firecrawl.contact_email || null,
+        records_officer: firecrawl.records_officer || null
+      } : null
+    };
+
+    // Optional richer candidate set for UI
+    if (Array.isArray(phoneOptions.candidates) === false) {
+      const candidates = [];
+      if (notion.phone) candidates.push({ phone: notion.phone, source: 'Notion PD Card', kind: 'phone' });
+      if (firecrawl?.contact_phone) candidates.push({ phone: firecrawl.contact_phone, source: 'Firecrawl Deep Search', kind: 'phone' });
+      if (web.phone) candidates.push({ phone: web.phone, source: 'Web Search (GPT)', kind: 'phone' });
+      if (candidates.length > 0) {
+        phoneOptions.candidates = candidates;
       }
     };
 
-    // Pick best default: Notion preferred, else web search
-    const bestPhone = notion.phone || web.phone || null;
+    // Pick best default: Notion preferred, then Firecrawl, then web search
+    const bestPhone = notion.phone || firecrawl?.contact_phone || web.phone || null;
 
     logger.info('Dual phone lookup completed', {
       caseId: caseData.id,
       phoneTaskId,
       notionPhone: notion.phone,
+      firecrawlPhone: firecrawl?.contact_phone || null,
       webPhone: web.phone,
       selected: bestPhone
     });
