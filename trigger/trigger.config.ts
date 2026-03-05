@@ -43,6 +43,7 @@ export default defineConfig({
           "REQUESTS_INBOX",
           "AI_ROUTER_V2",
           "FIRECRAWL_API_KEY",
+          "PARALLEL_API_KEY",
         ];
         const result = vars
           .filter((name) => process.env[name])

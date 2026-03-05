@@ -1954,26 +1954,112 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
      * Analyzes which agency likely holds the records and suggests alternatives.
      */
     async generateAgencyResearchBrief(caseData) {
-        const prompt = `You are a FOIA research specialist. A public records request was denied or returned "no responsive records."
+        const agencyName = caseData.agency_name || 'Unknown agency';
+        const state = caseData.state || 'Unknown';
+        const location = caseData.incident_location || 'Unknown';
+        const records = Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Various records';
+
+        const parallelApiKey = process.env.PARALLEL_API_KEY;
+        const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
+
+        // Strategy: Use Parallel search for web research, then have AI synthesize.
+        // Firecrawl handles contact lookup separately in pd-contact-service.
+        try {
+            let searchResults = [];
+
+            // --- Parallel Search ---
+            if (parallelApiKey) {
+                try {
+                    const searchObjective = `Find the correct government agency that handles public records requests (FOIA/open records) for: ${records}. Location: ${location}, ${state}. The agency "${agencyName}" denied or had no responsive records. Find alternative agencies in the same jurisdiction that likely hold these records. Include agency names, email addresses, phone numbers, and any online records request portals.`;
+                    const searchQueries = [
+                        `${location} ${state} public records request ${records} agency`,
+                        `${agencyName} ${state} FOIA records custodian contact email`,
+                        `${state} ${location} police records open records request portal`,
+                    ];
+
+                    const parallelRes = await fetch('https://api.parallel.ai/v1beta/search', {
+                        method: 'POST',
+                        headers: {
+                            'x-api-key': parallelApiKey,
+                            'Content-Type': 'application/json',
+                            'parallel-beta': 'search-extract-2025-10-10',
+                        },
+                        body: JSON.stringify({
+                            objective: searchObjective,
+                            search_queries: searchQueries,
+                            max_results: 10,
+                            excerpts: { max_chars_per_result: 3000 },
+                        }),
+                        signal: AbortSignal.timeout(30_000),
+                    });
+
+                    if (parallelRes.ok) {
+                        const parallelData = await parallelRes.json();
+                        const results = parallelData?.search?.results || parallelData?.results || [];
+                        searchResults = results.map(r => `[${r.title || 'No title'}] ${r.url || ''}\n${r.excerpt || r.snippets?.join('\n') || ''}`);
+                        console.log(`Parallel search returned ${searchResults.length} results for "${agencyName}"`);
+                    } else {
+                        console.warn(`Parallel search failed (${parallelRes.status}):`, await parallelRes.text().catch(() => ''));
+                    }
+                } catch (parallelErr) {
+                    console.warn('Parallel search error:', parallelErr.message);
+                }
+            }
+
+            // --- Firecrawl agent fallback if Parallel returned nothing ---
+            if (searchResults.length === 0 && firecrawlApiKey) {
+                try {
+                    const firecrawlRes = await fetch('https://api.firecrawl.dev/v1/search', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${firecrawlApiKey}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            query: `${location} ${state} ${records} public records FOIA request agency contact email portal`,
+                            limit: 8,
+                        }),
+                        signal: AbortSignal.timeout(30_000),
+                    });
+                    if (firecrawlRes.ok) {
+                        const firecrawlData = await firecrawlRes.json();
+                        const results = firecrawlData?.data || [];
+                        searchResults = results.map(r => `[${r.title || r.metadata?.title || 'No title'}] ${r.url || ''}\n${r.description || r.markdown?.substring(0, 2000) || ''}`);
+                        console.log(`Firecrawl search returned ${searchResults.length} results for "${agencyName}"`);
+                    } else {
+                        console.warn(`Firecrawl search failed (${firecrawlRes.status})`);
+                    }
+                } catch (fcErr) {
+                    console.warn('Firecrawl search error:', fcErr.message);
+                }
+            }
+
+            // --- Synthesize with AI ---
+            const searchContext = searchResults.length > 0
+                ? `\n\nWEB SEARCH RESULTS:\n${searchResults.slice(0, 8).join('\n---\n')}`
+                : '\n\n(No web search results available — use your knowledge of government agency structures.)';
+
+            const synthesisPrompt = `You are a FOIA research specialist. A public records request was denied or returned "no responsive records."
 Analyze which agency most likely holds these records and suggest alternatives.
 
 CASE CONTEXT:
-- Agency that denied: ${caseData.agency_name}
-- State: ${caseData.state || 'Unknown'}
-- Incident location: ${caseData.incident_location || 'Unknown'}
+- Agency that denied: ${agencyName}
+- State: ${state}
+- Incident location: ${location}
 - Subject: ${caseData.subject_name || 'Unknown'}
-- Records requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Various records'}
+- Records requested: ${records}
 - Incident date: ${caseData.incident_date || 'Unknown'}
 - Additional details: ${(caseData.additional_details || '').substring(0, 500)}
+${searchContext}
 
-ANALYSIS TASKS:
-1. Why might this agency have said "no records"? (wrong jurisdiction, records held by different unit, etc.)
-2. Which specific agencies likely hold these records? Consider: city vs county vs state, specialized units, multi-jurisdictional incidents
-3. What search terms or record types might yield better results?
+Based on the case context${searchResults.length > 0 ? ' and web search results' : ''}, determine:
+1. Why this agency likely had no records (wrong jurisdiction, records held by different unit, etc.)
+2. Which specific agencies likely hold these records
+3. Contact information found (emails, portals, phone numbers)
 
 Return JSON:
 {
-  "summary": "Brief explanation of why the denial likely occurred and where records probably are",
+  "summary": "Brief explanation of why the denial occurred and where records probably are",
   "suggested_agencies": [
     { "name": "Agency Name", "reason": "Why they might have it", "confidence": 0.0-1.0 }
   ],
@@ -1983,31 +2069,21 @@ Return JSON:
 
 Return ONLY valid JSON.`;
 
-        try {
             let raw;
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 45_000);
-            try {
+            if (this.anthropic) {
+                const response = await this.anthropic.messages.create({
+                    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
+                    max_tokens: 1500,
+                    messages: [{ role: 'user', content: synthesisPrompt }],
+                });
+                raw = response.content[0].text?.trim();
+            } else {
                 const response = await this.openai.responses.create({
                     model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                     reasoning: { effort: 'medium' },
-                    tools: [{ type: 'web_search' }],
-                    input: prompt
-                }, { signal: controller.signal });
-                clearTimeout(timeout);
+                    input: synthesisPrompt,
+                }, { signal: AbortSignal.timeout(45_000) });
                 raw = response.output_text?.trim();
-            } catch (openaiError) {
-                clearTimeout(timeout);
-                console.warn('OpenAI agency research failed, falling back to Anthropic:', openaiError.message);
-                if (!this.anthropic) {
-                    throw openaiError;
-                }
-                const response = await this.anthropic.messages.create({
-                    model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
-                    max_tokens: 1000,
-                    messages: [{ role: 'user', content: prompt }],
-                });
-                raw = response.content[0].text?.trim();
             }
 
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
