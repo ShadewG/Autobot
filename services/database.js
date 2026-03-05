@@ -1781,18 +1781,17 @@ class DatabaseService {
         }
 
         // DEDUP GUARD: Enforce one active proposal per case.
-        // Checks ALL active statuses. Same key = true dedup (return existing).
+        // Same key = true dedup (return existing).
         // Different key = new analysis supersedes — dismiss ALL stale active proposals.
-        // All active (non-terminal) proposal statuses — used for dedup and the DB unique constraint
-        // Guard only fires for PENDING_APPROVAL because all new proposals enter as PENDING_APPROVAL.
-        // Other active statuses (BLOCKED, DECISION_RECEIVED, PENDING_PORTAL) are transitions from PENDING_APPROVAL.
-        // The DB unique index (idx_proposals_one_active_per_case) is the ultimate safety net.
-        if (proposalData.caseId && incomingStatus === 'PENDING_APPROVAL') {
+        // This must run for both queued gates and auto-approved proposals,
+        // otherwise auto-approved operational actions can leave stale pending gates behind.
+        if (proposalData.caseId && ['PENDING_APPROVAL', 'APPROVED'].includes(incomingStatus)) {
+            const dedupStatuses = [...ACTIVE_PROPOSAL_STATUSES, 'APPROVED'];
             const existing = await this.query(
                 `SELECT id, action_type, proposal_key, status FROM proposals
                  WHERE case_id = $1 AND status = ANY($2)
                  ORDER BY created_at DESC`,
-                [proposalData.caseId, ACTIVE_PROPOSAL_STATUSES]
+                [proposalData.caseId, dedupStatuses]
             );
 
             if (existing.rows.length > 0) {
@@ -1811,7 +1810,7 @@ class DatabaseService {
                 await this.query(
                     `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW()
                      WHERE id = ANY($1) AND status = ANY($2)`,
-                    [staleIds, ACTIVE_PROPOSAL_STATUSES]
+                    [staleIds, dedupStatuses]
                 );
                 // Also dismiss any CHAIN_PENDING siblings of the stale proposals
                 const staleChainIds = existing.rows.filter(r => r.chain_id).map(r => r.chain_id);
@@ -2496,9 +2495,34 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.status as case_status,
-                c.send_date, c.state, c.additional_details, c.notion_page_id, c.user_id,
+                c.substatus as case_substatus, c.pause_reason as case_pause_reason,
+                c.send_date, c.state, c.additional_details, c.requested_records, c.notion_page_id, c.user_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
-                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
+                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax,
+                (
+                    SELECT m.subject
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_subject,
+                (
+                    SELECT m.from_email
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_from_email,
+                (
+                    SELECT LEFT(COALESCE(NULLIF(m.body_text, ''), CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))), 1200)
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_preview
             FROM phone_call_queue pcq
             JOIN cases c ON pcq.case_id = c.id
             LEFT JOIN agencies a ON c.agency_id = a.id
@@ -2513,9 +2537,34 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.status as case_status,
-                c.send_date, c.state, c.additional_details, c.notion_page_id, c.user_id,
+                c.substatus as case_substatus, c.pause_reason as case_pause_reason,
+                c.send_date, c.state, c.additional_details, c.requested_records, c.notion_page_id, c.user_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
-                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
+                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax,
+                (
+                    SELECT m.subject
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_subject,
+                (
+                    SELECT m.from_email
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_from_email,
+                (
+                    SELECT LEFT(COALESCE(NULLIF(m.body_text, ''), CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))), 1200)
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_preview
             FROM phone_call_queue pcq
             JOIN cases c ON pcq.case_id = c.id
             LEFT JOIN agencies a ON c.agency_id = a.id
@@ -2530,9 +2579,34 @@ class DatabaseService {
         const result = await this.query(`
             SELECT pcq.*,
                 c.case_name, c.subject_name, c.agency_email, c.agency_name as case_agency_name, c.status as case_status,
-                c.send_date, c.state, c.additional_details, c.notion_page_id,
+                c.substatus as case_substatus, c.pause_reason as case_pause_reason,
+                c.send_date, c.state, c.additional_details, c.requested_records, c.notion_page_id,
                 COALESCE(pcq.agency_phone, a.phone) as agency_phone,
-                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax
+                a.phone as agency_phone_from_db, a.contact_name, a.address, a.email_foia, a.fax,
+                (
+                    SELECT m.subject
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_subject,
+                (
+                    SELECT m.from_email
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_from_email,
+                (
+                    SELECT LEFT(COALESCE(NULLIF(m.body_text, ''), CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))), 1200)
+                    FROM messages m
+                    WHERE m.case_id = c.id
+                      AND m.direction = 'inbound'
+                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_preview
             FROM phone_call_queue pcq
             JOIN cases c ON pcq.case_id = c.id
             LEFT JOIN agencies a ON c.agency_id = a.id
