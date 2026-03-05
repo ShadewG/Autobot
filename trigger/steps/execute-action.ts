@@ -931,7 +931,10 @@ export async function executeAction(
         });
 
         // Use contact signals directly as candidates — don't require agency name match
-        candidateEmail = contactSignalEmail || knownCaseEmailSignal || null;
+        // Filter out placeholder emails from known case signals
+        const usableKnownEmail = knownCaseEmailSignal && !/placeholder\.invalid/i.test(knownCaseEmailSignal)
+          ? knownCaseEmailSignal : null;
+        candidateEmail = contactSignalEmail || usableKnownEmail || null;
         candidatePortalUrl = contactSignalPortal || knownCasePortalSignal || null;
         candidatePhone = contactSignalPhone || null;
         candidateFax = contactSignalFax || null;
