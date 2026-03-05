@@ -281,7 +281,21 @@ class FollowUpService {
                 SELECT c.*
                 FROM cases c
                 LEFT JOIN follow_up_schedule f ON c.id = f.case_id
-                WHERE c.status IN ('sent', 'awaiting_response')
+                WHERE (
+                    LOWER(c.status) IN ('sent', 'awaiting_response')
+                    OR (
+                        LOWER(c.status) IN (
+                            'needs_human_review',
+                            'needs_phone_call',
+                            'needs_contact_info',
+                            'needs_human_fee_approval',
+                            'needs_rebuttal',
+                            'pending_fee_decision',
+                            'id_state'
+                        )
+                        AND UPPER(COALESCE(c.pause_reason, '')) = 'RESEARCH_HANDOFF'
+                    )
+                )
                 AND c.deadline_date < NOW()
                 AND (f.id IS NULL OR f.status = 'max_reached')
             `);

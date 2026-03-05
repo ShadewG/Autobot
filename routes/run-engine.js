@@ -44,6 +44,20 @@ function triggerOptsDebounced(caseId, taskType, uniqueId) {
   };
 }
 
+const FOLLOWUP_ELIGIBLE_STATUSES = new Set([
+  'sent',
+  'awaiting_response',
+]);
+const FOLLOWUP_RESEARCH_HANDOFF_STATUSES = new Set([
+  'needs_human_review',
+  'needs_phone_call',
+  'needs_contact_info',
+  'needs_human_fee_approval',
+  'needs_rebuttal',
+  'pending_fee_decision',
+  'id_state',
+]);
+
 // Save Trigger.dev run ID in agent_run metadata for dashboard linking
 async function saveTriggerRunId(runId, triggerRunId) {
   try {
@@ -782,11 +796,17 @@ router.post('/cases/:id/run-followup', async (req, res) => {
     }
 
     // Check case is in appropriate status
-    if (!['sent', 'awaiting_response'].includes(caseData.status)) {
+    const status = String(caseData.status || '').toLowerCase();
+    const isResearchHandoff = String(caseData.pause_reason || '').toUpperCase() === 'RESEARCH_HANDOFF';
+    const isEligible =
+      FOLLOWUP_ELIGIBLE_STATUSES.has(status) ||
+      (FOLLOWUP_RESEARCH_HANDOFF_STATUSES.has(status) && isResearchHandoff);
+    if (!isEligible) {
       return res.status(400).json({
         success: false,
-        error: `Case status must be 'sent' or 'awaiting_response' for follow-up`,
-        current_status: caseData.status
+        error: `Case status is not eligible for follow-up`,
+        current_status: caseData.status,
+        pause_reason: caseData.pause_reason || null
       });
     }
 

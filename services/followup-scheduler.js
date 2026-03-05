@@ -22,6 +22,19 @@ const { transitionCaseRuntime } = require('./case-runtime');
 const FOLLOWUP_CHECK_CRON = process.env.FOLLOWUP_CHECK_CRON || '*/15 * * * *'; // Every 15 minutes
 const MAX_FOLLOWUPS = parseInt(process.env.MAX_FOLLOWUPS) || 3;
 const MAX_CONCURRENT_FOLLOWUPS = parseInt(process.env.MAX_CONCURRENT_FOLLOWUPS) || 5;
+const FOLLOWUP_ELIGIBLE_STATUSES = [
+  'sent',
+  'awaiting_response'
+];
+const FOLLOWUP_RESEARCH_HANDOFF_STATUSES = [
+  'needs_human_review',
+  'needs_phone_call',
+  'needs_contact_info',
+  'needs_human_fee_approval',
+  'needs_rebuttal',
+  'pending_fee_decision',
+  'id_state'
+];
 
 class FollowupScheduler {
   constructor() {
@@ -124,7 +137,13 @@ class FollowupScheduler {
         AND fs.status = 'scheduled'
         AND fs.auto_send = true
         AND fs.followup_count < $1
-        AND c.status IN ('sent', 'awaiting_response')
+        AND (
+          LOWER(c.status) = ANY($3::text[])
+          OR (
+            LOWER(c.status) = ANY($4::text[])
+            AND UPPER(COALESCE(c.pause_reason, '')) = 'RESEARCH_HANDOFF'
+          )
+        )
         AND NOT EXISTS (
           -- Don't process if there's already an active run for this case
           SELECT 1 FROM agent_runs ar
@@ -133,7 +152,12 @@ class FollowupScheduler {
         )
       ORDER BY fs.next_followup_date ASC
       LIMIT $2
-    `, [MAX_FOLLOWUPS, MAX_CONCURRENT_FOLLOWUPS * 2]);
+    `, [
+      MAX_FOLLOWUPS,
+      MAX_CONCURRENT_FOLLOWUPS * 2,
+      FOLLOWUP_ELIGIBLE_STATUSES,
+      FOLLOWUP_RESEARCH_HANDOFF_STATUSES
+    ]);
 
     return result.rows;
   }

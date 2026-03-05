@@ -526,7 +526,21 @@ class CronService {
             const result = await db.query(`
                 SELECT c.*
                 FROM cases c
-                WHERE c.status IN ('sent', 'awaiting_response')
+                WHERE (
+                    LOWER(c.status) IN ('sent', 'awaiting_response')
+                    OR (
+                        LOWER(c.status) IN (
+                            'needs_human_review',
+                            'needs_phone_call',
+                            'needs_contact_info',
+                            'needs_human_fee_approval',
+                            'needs_rebuttal',
+                            'pending_fee_decision',
+                            'id_state'
+                        )
+                        AND UPPER(COALESCE(c.pause_reason, '')) = 'RESEARCH_HANDOFF'
+                    )
+                )
                   AND c.deadline_date IS NOT NULL
                   AND c.deadline_date < CURRENT_DATE
                   AND (
