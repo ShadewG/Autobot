@@ -2878,6 +2878,19 @@ function MonitorPageContent() {
                   portal_failed: "Portal failed",
                   clarification_difficult: "Clarification by phone",
                 };
+                const REASON_PURPOSES: Record<string, string> = {
+                  no_email_response: "Confirm status and unblock the request when email has stalled.",
+                  manual_add: "Manual follow-up requested by operator.",
+                  clarification_needed: "Get missing details needed to proceed with records processing.",
+                  details_needed: "Collect additional case/request details by phone.",
+                  complex_inquiry: "Handle an issue better resolved live than over email.",
+                  portal_failed: "Recover from portal submission failure and confirm next intake path.",
+                  clarification_difficult: "Clarify agency requirements that were unclear in writing.",
+                };
+                const callPurpose =
+                  (task.notes && String(task.notes).trim()) ||
+                  REASON_PURPOSES[task.reason || ""] ||
+                  "Follow up on this request by phone.";
 
                 return (
                   <div
@@ -2931,6 +2944,9 @@ function MonitorPageContent() {
                             {REASON_LABELS[task.reason || ""] || task.reason || ""}
                           </span>
                         </div>
+                        <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+                          Call purpose: {callPurpose}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         {task.created_at && (
@@ -3066,6 +3082,9 @@ function MonitorPageContent() {
                             )}
                             {task.notes && (
                               <p><span className="text-muted-foreground">Notes:</span> {task.notes}</p>
+                            )}
+                            {callPurpose && (
+                              <p><span className="text-muted-foreground">Call purpose:</span> {callPurpose}</p>
                             )}
                           </div>
                             );

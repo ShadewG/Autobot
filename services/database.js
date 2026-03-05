@@ -2480,6 +2480,52 @@ class DatabaseService {
     // =========================================================================
 
     async createPhoneCallTask(data) {
+        const existing = await this.query(`
+            SELECT *
+            FROM phone_call_queue
+            WHERE case_id = $1
+              AND status IN ('pending', 'claimed')
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [data.case_id]);
+
+        if (existing.rows.length > 0) {
+            const current = existing.rows[0];
+            const mergedNotes = [current.notes, data.notes]
+                .filter(Boolean)
+                .map((v) => String(v).trim())
+                .filter((v, i, arr) => arr.indexOf(v) === i)
+                .join(' | ') || null;
+            const mergedPriority = Math.max(Number(current.priority || 0), Number(data.priority || 0));
+            const mergedDays = current.days_since_sent != null
+                ? current.days_since_sent
+                : (data.days_since_sent || null);
+
+            const updated = await this.query(`
+                UPDATE phone_call_queue
+                SET agency_name = COALESCE($2, agency_name),
+                    agency_phone = COALESCE($3, agency_phone),
+                    agency_state = COALESCE($4, agency_state),
+                    reason = COALESCE($5, reason),
+                    priority = $6,
+                    notes = $7,
+                    days_since_sent = COALESCE($8, days_since_sent),
+                    updated_at = NOW()
+                WHERE id = $1
+                RETURNING *
+            `, [
+                current.id,
+                data.agency_name || null,
+                data.agency_phone || null,
+                data.agency_state || null,
+                data.reason || null,
+                mergedPriority,
+                mergedNotes,
+                mergedDays
+            ]);
+            return updated.rows[0];
+        }
+
         const result = await this.query(`
             INSERT INTO phone_call_queue (
                 case_id, agency_name, agency_phone, agency_state,
