@@ -85,6 +85,21 @@ function emailDomain(value: string | null): string | null {
   return value.slice(idx + 1);
 }
 
+async function latestInboundRequestsEmailResend(caseId: number): Promise<boolean> {
+  try {
+    const latestInbound = await db.getLatestInboundMessage(caseId);
+    const latestBody = String(latestInbound?.body_text || "");
+    const latestSubject = String(latestInbound?.subject || "");
+    const combined = `${latestSubject}\n${latestBody}`.toLowerCase();
+    if (!combined.trim()) return false;
+    const hasSendVerb = /\b(send|resend|re-send|submit|resubmit)\b/.test(combined);
+    const hasEmailToken = /\b(email|e-mail|mailbox|address)\b/.test(combined);
+    return hasSendVerb && hasEmailToken;
+  } catch {
+    return false;
+  }
+}
+
 function buildAllowedActions(params: {
   classification: Classification;
   denialSubtype: string | null;
@@ -1814,6 +1829,16 @@ async function deterministicRouting(
 
   // NO_RESPONSE / followup triggers
   if (classification === "NO_RESPONSE" || isFollowupTrigger) {
+    if (await latestInboundRequestsEmailResend(caseId)) {
+      return decision("SEND_FOLLOWUP", {
+        requiresHuman: true,
+        pauseReason: "SCOPE",
+        reasoning: [
+          "Latest inbound asks for resend/submit via email",
+          "Prioritizing direct follow-up email over additional research/phone routing",
+        ],
+      });
+    }
     const followupSchedule = await db.getFollowUpScheduleByCaseId(caseId);
     const followupCount = followupSchedule?.followup_count || 0;
     if (followupCount >= MAX_FOLLOWUPS) {
@@ -1947,36 +1972,17 @@ export async function decideNextAction(
         db.getFollowUpScheduleByCaseId(caseId),
         db.getCaseById(caseId),
       ]);
-      // If a recent manual phone-call note indicates "resend by email", prefer an email follow-up
+      // If latest inbound asks to resend/submit by email, prioritize an email follow-up
       // over re-running research/phone fallback.
-      try {
-        const latestInbound = await db.query(
-          `SELECT subject, body_text
-           FROM messages
-           WHERE case_id = $1 AND direction = 'inbound'
-           ORDER BY created_at DESC
-           LIMIT 1`,
-          [caseId]
-        );
-        const latestBody = String(latestInbound.rows[0]?.body_text || "");
-        const latestSubject = String(latestInbound.rows[0]?.subject || "");
-        const combined = `${latestSubject}\n${latestBody}`.toLowerCase();
-        const asksToResendEmail =
-          /resend|send/.test(combined) &&
-          /email/.test(combined) &&
-          /(records|request|address|follow-up|follow up)/.test(combined);
-        if (asksToResendEmail) {
-          return decision("SEND_FOLLOWUP", {
-            requiresHuman: true,
-            pauseReason: "SCOPE",
-            reasoning: [
-              "Recent manual contact indicates agency requested email resend",
-              "Prioritizing direct follow-up email over additional research/phone routing",
-            ],
-          });
-        }
-      } catch {
-        // non-fatal; continue default overdue routing
+      if (await latestInboundRequestsEmailResend(caseId)) {
+        return decision("SEND_FOLLOWUP", {
+          requiresHuman: true,
+          pauseReason: "SCOPE",
+          reasoning: [
+            "Latest inbound asks for resend/submit via email",
+            "Prioritizing direct follow-up email over additional research/phone routing",
+          ],
+        });
       }
       const followupCount = followupSchedule?.followup_count || 0;
       if (followupCount >= MAX_FOLLOWUPS) {
@@ -2490,6 +2496,17 @@ export async function decideNextAction(
         denialSubtype,
         inlineKeyPoints
       );
+    }
+
+    if ((classification === "NO_RESPONSE" || isFollowupTrigger) && await latestInboundRequestsEmailResend(caseId)) {
+      return decision("SEND_FOLLOWUP", {
+        requiresHuman: true,
+        pauseReason: "SCOPE",
+        reasoning: [
+          "Latest inbound asks for resend/submit via email",
+          "Prioritizing direct follow-up email over additional research/phone routing",
+        ],
+      });
     }
 
     // === AI Router v2 vs Legacy routing ===

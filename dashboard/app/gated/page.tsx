@@ -421,6 +421,11 @@ function deriveDisplayAgencyName(review: {
   return current || "Unknown agency";
 }
 
+function hasCallablePhone(value: string | null | undefined): boolean {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 7;
+}
+
 type ReviewCategory = "fee" | "portal" | "denial" | "phone" | "general";
 
 function categorizeReview(review: HumanReviewCase): ReviewCategory {
@@ -429,15 +434,15 @@ function categorizeReview(review: HumanReviewCase): ReviewCategory {
   const status = (review.status || "").toUpperCase();
   const portalStatus = (review.last_portal_status || "").toUpperCase();
   const phoneOutcome = (review.phone_call_plan?.outcome || "").toUpperCase();
+  const hasPhoneTarget = hasCallablePhone(review.phone_call_plan?.agency_phone);
 
   // Research handoff / phone-call cases are not portal retries, even if
   // a historical portal URL exists on the case record.
-  if (
+  const explicitPhoneRouting =
     status.includes("PHONE_CALL") ||
-    pr.includes("RESEARCH_HANDOFF") ||
-    sub.includes("AGENCY_RESEARCH_COMPLETE") ||
-    phoneOutcome.includes("PHONE_FALLBACK")
-  ) {
+    phoneOutcome.includes("PHONE_FALLBACK") ||
+    pr.includes("FOLLOWUP_CHANNEL:PHONE");
+  if ((explicitPhoneRouting && hasPhoneTarget) || (status.includes("PHONE_CALL") && hasPhoneTarget)) {
     return "phone";
   }
   if (pr.includes("RESEARCH") || sub.includes("RESEARCH")) {
@@ -2442,7 +2447,7 @@ function MonitorPageContent() {
                       <Button
                         className="flex-1 bg-amber-700 hover:bg-amber-600 text-white"
                         onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "research_handoff")}
-                        disabled={addingToPhoneQueue || isSubmitting}
+                        disabled={addingToPhoneQueue || isSubmitting || !hasCallablePhone(selectedItem.data.phone_call_plan?.agency_phone)}
                       >
                         {addingToPhoneQueue ? (
                           <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />

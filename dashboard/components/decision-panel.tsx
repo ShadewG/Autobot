@@ -70,6 +70,11 @@ interface DecisionPanelProps {
 // Normalized pause reason type (includes UNKNOWN)
 type NormalizedPauseReason = PauseReason | "UNKNOWN";
 
+function hasCallablePhone(value: string | null | undefined): boolean {
+  const digits = String(value || "").replace(/\D/g, "");
+  return digits.length >= 7;
+}
+
 // Normalize pause reason strings to expected enum values
 // Also tries to infer from request fields and message content when pause_reason is null
 function normalizePauseReason(
@@ -683,13 +688,14 @@ export function DecisionPanel({
   if (request.review_reason && onResolveReview) {
     const reason = request.review_reason;
     const plan = request.phone_call_plan;
+    const hasPhoneTarget = hasCallablePhone(plan?.agency_phone);
 
     // Map review_reason to gated queue category
     const category: "fee" | "portal" | "denial" | "phone" | "general" =
       reason === "FEE_QUOTE" ? "fee"
       : reason === "PORTAL_FAILED" || reason === "PORTAL_STUCK" ? "portal"
       : reason === "DENIAL" ? "denial"
-      : reason === "PHONE_CALL" ? "phone"
+      : reason === "PHONE_CALL" && hasPhoneTarget ? "phone"
       : "general";
 
     const handleAction = async (actionId: string) => {
@@ -841,11 +847,11 @@ export function DecisionPanel({
 
           {category === "phone" && (
             <div className="flex gap-2">
-              <Button className="flex-1 bg-amber-700 hover:bg-amber-600 text-white" onClick={() => handleAction("make_phone_call")} disabled={actionLoading("make_phone_call")}>
+              <Button className="flex-1 bg-amber-700 hover:bg-amber-600 text-white" onClick={() => handleAction("make_phone_call")} disabled={actionLoading("make_phone_call") || !hasPhoneTarget}>
                 {spinnerFor("make_phone_call") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
                 MAKE PHONE CALL
               </Button>
-              <Button variant="outline" className="flex-1" onClick={() => handleAction("queue_phone_call")} disabled={actionLoading("queue_phone_call")}>
+              <Button variant="outline" className="flex-1" onClick={() => handleAction("queue_phone_call")} disabled={actionLoading("queue_phone_call") || !hasPhoneTarget}>
                 {spinnerFor("queue_phone_call") ? <Loader2 className="h-3 w-3 mr-1.5 animate-spin" /> : <Phone className="h-3 w-3 mr-1.5" />}
                 QUEUE PHONE CALL
               </Button>
