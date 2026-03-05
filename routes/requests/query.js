@@ -10,6 +10,9 @@ const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 router.get('/', async (req, res) => {
     try {
         const { requires_human, status, agency_id, q } = req.query;
+        const userIdParam = req.query.user_id;
+        const userId = userIdParam && userIdParam !== 'unowned' ? parseInt(userIdParam, 10) || null : null;
+        const unownedOnly = userIdParam === 'unowned';
 
         const includeCompleted = req.query.include_completed === 'true';
 
@@ -55,6 +58,14 @@ router.get('/', async (req, res) => {
             WHERE (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
         `;
         const params = [];
+
+        // User ownership filter (must match queue/monitor semantics)
+        if (userId) {
+            params.push(userId);
+            query += ` AND c.user_id = $${params.length}`;
+        } else if (unownedOnly) {
+            query += ` AND c.user_id IS NULL`;
+        }
 
         // Exclude completed/cancelled cases from main view unless explicitly requested
         if (!includeCompleted && !status) {
@@ -103,6 +114,8 @@ router.get('/', async (req, res) => {
         const completedResult = await db.query(`
             SELECT c.* FROM cases c
             WHERE c.status IN ('completed', 'cancelled')
+            ${userId ? `AND c.user_id = ${userId}` : ''}
+            ${unownedOnly ? 'AND c.user_id IS NULL' : ''}
             ORDER BY c.closed_at DESC NULLS LAST, c.updated_at DESC
             LIMIT 50
         `);
