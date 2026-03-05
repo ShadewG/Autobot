@@ -27,6 +27,7 @@ import { cn, formatRelativeTime, humanizeRiskFlag, condenseReviewNotes, formatRe
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
 import { LinkifiedText } from "@/components/linkified-text";
+import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
 import {
   Loader2,
   CheckCircle,
@@ -596,6 +597,8 @@ function MonitorPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [showCorrespondence, setShowCorrespondence] = useState(false);
+  const [showAddCorrespondenceDialog, setShowAddCorrespondenceDialog] = useState(false);
+  const [addCorrespondenceCaseId, setAddCorrespondenceCaseId] = useState<number | null>(null);
   const [correspondenceMessages, setCorrespondenceMessages] = useState<ThreadMessage[]>([]);
   const [correspondenceLoading, setCorrespondenceLoading] = useState(false);
   const [removedIds, setRemovedIds] = useState<Set<string>>(new Set());
@@ -633,6 +636,13 @@ function MonitorPageContent() {
     onConfirm: () => void;
   } | null>(null);
   const initialCaseApplied = useRef(false);
+  const reviewInstructionRef = useRef<HTMLTextAreaElement | null>(null);
+  const adjustInstructionRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const getReviewInstructionText = () =>
+    (reviewInstructionRef.current?.value ?? reviewInstruction ?? "");
+  const getAdjustInstructionText = () =>
+    (adjustInstructionRef.current?.value ?? adjustInstruction ?? "");
 
   // ── Deep linking & user filter ─────────────
   const searchParams = useSearchParams();
@@ -894,7 +904,8 @@ function MonitorPageContent() {
 
   const handleApprove = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
-    if (isEscalateProposal && !reviewInstruction.trim()) {
+    const reviewText = getReviewInstructionText().trim();
+    if (isEscalateProposal && !reviewText) {
       showToast("Provide instructions before approving this review item", "error");
       return;
     }
@@ -902,7 +913,7 @@ function MonitorPageContent() {
     try {
       const body: Record<string, unknown> = { action: "APPROVE" };
       if (isEscalateProposal) {
-        body.instruction = reviewInstruction.trim();
+        body.instruction = reviewText;
       }
       // Include any edits the user made to the draft
       if (editedBody && editedBody !== draftBody) body.draft_body_text = editedBody;
@@ -956,7 +967,8 @@ function MonitorPageContent() {
 
   const handleAdjust = async () => {
     if (!selectedItem || selectedItem.type !== "proposal") return;
-    if (!adjustInstruction.trim()) return;
+    const adjustText = getAdjustInstructionText().trim();
+    if (!adjustText) return;
     setIsSubmitting(true);
     try {
       const res = await fetch(
@@ -966,7 +978,7 @@ function MonitorPageContent() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "ADJUST",
-            instruction: adjustInstruction.trim(),
+            instruction: adjustText,
           }),
         }
       );
@@ -1082,6 +1094,11 @@ function MonitorPageContent() {
     } finally {
       setCorrespondenceLoading(false);
     }
+  };
+
+  const handleMakePhoneCallFromQueue = (caseId: number) => {
+    setAddCorrespondenceCaseId(caseId);
+    setShowAddCorrespondenceDialog(true);
   };
 
   const handleResolveReview = async (action: string, instruction?: string) => {
@@ -2446,6 +2463,15 @@ function MonitorPageContent() {
                     <div className="flex gap-2">
                       <Button
                         className="flex-1 bg-amber-700 hover:bg-amber-600 text-white"
+                        onClick={() => handleMakePhoneCallFromQueue(selectedItem.data.id)}
+                        disabled={isSubmitting || !hasCallablePhone(selectedItem.data.phone_call_plan?.agency_phone)}
+                      >
+                        <Phone className="h-3 w-3 mr-1.5" />
+                        MAKE PHONE CALL
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="flex-1"
                         onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "research_handoff")}
                         disabled={addingToPhoneQueue || isSubmitting || !hasCallablePhone(selectedItem.data.phone_call_plan?.agency_phone)}
                       >
@@ -2464,15 +2490,17 @@ function MonitorPageContent() {
                 <div className="flex gap-2">
                   <Textarea
                     placeholder="Custom instruction (optional)..."
+                    ref={reviewInstructionRef}
                     value={reviewInstruction}
                     onChange={(e) => setReviewInstruction(e.target.value)}
+                    onInput={(e) => setReviewInstruction((e.target as HTMLTextAreaElement).value)}
                     className="text-xs bg-background min-h-[60px] flex-1"
                   />
                   <Button
                     variant="outline"
                     className="self-end"
-                    onClick={() => handleResolveReview("custom", reviewInstruction)}
-                    disabled={isSubmitting || !reviewInstruction.trim()}
+                    onClick={() => handleResolveReview("custom", getReviewInstructionText().trim())}
+                    disabled={isSubmitting || !getReviewInstructionText().trim()}
                   >
                     <Send className="h-3 w-3 mr-1" /> SEND
                   </Button>
@@ -3322,6 +3350,18 @@ function MonitorPageContent() {
         </DialogContent>
       </Dialog>
 
+      <AddCorrespondenceDialog
+        open={showAddCorrespondenceDialog}
+        onOpenChange={setShowAddCorrespondenceDialog}
+        caseId={addCorrespondenceCaseId || selectedCaseId || 0}
+        onSuccess={() => {
+          if (addCorrespondenceCaseId) {
+            void openCorrespondence(addCorrespondenceCaseId);
+          }
+          revalidateQueue();
+        }}
+      />
+
       {/* ── Adjust Modal ───────────────────── */}
       <Dialog open={showAdjustModal} onOpenChange={setShowAdjustModal}>
         <DialogContent className="bg-card border">
@@ -3333,8 +3373,10 @@ function MonitorPageContent() {
           </DialogHeader>
           <Textarea
             placeholder="e.g., Make tone more formal, reference the statute, reduce fee amount..."
+            ref={adjustInstructionRef}
             value={adjustInstruction}
             onChange={(e) => setAdjustInstruction(e.target.value)}
+            onInput={(e) => setAdjustInstruction((e.target as HTMLTextAreaElement).value)}
             className="min-h-[100px] text-xs bg-background"
           />
           <DialogFooter>
@@ -3348,7 +3390,7 @@ function MonitorPageContent() {
             <Button
               size="sm"
               onClick={handleAdjust}
-              disabled={!adjustInstruction.trim() || isSubmitting}
+              disabled={!getAdjustInstructionText().trim() || isSubmitting}
             >
               {isSubmitting ? (
                 <Loader2 className="h-3 w-3 mr-1 animate-spin" />
