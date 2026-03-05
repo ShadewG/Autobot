@@ -2480,17 +2480,7 @@ class DatabaseService {
     // =========================================================================
 
     async createPhoneCallTask(data) {
-        const existing = await this.query(`
-            SELECT *
-            FROM phone_call_queue
-            WHERE case_id = $1
-              AND status IN ('pending', 'claimed')
-            ORDER BY created_at DESC
-            LIMIT 1
-        `, [data.case_id]);
-
-        if (existing.rows.length > 0) {
-            const current = existing.rows[0];
+        const mergeIntoExistingTask = async (current) => {
             const mergedNotes = [current.notes, data.notes]
                 .filter(Boolean)
                 .map((v) => String(v).trim())
@@ -2524,25 +2514,57 @@ class DatabaseService {
                 mergedDays
             ]);
             return updated.rows[0];
+        };
+
+        const existing = await this.query(`
+            SELECT *
+            FROM phone_call_queue
+            WHERE case_id = $1
+              AND status IN ('pending', 'claimed')
+            ORDER BY created_at DESC
+            LIMIT 1
+        `, [data.case_id]);
+
+        if (existing.rows.length > 0) {
+            return mergeIntoExistingTask(existing.rows[0]);
         }
 
-        const result = await this.query(`
-            INSERT INTO phone_call_queue (
-                case_id, agency_name, agency_phone, agency_state,
-                reason, priority, notes, days_since_sent
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            RETURNING *
-        `, [
-            data.case_id,
-            data.agency_name || null,
-            data.agency_phone || null,
-            data.agency_state || null,
-            data.reason || 'no_email_response',
-            data.priority || 0,
-            data.notes || null,
-            data.days_since_sent || null
-        ]);
-        return result.rows[0];
+        try {
+            const result = await this.query(`
+                INSERT INTO phone_call_queue (
+                    case_id, agency_name, agency_phone, agency_state,
+                    reason, priority, notes, days_since_sent
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                RETURNING *
+            `, [
+                data.case_id,
+                data.agency_name || null,
+                data.agency_phone || null,
+                data.agency_state || null,
+                data.reason || 'no_email_response',
+                data.priority || 0,
+                data.notes || null,
+                data.days_since_sent || null
+            ]);
+            return result.rows[0];
+        } catch (error) {
+            // Race-safe path: if a concurrent insert won the unique active-task index,
+            // merge this payload into the just-created active row.
+            if (error && error.code === '23505') {
+                const concurrent = await this.query(`
+                    SELECT *
+                    FROM phone_call_queue
+                    WHERE case_id = $1
+                      AND status IN ('pending', 'claimed')
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                `, [data.case_id]);
+                if (concurrent.rows.length > 0) {
+                    return mergeIntoExistingTask(concurrent.rows[0]);
+                }
+            }
+            throw error;
+        }
     }
 
     async getPendingPhoneCalls(limit = 50) {
