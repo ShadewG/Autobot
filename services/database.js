@@ -2805,6 +2805,49 @@ class DatabaseService {
     // =========================================================================
 
     async addCaseAgency(caseId, agencyData) {
+        // Dedup check: look for existing active row with same agency name (case-insensitive)
+        const dupCheck = await this.query(
+            `SELECT * FROM case_agencies
+             WHERE case_id = $1 AND is_active = true
+               AND (LOWER(agency_name) = LOWER($2) ${agencyData.agency_id ? 'OR agency_id = $3' : ''})
+             ORDER BY created_at ASC LIMIT 1`,
+            agencyData.agency_id
+                ? [caseId, agencyData.agency_name, agencyData.agency_id]
+                : [caseId, agencyData.agency_name]
+        );
+
+        if (dupCheck.rows.length > 0) {
+            // Merge new info into existing row
+            const existingRow = dupCheck.rows[0];
+            const mergeUpdates = {};
+            if (agencyData.agency_email && !existingRow.agency_email) mergeUpdates.agency_email = agencyData.agency_email;
+            if (agencyData.portal_url && !existingRow.portal_url) mergeUpdates.portal_url = agencyData.portal_url;
+            if (agencyData.portal_provider && !existingRow.portal_provider) mergeUpdates.portal_provider = agencyData.portal_provider;
+            if (agencyData.agency_id && !existingRow.agency_id) mergeUpdates.agency_id = agencyData.agency_id;
+            if (agencyData.notes && !existingRow.notes) mergeUpdates.notes = agencyData.notes;
+
+            if (Object.keys(mergeUpdates).length > 0) {
+                const setClauses = Object.keys(mergeUpdates).map((k, i) => `${k} = $${i + 2}`);
+                setClauses.push('updated_at = NOW()');
+                const vals = Object.values(mergeUpdates);
+                await this.query(
+                    `UPDATE case_agencies SET ${setClauses.join(', ')} WHERE id = $1`,
+                    [existingRow.id, ...vals]
+                );
+                const refreshed = await this.query('SELECT * FROM case_agencies WHERE id = $1', [existingRow.id]);
+                const merged = refreshed.rows[0] || existingRow;
+
+                const isPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : existingRow.is_primary;
+                if (isPrimary) {
+                    await this.syncPrimaryAgencyToCase(caseId, merged);
+                }
+                return merged;
+            }
+
+            // Nothing new to merge — return existing row as-is
+            return existingRow;
+        }
+
         // Check if this is the first agency for this case
         const existing = await this.query(
             'SELECT COUNT(*) as cnt FROM case_agencies WHERE case_id = $1 AND is_active = true',

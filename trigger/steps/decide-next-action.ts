@@ -703,11 +703,12 @@ async function makeAIDecisionV2(params: {
         !requiresHuman &&
         !ALWAYS_GATE_ACTIONS.includes(object.action as ActionType);
 
-      // Bodycam custodian research override
+      // Bodycam custodian research override (capped at 2 attempts to prevent infinite loop)
       if (
         classification === "CLARIFICATION_REQUEST" &&
         object.action !== "RESEARCH_AGENCY" &&
-        preComputed.bodycamResearchNeeded
+        preComputed.bodycamResearchNeeded &&
+        preComputed.researchAttemptCount < 2
       ) {
         return decision("RESEARCH_AGENCY", {
           pauseReason: "DENIAL",
@@ -1480,9 +1481,16 @@ async function aiDecision(params: {
 
     // Guardrail: if body-cam is requested but inbound guidance is only 911/form
     // process, force custodian research rather than staying in a 911-only loop.
+    // Capped at 2 research attempts to prevent infinite loop.
+    const v1ResearchCount = await db.query(
+      `SELECT COUNT(*)::int AS cnt FROM proposals
+       WHERE case_id = $1 AND action_type = 'RESEARCH_AGENCY' AND status IN ('EXECUTED', 'DISMISSED')`,
+      [params.caseId]
+    ).then((r: any) => r.rows?.[0]?.cnt || 0);
     if (
       params.classification === "CLARIFICATION_REQUEST" &&
       object.action !== "RESEARCH_AGENCY" &&
+      v1ResearchCount < 2 &&
       shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, params.constraints)
     ) {
       return decision("RESEARCH_AGENCY", {
@@ -1756,7 +1764,12 @@ async function deterministicRouting(
   if (classification === "CLARIFICATION_REQUEST") {
     const caseData = await db.getCaseById(caseId);
     const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
-    if (shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, topConstraints)) {
+    const detResearchCount = await db.query(
+      `SELECT COUNT(*)::int AS cnt FROM proposals
+       WHERE case_id = $1 AND action_type = 'RESEARCH_AGENCY' AND status IN ('EXECUTED', 'DISMISSED')`,
+      [caseId]
+    ).then((r: any) => r.rows?.[0]?.cnt || 0);
+    if (detResearchCount < 2 && shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, topConstraints)) {
       return decision("RESEARCH_AGENCY", {
         pauseReason: "DENIAL",
         researchLevel: "deep",

@@ -114,6 +114,17 @@ router.post('/:id/invoke-agent', async (req, res) => {
 
         log.info(`Manual agent invocation requested`);
 
+        // Guard: prevent duplicate active runs for same case
+        const activeRun = await db.getActiveRunForCase(requestId);
+        if (activeRun) {
+            log.warn(`Duplicate invoke-agent blocked — active run ${activeRun.id} already exists`);
+            return res.status(409).json({
+                success: false,
+                error: `Case already has an active agent run (run #${activeRun.id}, status: ${activeRun.status})`,
+                active_run_id: activeRun.id,
+            });
+        }
+
         const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
         const triggerRun = await db.createAgentRunFull({
             case_id: requestId,
@@ -146,6 +157,13 @@ router.post('/:id/invoke-agent', async (req, res) => {
             trigger_run_id: handle.id
         });
     } catch (error) {
+        if (error.code === '23505') {
+            log.warn(`Duplicate agent run prevented by unique constraint: ${error.message}`);
+            return res.status(409).json({
+                success: false,
+                error: 'Duplicate agent run — please wait for the current run to complete',
+            });
+        }
         log.error(`Error invoking agent: ${error.message}`);
         res.status(500).json({
             success: false,

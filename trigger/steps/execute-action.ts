@@ -1119,6 +1119,30 @@ export async function executeAction(
       });
 
       if (!newEmail && !newPortalUrl && !newPhone && !newFax) {
+        // Defense in depth: if case already has usable channels (email/portal),
+        // don't loop back into research — transition to human review instead.
+        if (hasKnownCaseSignals) {
+          logger.info("Research found no NEW channels but case has existing contact channels — stopping research loop", {
+            caseId,
+            knownEmail: knownCaseEmailSignal,
+            knownPortal: knownCasePortalSignal,
+          });
+          await persistResearchExecutionMeta({
+            outcome: "research_complete_existing_channels",
+            existing_channels: {
+              email: knownCaseEmailSignal || null,
+              portal: knownCasePortalSignal || null,
+            },
+          });
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+            targetStatus: "needs_human_review",
+            substatus: "research_exhausted_existing_channels",
+            pauseReason: "RESEARCH_COMPLETE_EXISTING_CHANNELS",
+          });
+          executionResult = { action: "research_complete", followup: "existing_channels_available" };
+          break;
+        }
+
         // No new channel found: continue with phone-call fallback instead of
         // blocking on a manual "retry research" gate.
         const fallback = await buildPhoneFallbackPayload({

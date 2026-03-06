@@ -150,11 +150,28 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
             return res.status(404).json({ success: false, error: 'Case agency not found' });
         }
 
-        const lookup = await pdContactService.lookupContact(
-            caseAgency.agency_name,
-            caseData.state,
-            { forceSearch: true }
-        );
+        const RESEARCH_TIMEOUT_MS = 30_000;
+        let lookup;
+        try {
+            lookup = await Promise.race([
+                pdContactService.lookupContact(
+                    caseAgency.agency_name,
+                    caseData.state,
+                    { forceSearch: true }
+                ),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Research lookup timed out after 30s')), RESEARCH_TIMEOUT_MS)
+                ),
+            ]);
+        } catch (timeoutErr) {
+            if (timeoutErr.message.includes('timed out')) {
+                return res.status(504).json({
+                    success: false,
+                    error: 'Agency research timed out after 30 seconds. Try again or add contact info manually.',
+                });
+            }
+            throw timeoutErr;
+        }
         if (!lookup) {
             await db.logActivity(
                 'case_agency_research_failed',

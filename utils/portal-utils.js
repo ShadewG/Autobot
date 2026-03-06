@@ -45,10 +45,26 @@ const PORTAL_PROVIDERS = [
     }
 ];
 
+const TRACKING_URL_PATTERNS = [
+    /sendgrid\.net/i,
+    /\.ct\.sendgrid\.net/i,
+    /click\.mailchimp\.com/i,
+    /track\.hubspot\.com/i,
+    /links\.govdelivery\.com/i,
+    /email\.mg\./i,
+    /click\.\w+mail/i,
+    /trk\.klclick/i,
+];
+
 function normalizePortalUrl(url) {
     if (!url) return null;
     const trimmed = url.trim();
     if (!trimmed) return null;
+
+    // Reject email tracking/redirect URLs
+    if (TRACKING_URL_PATTERNS.some(pattern => pattern.test(trimmed))) {
+        return null;
+    }
 
     if (/^https?:\/\//i.test(trimmed)) {
         return trimmed;
