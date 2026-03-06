@@ -2135,7 +2135,8 @@ export async function decideNextAction(
     if (triggerType === "HUMAN_REVIEW_RESOLUTION" && reviewAction) {
       reasoning.push(`Human review resolution: action=${reviewAction}`);
       const ri = reviewInstruction || null;
-      const reviewActionRaw = String(reviewAction);
+      const reviewActionRaw = String(reviewAction).trim();
+      const normalizedReviewAction = reviewActionRaw.toLowerCase();
 
       // Block send_via_email if case is flagged as wrong agency
       const caseDataForReview = await db.getCaseById(caseId);
@@ -2144,7 +2145,7 @@ export async function decideNextAction(
 
       // Monitor/API decision approvals often arrive as reviewAction=APPROVE with the
       // selected proposal already moved to DECISION_RECEIVED. Resume that proposal action.
-      if (reviewActionRaw === "APPROVE") {
+      if (normalizedReviewAction === "approve") {
         const approvedProposal = await db.query(
           `SELECT id, action_type
            FROM proposals
@@ -2207,6 +2208,11 @@ export async function decideNextAction(
         research_agency: async () => decision("RESEARCH_AGENCY", {
           adjustmentInstruction: ri || "Research the correct agency",
           reasoning,
+        }),
+        retry_research: async () => decision("RESEARCH_AGENCY", {
+          adjustmentInstruction: ri || "Retry agency research from scratch",
+          reasoning: [...reasoning, "Human explicitly requested another agency research pass."],
+          researchLevel: "deep",
         }),
         reformulate_request: async () => decision("REFORMULATE_REQUEST", {
           adjustmentInstruction: ri || "Reformulate with a different approach",
@@ -2557,13 +2563,13 @@ export async function decideNextAction(
         },
       };
 
-      const handler = reviewMap[reviewAction];
+      const handler = reviewMap[normalizedReviewAction];
       logger.info("HUMAN_REVIEW_RESOLUTION routing", {
         caseId,
         classification,
         reviewAction,
         isWrongAgency,
-        chosenHandler: handler ? reviewAction : "fallback_escalate_unknown_review_action",
+        chosenHandler: handler ? normalizedReviewAction : "fallback_escalate_unknown_review_action",
       });
       if (handler) return handler();
       return decision("ESCALATE", { reasoning: [...reasoning, `Unknown review action: ${reviewAction}`] });
