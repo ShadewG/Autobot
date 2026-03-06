@@ -201,6 +201,92 @@ async function _getRequesterInfo(caseData) {
     };
 }
 
+function buildPdfReplyRequirementsFromText(input) {
+    const corpus = String(input || '')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+
+    return {
+        requestFormRequired: /request form|apra\/foia request form|public records request form|new foia request form|attached a blank copy|blank copy of (?:our )?(?:apra\/foia )?request form|complete (?:this|the|our|attached)?\s*(?:pdf|form)|completed (?:public )?records request form/.test(corpus),
+        mailingAddressRequired: /mailing address|physical mailing address|address \(for cd\)|mail a cd/.test(corpus),
+        tooLargeForEmail: /too large to send via email|files are too large to email|method to send the records|delivery method|mail a cd/.test(corpus),
+    };
+}
+
+async function _getPdfReplyRequirements(caseData) {
+    const latestInbound = await database.getLatestInboundMessage(caseData.id);
+    const combined = [
+        latestInbound?.subject || '',
+        latestInbound?.body_text || '',
+        latestInbound?.body_html || '',
+    ].join('\n');
+
+    return buildPdfReplyRequirementsFromText(combined);
+}
+
+function _formatMailingAddressLines(requester) {
+    const lines = [];
+    if (requester.address) lines.push(requester.address);
+    if (requester.addressLine2) lines.push(requester.addressLine2);
+    const locality = [
+        requester.city,
+        requester.state,
+        requester.zip,
+    ].filter(Boolean);
+    if (locality.length) {
+        if (requester.city && requester.state) {
+            lines.push(`${requester.city}, ${requester.state}${requester.zip ? ` ${requester.zip}` : ''}`);
+        } else {
+            lines.push(locality.join(' '));
+        }
+    }
+    return lines.filter(Boolean);
+}
+
+function _buildDeterministicPdfReplyDraft(caseData, requester, replyRequirements = {}) {
+    const subjectName = caseData.subject_name || caseData.case_name || 'Public Records Request';
+    const addressLines = _formatMailingAddressLines(requester);
+    const lines = [
+        `To ${caseData.agency_name || 'Records Custodian'},`,
+        '',
+        `Attached please find my completed public records request form regarding ${subjectName}.`,
+    ];
+
+    if (replyRequirements.mailingAddressRequired && addressLines.length > 0) {
+        lines.push('');
+        lines.push('Mailing address for CD delivery if needed:');
+        lines.push(...addressLines);
+    }
+
+    if (replyRequirements.tooLargeForEmail) {
+        lines.push('');
+        if (addressLines.length > 0) {
+            lines.push('If the responsive files are too large to email, you may mail a CD to the mailing address above.');
+        } else {
+            lines.push('If the responsive files are too large to email, please let me know if you need a physical mailing address for CD delivery.');
+        }
+    }
+
+    lines.push('');
+    lines.push('Please let me know if you need any additional information to process this request.');
+    lines.push('');
+    lines.push('Thank you,');
+    lines.push(requester.name);
+    if (requester.organization) lines.push(requester.organization);
+    if (requester.email) lines.push(requester.email);
+    if (requester.phone) lines.push(requester.phone);
+
+    return {
+        subject: `Completed Public Records Request Form – ${subjectName}`,
+        bodyText: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
+    };
+}
+
 /**
  * Attempt to fill a PDF form. Strategies in order:
  * 1. If fillable fields exist, use AI to map case data to fields
@@ -240,6 +326,157 @@ async function fillPdfForm(pdfBuffer, caseData) {
 
     // Strategy 3: generate standalone letter
     return await _generateFoiaLetterPdf(caseData, requester);
+}
+
+async function fillPdfFormStrict(pdfBuffer, caseData) {
+    const requester = await _getRequesterInfo(caseData);
+
+    let pdfDoc;
+    try {
+        pdfDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+    } catch (loadErr) {
+        throw new Error(`Unable to load PDF form: ${loadErr.message}`);
+    }
+
+    try {
+        const form = pdfDoc.getForm();
+        const fields = form.getFields();
+        if (fields.length > 0) {
+            return await _fillFormFields(pdfDoc, form, fields, caseData, requester);
+        }
+    } catch (formErr) {
+        // Continue to flat-form attempt below.
+    }
+
+    if (pdfDoc.getPageCount() > 0) {
+        return await _fillFlatForm(pdfDoc, caseData, requester);
+    }
+
+    throw new Error('PDF form has no fillable content');
+}
+
+function isLikelyRequestFormAttachment(attachment) {
+    if (!attachment) return false;
+    const contentType = String(attachment.content_type || '').toLowerCase();
+    const filename = String(attachment.filename || '').toLowerCase();
+    const extractedText = String(attachment.extracted_text || '').toLowerCase();
+    if (contentType !== 'application/pdf') return false;
+    if (filename.startsWith('filled_')) return false;
+
+    const corpus = `${filename}\n${extractedText}`;
+    return /request form|apra|access to public records act|public records act|foia/.test(corpus);
+}
+
+async function _loadAttachmentBuffer(attachment) {
+    if (!attachment) return null;
+    if (attachment.storage_path && fs.existsSync(attachment.storage_path)) {
+        return fs.readFileSync(attachment.storage_path);
+    }
+    const fullAttachment = await database.getAttachmentById(attachment.id);
+    if (fullAttachment?.file_data) {
+        return Buffer.isBuffer(fullAttachment.file_data)
+            ? fullAttachment.file_data
+            : Buffer.from(fullAttachment.file_data.data || fullAttachment.file_data);
+    }
+    return null;
+}
+
+async function getLatestPreparedPdfAttachment(caseId) {
+    const attachments = await database.getAttachmentsByCaseId(caseId);
+    return attachments.find((attachment) =>
+        attachment.filename?.startsWith('filled_') &&
+        attachment.content_type === 'application/pdf'
+    ) || null;
+}
+
+async function findLatestRequestFormAttachment(caseId) {
+    const attachments = await database.getAttachmentsByCaseId(caseId);
+    return attachments.find((attachment) =>
+        attachment.message_direction === 'inbound' &&
+        isLikelyRequestFormAttachment(attachment)
+    ) || null;
+}
+
+async function prepareInboundPdfFormReply(caseData, options = {}) {
+    const caseId = caseData?.id;
+    if (!caseId) throw new Error('caseData.id is required');
+
+    const sourceAttachment = await findLatestRequestFormAttachment(caseId);
+    if (!sourceAttachment) {
+        return {
+            success: false,
+            manualRequired: false,
+            error: 'No inbound PDF request form found on this case',
+        };
+    }
+
+    const replyRequirements = await _getPdfReplyRequirements(caseData);
+
+    const existingFilledAttachment = !options.forceRegenerate
+        ? await getLatestPreparedPdfAttachment(caseId)
+        : null;
+    if (existingFilledAttachment) {
+        const requester = await _getRequesterInfo(caseData);
+        const emailDraft = await _generateCoverEmail(caseData, requester, caseData.portal_url || null, replyRequirements);
+        return {
+            success: true,
+            reused: true,
+            attachmentId: existingFilledAttachment.id,
+            sourceAttachmentId: sourceAttachment.id,
+            sourceFilename: sourceAttachment.filename,
+            draftSubject: emailDraft.subject,
+            draftBodyText: emailDraft.bodyText,
+        };
+    }
+
+    const pdfBuffer = await _loadAttachmentBuffer(sourceAttachment);
+    if (!pdfBuffer) {
+        return {
+            success: false,
+            manualRequired: true,
+            sourceAttachmentId: sourceAttachment.id,
+            sourceFilename: sourceAttachment.filename,
+            error: 'The attached request form PDF is stored in the case, but its file contents are unavailable',
+        };
+    }
+
+    try {
+        const filledBuffer = await fillPdfFormStrict(pdfBuffer, caseData);
+        const caseDir = resolveCaseAttachmentDir(caseId);
+        const timestamp = Date.now();
+        const filledFilename = `filled_${timestamp}.pdf`;
+        const filledPath = path.join(caseDir, filledFilename);
+        fs.writeFileSync(filledPath, filledBuffer);
+
+        const attachment = await database.createAttachment({
+            message_id: null,
+            case_id: caseId,
+            filename: filledFilename,
+            content_type: 'application/pdf',
+            size_bytes: filledBuffer.length,
+            storage_path: filledPath,
+            file_data: filledBuffer
+        });
+
+        const requester = await _getRequesterInfo(caseData);
+        const emailDraft = await _generateCoverEmail(caseData, requester, caseData.portal_url || null, replyRequirements);
+        return {
+            success: true,
+            attachmentId: attachment.id,
+            sourceAttachmentId: sourceAttachment.id,
+            sourceFilename: sourceAttachment.filename,
+            draftSubject: emailDraft.subject,
+            draftBodyText: emailDraft.bodyText,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            manualRequired: true,
+            sourceAttachmentId: sourceAttachment.id,
+            sourceFilename: sourceAttachment.filename,
+            error: error.message || String(error),
+        };
+    }
 }
 
 /**
@@ -777,7 +1014,11 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
 /**
  * Generate a cover email to send with the filled PDF form.
  */
-async function _generateCoverEmail(caseData, requester, portalUrl) {
+async function _generateCoverEmail(caseData, requester, portalUrl, replyRequirements = {}) {
+    if (replyRequirements.requestFormRequired || replyRequirements.mailingAddressRequired || replyRequirements.tooLargeForEmail) {
+        return _buildDeterministicPdfReplyDraft(caseData, requester, replyRequirements);
+    }
+
     try {
         const aiResponse = await getOpenAI().chat.completions.create({
             model: 'gpt-5.2',
@@ -837,5 +1078,12 @@ module.exports = {
     extractPdfUrl,
     downloadPdf,
     fillPdfForm,
+    fillPdfFormStrict,
+    buildPdfReplyRequirementsFromText,
+    _buildDeterministicPdfReplyDraft,
+    isLikelyRequestFormAttachment,
+    findLatestRequestFormAttachment,
+    getLatestPreparedPdfAttachment,
+    prepareInboundPdfFormReply,
     handlePdfFormFallback
 };

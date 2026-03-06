@@ -244,6 +244,27 @@ export async function draftResponse(
       break;
     }
 
+    case "SEND_PDF_EMAIL": {
+      // These proposals depend on a prepared PDF attachment. Reuse the existing
+      // filled attachment if present; otherwise generate it now from the case's
+      // inbound request-form PDF.
+      // @ts-ignore
+      const pdfFormService = require("../../services/pdf-form-service");
+      const pdfReply = await pdfFormService.prepareInboundPdfFormReply(caseData);
+      if (!pdfReply?.success) {
+        throw new Error(pdfReply?.error || `Unable to prepare PDF email reply for case ${caseId}`);
+      }
+      draft = {
+        subject: pdfReply.draftSubject,
+        body_text: pdfReply.draftBodyText,
+        body_html: null,
+        attachment_id: pdfReply.attachmentId || null,
+        source_attachment_id: pdfReply.sourceAttachmentId || null,
+        source_filename: pdfReply.sourceFilename || null,
+      };
+      break;
+    }
+
     case "ACCEPT_FEE":
     case "APPROVE_FEE" as any: {
       const acceptFeeAmt = extractedFeeAmount || caseData.fee_amount || caseData.fee_quote_jsonb?.amount || null;
@@ -524,7 +545,10 @@ export async function draftResponse(
 
   // Drafts are often reviewed before execution; sanitize attachment claims here
   // as well (execution-time sanitization is too late for gated proposals).
-  if (textClaimsAttachment(draft.body_text) || textClaimsAttachment(draft.body_html)) {
+  if (
+    actionType !== "SEND_PDF_EMAIL" &&
+    (textClaimsAttachment(draft.body_text) || textClaimsAttachment(draft.body_html))
+  ) {
     draft.body_text = draft.body_text ? stripAttachmentClaimLines(draft.body_text) : draft.body_text;
     draft.body_html = null; // Rebuild from sanitized text.
     logger.warn("Removed attachment claim from generated draft", { caseId, actionType });

@@ -84,6 +84,16 @@ class AIService {
         return lines;
     }
 
+    formatInlineMailingAddress(address) {
+        if (!address) return '';
+        const parts = String(address).split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        if (parts.length >= 2 && /^\d{5}(?:-\d{4})?$/.test(parts[parts.length - 1])) {
+            const zip = parts.pop();
+            parts[parts.length - 1] = `${parts[parts.length - 1]} ${zip}`;
+        }
+        return parts.join(', ');
+    }
+
     sanitizeLegacyIdentityMentions(text, userSignature) {
         if (!text) return text;
         const allowedIdentity = [
@@ -176,6 +186,7 @@ class AIService {
         const name = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
         const title = userSignature?.title || process.env.REQUESTER_TITLE || '';
         const phone = userSignature?.phone || process.env.REQUESTER_PHONE || '';
+        const mailingAddress = this.formatInlineMailingAddress(userSignature?.address);
 
         let result = text;
         // Replace common placeholder variants (with or without brackets/markdown)
@@ -185,6 +196,8 @@ class AIService {
 
         // Phone placeholder: use configured phone if available, otherwise remove placeholder token.
         result = result.replace(/(?:\*\*)?\[?\s*your\s+phone(?:\s+number)?\s*\]?(?:\*\*)?/gi, phone || '');
+        result = result.replace(/\[\s*INSERT\s+REQUESTER\s+MAILING\s+ADDRESS\s*\]/gi, mailingAddress || '');
+        result = result.replace(/\[\s*REQUESTER\s+MAILING\s+ADDRESS\s*\]/gi, mailingAddress || '');
 
         // Remove full lines that still contain contact placeholders we never want in output.
         // Handles variants like "[Your Address/City, State]" and markdown bullet/label wrappers.
@@ -196,6 +209,46 @@ class AIService {
         // Remove now-empty label lines left by token replacement, e.g. "Phone:".
         result = result.replace(/^\s*(?:[-*]\s*)?(?:phone|telephone)\s*:\s*$/gmi, '');
         // Clean up any trailing blank lines left by removals
+        result = result.replace(/\n{3,}/g, '\n\n');
+        return result.trim();
+    }
+
+    sanitizeClarificationDraft(text, userSignature) {
+        if (!text) return text;
+
+        const mailingAddress = this.formatInlineMailingAddress(userSignature?.address);
+
+        let result = text.replace(/\r\n/g, '\n');
+
+        if (mailingAddress) {
+            result = result.replace(
+                /^(\s*(?:mailing\s+address|physical\s+mailing\s+address)\s*(?:\(.*?\))?\s*:\s*)(.+)$/gmi,
+                (full, prefix, value) => (
+                    /\[.*\]|\binsert\b|\btbd\b|\bto follow\b|\bplaceholder\b/i.test(value)
+                        ? `${prefix}${mailingAddress}`
+                        : full
+                )
+            );
+        } else {
+            result = result.replace(
+                /^\s*(?:mailing\s+address|physical\s+mailing\s+address)\s*(?:\(.*?\))?\s*:\s*(?:\[.*\]|\binsert\b.*)?$/gmi,
+                ''
+            );
+            result = result.replace(/^.*mailing address included.*$/gmi, '');
+        }
+
+        // Clarification replies on this path do not send attachments or forms.
+        // Remove claims that a request form has already been completed or will be sent.
+        result = result.replace(
+            /^.*\b(?:i['’]?ve|i have)\s+completed\b.*\b(?:apra\/foia request form|foia request form|request form)\b.*$/gmi,
+            ''
+        );
+        result = result.replace(
+            /^.*\b(?:will send|am sending|sending|have sent|sent)\b.*\b(?:apra\/foia request form|foia request form|request form)\b.*$/gmi,
+            ''
+        );
+        result = result.replace(/^.*\b(?:attached|enclosed|included with this email)\b.*\b(?:form)\b.*$/gmi, '');
+
         result = result.replace(/\n{3,}/g, '\n\n');
         return result.trim();
     }
@@ -1830,6 +1883,8 @@ Return valid JSON matching the schema below. Use null for missing fields, [] for
         const lessonsContext = options.lessonsContext || '';
         const clarificationResearch = options.clarificationResearch || '';
         const correspondenceContext = options.correspondenceContext || '';
+        const userSignature = await this.getUserSignatureForCase(caseData);
+        const requesterMailingAddress = this.formatInlineMailingAddress(userSignature?.address);
         const correspondenceSection = correspondenceContext
             ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
             : '';
@@ -1845,6 +1900,8 @@ ORIGINAL REQUEST:
 - Records Requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records || 'Various records'}
 - Incident Date: ${caseData.incident_date || 'Not specified'}
 - Location: ${caseData.incident_location || 'Not specified'}
+- Requester mailing address on file: ${requesterMailingAddress || 'NOT AVAILABLE'}
+- Requester phone on file: ${userSignature?.phone || 'Not available'}
 
 ${clarificationResearch ? `PRE-RESEARCHED CONTEXT (use this to answer their question):\n${clarificationResearch}\n` : ''}
 ${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
@@ -1856,6 +1913,9 @@ Generate a professional, helpful response that:
 4. Maintains a cooperative, professional tone
 5. Keeps under 200 words
 6. Do NOT claim any attachment is included unless attachments are explicitly being sent with this reply (avoid phrases like "attached", "enclosed", "included with this email").
+7. Do NOT use placeholders like "[INSERT REQUESTER MAILING ADDRESS]" or "[Your Address]".
+8. If a mailing address is requested and one is on file, include the exact mailing address from above. If none is on file, do not invent one and do not leave a placeholder.
+9. Do NOT say a request form has already been completed, attached, or sent unless this reply is actually sending that form.
 
 Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
 
@@ -1864,8 +1924,8 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
                 { effort: 'medium' }
             );
-            const userSignature = await this.getUserSignatureForCase(caseData);
-            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
+            let normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
+            normalizedBodyText = this.sanitizeClarificationDraft(normalizedBodyText, userSignature);
             const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
 
             return {

@@ -343,6 +343,25 @@ function extractEscalationRequestedAction(reasoning: string[]): string | null {
   return null;
 }
 
+function extractManualPdfEscalation(reasoning: string[]) {
+  const normalized = reasoning
+    .map((line) => formatReasoningItem(line))
+    .filter(Boolean);
+  const instruction =
+    normalized.find((line) => /human should complete .*\.pdf manually and send/i.test(line)) || null;
+  if (!instruction) return null;
+  const attachmentMatch = instruction.match(/complete\s+(.+?\.pdf)\s+manually/i);
+  const failureLine =
+    normalized.find((line) => /automatic pdf form preparation failed:/i.test(line)) || null;
+  return {
+    instruction,
+    attachmentName: attachmentMatch?.[1] || null,
+    failureReason: failureLine
+      ? failureLine.replace(/^automatic pdf form preparation failed:\s*/i, "")
+      : null,
+  };
+}
+
 const ACTION_LABELS: Record<string, string> = {
   SEND_REBUTTAL: "SEND REBUTTAL",
   SEND_APPEAL: "SEND APPEAL",
@@ -1361,6 +1380,10 @@ function MonitorPageContent() {
     selectedItem?.type === "proposal" && selectedItem.data.action_type === "ESCALATE"
       ? extractEscalationRequestedAction(reasoning)
       : null;
+  const manualPdfEscalation =
+    selectedItem?.type === "proposal" && selectedItem.data.action_type === "ESCALATE"
+      ? extractManualPdfEscalation(reasoning)
+      : null;
 
   const INTERNAL_FLAGS = new Set(["NO_DRAFT", "MISSING_DRAFT", "DRAFT_EMPTY"]);
   const riskFlags = (() => {
@@ -1714,32 +1737,60 @@ function MonitorPageContent() {
               )}
               {selectedItem.data.action_type === "ESCALATE" && (
                 <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">Review the reasoning below and choose an action — approve, adjust, or dismiss.</p>
-                  <div className="text-xs space-y-1">
-                    {escalationRequestedAction && (
-                      <p>
-                        <span className="text-muted-foreground">Requested action:</span>{" "}
-                        <span className="font-medium">{escalationRequestedAction.replace(/_/g, " ")}</span>
+                  {manualPdfEscalation ? (
+                    <div className="space-y-1.5 text-xs">
+                      <p className="text-amber-200">
+                        Automatic PDF completion failed. Complete the attached{" "}
+                        <span className="font-medium">
+                          {manualPdfEscalation.attachmentName || "request form PDF"}
+                        </span>{" "}
+                        manually and send it to the agency.
                       </p>
-                    )}
-                    {selectedItem.data.case_status && (
-                      <p>
-                        <span className="text-muted-foreground">Case status:</span>{" "}
-                        {selectedItem.data.case_status.replace(/_/g, " ")}
-                      </p>
-                    )}
-                    {selectedItem.data.case_substatus && (
-                      <p>
-                        <span className="text-muted-foreground">Case substatus:</span>{" "}
-                        {selectedItem.data.case_substatus}
-                      </p>
-                    )}
-                    {!selectedItem.data.last_inbound_preview && (
-                      <p className="text-amber-400">
-                        No inbound message context is attached to this proposal.
-                      </p>
-                    )}
-                  </div>
+                      {(selectedItem.data.effective_agency_email || selectedItem.data.agency_email) && (
+                        <p>
+                          <span className="text-muted-foreground">Send to:</span>{" "}
+                          <span className="font-medium">
+                            {selectedItem.data.effective_agency_email || selectedItem.data.agency_email}
+                          </span>
+                        </p>
+                      )}
+                      {manualPdfEscalation.failureReason && (
+                        <p>
+                          <span className="text-muted-foreground">Failure:</span>{" "}
+                          {manualPdfEscalation.failureReason}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-xs text-muted-foreground">Review the reasoning below and choose an action — approve, adjust, or dismiss.</p>
+                      <div className="text-xs space-y-1">
+                        {escalationRequestedAction && (
+                          <p>
+                            <span className="text-muted-foreground">Requested action:</span>{" "}
+                            <span className="font-medium">{escalationRequestedAction.replace(/_/g, " ")}</span>
+                          </p>
+                        )}
+                        {selectedItem.data.case_status && (
+                          <p>
+                            <span className="text-muted-foreground">Case status:</span>{" "}
+                            {selectedItem.data.case_status.replace(/_/g, " ")}
+                          </p>
+                        )}
+                        {selectedItem.data.case_substatus && (
+                          <p>
+                            <span className="text-muted-foreground">Case substatus:</span>{" "}
+                            {selectedItem.data.case_substatus}
+                          </p>
+                        )}
+                        {!selectedItem.data.last_inbound_preview && (
+                          <p className="text-amber-400">
+                            No inbound message context is attached to this proposal.
+                          </p>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -2043,14 +2094,16 @@ function MonitorPageContent() {
           <div className="border-t pt-4 space-y-2">
             {/* Action explanation */}
             <p className="text-[10px] text-muted-foreground">
-              {getActionExplanation(
-                selectedItem.data.action_type,
-                !!draftBody,
-                selectedItem.data.portal_url,
-                selectedItem.data.effective_agency_email || selectedItem.data.agency_email
-              )}
+              {manualPdfEscalation
+                ? "Manual fallback: complete the attached PDF form and send it yourself. Dismiss this handoff once you have handled it."
+                : getActionExplanation(
+                    selectedItem.data.action_type,
+                    !!draftBody,
+                    selectedItem.data.portal_url,
+                    selectedItem.data.effective_agency_email || selectedItem.data.agency_email
+                  )}
             </p>
-            {isEscalateProposal && (
+            {isEscalateProposal && !manualPdfEscalation && (
               <div className="space-y-1">
                 <p className="text-[10px] text-muted-foreground">
                   Provide guidance and approve. The AI will execute this direction and return with a concrete next proposal.
@@ -2065,7 +2118,7 @@ function MonitorPageContent() {
             )}
             {(() => {
               const gateOptions = selectedItem.data.gate_options as string[] | null;
-              const showApprove = !gateOptions || gateOptions.includes("APPROVE");
+              const showApprove = (!gateOptions || gateOptions.includes("APPROVE")) && !manualPdfEscalation;
               const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
               const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
               const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");
@@ -2090,7 +2143,7 @@ function MonitorPageContent() {
                       <Button
                         className="flex-1 bg-green-700 hover:bg-green-600 text-white"
                         onClick={handleApprove}
-                        disabled={isSubmitting || (isEscalateProposal && !reviewInstruction.trim())}
+                        disabled={isSubmitting || (isEscalateProposal && !manualPdfEscalation && !reviewInstruction.trim())}
                       >
                         {isSubmitting ? (
                           <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />

@@ -14,6 +14,7 @@ const {
     normalizePortalTimeoutSubstatus,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
+const { isLikelyRequestFormAttachment } = require('../../services/pdf-form-service');
 
 const LIVE_OVERVIEW_CACHE_TTL_MS = 15_000;
 const LIVE_OVERVIEW_STALE_TTL_MS = 5 * 60_000;
@@ -604,9 +605,53 @@ router.get('/live-overview', async (req, res) => {
             }, new Map());
         }
 
+        let caseRelevantAttachmentsByCase = new Map();
+        if (caseIdsForReasoning.length > 0) {
+            const caseAttachmentResult = await db.query(`
+                SELECT
+                    a.id,
+                    a.case_id,
+                    a.message_id,
+                    a.filename,
+                    a.content_type,
+                    a.size_bytes,
+                    a.storage_url,
+                    a.extracted_text,
+                    a.created_at
+                FROM attachments a
+                WHERE a.case_id = ANY($1::int[])
+                ORDER BY a.created_at DESC
+            `, [caseIdsForReasoning]);
+
+            caseRelevantAttachmentsByCase = caseAttachmentResult.rows.reduce((acc, row) => {
+                const caseId = Number(row.case_id);
+                if (!acc.has(caseId)) acc.set(caseId, []);
+                const isPreparedPdf = String(row.filename || '').startsWith('filled_') && row.content_type === 'application/pdf';
+                if (!isPreparedPdf && !isLikelyRequestFormAttachment(row)) {
+                    return acc;
+                }
+                acc.get(caseId).push({
+                    id: row.id,
+                    case_id: row.case_id,
+                    message_id: row.message_id,
+                    filename: row.filename,
+                    content_type: row.content_type,
+                    size_bytes: row.size_bytes,
+                    storage_url: row.storage_url,
+                    extracted_text: row.extracted_text,
+                    created_at: row.created_at,
+                    download_url: `/api/monitor/attachments/${row.id}/download`
+                });
+                return acc;
+            }, new Map());
+        }
+
         const pendingApprovalsWithAttachments = pendingApprovalRows.map((row) => {
             const messageId = Number(row.trigger_message_id);
-            const attachments = attachmentsByMessage.get(messageId) || [];
+            const messageAttachments = attachmentsByMessage.get(messageId) || [];
+            const caseAttachments = caseRelevantAttachmentsByCase.get(Number(row.case_id)) || [];
+            const attachments = [...messageAttachments, ...caseAttachments]
+                .filter((attachment, index, arr) => arr.findIndex((candidate) => candidate.id === attachment.id) === index);
             const reviewCtx = latestReviewByCase.get(Number(row.case_id)) || {};
             const primaryCaseAgency = primaryCaseAgencyByCase.get(Number(row.case_id)) || null;
             const researchSuggestedAgency = row.action_type === 'RESEARCH_AGENCY'

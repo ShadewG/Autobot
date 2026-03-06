@@ -100,6 +100,85 @@ async function latestInboundRequestsEmailResend(caseId: number): Promise<boolean
   }
 }
 
+function clarificationLooksLikeRequestFormWorkflow(latestInbound: any, latestAnalysis: any): boolean {
+  const corpus = [
+    latestInbound?.subject || "",
+    latestInbound?.body_text || "",
+    latestInbound?.body_html || "",
+    ...(Array.isArray(latestAnalysis?.key_points) ? latestAnalysis.key_points : []),
+    latestAnalysis?.unanswered_question || "",
+    latestAnalysis?.full_analysis_json ? JSON.stringify(latestAnalysis.full_analysis_json) : "",
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  const asksForRequestForm = /request form|apra\/foia request form|public records request form|fill(?:ed)? out (?:the )?(?:attached )?(?:pdf|form)|complete (?:the )?(?:attached )?(?:pdf|form)|attached form|new foia request form/.test(corpus);
+  const asksForMailingAddress = /mailing address|physical address|address \(for cd\)|for cd/.test(corpus);
+
+  return asksForRequestForm || asksForMailingAddress;
+}
+
+async function getClarificationPdfRoutingDecision(
+  caseId: number,
+): Promise<DecisionResult | null> {
+  const caseData = await db.getCaseById(caseId);
+  if (!caseData) return null;
+
+  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const latestAnalysis = latestInbound?.id
+    ? await db.getResponseAnalysisByMessageId(latestInbound.id)
+    : await db.getLatestResponseAnalysis(caseId);
+
+  if (!clarificationLooksLikeRequestFormWorkflow(latestInbound, latestAnalysis)) {
+    return null;
+  }
+
+  // @ts-ignore
+  const pdfFormService = require("../../services/pdf-form-service");
+  const sourceAttachment = await pdfFormService.findLatestRequestFormAttachment(caseId);
+  if (!sourceAttachment) {
+    return null;
+  }
+
+  const pdfReply = await pdfFormService.prepareInboundPdfFormReply(caseData);
+  if (pdfReply?.success && caseData.agency_email) {
+    return decision("SEND_PDF_EMAIL", {
+      canAutoExecute: false,
+      requiresHuman: true,
+      pauseReason: "SCOPE",
+      reasoning: [
+        "Agency requested a completed records request form and/or mailing address.",
+        `Prepared a filled PDF reply package from ${pdfReply.sourceFilename || sourceAttachment.filename || "the attached request form"}.`,
+        "Proposing a PDF email response with the completed form attached.",
+      ],
+    });
+  }
+
+  if (pdfReply?.success && !caseData.agency_email) {
+    return decision("ESCALATE", {
+      pauseReason: "SCOPE",
+      reasoning: [
+        "Agency requested a completed records request form and/or mailing address.",
+        `The attached PDF form was prepared from ${pdfReply.sourceFilename || sourceAttachment.filename || "the inbound attachment"}, but no agency email is on file.`,
+        "Human should review the filled PDF and send it manually once the correct delivery channel is confirmed.",
+      ],
+    });
+  }
+
+  if (pdfReply?.manualRequired) {
+    return decision("ESCALATE", {
+      pauseReason: "SCOPE",
+      reasoning: [
+        "Agency requested a completed records request form and/or mailing address.",
+        `Automatic PDF form preparation failed: ${pdfReply.error || "unknown error"}.`,
+        `Human should complete ${pdfReply.sourceFilename || sourceAttachment.filename || "the attached PDF form"} manually and send it with the response.`,
+      ],
+    });
+  }
+
+  return null;
+}
+
 function buildAllowedActions(params: {
   classification: Classification;
   denialSubtype: string | null;
@@ -2548,6 +2627,13 @@ export async function decideNextAction(
           "Prioritizing direct follow-up email over additional research/phone routing",
         ],
       });
+    }
+
+    if (classification === "CLARIFICATION_REQUEST") {
+      const pdfDecision = await getClarificationPdfRoutingDecision(caseId);
+      if (pdfDecision) {
+        return pdfDecision;
+      }
     }
 
     // === AI Router v2 vs Legacy routing ===

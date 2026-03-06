@@ -203,6 +203,23 @@ function resolvePortalUrl(caseUrl: string | null, agencyUrl: string | null): str
   return null;
 }
 
+function extractManualPdfEscalation(reasoning: string[] | null | undefined) {
+  const lines = formatReasoning(reasoning || [], 8);
+  const instruction =
+    lines.find((line) => /human should complete .*\.pdf manually and send/i.test(String(line))) || null;
+  if (!instruction) return null;
+  const attachmentMatch = String(instruction).match(/complete\s+(.+?\.pdf)\s+manually/i);
+  const failureLine =
+    lines.find((line) => /automatic pdf form preparation failed:/i.test(String(line))) || null;
+  return {
+    instruction: String(instruction),
+    attachmentName: attachmentMatch?.[1] || null,
+    failureReason: failureLine
+      ? String(failureLine).replace(/^automatic pdf form preparation failed:\s*/i, "")
+      : null,
+  };
+}
+
 // ── Multi-agency helpers ─────────────────────────────────────────────────────
 
 function parseEmailList(value?: string | null): string[] {
@@ -1217,6 +1234,10 @@ function DetailV2Content() {
     ? `Approve ${pending_proposal!.action_chain!.length} Actions`
     : isEmailLikePendingAction ? "Send" : "Approve";
   const pendingDelivery = getDeliveryTarget(pendingActionType || null, request, agency_summary || null);
+  const pendingManualPdfEscalation =
+    pendingActionType === "ESCALATE"
+      ? extractManualPdfEscalation(pending_proposal?.reasoning || [])
+      : null;
 
   const statusValue = String(request.status || "").toUpperCase();
   const isPausedStatus = [
@@ -1600,7 +1621,23 @@ function DetailV2Content() {
                         {pending_proposal.draft_body_text && (
                           <LinkifiedText text={pending_proposal.draft_body_text || ""} className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed" />
                         )}
-                        {!pending_proposal.draft_body_text && (
+                        {!pending_proposal.draft_body_text && pendingManualPdfEscalation && (
+                          <div className="rounded border border-amber-700/40 bg-amber-500/10 px-2 py-2 text-xs text-amber-200 space-y-1">
+                            <p>{pendingManualPdfEscalation.instruction}</p>
+                            {pendingDelivery?.target && (
+                              <p>
+                                <span className="text-amber-100/80">Send to:</span>{" "}
+                                <span className="font-medium">{pendingDelivery.target}</span>
+                              </p>
+                            )}
+                            {pendingManualPdfEscalation.failureReason && (
+                              <p className="text-amber-100/80">
+                                Failure: {pendingManualPdfEscalation.failureReason}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {!pending_proposal.draft_body_text && !pendingManualPdfEscalation && (
                           <p className="text-[10px] text-muted-foreground italic">Approve to proceed with this action.</p>
                         )}
                       </div>
@@ -1667,7 +1704,7 @@ function DetailV2Content() {
                         </div>
                       ) : (() => {
                         const gateOptions = pending_proposal.gate_options as string[] | null;
-                        const showApprove = !gateOptions || gateOptions.includes("APPROVE");
+                        const showApprove = (!gateOptions || gateOptions.includes("APPROVE")) && !pendingManualPdfEscalation;
                         const showAdjust = !gateOptions || gateOptions.includes("ADJUST");
                         const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
                         const showRetryResearch = gateOptions?.includes("RETRY_RESEARCH");

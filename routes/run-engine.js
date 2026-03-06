@@ -117,6 +117,108 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   logger.info('Proposal executed via direct email send fallback', { caseId, proposalId });
 }
 
+async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) {
+  const caseId = proposal.case_id;
+  const proposalId = proposal.id;
+  const caseData = await db.getCaseById(caseId);
+
+  if (!caseData?.agency_email) {
+    throw new Error(`Case ${caseId} has no agency_email — cannot send PDF email directly`);
+  }
+
+  const claimed = await db.query(
+    `UPDATE proposals
+     SET status = 'DECISION_RECEIVED',
+         human_decision = $1,
+         updated_at = NOW()
+     WHERE id = $2
+       AND status IN ('PENDING_APPROVAL','BLOCKED','DECISION_RECEIVED')
+     RETURNING id`,
+    [JSON.stringify(humanDecision), proposalId]
+  );
+  if (claimed.rows.length === 0) {
+    throw new Error('Proposal was already actioned by another request');
+  }
+
+  // Reuse the prepared PDF if one already exists; otherwise this proposal is
+  // stale and must be regenerated before approval.
+  const fs = require('fs');
+  const sendgridService = require('../services/sendgrid-service');
+  const pdfFormService = require('../services/pdf-form-service');
+  const pdfAttachment = await pdfFormService.getLatestPreparedPdfAttachment(caseId);
+  if (!pdfAttachment) {
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    throw new Error('No prepared PDF attachment found for this proposal');
+  }
+
+  let pdfBuffer = null;
+  if (pdfAttachment.storage_path && fs.existsSync(pdfAttachment.storage_path)) {
+    pdfBuffer = fs.readFileSync(pdfAttachment.storage_path);
+  } else {
+    const fullAttachment = await db.getAttachmentById(pdfAttachment.id);
+    if (fullAttachment?.file_data) {
+      pdfBuffer = Buffer.isBuffer(fullAttachment.file_data)
+        ? fullAttachment.file_data
+        : Buffer.from(fullAttachment.file_data.data || fullAttachment.file_data);
+    }
+  }
+  if (!pdfBuffer) {
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    throw new Error('Prepared PDF file is unavailable for this proposal');
+  }
+
+  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
+  const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
+  const replyHeaders =
+    latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
+      ? {
+          inReplyTo: latestInbound.message_id,
+          references: latestInbound.message_id,
+        }
+      : {};
+
+  try {
+    await sendgridService.sendEmail({
+      to: caseData.agency_email,
+      subject: proposal.draft_subject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`,
+      text: proposal.draft_body_text,
+      html: proposal.draft_body_html || null,
+      caseId,
+      messageType: 'send_pdf_email',
+      ...replyHeaders,
+      attachments: [{
+        content: pdfBuffer.toString('base64'),
+        filename: pdfAttachment.filename,
+        type: 'application/pdf',
+        disposition: 'attachment',
+      }],
+    });
+  } catch (error) {
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    await db.query(
+      `UPDATE cases
+       SET requires_human = true,
+           pause_reason = 'PENDING_APPROVAL',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [caseId]
+    );
+    throw error;
+  }
+
+  await db.updateProposal(proposalId, { status: 'EXECUTED' });
+  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
+  await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly with PDF attachment`, {
+    case_id: caseId,
+    proposal_id: proposalId,
+    action_type: proposal.action_type,
+    attachment_id: pdfAttachment.id,
+  });
+
+  logger.info('Proposal executed via direct PDF email send fallback', { caseId, proposalId, attachmentId: pdfAttachment.id });
+}
+
 const FOLLOWUP_ELIGIBLE_STATUSES = new Set([
   'sent',
   'awaiting_response',
@@ -714,10 +816,16 @@ router.post('/proposals/:id/decision', async (req, res) => {
     // ADJUST falls through to pipeline re-trigger so the instruction can be applied
     const refreshedProposal = await db.getProposalById(proposalId);
     if (action === 'APPROVE' && refreshedProposal.draft_body_text && refreshedProposal.draft_subject) {
-      await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
+      if (refreshedProposal.action_type === 'SEND_PDF_EMAIL') {
+        await executeApprovedProposalPdfEmailDirectly(refreshedProposal, humanDecision);
+      } else {
+        await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
+      }
       return res.json({
         success: true,
-        message: 'Email sent directly',
+        message: refreshedProposal.action_type === 'SEND_PDF_EMAIL'
+          ? 'PDF email sent directly'
+          : 'Email sent directly',
         proposal_id: proposalId,
         action,
       });

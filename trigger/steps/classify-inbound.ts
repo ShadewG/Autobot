@@ -31,6 +31,78 @@ export const CLASSIFICATION_MAP: Record<string, Classification> = {
   other: "UNKNOWN",
 };
 
+const REQUEST_FORM_CLARIFICATION_OVERRIDE_INTENTS = new Set([
+  "records_ready",
+  "delivery",
+  "acknowledgment",
+  "other",
+]);
+
+function normalizeClassificationText(input: any): string {
+  if (!input) return "";
+  return String(input)
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+export function looksLikeRequestFormClarification(message: any, attachments: any[] = []): boolean {
+  const corpus = [
+    message?.subject,
+    message?.body_text,
+    message?.body_html,
+    ...(Array.isArray(attachments)
+      ? attachments.flatMap((attachment: any) => [
+          attachment?.filename,
+          attachment?.extracted_text,
+        ])
+      : []),
+  ]
+    .map(normalizeClassificationText)
+    .filter(Boolean)
+    .join("\n");
+
+  if (!corpus) return false;
+
+  const requestFormSignals =
+    /request form|apra\/foia request form|public records request form|new foia request form|attached a blank copy|blank copy of (?:our )?(?:apra\/foia )?request form|complete (?:this|the|our|attached)?\s*(?:pdf|form)|completed (?:public )?records request form/.test(
+      corpus
+    );
+  const deliveryMethodSignals =
+    /too large to send via email|files are too large to email|method to send the records|mailing address|physical mailing address|mail a cd|delivery method/.test(
+      corpus
+    );
+
+  return requestFormSignals || deliveryMethodSignals;
+}
+
+function applyDeterministicClassificationOverrides(
+  aiResult: ClassificationOutput,
+  message: any,
+  attachments: any[] = []
+): ClassificationOutput {
+  const normalizedIntent = String(aiResult?.intent || "").toLowerCase();
+  if (!REQUEST_FORM_CLARIFICATION_OVERRIDE_INTENTS.has(normalizedIntent)) {
+    return aiResult;
+  }
+
+  if (!looksLikeRequestFormClarification(message, attachments)) {
+    return aiResult;
+  }
+
+  return {
+    ...aiResult,
+    intent: "question",
+    requires_response: true,
+    suggested_action: "respond",
+    reason_no_response: null,
+  };
+}
+
 export function buildClassificationPrompt(
   message: any,
   caseData: any,
@@ -389,6 +461,17 @@ export async function classifyInbound(
     } as ClassificationOutput;
   }
 
+  const normalizedAiResult = applyDeterministicClassificationOverrides(aiResult, message, messageAttachments);
+  if (normalizedAiResult.intent !== aiResult.intent) {
+    logger.info("Deterministic classification override applied for request-form clarification", {
+      caseId: context.caseId,
+      messageId,
+      originalIntent: aiResult.intent,
+      overriddenIntent: normalizedAiResult.intent,
+    });
+  }
+  aiResult = normalizedAiResult;
+
   // Map intent to classification enum
   const classification: Classification = CLASSIFICATION_MAP[aiResult.intent] || "UNKNOWN";
   let feeAmount = aiResult.fee_amount != null ? Number(aiResult.fee_amount) : null;
@@ -525,6 +608,7 @@ export async function classifyMessageContent(
     } as ClassificationOutput;
   }
 
+  aiResult = applyDeterministicClassificationOverrides(aiResult, message, attachments);
   const classification: Classification = CLASSIFICATION_MAP[aiResult.intent] || "UNKNOWN";
   let feeAmount = aiResult.fee_amount != null ? Number(aiResult.fee_amount) : null;
   if (feeAmount !== null && (isNaN(feeAmount) || feeAmount < 0.10)) feeAmount = null;
