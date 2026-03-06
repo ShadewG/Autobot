@@ -106,6 +106,36 @@ function normalizePhoneForCompare(value: any): string | null {
   return digits;
 }
 
+export function extractPhoneCandidatesFromText(
+  text: any,
+  source = "Latest inbound message"
+): Array<{ phone: string; kind: "phone" | "fax"; source: string }> {
+  const body = String(text || "");
+  if (!body.trim()) return [];
+
+  const candidates: Array<{ phone: string; kind: "phone" | "fax"; source: string }> = [];
+  const seen = new Set<string>();
+
+  for (const match of body.matchAll(
+    /(?:\+?1[\s.-]*)?(?:\(\d{3}\)|\b\d{3}\b)[\s.-]*\d{3}[\s.-]*\d{4}(?:\s*(?:x|ext\.?|extension)\s*\d{1,5})?/gi
+  )) {
+    const phone = String(match[0] || "").trim();
+    const normalized = normalizePhoneForCompare(phone);
+    if (!normalized) continue;
+
+    const beforeText = body
+      .slice(Math.max(0, (match.index || 0) - 18), match.index || 0)
+      .toLowerCase();
+    const kind = /(?:^|[\s(])(?:fax|facsimile)[:\s-]*$/.test(beforeText) ? "fax" : "phone";
+    const key = `${kind}:${normalized}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ phone, kind, source });
+  }
+
+  return candidates;
+}
+
 export async function executeAction(
   caseId: number,
   proposalId: number,
@@ -665,6 +695,14 @@ export async function executeAction(
           existingCaseAgencyRows = existingCaseAgencies.rows || [];
           existingCaseAgencyPhone = existingCaseAgencyRows.find((row) => normalizePhoneForCompare(row.phone))?.phone || null;
         } catch (e: any) { /* non-fatal */ }
+        const inboundPhoneCandidates = extractPhoneCandidatesFromText(
+          latestInbound?.body_text ||
+            latestInbound?.body_html ||
+            latestInbound?.summary ||
+            latestInbound?.subject ||
+            "",
+          "Latest inbound message"
+        );
 
         type PhoneCandidate = {
           phone: string;
@@ -698,6 +736,14 @@ export async function executeAction(
             kind: "fax",
             source: "Current case agency (fax)",
             agency_name: row.agency_name || null,
+          });
+        }
+        for (const inboundCandidate of inboundPhoneCandidates) {
+          pushCandidate({
+            phone: inboundCandidate.phone,
+            kind: inboundCandidate.kind,
+            source: inboundCandidate.source,
+            agency_name: fallbackAgencyName,
           });
         }
         pushCandidate({

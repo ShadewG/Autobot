@@ -12,6 +12,28 @@ const router = express.Router();
 const db = require('../services/database');
 const { tasks } = require('@trigger.dev/sdk');
 
+const AUTO_CAPTURE_NOTES_PREFIX = 'Auto-captured from monitor decision:%';
+const DEDUPED_EVAL_CASES_CTE = `
+    WITH ranked_eval_cases AS (
+        SELECT
+            ec.*,
+            ROW_NUMBER() OVER (
+                PARTITION BY CASE
+                    WHEN ec.proposal_id IS NOT NULL
+                     AND COALESCE(ec.notes, '') LIKE '${AUTO_CAPTURE_NOTES_PREFIX}'
+                    THEN CONCAT('auto-monitor:', COALESCE(ec.case_id::text, 'none'))
+                    ELSE CONCAT('eval-case:', ec.id::text)
+                END
+                ORDER BY ec.created_at DESC, ec.id DESC
+            ) AS logical_rank
+        FROM eval_cases ec
+        WHERE ec.is_active = true
+    ),
+    deduped_eval_cases AS (
+        SELECT * FROM ranked_eval_cases WHERE logical_rank = 1
+    )
+`;
+
 const KNOWN_ACTION_TYPES = new Set([
     'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_CLARIFICATION', 'SEND_APPEAL',
     'SEND_FEE_WAIVER_REQUEST', 'SEND_STATUS_UPDATE', 'SEND_INITIAL_REQUEST',
@@ -33,6 +55,7 @@ function parseId(val) {
 router.get('/cases', async (req, res) => {
     try {
         const result = await db.query(`
+            ${DEDUPED_EVAL_CASES_CTE}
             SELECT
                 ec.id,
                 ec.proposal_id,
@@ -52,7 +75,7 @@ router.get('/cases', async (req, res) => {
                 er.judge_score AS last_judge_score,
                 er.failure_category AS last_failure_category,
                 er.ran_at AS last_ran_at
-            FROM eval_cases ec
+            FROM deduped_eval_cases ec
             LEFT JOIN proposals p ON p.id = ec.proposal_id
             LEFT JOIN cases c ON c.id = ec.case_id
             LEFT JOIN LATERAL (
@@ -236,6 +259,7 @@ router.post('/run', async (req, res) => {
 router.get('/summary', async (req, res) => {
     try {
         const result = await db.query(`
+            ${DEDUPED_EVAL_CASES_CTE}
             SELECT
                 COUNT(DISTINCT ec.id)::int                                                      AS total_cases,
                 COUNT(er.id) FILTER (WHERE er.ran_at > NOW() - INTERVAL '7 days')::int          AS runs_last_7d,
@@ -248,16 +272,16 @@ router.get('/summary', async (req, res) => {
                 COUNT(*) FILTER (
                     WHERE er.ran_at > NOW() - INTERVAL '7 days'
                 )::int                                                                          AS total_7d
-            FROM eval_cases ec
+            FROM deduped_eval_cases ec
             LEFT JOIN eval_runs er ON er.eval_case_id = ec.id
-            WHERE ec.is_active = true
         `);
 
         const failuresResult = await db.query(`
+            ${DEDUPED_EVAL_CASES_CTE}
             SELECT failure_category, COUNT(*)::int AS count
             FROM eval_runs er
-            JOIN eval_cases ec ON ec.id = er.eval_case_id
-            WHERE ec.is_active = true
+            JOIN deduped_eval_cases ec ON ec.id = er.eval_case_id
+            WHERE true
               AND er.failure_category IS NOT NULL
               AND er.ran_at > NOW() - INTERVAL '30 days'
             GROUP BY failure_category
@@ -310,6 +334,7 @@ router.get('/cases/:id/history', async (req, res) => {
 router.get('/export', async (req, res) => {
     try {
         const result = await db.query(`
+            ${DEDUPED_EVAL_CASES_CTE}
             SELECT
                 ec.id              AS eval_case_id,
                 ec.proposal_id,
@@ -328,7 +353,7 @@ router.get('/export', async (req, res) => {
                 er.failure_category AS last_failure_category,
                 er.judge_reasoning AS last_judge_reasoning,
                 er.ran_at          AS last_ran_at
-            FROM eval_cases ec
+            FROM deduped_eval_cases ec
             LEFT JOIN proposals p ON p.id = ec.proposal_id
             LEFT JOIN cases c ON c.id = ec.case_id
             LEFT JOIN LATERAL (
@@ -337,7 +362,6 @@ router.get('/export', async (req, res) => {
                 ORDER BY ran_at DESC
                 LIMIT 1
             ) er ON true
-            WHERE ec.is_active = true
             ORDER BY ec.created_at ASC
         `);
 

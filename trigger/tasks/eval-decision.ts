@@ -15,6 +15,28 @@ import { z } from "zod";
 import db, { logger } from "../lib/db";
 import { fallbackDraftModel } from "../lib/ai";
 
+const AUTO_CAPTURE_NOTES_PREFIX = "Auto-captured from monitor decision:%";
+const DEDUPED_EVAL_CASES_SQL = `
+  WITH ranked_eval_cases AS (
+    SELECT
+      ec.*,
+      ROW_NUMBER() OVER (
+        PARTITION BY CASE
+          WHEN ec.proposal_id IS NOT NULL
+           AND COALESCE(ec.notes, '') LIKE '${AUTO_CAPTURE_NOTES_PREFIX}'
+          THEN CONCAT('auto-monitor:', COALESCE(ec.case_id::text, 'none'))
+          ELSE CONCAT('eval-case:', ec.id::text)
+        END
+        ORDER BY ec.created_at DESC, ec.id DESC
+      ) AS logical_rank
+    FROM eval_cases ec
+    WHERE ec.is_active = true
+  ),
+  deduped_eval_cases AS (
+    SELECT * FROM ranked_eval_cases WHERE logical_rank = 1
+  )
+`;
+
 const judgeSchema = z.object({
   score: z.number().min(1).max(5).int(),
   reasoning: z.string(),
@@ -126,7 +148,8 @@ export const evalDecision = task({
       evalCases = r.rows;
     } else if (payload.runAll) {
       const r = await db.query(
-        "SELECT * FROM eval_cases WHERE is_active = true ORDER BY created_at DESC"
+        `${DEDUPED_EVAL_CASES_SQL}
+         SELECT * FROM deduped_eval_cases ORDER BY created_at DESC`
       );
       evalCases = r.rows;
     } else {

@@ -17,6 +17,7 @@ const {
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-utils');
 const { isValidEmail } = require('../utils/contact-utils');
 const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
+const triggerDispatch = require('../services/trigger-dispatch-service');
 
 // Feature flag for Run Engine (Phase 3) - new auditability layer
 const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
@@ -434,8 +435,6 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                 let triggerEnqueued = false;
                 let run = null;
                 try {
-                    const { tasks } = require('@trigger.dev/sdk');
-
                     const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 
                     run = await db.createAgentRunFull({
@@ -447,15 +446,23 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                         langgraph_thread_id: `case:${caseId}:msg-${messageId}`
                     });
 
-                    const handle = await tasks.trigger('process-inbound', {
+                    const { handle } = await triggerDispatch.triggerTask('process-inbound', {
                         runId: run.id,
                         caseId,
                         messageId,
                         autopilotMode,
                     }, {
-                        queue: { name: `case-${caseId}`, concurrencyLimit: 1 },
+                        queue: `case-${caseId}`,
                         idempotencyKey: `analysis:${caseId}:${messageId}`,
                         idempotencyKeyTTL: "1h",
+                    }, {
+                        runId: run.id,
+                        caseId,
+                        messageId,
+                        triggerType: 'inbound_message',
+                        source: 'email_queue',
+                        verifyMs: 8000,
+                        pollMs: 1200,
                     });
 
                     triggerEnqueued = true;

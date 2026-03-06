@@ -11,6 +11,16 @@ const triggerDispatch = require('./trigger-dispatch-service');
 const discordService = require('./discord-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 
+function normalizePortalTimeoutError(rawError) {
+    const value = String(rawError || '').trim();
+    if (!value || value === 'Unknown') {
+        return 'No active submit-portal run';
+    }
+    if (/^Status:\s*created$/i.test(value)) {
+        return 'No active submit-portal run; last portal task status was created';
+    }
+    return value;
+}
 
 class CronService {
     constructor() {
@@ -984,6 +994,7 @@ class CronService {
                             portalError = d.error || d.failure_reason || d.message || `Status: ${d.status || 'unknown'}`;
                         } catch (_) { portalError = caseData.last_portal_details.substring(0, 200); }
                     }
+                    portalError = normalizePortalTimeoutError(portalError);
 
                     await transitionCaseRuntime(caseData.id, 'PORTAL_STUCK', {
                         substatus: `Portal timed out (>30 min): ${portalError}`.substring(0, 100),
@@ -1013,7 +1024,7 @@ class CronService {
                     });
 
                     await db.logActivity('portal_stuck_escalated',
-                        `Case ${caseData.case_name} stuck >60min. Error: ${portalError}`,
+                        `Case ${caseData.case_name} stuck >30min. Error: ${portalError}`,
                         { case_id: caseData.id, portal_error: portalError, recording_url: recordingUrl });
                     try { await notionService.syncStatusToNotion(caseData.id); } catch (_) {}
                     portalEscalated++;
