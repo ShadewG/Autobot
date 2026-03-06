@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState, useRef, Suspense, useMemo } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1581,9 +1582,7 @@ function DetailV2Content() {
                           </span>
                         </div>
                         {pending_proposal.draft_body_text && (
-                          <p className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed">
-                            {pending_proposal.draft_body_text}
-                          </p>
+                          <LinkifiedText text={pending_proposal.draft_body_text || ""} className="text-xs text-muted-foreground whitespace-pre-wrap leading-relaxed" />
                         )}
                         {!pending_proposal.draft_body_text && (
                           <p className="text-[10px] text-muted-foreground italic">Approve to proceed with this action.</p>
@@ -2177,7 +2176,7 @@ function DetailV2Content() {
           >
             Intel
           </button>
-          <span className="text-border mx-1">|</span>
+          <span className="text-border mx-1 hidden sm:inline">|</span>
           {/* Drawer tabs */}
           {(["runs", "agent-log"] as const).map((tab) => (
             <button

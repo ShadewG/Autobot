@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -341,9 +342,7 @@ export function DraftApprovalPanel({
                 </p>
               )}
               <div className="bg-muted/50 rounded-lg p-3 max-h-[200px] overflow-auto">
-                <pre className="text-sm whitespace-pre-wrap font-sans">
-                  {action.draft_body || "(No content)"}
-                </pre>
+                <LinkifiedText text={action.draft_body || "(No content)"} className="text-sm whitespace-pre-wrap font-sans" />
               </div>
             </div>
           )}

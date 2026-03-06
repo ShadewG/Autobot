@@ -23,6 +23,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetcher, fetchAPI } from "@/lib/api";
 import { formatDate, cn, stripHtmlTags } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   FlaskConical,
   Play,
@@ -107,6 +108,7 @@ export default function EvalPage() {
   const [history, setHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [lastTriggerRunId, setLastTriggerRunId] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState(false);
 
   const { data: casesData, mutate: mutateCases, isLoading: casesLoading } = useSWR<{
     success: boolean;
@@ -137,8 +139,9 @@ export default function EvalPage() {
           mutateSummary();
         }, 3000);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to run evals:", e);
+      toast.error(e?.message || "Failed to run evals");
     } finally {
       setRunningAll(false);
     }
@@ -158,8 +161,9 @@ export default function EvalPage() {
           mutateSummary();
         }, 5000);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to run eval:", e);
+      toast.error(e?.message || "Failed to run eval");
     } finally {
       setRunningId(null);
     }
@@ -169,6 +173,7 @@ export default function EvalPage() {
     setSelectedCase(evalCase);
     setLoadingHistory(true);
     setHistory([]);
+    setHistoryError(false);
     try {
       const result = await fetchAPI<{ success: boolean; runs: any[] }>(
         `/eval/cases/${evalCase.id}/history`
@@ -176,6 +181,8 @@ export default function EvalPage() {
       setHistory(result.runs || []);
     } catch (e) {
       console.error("Failed to load history:", e);
+      toast.error("Failed to load eval history");
+      setHistoryError(true);
     } finally {
       setLoadingHistory(false);
     }
@@ -344,7 +351,7 @@ export default function EvalPage() {
                             </span>
                           )}
                           {ec.notes && (
-                            <p className="text-xs text-muted-foreground truncate max-w-[160px]">
+                            <p className="text-xs text-muted-foreground truncate max-w-[160px]" title={ec.notes}>
                               {ec.notes}
                             </p>
                           )}
@@ -432,7 +439,7 @@ export default function EvalPage() {
                 <div className="space-y-2">
                   {failureBreakdown.map((item) => (
                     <div key={item.failure_category} className="flex items-center justify-between">
-                      <span className="text-xs font-mono text-muted-foreground">
+                      <span className="text-xs font-mono text-muted-foreground truncate">
                         {item.failure_category}
                       </span>
                       <Badge variant="outline" className="text-xs text-red-400 bg-red-500/10">
@@ -482,6 +489,14 @@ export default function EvalPage() {
           {loadingHistory ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : historyError ? (
+            <div className="flex flex-col items-center justify-center py-8 gap-3">
+              <AlertTriangle className="h-6 w-6 text-muted-foreground opacity-50" />
+              <p className="text-sm text-muted-foreground">Failed to load history</p>
+              <Button variant="outline" size="sm" onClick={() => selectedCase && handleViewHistory(selectedCase)}>
+                Retry
+              </Button>
             </div>
           ) : (
             <ScrollArea className="h-[400px]">

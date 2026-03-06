@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -227,12 +228,12 @@ export function InboundEvidencePanel({
           </div>
           <Collapsible open={showFullBody} onOpenChange={setShowFullBody}>
             <div className="bg-muted/30 rounded-lg p-3 text-sm">
-              <pre className="whitespace-pre-wrap font-sans">
-                {showRaw
-                  ? (message.raw_body || message.body)?.slice(0, showFullBody ? undefined : 500)
-                  : message.body?.slice(0, showFullBody ? undefined : 500)}
-                {!showFullBody && (message.body?.length || 0) > 500 && "..."}
-              </pre>
+              <LinkifiedText
+                text={((showRaw ? (message.raw_body || message.body) : message.body)
+                  ?.slice(0, showFullBody ? undefined : 500) || "")
+                  + (!showFullBody && (message.body?.length || 0) > 500 ? "..." : "")}
+                className="whitespace-pre-wrap font-sans text-sm"
+              />
             </div>
             {(message.body?.length || 0) > 500 && (
               <CollapsibleTrigger asChild>

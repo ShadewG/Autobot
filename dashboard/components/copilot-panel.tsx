@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -149,8 +150,11 @@ export function CopilotPanel({
               {nextAction.draft_content && (
                 <div className="space-y-1">
                   <span className="text-xs font-medium text-muted-foreground">Draft Preview</span>
-                  <div className="bg-muted rounded p-2 text-xs max-h-32 overflow-auto whitespace-pre-wrap">
-                    {nextAction.draft_preview || nextAction.draft_content.substring(0, 300)}...
+                  <div className="bg-muted rounded p-2 text-xs max-h-32 overflow-auto">
+                    <LinkifiedText
+                      text={(nextAction.draft_preview || nextAction.draft_content.substring(0, 300)) + "..."}
+                      className="whitespace-pre-wrap"
+                    />
                   </div>
                 </div>
               )}

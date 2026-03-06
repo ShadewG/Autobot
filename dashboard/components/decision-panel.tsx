@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1226,9 +1227,7 @@ export function DecisionPanel({
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="bg-muted rounded-md p-3 text-sm border border-border">
-                <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed">
-                  {nextAction.draft_content}
-                </pre>
+                <LinkifiedText text={nextAction.draft_content || ""} className="whitespace-pre-wrap font-sans text-xs leading-relaxed" />
               </div>
             </CollapsibleContent>
           </Collapsible>

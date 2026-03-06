@@ -424,7 +424,7 @@ export default function RunsPage() {
 
       {/* Run Details Dialog */}
       <Dialog open={!!selectedRun} onOpenChange={(open) => !open && setSelectedRun(null)}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
+        <DialogContent className="max-w-4xl w-[calc(100vw-2rem)] max-h-[80vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Bot className="h-5 w-5" />
