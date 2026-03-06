@@ -705,7 +705,7 @@ function toRequestListItem(caseData) {
         id: String(caseData.id),
         subject: subject,
         agency_name: caseData.agency_name || '—',
-        state: caseData.state || '—',
+        state: caseData.state && caseData.state !== '{}' ? caseData.state : '—',
         status: STATUS_MAP[effectiveDbStatus] || 'DRAFT',
         last_inbound_at: caseData.last_response_date || null,
         last_activity_at: caseData.updated_at || caseData.created_at,

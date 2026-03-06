@@ -177,7 +177,7 @@ function parseStateFromAgencyName(agencyName: string): string | null {
 }
 
 export function normalizeStateCode(state: string | null | undefined): string | null {
-  if (!state || state === '—') return null;
+  if (!state || state === '—' || state === '{}') return null;
   const trimmed = state.trim();
   if (!trimmed) return null;
 
