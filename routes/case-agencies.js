@@ -4,6 +4,7 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const pdContactService = require('../services/pd-contact-service');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const { normalizeAgencyEmailHint, findCanonicalAgency } = require('../services/canonical-agency');
 
 function firstNonEmpty(...values) {
     for (const value of values) {
@@ -40,6 +41,38 @@ function buildExistingContactFallback(caseAgency, caseData) {
     };
 }
 
+async function canonicalizeCaseAgency(caseAgency, caseData) {
+    const canonicalAgency = await findCanonicalAgency(db, {
+        portalUrl: caseAgency?.portal_url,
+        portalMailbox: caseAgency?.agency_email || caseData?.agency_email || null,
+        agencyEmail: caseAgency?.agency_email,
+        agencyName: caseAgency?.agency_name,
+        stateHint: caseData?.state,
+    });
+
+    const resolvedPortalUrl = [
+        caseAgency?.portal_url,
+        canonicalAgency?.portal_url,
+        canonicalAgency?.portal_url_alt,
+    ].map((value) => normalizePortalUrl(value)).find(Boolean) || null;
+
+    return {
+        ...caseAgency,
+        agency_id: canonicalAgency?.id || caseAgency?.agency_id || null,
+        agency_name: canonicalAgency?.name || caseAgency?.agency_name,
+        agency_email: normalizeAgencyEmailHint(caseAgency?.agency_email)
+            || normalizeAgencyEmailHint(canonicalAgency?.email_foia)
+            || normalizeAgencyEmailHint(canonicalAgency?.email_main)
+            || null,
+        portal_url: resolvedPortalUrl,
+        portal_provider:
+            caseAgency?.portal_provider
+            || canonicalAgency?.portal_provider
+            || detectPortalProviderByUrl(resolvedPortalUrl)?.name
+            || null,
+    };
+}
+
 /**
  * GET /api/cases/:id/agencies
  * List all agencies for a case
@@ -50,8 +83,14 @@ router.get('/:id/agencies', async (req, res) => {
         if (!caseId) return res.status(400).json({ success: false, error: 'Invalid case id' });
 
         const includeInactive = req.query.includeInactive === 'true';
-        const agencies = await db.getCaseAgencies(caseId, includeInactive);
-        res.json({ success: true, agencies });
+        const [caseData, agencies] = await Promise.all([
+            db.getCaseById(caseId),
+            db.getCaseAgencies(caseId, includeInactive),
+        ]);
+        const canonicalAgencies = await Promise.all(
+            agencies.map((agency) => canonicalizeCaseAgency(agency, caseData))
+        );
+        res.json({ success: true, agencies: canonicalAgencies });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

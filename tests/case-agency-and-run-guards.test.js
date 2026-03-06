@@ -243,5 +243,70 @@ describe('Case agency and run guards', function () {
         restore();
       }
     });
+
+    it('canonicalizes stale case_agency rows on read using strong email signals', async function () {
+      const dbStub = {
+        getCaseById: sinon.stub().resolves({
+          id: 25207,
+          state: '{}',
+          agency_email: null,
+          alternate_agency_email: null,
+          portal_url: null,
+          portal_provider: null,
+        }),
+        getCaseAgencies: sinon.stub().resolves([
+          {
+            id: 61,
+            case_id: 25207,
+            agency_id: 152,
+            agency_name: 'Stow Police Department',
+            agency_email: 'ORR@mylubbock.us',
+            portal_url: 'https://u8387778.ct.sendgrid.net/ls/click?abc',
+            portal_provider: 'govqa',
+            is_primary: true,
+            is_active: true,
+            added_source: 'case_row_backfill',
+            status: 'active',
+          },
+        ]),
+        query: sinon.stub().resolves({
+          rows: [{
+            id: 1365,
+            name: 'Lubbock Police Department, Texas',
+            state: 'TX',
+            email_main: null,
+            email_foia: 'orr@mylubbock.us',
+            portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+            portal_url_alt: null,
+            portal_provider: 'govqa',
+            score: 15,
+            completeness: 3,
+          }],
+        }),
+      };
+      const { router, restore } = loadCaseAgenciesRouter({
+        dbStub,
+        notionStub: {},
+        pdContactStub: {},
+      });
+
+      try {
+        const app = express();
+        app.use('/api/cases', router);
+
+        const response = await supertest(app)
+          .get('/api/cases/25207/agencies');
+
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(response.body.success, true);
+        assert(Array.isArray(response.body.agencies), 'expected agencies array');
+        assert.strictEqual(response.body.agencies[0].agency_name, 'Lubbock Police Department, Texas');
+        assert.strictEqual(response.body.agencies[0].agency_id, 1365);
+        assert.strictEqual(response.body.agencies[0].agency_email, 'orr@mylubbock.us');
+        assert.strictEqual(response.body.agencies[0].portal_url, 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx');
+      } finally {
+        restore();
+      }
+    });
   });
 });

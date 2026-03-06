@@ -59,18 +59,37 @@ describe('Request list and agency directory normalization', function () {
             rows: [
               {
                 case_id: 25207,
-                agency_id: 1365,
-                agency_name: 'Lubbock Police Department, Texas',
+                agency_id: 152,
+                agency_name: 'Stow Police Department',
                 agency_email: 'orr@mylubbock.us',
-                portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+                portal_url: 'https://u8387778.ct.sendgrid.net/ls/click?abc',
                 portal_provider: 'govqa',
-                canonical_agency_name: 'Lubbock Police Department, Texas',
-                canonical_state: 'TX',
+                canonical_agency_name: 'Stow Police Department',
+                canonical_state: 'OH',
                 canonical_email_main: null,
-                canonical_email_foia: 'orr@mylubbock.us',
-                canonical_portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+                canonical_email_foia: null,
+                canonical_portal_url: null,
                 canonical_portal_url_alt: null,
                 canonical_portal_provider: 'govqa',
+              },
+            ],
+          };
+        }
+
+        if (sql.includes('FROM agencies a') && sql.includes('score DESC')) {
+          return {
+            rows: [
+              {
+                id: 1365,
+                name: 'Lubbock Police Department, Texas',
+                state: 'TX',
+                email_main: null,
+                email_foia: 'orr@mylubbock.us',
+                portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+                portal_url_alt: null,
+                portal_provider: 'govqa',
+                score: 15,
+                completeness: 3,
               },
             ],
           };
