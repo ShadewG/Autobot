@@ -7,6 +7,7 @@ process.env.OPENAI_API_KEY = "";
 
 const database = require("../services/database");
 const { decideNextAction } = require("../trigger/steps/decide-next-action.ts");
+const { reasoningForcesCorrectedAgencyResearch } = require("../trigger/steps/execute-action.ts");
 
 describe("DENIAL no-records wrong-agency routing", function () {
   let getCaseByIdStub;
@@ -144,5 +145,16 @@ describe("DENIAL no-records wrong-agency routing", function () {
     assert.strictEqual(result.actionType, "RESEARCH_AGENCY");
     assert.strictEqual(result.researchLevel, "deep");
     sinon.assert.called(updateCaseStub);
+  });
+
+  it("flags wrong-jurisdiction reasoning so research execution ignores stale case channels", function () {
+    const result = reasoningForcesCorrectedAgencyResearch([
+      "Human review resolution: action=custom",
+      "The denial/no-records response came from an unrelated jurisdiction (City of Lubbock, TX).",
+      "Human directive requires re-targeting the request to the correct Georgia custodian.",
+      "Research/confirm the correct Gwinnett County portal/contact before sending.",
+    ]);
+
+    assert.strictEqual(result, true);
   });
 });

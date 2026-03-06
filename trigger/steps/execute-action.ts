@@ -108,19 +108,36 @@ function normalizePhoneForCompare(value: any): string | null {
   return digits;
 }
 
-function hasWrongAgencyConstraint(value: any): boolean {
-  if (Array.isArray(value)) {
-    return value.includes("WRONG_AGENCY");
-  }
+function normalizeConstraintArray(value: any): string[] {
+  if (Array.isArray(value)) return value.map((item) => String(item));
   if (typeof value === "string") {
     try {
       const parsed = JSON.parse(value);
-      return Array.isArray(parsed) && parsed.includes("WRONG_AGENCY");
+      return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
     } catch {
-      return value.includes("WRONG_AGENCY");
+      return value ? [String(value)] : [];
     }
   }
-  return false;
+  return [];
+}
+
+function hasWrongAgencyConstraint(value: any): boolean {
+  return normalizeConstraintArray(value).includes("WRONG_AGENCY");
+}
+
+export function reasoningForcesCorrectedAgencyResearch(reasoning: any): boolean {
+  const text = Array.isArray(reasoning)
+    ? reasoning.map((line) => String(line || "")).join("\n").toLowerCase()
+    : String(reasoning || "").toLowerCase();
+
+  if (!text.trim()) return false;
+
+  const rejectsCurrentAgency =
+    /\bwrong jurisdiction\b|\bunrelated jurisdiction\b|\bwrong agency\b|\bwrong for this case\b|\bincorrect (agency|department|custodian|jurisdiction)\b|do not use|do not rebut|do not route/.test(text);
+  const demandsCorrectedRouting =
+    /research the correct|correct (agency|custodian)|verify .* (channel|portal|contact)|do not assume email|re-target|re-route|switching away from|identifying the correct/i.test(text);
+
+  return rejectsCurrentAgency && demandsCorrectedRouting;
 }
 
 export function extractPhoneCandidatesFromText(
@@ -936,7 +953,31 @@ export async function executeAction(
         hasWrongAgencyConstraint(caseSignalsSource?.constraints) ||
         hasWrongAgencyConstraint(caseData?.constraints_jsonb) ||
         hasWrongAgencyConstraint(caseData?.constraints);
-      const ignoreCurrentAgencySignals = !!metadataAgencyMismatch || wrongAgencyConstraint;
+      const wrongAgencyDirective = reasoningForcesCorrectedAgencyResearch([
+        ...(Array.isArray(reasoning) ? reasoning : []),
+        ...(Array.isArray(existingProposal?.reasoning) ? existingProposal.reasoning : []),
+      ]);
+      const ignoreCurrentAgencySignals = !!metadataAgencyMismatch || wrongAgencyConstraint || wrongAgencyDirective;
+      if (wrongAgencyDirective && !wrongAgencyConstraint) {
+        const currentConstraints = [
+          ...normalizeConstraintArray(caseSignalsSource?.constraints_jsonb),
+          ...normalizeConstraintArray(caseSignalsSource?.constraints),
+          ...normalizeConstraintArray(caseData?.constraints_jsonb),
+          ...normalizeConstraintArray(caseData?.constraints),
+        ].filter(Boolean);
+        if (!currentConstraints.includes("WRONG_AGENCY")) {
+          try {
+            await db.updateCase(caseId, {
+              constraints_jsonb: JSON.stringify([...new Set([...currentConstraints, "WRONG_AGENCY"])]),
+            });
+          } catch (constraintErr: any) {
+            logger.warn("Failed to persist WRONG_AGENCY during research execution", {
+              caseId,
+              error: constraintErr?.message || String(constraintErr),
+            });
+          }
+        }
+      }
       const knownCaseEmailSignal = ignoreCurrentAgencySignals
         ? null
         : (
