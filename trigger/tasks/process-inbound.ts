@@ -152,6 +152,187 @@ export const processInbound = task({
       }
     };
 
+    const runAdjustedDraftLoop = async ({
+      actionType,
+      constraints,
+      scopeItems,
+      feeAmount,
+      baseInstruction,
+      messageIdForDraft,
+      baseResearch,
+      baseReasoning,
+      basePauseReason,
+      confidence,
+      triggerSource,
+      classificationForExecution,
+      jurisdictionLevel,
+      state,
+      startingAdjustmentCount = 1,
+    }: {
+      actionType: ActionType;
+      constraints: any[];
+      scopeItems: any[];
+      feeAmount: number | null;
+      baseInstruction: string | null | undefined;
+      messageIdForDraft: number | null;
+      baseResearch: ResearchContext;
+      baseReasoning: string[];
+      basePauseReason: string | null;
+      confidence: number;
+      triggerSource: "ADJUSTMENT" | "INBOUND_MESSAGE";
+      classificationForExecution: any;
+      jurisdictionLevel: any;
+      state: string | null | undefined;
+      startingAdjustmentCount?: number;
+    }): Promise<
+      | { status: "timed_out" | "dismissed" | "withdrawn"; proposalId: number }
+      | {
+          status: "approved";
+          proposalId: number;
+          draft: any;
+          reasoning: string[];
+          actionType: ActionType;
+        }
+    > => {
+      let instruction = baseInstruction || null;
+      let researchForLoop = baseResearch;
+      let adjustmentCount = startingAdjustmentCount;
+
+      while (true) {
+        const loopReasoning = instruction
+          ? [...baseReasoning, `Adjusted per human: ${instruction}`]
+          : [...baseReasoning];
+
+        await markStep("draft_response", `Run #${runId}: drafting adjusted response`, {
+          action_type: actionType,
+          adjustment_count: adjustmentCount,
+        });
+        const adjustedDraft = await draftResponse(
+          caseId,
+          actionType,
+          constraints,
+          scopeItems,
+          feeAmount,
+          instruction,
+          messageIdForDraft,
+          researchForLoop
+        );
+
+        await markStep("safety_check", `Run #${runId}: safety checking adjusted draft`, {
+          action_type: actionType,
+          adjustment_count: adjustmentCount,
+        });
+        const adjustedSafety = await safetyCheck(
+          adjustedDraft.bodyText,
+          adjustedDraft.subject,
+          actionType,
+          constraints,
+          scopeItems,
+          jurisdictionLevel,
+          state
+        );
+
+        await markStep("gate", `Run #${runId}: creating adjusted proposal for approval`, {
+          action_type: actionType,
+          adjustment_count: adjustmentCount,
+        });
+        const adjustedGate = await createProposalAndGate(
+          caseId,
+          runId,
+          actionType,
+          messageIdForDraft,
+          adjustedDraft,
+          adjustedSafety,
+          false,
+          true,
+          basePauseReason,
+          loopReasoning,
+          confidence,
+          adjustmentCount,
+          null,
+          adjustedDraft.lessonsApplied
+        );
+
+        if (!adjustedGate.shouldWait || !adjustedGate.waitpointTokenId) {
+          return {
+            status: "approved",
+            proposalId: adjustedGate.proposalId,
+            draft: adjustedDraft,
+            reasoning: loopReasoning,
+            actionType,
+          };
+        }
+
+        await markStep("wait_human_decision", `Run #${runId}: waiting for adjusted draft approval`, {
+          proposal_id: adjustedGate.proposalId,
+          adjustment_count: adjustmentCount,
+        });
+        await waitRun(caseId, runId);
+        const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
+
+        if (!adjustResult.ok) {
+          await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+          return { status: "timed_out", proposalId: adjustedGate.proposalId };
+        }
+
+        const humanDecision = adjustResult.output;
+
+        if (humanDecision.action === "DISMISS") {
+          await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+          await reconcileCaseAfterDismiss(caseId);
+          return { status: "dismissed", proposalId: adjustedGate.proposalId };
+        }
+
+        if (humanDecision.action === "WITHDRAW") {
+          await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", {
+            proposalId: adjustedGate.proposalId,
+          });
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", {
+            substatus: "withdrawn_by_user",
+          });
+          await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
+          return { status: "withdrawn", proposalId: adjustedGate.proposalId };
+        }
+
+        if (humanDecision.action === "ADJUST") {
+          await db.updateProposal(adjustedGate.proposalId, {
+            status: "DISMISSED",
+            human_decision: {
+              action: "ADJUST",
+              instruction: humanDecision.instruction,
+              decidedAt: new Date().toISOString(),
+            },
+          });
+
+          const ADJUST_RESEARCH_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
+          if (ADJUST_RESEARCH_RE.test(humanDecision.instruction || "") && researchForLoop.level === "none") {
+            researchForLoop = await researchContext(
+              caseId,
+              actionType,
+              classificationForExecution,
+              null,
+              "medium",
+              undefined,
+              messageIdForDraft
+            );
+          }
+
+          instruction = humanDecision.instruction || instruction;
+          adjustmentCount += 1;
+          continue;
+        }
+
+        await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+        return {
+          status: "approved",
+          proposalId: adjustedGate.proposalId,
+          draft: adjustedDraft,
+          reasoning: loopReasoning,
+          actionType,
+        };
+      }
+    };
+
     logger.info("process-inbound started", { runId, caseId, messageId, autopilotMode, triggerType });
     await markStep("start", `Run #${runId}: started process-inbound`, { trigger_type: triggerType || "INBOUND_MESSAGE" });
 
@@ -179,101 +360,50 @@ export const processInbound = task({
         if (RESEARCH_RE.test(reviewInstruction)) {
           adjustResearch = await researchContext(caseId, originalActionType as any, "UNKNOWN" as any, null, "medium", undefined, messageId);
         }
+        const adjustedOutcome = await runAdjustedDraftLoop({
+          actionType: originalActionType as ActionType,
+          constraints: currentConstraints,
+          scopeItems: currentScopeItems,
+          feeAmount: context.caseData.fee_amount ?? null,
+          baseInstruction: reviewInstruction,
+          messageIdForDraft: messageId,
+          baseResearch: adjustResearch,
+          baseReasoning: adjustmentReasoning,
+          basePauseReason: null,
+          confidence: 0.9,
+          triggerSource: "ADJUSTMENT",
+          classificationForExecution: null,
+          jurisdictionLevel: null,
+          state: context.caseData.state,
+          startingAdjustmentCount: 1,
+        });
 
-        // Re-draft with the user's adjustment instruction
-        await markStep("draft_response", `Run #${runId}: drafting adjusted response`, { action_type: originalActionType });
-        const adjustedDraft = await draftResponse(
-          caseId, originalActionType as any, currentConstraints, currentScopeItems,
-          context.caseData.fee_amount ?? null,
-          reviewInstruction,
-          messageId,
-          adjustResearch
-        );
-
-        // Safety check the adjusted draft
-        await markStep("safety_check", `Run #${runId}: safety checking adjusted draft`);
-        const adjustedSafety = await safetyCheck(
-          adjustedDraft.bodyText, adjustedDraft.subject,
-          originalActionType, currentConstraints, currentScopeItems,
-          null, context.caseData.state
-        );
-
-        // Create new proposal for human review (always requires human approval)
-        await markStep("gate", `Run #${runId}: creating adjusted proposal for approval`);
-        const adjustedGate = await createProposalAndGate(
-          caseId, runId, originalActionType as any,
-          messageId, adjustedDraft, adjustedSafety,
-          false, true, null,
-          adjustmentReasoning,
-          0.9, 1, null, adjustedDraft.lessonsApplied
-        );
-
-        // Wait for human to approve the adjusted draft
-        if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
-          await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: adjustedGate.proposalId });
-          await waitRun(caseId, runId);
-          const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
-
-          if (!result.ok) {
-            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
-            await completeRun(caseId, runId);
-            return { status: "timed_out", proposalId: adjustedGate.proposalId };
-          }
-
-          const humanDecision = result.output;
-          if (humanDecision.action === "DISMISS") {
-            await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
-            await reconcileCaseAfterDismiss(caseId);
-            await completeRun(caseId, runId);
-            return { status: "dismissed", proposalId: adjustedGate.proposalId };
-          }
-
-          if (humanDecision.action === "WITHDRAW") {
-            await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: adjustedGate.proposalId });
-            await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
-            await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
-            await completeRun(caseId, runId);
-            return { status: "withdrawn", proposalId: adjustedGate.proposalId };
-          }
-
-          if (humanDecision.action === "ADJUST") {
-            // Recursive adjustment — dismiss this proposal, complete this run.
-            // The waitpoint completion from the dashboard already records the instruction.
-            // The monitor processProposalDecision will see no waitpoint_token on this new
-            // proposal (it was consumed), so it will re-trigger a new process-inbound run
-            // with the updated instruction via the legacy path.
-            await db.updateProposal(adjustedGate.proposalId, {
-              status: "DISMISSED",
-              human_decision: { action: "ADJUST", instruction: humanDecision.instruction, decidedAt: new Date().toISOString() },
-            });
-            await completeRun(caseId, runId);
-            return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
-          }
-
-          // APPROVE: execute the adjusted action
-          await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
-          const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
-          const adjustedExecutionActionType = (adjustedProposalRow?.action_type || originalActionType) as ActionType;
-          await markStep("execute_action", `Run #${runId}: executing approved adjusted action`, { action_type: adjustedExecutionActionType });
-          const execution = await executeAction(
-            caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
-            adjustedDraft, null, adjustmentReasoning,
-            undefined, undefined,
-            null // classification: fast-path skips classify; side effects ran in original run
-          );
-
-          // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
-          if (execution.actionExecuted) {
-            await db.updateProposal(adjustedGate.proposalId, { status: "EXECUTED", executedAt: new Date() });
-          }
-
-          await markStep("commit_state", `Run #${runId}: committing adjusted decision state`);
-          await commitState(
-            caseId, runId, adjustedExecutionActionType,
-            adjustmentReasoning,
-            0.9, "ADJUSTMENT", execution.actionExecuted, execution.executionResult
-          );
+        if (adjustedOutcome.status !== "approved") {
+          await completeRun(caseId, runId);
+          return adjustedOutcome;
         }
+
+        const adjustedProposalRow = await db.getProposalById(adjustedOutcome.proposalId);
+        const adjustedExecutionActionType = (adjustedProposalRow?.action_type || originalActionType) as ActionType;
+        await markStep("execute_action", `Run #${runId}: executing approved adjusted action`, { action_type: adjustedExecutionActionType });
+        const execution = await executeAction(
+          caseId, adjustedOutcome.proposalId, adjustedExecutionActionType, runId,
+          adjustedOutcome.draft, null, adjustedOutcome.reasoning,
+          undefined, undefined,
+          null // classification: fast-path skips classify; side effects ran in original run
+        );
+
+        // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
+        if (execution.actionExecuted) {
+          await db.updateProposal(adjustedOutcome.proposalId, { status: "EXECUTED", executedAt: new Date() });
+        }
+
+        await markStep("commit_state", `Run #${runId}: committing adjusted decision state`);
+        await commitState(
+          caseId, runId, adjustedExecutionActionType,
+          adjustedOutcome.reasoning,
+          0.9, "ADJUSTMENT", execution.actionExecuted, execution.executionResult
+        );
 
         try {
           await completeRun(caseId, runId);
@@ -638,78 +768,59 @@ export const processInbound = task({
 
       if (humanDecision.action === "ADJUST") {
         await markStep("adjust_draft", `Run #${runId}: applying human adjustment`, { proposal_id: gate.proposalId });
-        // Upgrade research if instruction mentions research keywords and original research was empty
-        const ADJUST_RESEARCH_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
-        let adjustResearch = research;
-        if (ADJUST_RESEARCH_RE.test(humanDecision.instruction || "") && research.level === "none") {
-          adjustResearch = await researchContext(caseId, decision.actionType, classification.classification, classification.denialSubtype, "medium", undefined, messageId);
+        await db.updateProposal(gate.proposalId, {
+          status: "DISMISSED",
+          human_decision: {
+            action: "ADJUST",
+            instruction: humanDecision.instruction,
+            decidedAt: new Date().toISOString(),
+          },
+        });
+
+        const adjustedOutcome = await runAdjustedDraftLoop({
+          actionType: decision.actionType,
+          constraints,
+          scopeItems,
+          feeAmount: classification.extractedFeeAmount,
+          baseInstruction: humanDecision.instruction || null,
+          messageIdForDraft: decision.overrideMessageId || messageId,
+          baseResearch: research,
+          baseReasoning: decision.reasoning,
+          basePauseReason: decision.pauseReason,
+          confidence: classification.confidence,
+          triggerSource: "INBOUND_MESSAGE",
+          classificationForExecution: classification.classification,
+          jurisdictionLevel: classification.jurisdiction_level,
+          state: context.caseData.state,
+          startingAdjustmentCount: 1,
+        });
+
+        if (adjustedOutcome.status !== "approved") {
+          await completeRun(caseId, runId);
+          return adjustedOutcome;
         }
 
-        const adjustedDraft = await draftResponse(
-          caseId, decision.actionType, constraints, scopeItems,
-          classification.extractedFeeAmount,
-          humanDecision.instruction || null,
-          decision.overrideMessageId || messageId,
-          adjustResearch
+        const adjustedProposalRow = await db.getProposalById(adjustedOutcome.proposalId);
+        const adjustedExecutionActionType = (adjustedProposalRow?.action_type || decision.actionType) as ActionType;
+        await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: adjustedExecutionActionType });
+        const adjustedExecution = await executeAction(
+          caseId, adjustedOutcome.proposalId, adjustedExecutionActionType, runId,
+          adjustedOutcome.draft, null, adjustedOutcome.reasoning,
+          undefined, undefined,
+          classification.classification
         );
-
-        const adjustedSafety = await safetyCheck(
-          adjustedDraft.bodyText, adjustedDraft.subject,
-          decision.actionType, constraints, scopeItems,
-          classification.jurisdiction_level, context.caseData.state
+        await markStep("commit_state", `Run #${runId}: committing adjusted approved action state`);
+        await commitState(
+          caseId, runId, adjustedExecutionActionType, adjustedOutcome.reasoning,
+          classification.confidence, "INBOUND_MESSAGE",
+          adjustedExecution.actionExecuted, adjustedExecution.executionResult
         );
-
-        const adjustedGate = await createProposalAndGate(
-          caseId, runId, decision.actionType,
-          messageId, adjustedDraft, adjustedSafety,
-          false, true, decision.pauseReason,
-          [...decision.reasoning, `Adjusted per human: ${humanDecision.instruction}`],
-          classification.confidence, 1, null, adjustedDraft.lessonsApplied
-        );
-
-        if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {
-          await markStep("wait_human_decision", `Run #${runId}: waiting for adjusted draft approval`, { proposal_id: adjustedGate.proposalId });
-          const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
-
-          if (!adjustResult.ok) {
-            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
-            await completeRun(caseId, runId);
-            return { status: "timed_out", proposalId: adjustedGate.proposalId };
-          }
-
-          if (adjustResult.output.action !== "APPROVE") {
-            await db.updateProposal(adjustedGate.proposalId, {
-              status: adjustResult.output.action === "DISMISS" ? "DISMISSED" : "WITHDRAWN",
-            });
-            if (adjustResult.output.action === "DISMISS") {
-              await reconcileCaseAfterDismiss(caseId);
-            }
-            await completeRun(caseId, runId);
-            return { status: adjustResult.output.action.toLowerCase(), proposalId: adjustedGate.proposalId };
-          }
-
-          const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
-          const adjustedExecutionActionType = (adjustedProposalRow?.action_type || decision.actionType) as ActionType;
-          await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: adjustedExecutionActionType });
-          const adjustedExecution = await executeAction(
-            caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
-            adjustedDraft, null, decision.reasoning,
-            undefined, undefined,
-            classification.classification
-          );
-          await markStep("commit_state", `Run #${runId}: committing adjusted approved action state`);
-          await commitState(
-            caseId, runId, adjustedExecutionActionType, decision.reasoning,
-            classification.confidence, "INBOUND_MESSAGE",
-            adjustedExecution.actionExecuted, adjustedExecution.executionResult
-          );
-          try {
-            await completeRun(caseId, runId);
-          } catch (err: any) {
-            logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
-          }
-          return { status: "completed", proposalId: adjustedGate.proposalId };
+        try {
+          await completeRun(caseId, runId);
+        } catch (err: any) {
+          logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
         }
+        return { status: "completed", proposalId: adjustedOutcome.proposalId };
       }
       // APPROVE falls through to execute
     }

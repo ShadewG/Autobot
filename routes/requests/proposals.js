@@ -10,6 +10,42 @@ function buildHumanDecision(action, extras = {}) {
     };
 }
 
+async function completeProposalWaitpoint(proposal, data, log) {
+    if (!proposal?.waitpoint_token) return null;
+
+    let tokenId = proposal.waitpoint_token;
+    if (!tokenId.startsWith('waitpoint_')) {
+        const { wait: triggerWait } = require('@trigger.dev/sdk');
+        const token = await triggerWait.createToken({ idempotencyKey: tokenId, timeout: '30d' });
+        tokenId = token.id;
+        log.info(`Resolved waitpoint idempotency key for proposal ${proposal.id}`, {
+            proposalId: proposal.id,
+            idempotencyKey: proposal.waitpoint_token,
+            resolvedTokenId: tokenId,
+        });
+    }
+
+    const triggerApiUrl = process.env.TRIGGER_API_URL || 'https://api.trigger.dev';
+    const completeResp = await fetch(
+        `${triggerApiUrl}/api/v1/waitpoints/tokens/${tokenId}/complete`,
+        {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+            },
+            body: JSON.stringify({ data }),
+        }
+    );
+
+    if (!completeResp.ok) {
+        const errorBody = await completeResp.text();
+        throw new Error(`Failed to complete waitpoint token ${tokenId}: ${completeResp.status} ${errorBody}`);
+    }
+
+    return tokenId;
+}
+
 /**
  * GET /api/requests/:id/proposals
  * Get all proposals for a case
@@ -166,11 +202,10 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
-            const { wait: triggerWait } = require('@trigger.dev/sdk');
-            await triggerWait.completeToken(proposal.waitpoint_token, {
+            await completeProposalWaitpoint(proposal, {
                 action: 'APPROVE',
                 proposalId: proposalId
-            });
+            }, log);
             log.info(`Trigger.dev waitpoint completed for approve on proposal ${proposalId}`);
         } else {
             // Legacy proposal — re-trigger inbound processing
@@ -255,13 +290,12 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
-            const { wait: triggerWait } = require('@trigger.dev/sdk');
-            await triggerWait.completeToken(proposal.waitpoint_token, {
+            await completeProposalWaitpoint(proposal, {
                 action: 'ADJUST',
                 proposalId: proposalId,
                 instruction: instruction,
                 adjustments: adjustments
-            });
+            }, log);
             log.info(`Trigger.dev waitpoint completed for adjust on proposal ${proposalId}`);
         } else {
             // Legacy proposal — re-trigger inbound processing with adjustment context
@@ -355,12 +389,11 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {
-            const { wait: triggerWait } = require('@trigger.dev/sdk');
-            await triggerWait.completeToken(proposal.waitpoint_token, {
+            await completeProposalWaitpoint(proposal, {
                 action: 'DISMISS',
                 proposalId: proposalId,
                 reason: reason
-            });
+            }, log);
             log.info(`Trigger.dev waitpoint completed for dismiss on proposal ${proposalId}`);
         } else {
             // Legacy proposal — just mark as dismissed, no re-trigger needed
@@ -427,6 +460,15 @@ router.post('/:id/proposals/:proposalId/withdraw', async (req, res) => {
             proposal_id: proposalId,
             reason: reason
         });
+
+        if (proposal.waitpoint_token) {
+            await completeProposalWaitpoint(proposal, {
+                action: 'WITHDRAW',
+                proposalId: proposalId,
+                reason: reason
+            }, log);
+            log.info(`Trigger.dev waitpoint completed for withdraw on proposal ${proposalId}`);
+        }
 
         log.info(`Proposal withdrawn, case set to MANUAL mode`);
 

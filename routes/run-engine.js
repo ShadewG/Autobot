@@ -882,18 +882,44 @@ router.post('/proposals/:id/decision', async (req, res) => {
           source: 'run_engine_approve_portal',
         })).handle;
       } else if (proposal.action_type === 'SEND_INITIAL_REQUEST') {
-        handle = (await triggerDispatch.triggerTask('process-initial-request', {
+        const initialPayload = {
           runId: run.id,
           caseId,
           autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-        }, triggerOptsDebounced(caseId, 'resume-initial', run.id))).handle;
+          ...(action === 'ADJUST'
+            ? {
+                triggerType: 'ADJUSTMENT',
+                reviewInstruction: instruction || null,
+                originalActionType: proposal.action_type,
+                originalProposalId: proposalId,
+              }
+            : {}),
+        };
+        handle = (await triggerDispatch.triggerTask(
+          'process-initial-request',
+          initialPayload,
+          triggerOptsDebounced(caseId, 'resume-initial', run.id)
+        )).handle;
       } else {
-        handle = (await triggerDispatch.triggerTask('process-inbound', {
+        const inboundPayload = {
           runId: run.id,
           caseId,
           messageId: proposal.trigger_message_id,
           autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
-        }, triggerOptsDebounced(caseId, 'resume-inbound', run.id))).handle;
+          ...(action === 'ADJUST'
+            ? {
+                triggerType: 'ADJUSTMENT',
+                reviewInstruction: instruction || null,
+                originalActionType: proposal.action_type,
+                originalProposalId: proposalId,
+              }
+            : {}),
+        };
+        handle = (await triggerDispatch.triggerTask(
+          'process-inbound',
+          inboundPayload,
+          triggerOptsDebounced(caseId, 'resume-inbound', run.id)
+        )).handle;
       }
     } catch (triggerError) {
       // Keep proposal actionable if Trigger.dev dispatch fails.

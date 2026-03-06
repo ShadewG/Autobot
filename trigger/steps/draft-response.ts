@@ -250,7 +250,9 @@ export async function draftResponse(
       // inbound request-form PDF.
       // @ts-ignore
       const pdfFormService = require("../../services/pdf-form-service");
-      const pdfReply = await pdfFormService.prepareInboundPdfFormReply(caseData);
+      const pdfReply = await pdfFormService.prepareInboundPdfFormReply(caseData, {
+        adjustmentInstruction,
+      });
       if (!pdfReply?.success) {
         throw new Error(pdfReply?.error || `Unable to prepare PDF email reply for case ${caseId}`);
       }

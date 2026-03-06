@@ -185,19 +185,24 @@ async function _getRequesterInfo(caseData) {
             console.warn(`Failed to load user ${caseData.user_id} for requester info, using env defaults:`, err.message);
         }
     }
+    const hasCaseRequesterAddress =
+        Boolean(caseData?.requester_address) ||
+        Boolean(caseData?.requester_city) ||
+        Boolean(caseData?.requester_state) ||
+        Boolean(caseData?.requester_zip);
     return {
-        name: user?.signature_name || user?.name || process.env.REQUESTER_NAME || 'Requester',
-        email: process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
-        phone: user?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702',
+        name: user?.signature_name || user?.name || caseData?.requester_name || process.env.REQUESTER_NAME || 'Requester',
+        email: caseData?.requester_email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+        phone: user?.signature_phone || caseData?.requester_phone || process.env.REQUESTER_PHONE || '209-800-7702',
         organization: user
             ? (user.signature_organization ?? '')
-            : (process.env.REQUESTER_ORG || ''),
-        title: user?.signature_title || process.env.REQUESTER_TITLE || '',
-        address: user?.address_street || process.env.REQUESTER_ADDRESS || '',
-        addressLine2: user?.address_street2 || process.env.REQUESTER_ADDRESS_LINE2 || '',
-        city: user?.address_city || process.env.REQUESTER_CITY || '',
-        state: user?.address_state || process.env.REQUESTER_STATE || caseData.state || '',
-        zip: user?.address_zip || process.env.REQUESTER_ZIP || ''
+            : (caseData?.requester_organization || process.env.REQUESTER_ORG || ''),
+        title: user?.signature_title || caseData?.requester_title || process.env.REQUESTER_TITLE || '',
+        address: user?.address_street || caseData?.requester_address || process.env.REQUESTER_ADDRESS || '3021 21st Ave W',
+        addressLine2: user?.address_street2 || caseData?.requester_address_line2 || process.env.REQUESTER_ADDRESS_LINE2 || 'Apt 202',
+        city: user?.address_city || caseData?.requester_city || process.env.REQUESTER_CITY || 'Seattle',
+        state: user?.address_state || caseData?.requester_state || process.env.REQUESTER_STATE || (hasCaseRequesterAddress ? '' : 'WA'),
+        zip: user?.address_zip || caseData?.requester_zip || process.env.REQUESTER_ZIP || '98199'
     };
 }
 
@@ -238,7 +243,7 @@ function _formatMailingAddressLines(requester) {
         requester.state,
         requester.zip,
     ].filter(Boolean);
-    if (locality.length) {
+    if (locality.length && (requester.address || requester.addressLine2 || requester.city || requester.zip)) {
         if (requester.city && requester.state) {
             lines.push(`${requester.city}, ${requester.state}${requester.zip ? ` ${requester.zip}` : ''}`);
         } else {
@@ -285,6 +290,107 @@ function _buildDeterministicPdfReplyDraft(caseData, requester, replyRequirements
         subject: `Completed Public Records Request Form – ${subjectName}`,
         bodyText: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
     };
+}
+
+function _extractExactSentenceInstruction(adjustmentInstruction) {
+    const match = String(adjustmentInstruction || '').match(
+        /add exactly this sentence after the first paragraph:\s*(.+)$/i
+    );
+    if (!match) return null;
+    return match[1].trim().replace(/^["']|["']$/g, '').trim();
+}
+
+function _insertSentenceAfterFirstParagraph(bodyText, sentence) {
+    const text = String(bodyText || '').trim();
+    const cleanSentence = String(sentence || '').trim();
+    if (!text || !cleanSentence) return text;
+    if (text.includes(cleanSentence)) return text;
+
+    const paragraphs = text.split(/\n\s*\n/);
+    if (paragraphs.length === 0) return `${text}\n\n${cleanSentence}`.trim();
+
+    paragraphs.splice(1, 0, cleanSentence);
+    return paragraphs.join('\n\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+async function _applyPdfDraftAdjustment(baseDraft, caseData, requester, portalUrl, adjustmentInstruction, replyRequirements = {}) {
+    const instruction = String(adjustmentInstruction || '').trim();
+    if (!instruction) return baseDraft;
+
+    const exactSentence = _extractExactSentenceInstruction(instruction);
+    if (exactSentence) {
+        return {
+            subject: baseDraft.subject,
+            bodyText: _insertSentenceAfterFirstParagraph(baseDraft.bodyText, exactSentence),
+        };
+    }
+
+    try {
+        const aiResponse = await getOpenAI().chat.completions.create({
+            model: 'gpt-5.2',
+            messages: [{
+                role: 'system',
+                content: `Revise this public-records PDF cover email according to the user's adjustment instruction.
+
+Hard requirements:
+- Keep the action as emailing a completed PDF request form.
+- Preserve all concrete case facts, mailing-address details, and CD-delivery fallback details that appear in the original draft.
+- Do not invent attachments, portal submissions, fees, or legal claims.
+- If the instruction asks to add a sentence, include that sentence verbatim.
+- Return JSON with "subject" and "bodyText" only.`
+            }, {
+                role: 'user',
+                content: JSON.stringify({
+                    agency_name: caseData.agency_name,
+                    subject_name: caseData.subject_name,
+                    state: caseData.state,
+                    portal_url: portalUrl,
+                    requester,
+                    replyRequirements,
+                    originalDraft: baseDraft,
+                    adjustmentInstruction: instruction,
+                })
+            }],
+            response_format: { type: 'json_object' },
+            max_completion_tokens: 700,
+            temperature: 0.2,
+        });
+
+        const parsed = JSON.parse(aiResponse.choices[0]?.message?.content || '{}');
+        const revisedSubject = String(parsed.subject || '').trim() || baseDraft.subject;
+        let revisedBody = String(parsed.bodyText || '').trim() || baseDraft.bodyText;
+        if (exactSentence && !revisedBody.includes(exactSentence)) {
+            revisedBody = _insertSentenceAfterFirstParagraph(revisedBody, exactSentence);
+        }
+        return {
+            subject: revisedSubject,
+            bodyText: revisedBody,
+        };
+    } catch (err) {
+        console.warn('AI PDF cover email adjustment failed, using deterministic fallback:', err.message);
+        const friendly = /\bfriendly|conversational|warmer|warm\b/i.test(instruction);
+        const firm = /\bfirm|assertive|stronger|deadline|rights\b/i.test(instruction);
+
+        let fallbackBody = baseDraft.bodyText;
+        if (friendly) {
+            fallbackBody = fallbackBody.replace(
+                'Please let me know if you need any additional information to process this request.',
+                'If you need anything else from me to process this request, please let me know.'
+            );
+        } else if (firm) {
+            fallbackBody = fallbackBody.replace(
+                'Please let me know if you need any additional information to process this request.',
+                'Please confirm receipt and let me know promptly if you need any additional information to process this request.'
+            );
+        }
+
+        return {
+            subject: baseDraft.subject,
+            bodyText: exactSentence
+                ? _insertSentenceAfterFirstParagraph(fallbackBody, exactSentence)
+                : fallbackBody,
+        };
+    }
 }
 
 /**
@@ -417,7 +523,13 @@ async function prepareInboundPdfFormReply(caseData, options = {}) {
         : null;
     if (existingFilledAttachment) {
         const requester = await _getRequesterInfo(caseData);
-        const emailDraft = await _generateCoverEmail(caseData, requester, caseData.portal_url || null, replyRequirements);
+        const emailDraft = await _generateCoverEmail(
+            caseData,
+            requester,
+            caseData.portal_url || null,
+            replyRequirements,
+            options.adjustmentInstruction || null
+        );
         return {
             success: true,
             reused: true,
@@ -459,7 +571,13 @@ async function prepareInboundPdfFormReply(caseData, options = {}) {
         });
 
         const requester = await _getRequesterInfo(caseData);
-        const emailDraft = await _generateCoverEmail(caseData, requester, caseData.portal_url || null, replyRequirements);
+        const emailDraft = await _generateCoverEmail(
+            caseData,
+            requester,
+            caseData.portal_url || null,
+            replyRequirements,
+            options.adjustmentInstruction || null
+        );
         return {
             success: true,
             attachmentId: attachment.id,
@@ -1014,9 +1132,10 @@ async function handlePdfFormFallback(caseData, portalUrl, failureReason, workflo
 /**
  * Generate a cover email to send with the filled PDF form.
  */
-async function _generateCoverEmail(caseData, requester, portalUrl, replyRequirements = {}) {
+async function _generateCoverEmail(caseData, requester, portalUrl, replyRequirements = {}, adjustmentInstruction = null) {
     if (replyRequirements.requestFormRequired || replyRequirements.mailingAddressRequired || replyRequirements.tooLargeForEmail) {
-        return _buildDeterministicPdfReplyDraft(caseData, requester, replyRequirements);
+        const baseDraft = _buildDeterministicPdfReplyDraft(caseData, requester, replyRequirements);
+        return _applyPdfDraftAdjustment(baseDraft, caseData, requester, portalUrl, adjustmentInstruction, replyRequirements);
     }
 
     try {
@@ -1081,6 +1200,8 @@ module.exports = {
     fillPdfFormStrict,
     buildPdfReplyRequirementsFromText,
     _buildDeterministicPdfReplyDraft,
+    _applyPdfDraftAdjustment,
+    _insertSentenceAfterFirstParagraph,
     isLikelyRequestFormAttachment,
     findLatestRequestFormAttachment,
     getLatestPreparedPdfAttachment,
