@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetcher, fetchAPI } from "@/lib/api";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, stripHtmlTags } from "@/lib/utils";
 import {
   FlaskConical,
   Play,
@@ -198,7 +198,7 @@ export default function EvalPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <FlaskConical className="h-6 w-6" />
@@ -208,7 +208,7 @@ export default function EvalPage() {
             Ground-truth dataset of human-verified decisions. Score AI quality with LLM-as-judge.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {lastTriggerRunId && (
             <a
               href={`${TRIGGER_PROJECT_URL}/runs/${lastTriggerRunId}`}
@@ -249,7 +249,7 @@ export default function EvalPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground">Eval Cases</p>
@@ -291,9 +291,9 @@ export default function EvalPage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Eval Cases Table */}
-        <div className="col-span-2">
+        <div className="lg:col-span-2">
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
@@ -315,7 +315,8 @@ export default function EvalPage() {
                   </p>
                 </div>
               ) : (
-                <Table>
+                <div className="overflow-x-auto">
+                <Table className="min-w-[600px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Case</TableHead>
@@ -335,11 +336,11 @@ export default function EvalPage() {
                               href={`/requests/detail-v2?id=${ec.case_id}`}
                               className="hover:underline text-primary text-sm"
                             >
-                              {ec.case_name || ec.agency_name || `Case #${ec.case_id}`}
+                              {stripHtmlTags(ec.case_name) || ec.agency_name || `Case #${ec.case_id}`}
                             </Link>
                           ) : (
                             <span className="text-sm text-muted-foreground">
-                              {ec.simulated_subject || `Sim #${ec.id}`}
+                              {stripHtmlTags(ec.simulated_subject) || `Sim #${ec.id}`}
                             </span>
                           )}
                           {ec.notes && (
@@ -405,6 +406,7 @@ export default function EvalPage() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -470,11 +472,11 @@ export default function EvalPage() {
 
       {/* History Dialog */}
       <Dialog open={!!selectedCase} onOpenChange={(open) => !open && setSelectedCase(null)}>
-        <DialogContent className="max-w-2xl max-h-[70vh]">
+        <DialogContent className="max-w-2xl w-[calc(100vw-2rem)] max-h-[70vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FlaskConical className="h-4 w-4" />
-              Eval History — {selectedCase?.case_name || selectedCase?.simulated_subject || (selectedCase?.case_id ? `Case #${selectedCase.case_id}` : `Sim #${selectedCase?.id}`)}
+              Eval History — {stripHtmlTags(selectedCase?.case_name) || stripHtmlTags(selectedCase?.simulated_subject) || (selectedCase?.case_id ? `Case #${selectedCase.case_id}` : `Sim #${selectedCase?.id}`)}
             </DialogTitle>
           </DialogHeader>
           {loadingHistory ? (

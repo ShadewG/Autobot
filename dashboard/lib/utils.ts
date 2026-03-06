@@ -364,6 +364,33 @@ export function formatReasoning(reasoning: any[] | null | undefined, maxItems?: 
   return formatted;
 }
 
+// Strip HTML tags from a string (e.g. case names with markup)
+export function stripHtmlTags(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.replace(/<[^>]+>/g, "").trim();
+}
+
+const TRACKING_URL_RE = /sendgrid\.net|\.ct\.sendgrid\.net|click\.mailchimp\.com|track\.hubspot\.com|links\.govdelivery\.com|email\.mg\./i;
+
+export function isTrackingUrl(url: string): boolean {
+  return TRACKING_URL_RE.test(url);
+}
+
+export function sanitizeDisplayUrl(url: string): { label: string; isTracked: boolean } {
+  const tracked = isTrackingUrl(url);
+  try {
+    const parsed = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+    const host = parsed.hostname.replace(/^www\./, '');
+    if (tracked) return { label: `${host} [tracked]`, isTracked: true };
+    const path = parsed.pathname === '/' ? '' : parsed.pathname;
+    const display = path.length > 20 ? `${host}${path.slice(0, 20)}…` : `${host}${path}`;
+    return { label: display, isTracked: false };
+  } catch {
+    if (tracked) return { label: '[tracked link]', isTracked: true };
+    return { label: url.length > 40 ? url.slice(0, 40) + '…' : url, isTracked: false };
+  }
+}
+
 // Action type display config — shared across queue page, detail page, panels
 export const ACTION_TYPE_LABELS: Record<string, { label: string; color: string }> = {
   SEND_INITIAL_REQUEST: { label: "Initial Request", color: "bg-blue-500/10 text-blue-400" },

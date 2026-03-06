@@ -54,7 +54,7 @@ import type {
   AgencyCandidate,
   ThreadMessage,
 } from "@/lib/types";
-import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS, formatCurrency } from "@/lib/utils";
+import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS, formatCurrency, isTrackingUrl } from "@/lib/utils";
 import {
   ArrowLeft,
   Loader2,
@@ -196,6 +196,12 @@ function daysUntilDue(dueAt: string | null | undefined): string | null {
   return `Due ${diff}d`;
 }
 
+function resolvePortalUrl(caseUrl: string | null, agencyUrl: string | null): string | null {
+  if (caseUrl && !isTrackingUrl(caseUrl)) return caseUrl;
+  if (agencyUrl && !isTrackingUrl(agencyUrl)) return agencyUrl;
+  return null;
+}
+
 // ── Multi-agency helpers ─────────────────────────────────────────────────────
 
 function parseEmailList(value?: string | null): string[] {
@@ -323,7 +329,7 @@ function DetailV2Content() {
   const [editedChainSubject, setEditedChainSubject] = useState<string>("");
   const [editedChainBody, setEditedChainBody] = useState<string>("");
   // View management
-  const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency">("thread");
+  const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency" | "intel">("thread");
   const [bottomDrawer, setBottomDrawer] = useState<"runs" | "agent-log" | null>(null);
   const [conversationTab, setConversationTab] = useState<string>("all");
   // Multi-agency state
@@ -1026,6 +1032,7 @@ function DetailV2Content() {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to research agency");
       mutate();
+      toast.success("Agency research completed");
     } catch (e: any) {
       toast.error(e.message || "Failed to research agency");
     } finally {
@@ -1247,7 +1254,8 @@ function DetailV2Content() {
       {/* ── HEADER ─── 2 lines, max ~56px ──────────────────────────────────── */}
       <div className="shrink-0 border-b border-border/50 px-3 py-1.5">
         {/* Line 1: back + case identity + controls */}
-        <div className="flex items-center gap-2 min-h-[28px]">
+        <div className="flex flex-wrap items-center gap-2 min-h-[28px]">
+          {/* Row 1: identity */}
           <button
             onClick={() => router.push("/requests")}
             className="text-muted-foreground hover:text-foreground shrink-0"
@@ -1256,6 +1264,9 @@ function DetailV2Content() {
           </button>
           <span className="text-xs font-mono text-muted-foreground">#{request.id}</span>
           <span className="text-sm font-semibold truncate">{request.subject}</span>
+          <div className="flex-1 hidden md:block" />
+          {/* Row 2 on mobile: controls */}
+          <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
           <Badge
             variant="outline"
             className={cn(
@@ -1326,14 +1337,15 @@ function DetailV2Content() {
               <DropdownMenuItem onClick={() => setWithdrawDialogOpen(true)}><Ban className="h-3.5 w-3.5 mr-1.5" />Withdraw</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         </div>
 
         {/* Line 2: metrics bar */}
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
+        <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mt-0.5">
           <span>{daysOpen(submittedAtDisplay)} open</span>
           {(request.next_due_at || request.statutory_due_at) && (
             <>
-              <span className="text-border">|</span>
+              <span className="text-border hidden sm:inline">|</span>
               <span className={cn(
                 request.due_info?.is_overdue ? "text-red-400" : "text-muted-foreground"
               )}>
@@ -1343,7 +1355,7 @@ function DetailV2Content() {
           )}
           {liveRunLabel && (
             <>
-              <span className="text-border">|</span>
+              <span className="text-border hidden sm:inline">|</span>
               <span className="text-blue-400 flex items-center gap-1">
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 {liveRunLabel}
@@ -1352,7 +1364,7 @@ function DetailV2Content() {
           )}
           {portalTaskActive && !liveRunLabel && (
             <>
-              <span className="text-border">|</span>
+              <span className="text-border hidden sm:inline">|</span>
               <span className="text-blue-400 flex items-center gap-1">
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 Portal submission
@@ -1362,7 +1374,7 @@ function DetailV2Content() {
           {/* Mismatch warning */}
           {(control_state === 'OUT_OF_SYNC' || control_mismatches.length > 0) && (
             <>
-              <span className="text-border">|</span>
+              <span className="text-border hidden sm:inline">|</span>
               <button
                 className="text-red-400 flex items-center gap-1 hover:underline"
                 onClick={handleResetToLastInbound}
@@ -1375,7 +1387,7 @@ function DetailV2Content() {
           )}
           {isAdmin && (liveRun?.trigger_run_id || activeWorkspaceRun?.trigger_run_id) && (
             <>
-              <span className="text-border">|</span>
+              <span className="text-border hidden sm:inline">|</span>
               <a
                 href={buildTriggerRunUrl(liveRun?.trigger_run_id || activeWorkspaceRun?.trigger_run_id) || "#"}
                 target="_blank"
@@ -1745,7 +1757,7 @@ function DetailV2Content() {
                 />
               </div>
             </ScrollArea>
-          ) : (
+          ) : activeView === "agency" ? (
             /* ── AGENCY VIEW ───────────────────────────────────────────────── */
             <ScrollArea className="flex-1 h-0">
               <div className="p-3 space-y-4">
@@ -1884,19 +1896,104 @@ function DetailV2Content() {
                 )}
               </div>
             </ScrollArea>
-          )}
+          ) : activeView === "intel" ? (
+            /* ── INTEL VIEW (mobile only — mirrors sidebar content) ───────── */
+            <ScrollArea className="flex-1 h-0">
+              {portalTaskActive && (
+                <CollapsibleSection title="PORTAL LIVE">
+                  <PortalLiveView
+                    caseId={id!}
+                    initialScreenshotUrl={request.last_portal_screenshot_url}
+                    portalTaskUrl={request.last_portal_task_url}
+                  />
+                </CollapsibleSection>
+              )}
+              <CollapsibleSection title="AGENCY">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium">{agency_summary?.name || request.agency_name}</div>
+                    {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
+                      <a href={`/agencies/detail?id=${agency_summary.id}`} className="text-[10px] text-primary hover:underline flex items-center gap-0.5">
+                        <ExternalLink className="h-2.5 w-2.5" /> Profile
+                      </a>
+                    )}
+                  </div>
+                  {request.state && <span className="text-[10px] text-muted-foreground">{request.state}</span>}
+                  {request.agency_email && (
+                    <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <Mail className="h-2.5 w-2.5" />
+                      <span className="truncate">{request.agency_email}</span>
+                    </div>
+                  )}
+                  {(() => {
+                    const portalUrl = resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null);
+                    return portalUrl ? (
+                      <div className="flex items-center gap-1 text-[10px]">
+                        <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                        <a href={portalUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline truncate">
+                          {request.portal_provider || agency_summary?.portal_provider || "Portal"}
+                        </a>
+                      </div>
+                    ) : null;
+                  })()}
+                  {agency_summary?.submission_method && (
+                    <Badge variant="outline" className="text-[10px] px-1 py-0">{agency_summary.submission_method}</Badge>
+                  )}
+                </div>
+              </CollapsibleSection>
+              {((request.fee_quote && request.fee_quote.amount > 0) || (request.cost_amount != null && request.cost_amount > 0)) && (
+                <CollapsibleSection title="FEES">
+                  {request.fee_quote && request.fee_quote.amount > 0 ? (
+                    <FeeBreakdown feeQuote={request.fee_quote} scopeItems={request.scope_items} className="border-0 bg-transparent p-0 shadow-none" />
+                  ) : (
+                    <div className="text-[10px] text-muted-foreground">{formatCurrency(request.cost_amount!)}</div>
+                  )}
+                </CollapsibleSection>
+              )}
+              {deadline_milestones && deadline_milestones.length > 0 && (
+                <CollapsibleSection title="DEADLINE">
+                  <DeadlineCalculator milestones={deadline_milestones} stateDeadline={state_deadline} compact />
+                </CollapsibleSection>
+              )}
+              {request.constraints && request.constraints.length > 0 && (
+                <CollapsibleSection title="CONSTRAINTS" count={request.constraints.length}>
+                  <ConstraintsDisplay constraints={request.constraints} />
+                </CollapsibleSection>
+              )}
+              {request.constraints && request.constraints.some((c: any) => c.type === "EXEMPTION") && (
+                <CollapsibleSection title="EXEMPTION CLAIMS" defaultOpen={false}>
+                  <ExemptionClaimsList
+                    constraints={request.constraints}
+                    state={request.state || ""}
+                    requestId={String(request.id)}
+                    onChallenge={() => setAdjustModalOpen(true)}
+                  />
+                </CollapsibleSection>
+              )}
+              {timeline_events.length > 0 && (
+                <CollapsibleSection title="TIMELINE" count={timeline_events.length}>
+                  <Timeline events={timeline_events.slice(0, 20)} compact />
+                </CollapsibleSection>
+              )}
+              {hasPortalHistory && (
+                <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
+                  <PortalLiveView caseId={id!} portalTaskUrl={request.last_portal_task_url} isLive={false} />
+                </CollapsibleSection>
+              )}
+            </ScrollArea>
+          ) : null}
         </div>
 
         {/* ── RESIZE HANDLE ────────────────────────────────────────────────── */}
         <div
-          className="shrink-0 w-1.5 cursor-col-resize flex items-center justify-center hover:bg-primary/20 active:bg-primary/30 transition-colors group"
+          className="hidden md:flex shrink-0 w-1.5 cursor-col-resize items-center justify-center hover:bg-primary/20 active:bg-primary/30 transition-colors group"
           onMouseDown={handleSidebarDragStart}
         >
           <GripVertical className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground" />
         </div>
 
-        {/* ── RIGHT PANEL: Intel Sidebar (always visible) ─────────────────── */}
-        <div style={{ width: sidebarWidth }} className="shrink-0 flex flex-col min-h-0">
+        {/* ── RIGHT PANEL: Intel Sidebar (desktop only, mobile uses Intel tab) ── */}
+        <div style={{ width: sidebarWidth }} className="hidden md:flex shrink-0 flex-col min-h-0">
           <ScrollArea className="flex-1 h-0">
               {/* Portal overlay */}
               {portalTaskActive && (
@@ -1927,19 +2024,22 @@ function DetailV2Content() {
                       <span className="truncate">{request.agency_email}</span>
                     </div>
                   )}
-                  {(request.portal_url || agency_summary?.portal_url) && (
-                    <div className="flex items-center gap-1 text-[10px]">
-                      <Globe className="h-2.5 w-2.5 text-muted-foreground" />
-                      <a
-                        href={request.portal_url || agency_summary?.portal_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-400 hover:underline truncate"
-                      >
-                        {request.portal_provider || agency_summary?.portal_provider || "Portal"}
-                      </a>
-                    </div>
-                  )}
+                  {(() => {
+                    const portalUrl = resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null);
+                    return portalUrl ? (
+                      <div className="flex items-center gap-1 text-[10px]">
+                        <Globe className="h-2.5 w-2.5 text-muted-foreground" />
+                        <a
+                          href={portalUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline truncate"
+                        >
+                          {request.portal_provider || agency_summary?.portal_provider || "Portal"}
+                        </a>
+                      </div>
+                    ) : null;
+                  })()}
                   {agency_summary?.submission_method && (
                     <Badge variant="outline" className="text-[10px] px-1 py-0">
                       {agency_summary.submission_method}
@@ -2062,6 +2162,21 @@ function DetailV2Content() {
               )}
             </button>
           ))}
+          {/* Intel tab — mobile only (sidebar is hidden on mobile) */}
+          <button
+            className={cn(
+              "px-3 py-1 text-[11px] font-medium border-b-2 transition-colors md:hidden",
+              activeView === "intel"
+                ? "border-foreground text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            )}
+            onClick={() => {
+              if (activeView === "intel") setActiveView("thread");
+              else { setActiveView("intel"); setBottomDrawer(null); }
+            }}
+          >
+            Intel
+          </button>
           <span className="text-border mx-1">|</span>
           {/* Drawer tabs */}
           {(["runs", "agent-log"] as const).map((tab) => (

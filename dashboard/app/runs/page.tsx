@@ -24,7 +24,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetcher, requestsAPI, type AgentRun, type AgentRunDiff, type RunActivityEntry } from "@/lib/api";
-import { formatDate, cn } from "@/lib/utils";
+import { formatDate, cn, stripHtmlTags } from "@/lib/utils";
 import {
   Search,
   Loader2,
@@ -45,11 +45,6 @@ const TRIGGER_PROJECT_URL = "https://cloud.trigger.dev/projects/v3/proj_afwkrlyn
 
 function triggerRunUrl(triggerRunId: string): string {
   return `${TRIGGER_PROJECT_URL}/runs/${triggerRunId}`;
-}
-
-function stripHtmlTags(value: string | null | undefined): string {
-  if (!value) return "";
-  return value.replace(/<[^>]+>/g, "").trim();
 }
 
 const STATUS_CONFIG: Record<AgentRun['status'], {
@@ -243,7 +238,7 @@ export default function RunsPage() {
             {recentOnly ? "Show all time" : "Show last 7 days"}
           </button>
         </div>
-      <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {(['running', 'completed', 'failed', 'gated', 'cancelled'] as const).map((status) => {
           const count = statsRunsList.filter((r) => r.status === status).length;
           const config = STATUS_CONFIG[status];
@@ -451,7 +446,7 @@ export default function RunsPage() {
             </div>
           ) : selectedRun ? (
             <Tabs defaultValue="overview" className="mt-4">
-              <TabsList>
+              <TabsList className="flex-wrap">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="activity">Activity</TabsTrigger>
                 {runDiff?.logs && runDiff.logs.length > 0 && (
@@ -466,7 +461,7 @@ export default function RunsPage() {
               </TabsList>
 
               <TabsContent value="overview" className="mt-4 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm text-muted-foreground">Run ID</p>
                     <p className="font-mono text-sm">{selectedRun.id}</p>
@@ -636,7 +631,7 @@ export default function RunsPage() {
               </TabsContent>
 
               <TabsContent value="state" className="mt-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <p className="text-sm font-medium mb-2 flex items-center gap-1">
                       <Database className="h-4 w-4" />

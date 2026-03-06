@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { sanitizeDisplayUrl } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const URL_RE = /\b((?:https?:\/\/|www\.)[^\s<>"\])}]+)([.,!?;:]?)/gi;
 
@@ -28,15 +30,17 @@ export function LinkifiedText({ text, className }: LinkifiedTextProps) {
       parts.push(text.slice(lastIndex, index));
     }
 
+    const { label, isTracked } = sanitizeDisplayUrl(url);
     parts.push(
       <a
         key={`${index}-${url}`}
         href={normalizeHref(url)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-400 hover:underline break-all"
+        className={cn("hover:underline break-all", isTracked ? "text-muted-foreground" : "text-blue-400")}
+        title={url}
       >
-        {url}
+        {label}
       </a>
     );
 
