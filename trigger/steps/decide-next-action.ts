@@ -2429,23 +2429,28 @@ export async function decideNextAction(
         custom: async () => {
           if (!ri) return noAction([...reasoning, "Custom action with no instruction"]);
 
-          if (classification === "WRONG_AGENCY") {
-            const wrongAgencyDecision = await deterministicRouting(
-              caseId,
-              classification,
-              extractedFeeAmount,
-              sentiment,
-              autopilotMode,
-              triggerType,
-              requiresResponse,
-              portalUrl,
-              denialSubtype,
-              inlineKeyPoints
-            );
-            return {
-              ...wrongAgencyDecision,
-              reasoning: [...reasoning, ...(wrongAgencyDecision.reasoning || [])],
-            };
+          const lowerRi = ri.toLowerCase();
+          const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+            currentAgencyName: caseDataForReview?.agency_name || null,
+            additionalDetails: caseDataForReview?.additional_details || null,
+          });
+          const currentAgencyName = String(caseDataForReview?.agency_name || "").trim().toLowerCase();
+          const explicitWrongAgencyDirective = !!currentAgencyName
+            && lowerRi.includes(currentAgencyName)
+            && (/\bwrong\b|do not use|not the correct|incorrect/i.test(lowerRi));
+          const humanWantsAgencyResearch = /\bresearch\b|\bcustodian\b|\bwrong agency\b|\bcorrect\s+(agency|custodian)\b|\bfind\b.*\bagency\b|\broute\b.*\b(correct|there)\b/i.test(ri);
+
+          if (classification === "WRONG_AGENCY" || (humanWantsAgencyResearch && (metadataAgencyMismatch || explicitWrongAgencyDirective))) {
+            return decision("RESEARCH_AGENCY", {
+              adjustmentInstruction: ri,
+              researchLevel: "deep",
+              reasoning: [
+                ...reasoning,
+                metadataAgencyMismatch
+                  ? `Case metadata names ${metadataAgencyMismatch.expectedAgencyName}; custom review is forcing a corrected-agency research pass.`
+                  : "Custom review explicitly rejected the current agency/custodian; forcing a corrected-agency research pass.",
+              ],
+            });
           }
 
           // AI Router v2: let AI interpret the custom instruction

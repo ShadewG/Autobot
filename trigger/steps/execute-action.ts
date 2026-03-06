@@ -18,6 +18,8 @@ import db, {
 import type { ActionType, ExecutionResult } from "../lib/types";
 import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/portal-utils";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
+// @ts-ignore
+const { detectCaseMetadataAgencyMismatch } = require("../../utils/request-normalization");
 
 const AI_ROUTER_V2_EXEC = process.env.AI_ROUTER_V2 || "false";
 
@@ -910,13 +912,23 @@ export async function executeAction(
       const contactSignalPortal = contactResult?.portal_url || null;
       const contactSignalPhone = contactResult?.contact_phone || contactResult?.phone || null;
       const contactSignalFax = contactResult?.contact_fax || contactResult?.fax || null;
-      const knownCaseEmailSignal =
-        caseSignalsSource?.alternate_agency_email ||
-        caseSignalsSource?.agency_email ||
-        caseData?.alternate_agency_email ||
-        caseData?.agency_email ||
-        null;
-      const knownCasePortalSignal = caseSignalsSource?.portal_url || caseData?.portal_url || null;
+      const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+        currentAgencyName: caseSignalsSource?.agency_name || caseData?.agency_name || null,
+        additionalDetails: caseSignalsSource?.additional_details || caseData?.additional_details || null,
+      });
+      const ignoreCurrentAgencySignals = !!metadataAgencyMismatch;
+      const knownCaseEmailSignal = ignoreCurrentAgencySignals
+        ? null
+        : (
+          caseSignalsSource?.alternate_agency_email ||
+          caseSignalsSource?.agency_email ||
+          caseData?.alternate_agency_email ||
+          caseData?.agency_email ||
+          null
+        );
+      const knownCasePortalSignal = ignoreCurrentAgencySignals
+        ? null
+        : (caseSignalsSource?.portal_url || caseData?.portal_url || null);
       const hasContactSignals = !!(contactSignalEmail || contactSignalPortal || contactSignalPhone || contactSignalFax);
       const hasKnownCaseSignals = !!(knownCaseEmailSignal || knownCasePortalSignal);
 
@@ -1024,7 +1036,7 @@ export async function executeAction(
         if (suggestedAgencies.length === 0) {
           const fallbackSuggestedName =
             String(contactResult?.agency_name || "").trim() ||
-            String(caseData?.agency_name || "").trim();
+            (ignoreCurrentAgencySignals ? "" : String(caseData?.agency_name || "").trim());
           if (fallbackSuggestedName) {
             suggestedAgencies = [{
               name: fallbackSuggestedName,

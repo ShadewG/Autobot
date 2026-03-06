@@ -73,4 +73,33 @@ describe("DENIAL no-records wrong-agency routing", function () {
     sinon.assert.called(getLatestResponseAnalysisStub);
     sinon.assert.called(queryStub);
   });
+
+  it("forces agency research for custom human review instructions that reject the current agency", async function () {
+    const result = await decideNextAction(
+      25210,
+      "OTHER",
+      [],
+      null,
+      "neutral",
+      "SUPERVISED",
+      "HUMAN_REVIEW_RESOLUTION",
+      true,
+      null,
+      "respond",
+      null,
+      null,
+      "custom",
+      "The denial came from the wrong jurisdiction. Do not use Lubbock Police Department. Research the correct agency or custodian in Gwinnett County, Georgia and route the request there.",
+      null,
+      null,
+      ["Wrong agency follow-up required"],
+    );
+
+    assert.strictEqual(result.actionType, "RESEARCH_AGENCY");
+    assert.strictEqual(result.researchLevel, "deep");
+    assert.ok(
+      result.reasoning.some((line) => /forcing a corrected-agency research pass/i.test(String(line))),
+      `expected forced research reasoning, got: ${JSON.stringify(result.reasoning)}`
+    );
+  });
 });
