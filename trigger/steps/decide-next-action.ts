@@ -2430,17 +2430,27 @@ export async function decideNextAction(
           if (!ri) return noAction([...reasoning, "Custom action with no instruction"]);
 
           const lowerRi = ri.toLowerCase();
+          const caseConstraintsForReview = caseDataForReview?.constraints_jsonb || caseDataForReview?.constraints || [];
           const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
             currentAgencyName: caseDataForReview?.agency_name || null,
             additionalDetails: caseDataForReview?.additional_details || null,
           });
           const currentAgencyName = String(caseDataForReview?.agency_name || "").trim().toLowerCase();
-          const explicitWrongAgencyDirective = !!currentAgencyName
-            && lowerRi.includes(currentAgencyName)
-            && (/\bwrong\b|do not use|not the correct|incorrect/i.test(lowerRi));
-          const humanWantsAgencyResearch = /\bresearch\b|\bcustodian\b|\bwrong agency\b|\bcorrect\s+(agency|custodian)\b|\bfind\b.*\bagency\b|\broute\b.*\b(correct|there)\b/i.test(ri);
+          const explicitWrongAgencyDirective = (
+            (!!currentAgencyName &&
+              lowerRi.includes(currentAgencyName) &&
+              (/\bwrong\b|do not use|do not route|not the correct|incorrect/i.test(lowerRi))) ||
+            /\bwrong agency\b|\bwrong jurisdiction\b|\bwrong for this case\b|\bincorrect (agency|department|custodian)\b|do not use|do not route/i.test(lowerRi)
+          );
+          const humanWantsAgencyResearch = /\bresearch\b|\bcustodian\b|\bwrong agency\b|\bcorrect\s+(agency|custodian)\b|\bfind\b.*\bagency\b|\broute\b.*\b(correct|there)\b|\bverify\b.*\b(channel|portal|contact)\b|do not assume email/i.test(ri);
 
           if (classification === "WRONG_AGENCY" || (humanWantsAgencyResearch && (metadataAgencyMismatch || explicitWrongAgencyDirective))) {
+            const currentConstraints = Array.isArray(caseConstraintsForReview) ? caseConstraintsForReview : [];
+            if (!currentConstraints.includes("WRONG_AGENCY")) {
+              await db.updateCase(caseId, {
+                constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+              });
+            }
             return decision("RESEARCH_AGENCY", {
               adjustmentInstruction: ri,
               researchLevel: "deep",

@@ -108,6 +108,21 @@ function normalizePhoneForCompare(value: any): string | null {
   return digits;
 }
 
+function hasWrongAgencyConstraint(value: any): boolean {
+  if (Array.isArray(value)) {
+    return value.includes("WRONG_AGENCY");
+  }
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) && parsed.includes("WRONG_AGENCY");
+    } catch {
+      return value.includes("WRONG_AGENCY");
+    }
+  }
+  return false;
+}
+
 export function extractPhoneCandidatesFromText(
   text: any,
   source = "Latest inbound message"
@@ -916,7 +931,12 @@ export async function executeAction(
         currentAgencyName: caseSignalsSource?.agency_name || caseData?.agency_name || null,
         additionalDetails: caseSignalsSource?.additional_details || caseData?.additional_details || null,
       });
-      const ignoreCurrentAgencySignals = !!metadataAgencyMismatch;
+      const wrongAgencyConstraint =
+        hasWrongAgencyConstraint(caseSignalsSource?.constraints_jsonb) ||
+        hasWrongAgencyConstraint(caseSignalsSource?.constraints) ||
+        hasWrongAgencyConstraint(caseData?.constraints_jsonb) ||
+        hasWrongAgencyConstraint(caseData?.constraints);
+      const ignoreCurrentAgencySignals = !!metadataAgencyMismatch || wrongAgencyConstraint;
       const knownCaseEmailSignal = ignoreCurrentAgencySignals
         ? null
         : (
