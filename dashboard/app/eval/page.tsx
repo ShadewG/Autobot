@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,6 +69,78 @@ interface FailureBreakdownItem {
   count: number;
 }
 
+interface EvalCaseListItem extends EvalCase {
+  duplicate_count: number;
+}
+
+function getEvalCaseGroupKey(evalCase: EvalCase): string {
+  if (evalCase.case_id != null) return `case:${evalCase.case_id}`;
+  if (evalCase.proposal_id != null) return `proposal:${evalCase.proposal_id}`;
+  if (evalCase.simulated_subject) return `simulation:${evalCase.simulated_subject.toLowerCase()}`;
+  return `eval:${evalCase.id}`;
+}
+
+function extractMonitorDecision(notes: string | null): string | null {
+  const match = notes?.match(/^Auto-captured from monitor decision:\s*([A-Z_]+)/i);
+  return match?.[1] ?? null;
+}
+
+function dedupeEvalCases(evalCases: EvalCase[]): EvalCaseListItem[] {
+  const grouped = new Map<string, EvalCase[]>();
+
+  for (const evalCase of evalCases) {
+    const key = getEvalCaseGroupKey(evalCase);
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.push(evalCase);
+    } else {
+      grouped.set(key, [evalCase]);
+    }
+  }
+
+  return Array.from(grouped.values())
+    .map((group) => {
+      const sorted = [...group].sort((a, b) => {
+        const createdDiff =
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        if (createdDiff !== 0) return createdDiff;
+        return b.id - a.id;
+      });
+
+      return {
+        ...sorted[0],
+        duplicate_count: group.length,
+      };
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime() || b.id - a.id
+    );
+}
+
+function EvalCaseMeta({ evalCase }: { evalCase: EvalCaseListItem }) {
+  const monitorDecision = extractMonitorDecision(evalCase.notes);
+
+  if (!monitorDecision && !evalCase.notes && evalCase.duplicate_count <= 1) {
+    return null;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+      {monitorDecision ? (
+        <span>Monitor: {monitorDecision}</span>
+      ) : evalCase.notes ? (
+        <p className="truncate max-w-[220px]" title={evalCase.notes}>
+          {evalCase.notes}
+        </p>
+      ) : null}
+      {evalCase.duplicate_count > 1 ? (
+        <span>{evalCase.duplicate_count - 1} older entries hidden</span>
+      ) : null}
+    </div>
+  );
+}
+
 function ScoreBadge({ score }: { score: number | null }) {
   if (score == null) return <span className="text-muted-foreground text-xs">—</span>;
   const color =
@@ -122,6 +194,7 @@ export default function EvalPage() {
   }>("/eval/summary", fetcher, { refreshInterval: 30000 });
 
   const evalCases = casesData?.cases || [];
+  const visibleEvalCases = useMemo(() => dedupeEvalCases(evalCases), [evalCases]);
   const summary = summaryData?.summary;
   const failureBreakdown = summaryData?.failure_breakdown || [];
 
@@ -201,6 +274,12 @@ export default function EvalPage() {
   const passRateDisplay =
     passRate != null ? `${Math.round(passRate * 100)}%` : "—";
   const avgScore = summary?.avg_score_7d;
+  const avgScoreDisplay =
+    avgScore != null
+      ? `${avgScore.toFixed(1)}/5`
+      : summary?.runs_last_7d
+      ? "Not scored"
+      : "—";
 
   return (
     <div className="space-y-6">
@@ -243,7 +322,7 @@ export default function EvalPage() {
           <Button
             size="sm"
             onClick={handleRunAll}
-            disabled={runningAll || evalCases.length === 0}
+            disabled={runningAll || visibleEvalCases.length === 0}
           >
             {runningAll ? (
               <Loader2 className="h-4 w-4 mr-1 animate-spin" />
@@ -285,9 +364,14 @@ export default function EvalPage() {
         <Card>
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground">Avg Score (7d)</p>
-            <p className="text-2xl font-bold">
-              {avgScore != null ? `${avgScore.toFixed(1)}/5` : "—"}
+            <p className={cn("font-bold", avgScore != null ? "text-2xl" : "text-lg")}>
+              {avgScoreDisplay}
             </p>
+            {avgScore == null && summary?.runs_last_7d ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Recent eval runs exist, but none recorded a judge score yet.
+              </p>
+            ) : null}
           </CardContent>
         </Card>
         <Card>
@@ -313,7 +397,7 @@ export default function EvalPage() {
                 <div className="flex items-center justify-center py-12">
                   <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
                 </div>
-              ) : evalCases.length === 0 ? (
+              ) : visibleEvalCases.length === 0 ? (
                 <div className="text-center py-12 text-muted-foreground">
                   <FlaskConical className="h-8 w-8 mx-auto mb-3 opacity-30" />
                   <p className="text-sm">No eval cases yet.</p>
@@ -335,7 +419,7 @@ export default function EvalPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {evalCases.map((ec) => (
+                    {visibleEvalCases.map((ec) => (
                       <TableRow key={ec.id} className="cursor-pointer hover:bg-muted/50">
                         <TableCell>
                           {ec.case_id ? (
@@ -350,11 +434,7 @@ export default function EvalPage() {
                               {stripHtmlTags(ec.simulated_subject) || `Sim #${ec.id}`}
                             </span>
                           )}
-                          {ec.notes && (
-                            <p className="text-xs text-muted-foreground truncate max-w-[160px]" title={ec.notes}>
-                              {ec.notes}
-                            </p>
-                          )}
+                          <EvalCaseMeta evalCase={ec} />
                         </TableCell>
                         <TableCell>
                           <Badge variant="secondary" className="text-xs font-mono">

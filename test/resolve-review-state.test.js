@@ -143,6 +143,30 @@ test('needs_contact_info status → DECISION_REQUIRED', () => {
     assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
 });
 
+test('PENDING_PORTAL proposal → DECISION_REQUIRED', () => {
+    const result = resolveReviewState({
+        caseData: { id: 131, status: 'needs_human_review', requires_human: true, pause_reason: 'UNSPECIFIED' },
+        activeProposal: { status: 'PENDING_PORTAL' },
+        activeRun: null,
+    });
+    assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
+});
+
+test('ready-to-send manual handoff without proposal → IDLE', () => {
+    const result = resolveReviewState({
+        caseData: {
+            id: 132,
+            status: 'needs_human_review',
+            requires_human: true,
+            pause_reason: 'UNSPECIFIED',
+            substatus: 'Ready to send via portal or email to Santa Rosa County SO',
+        },
+        activeProposal: null,
+        activeRun: null,
+    });
+    assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
+});
+
 // Rule 5: Waiting agency statuses → WAITING_AGENCY
 test('sent status → WAITING_AGENCY', () => {
     const result = resolveReviewState({

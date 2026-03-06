@@ -35,8 +35,8 @@ export function NavLinks() {
   ];
 
   return (
-    <div className="flex items-center justify-between flex-1">
-      <nav className="flex items-center gap-6 text-xs tracking-wider">
+    <div className="flex min-w-0 w-full flex-col gap-2 md:flex-row md:items-center md:justify-between">
+      <nav className="flex min-w-0 items-center gap-4 overflow-x-auto whitespace-nowrap pr-1 text-xs tracking-wider [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:gap-6">
         {links.map(({ href, label, count }) => {
           const isActive = pathname.startsWith(href);
           return (
@@ -63,7 +63,7 @@ export function NavLinks() {
           );
         })}
       </nav>
-      <div className="flex items-center gap-3 text-xs">
+      <div className="flex flex-wrap items-center gap-3 text-xs md:justify-end">
         {process.env.NEXT_PUBLIC_FOIA_RESEARCHER_URL && (
           <a
             href={process.env.NEXT_PUBLIC_FOIA_RESEARCHER_URL}
@@ -88,7 +88,7 @@ export function NavLinks() {
         )}
         {user && (
           <>
-            <span className="text-muted-foreground">{user.email}</span>
+            <span className="max-w-[160px] truncate text-muted-foreground">{user.email}</span>
             <button
               onClick={logout}
               className="text-muted-foreground hover:text-foreground transition-colors uppercase tracking-wider"

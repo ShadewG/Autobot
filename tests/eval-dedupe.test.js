@@ -78,6 +78,8 @@ describe('Eval backend dedupe', function () {
       assert.match(capturedSql, /WITH ranked_eval_cases/i);
       assert.match(capturedSql, /ROW_NUMBER\(\) OVER/i);
       assert.match(capturedSql, /Auto-captured from monitor decision:%/i);
+      assert.match(capturedSql, /LEFT JOIN cases c ON c\.id = ec\.case_id/i);
+      assert.match(capturedSql, /regexp_replace\(COALESCE\(ec\.simulated_subject, c\.case_name, ''\), '<\[\^>\]\+>', '', 'g'\)/i);
       assert.match(capturedSql, /FROM deduped_eval_cases ec/i);
     } finally {
       restore();

@@ -44,6 +44,79 @@ function triggerOptsDebounced(caseId, taskType, uniqueId) {
   };
 }
 
+async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
+  const caseId = proposal.case_id;
+  const proposalId = proposal.id;
+  const caseData = await db.getCaseById(caseId);
+
+  if (!caseData?.agency_email) {
+    throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
+  }
+
+  const claimed = await db.query(
+    `UPDATE proposals
+     SET status = 'DECISION_RECEIVED',
+         human_decision = $1,
+         updated_at = NOW()
+     WHERE id = $2
+       AND status IN ('PENDING_APPROVAL','BLOCKED','DECISION_RECEIVED')
+     RETURNING id`,
+    [JSON.stringify(humanDecision), proposalId]
+  );
+  if (claimed.rows.length === 0) {
+    throw new Error('Proposal was already actioned by another request');
+  }
+
+  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
+  const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
+  const freshEmailActions = ['REFORMULATE_REQUEST', 'SEND_INITIAL_REQUEST'];
+  const isFreshEmail = freshEmailActions.includes(proposal.action_type);
+  const replyHeaders =
+    !isFreshEmail && latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
+      ? {
+          'In-Reply-To': latestInbound.message_id,
+          'References': latestInbound.message_id
+        }
+      : null;
+
+  const emailResult = await emailExecutor.sendEmail({
+    to: caseData.agency_email,
+    subject: proposal.draft_subject,
+    bodyText: proposal.draft_body_text,
+    bodyHtml: proposal.draft_body_html || null,
+    headers: replyHeaders,
+    caseId,
+    proposalId,
+    runId: null,
+    actionType: proposal.action_type,
+    delayMs: 0,
+  });
+
+  if (!emailResult || emailResult.success !== true) {
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    await db.query(
+      `UPDATE cases
+       SET requires_human = true,
+           pause_reason = 'PENDING_APPROVAL',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [caseId]
+    );
+    throw new Error(emailResult?.error || 'Email send failed');
+  }
+
+  await db.updateProposal(proposalId, { status: 'EXECUTED' });
+  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
+  await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
+    case_id: caseId,
+    proposal_id: proposalId,
+    action_type: proposal.action_type
+  });
+
+  logger.info('Proposal executed via direct email send fallback', { caseId, proposalId });
+}
+
 const FOLLOWUP_ELIGIBLE_STATUSES = new Set([
   'sent',
   'awaiting_response',
@@ -340,8 +413,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
-    // Check proposal is in a decidable state (PENDING_APPROVAL = old queue, BLOCKED = Trigger.dev waitpoint)
-    if (!['PENDING_APPROVAL', 'BLOCKED'].includes(proposal.status)) {
+    // Allow retrying a wedged DECISION_RECEIVED proposal as long as it has not executed.
+    // This keeps the manual approval UX recoverable after transient Trigger/auth failures.
+    if (!['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(proposal.status)) {
       return res.status(409).json({
         success: false,
         error: `Proposal is not pending approval`,
@@ -516,21 +590,65 @@ router.post('/proposals/:id/decision', async (req, res) => {
       // Complete the waitpoint token via direct HTTP (SDK completeToken is unreliable
       // for tokens created inside running tasks — returns sporadic 500 errors)
       const triggerApiUrl = process.env.TRIGGER_API_URL || 'https://api.trigger.dev';
-      const completeResp = await fetch(
-        `${triggerApiUrl}/api/v1/waitpoints/tokens/${tokenId}/complete`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
-          },
-          body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null } }),
-        }
-      );
+      let waitpointError = null;
+      try {
+        const completeResp = await fetch(
+          `${triggerApiUrl}/api/v1/waitpoints/tokens/${tokenId}/complete`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+            },
+            body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null } }),
+          }
+        );
 
-      if (!completeResp.ok) {
-        const errorBody = await completeResp.text();
-        throw new Error(`Failed to complete waitpoint token ${tokenId}: ${completeResp.status} ${errorBody}`);
+        if (!completeResp.ok) {
+          const errorBody = await completeResp.text();
+          throw new Error(`Failed to complete waitpoint token ${tokenId}: ${completeResp.status} ${errorBody}`);
+        }
+      } catch (error) {
+        waitpointError = error;
+      }
+
+      if (waitpointError) {
+        const refreshedProposal = await db.getProposalById(proposalId);
+        const canFallbackToDirectEmail =
+          action === 'APPROVE' &&
+          refreshedProposal?.draft_body_text &&
+          refreshedProposal?.draft_subject;
+
+        if (canFallbackToDirectEmail) {
+          logger.warn('Waitpoint completion failed; falling back to direct email execution', {
+            proposalId,
+            caseId,
+            error: waitpointError.message,
+          });
+          await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
+          return res.json({
+            success: true,
+            message: 'Email sent directly after waitpoint fallback',
+            proposal_id: proposalId,
+            action,
+            fallback: 'direct_email',
+          });
+        }
+
+        await db.updateProposal(proposalId, {
+          status: 'PENDING_APPROVAL',
+          human_decision: null,
+          human_decided_at: null,
+        });
+        await db.query(
+          `UPDATE cases
+           SET requires_human = true,
+               pause_reason = 'PENDING_APPROVAL',
+               updated_at = NOW()
+           WHERE id = $1`,
+          [caseId]
+        );
+        throw waitpointError;
       }
 
       logger.info('Trigger.dev waitpoint token completed', {
@@ -565,8 +683,13 @@ router.post('/proposals/:id/decision', async (req, res) => {
       );
       if (remaining.rows.length === 0) {
         const caseRow = await db.getCaseById(caseId);
-        if (caseRow?.requires_human) {
-          const REVIEW_STATUSES = ['needs_human_review','needs_phone_call','needs_contact_info','needs_human_fee_approval'];
+        const REVIEW_STATUSES = ['needs_human_review','needs_phone_call','needs_contact_info','needs_human_fee_approval'];
+        const shouldReconcile = Boolean(caseRow) && (
+          Boolean(caseRow.requires_human) ||
+          REVIEW_STATUSES.includes(String(caseRow.status || ''))
+        );
+
+        if (shouldReconcile) {
           if (REVIEW_STATUSES.includes(caseRow.status)) {
             const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
             const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
@@ -591,65 +714,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
     // ADJUST falls through to pipeline re-trigger so the instruction can be applied
     const refreshedProposal = await db.getProposalById(proposalId);
     if (action === 'APPROVE' && refreshedProposal.draft_body_text && refreshedProposal.draft_subject) {
-      // Validate prerequisites before touching status (prevents stuck DECISION_RECEIVED state)
-      const caseData = await db.getCaseById(caseId);
-      if (!caseData.agency_email) {
-        throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
-      }
-
-      // Atomic claim: only one approve wins (race condition guard)
-      const claimed = await db.query(
-        `UPDATE proposals SET status = 'DECISION_RECEIVED', human_decision = $1, updated_at = NOW()
-         WHERE id = $2 AND status IN ('PENDING_APPROVAL','BLOCKED')
-         RETURNING id`,
-        [JSON.stringify(humanDecision), proposalId]
-      );
-      if (claimed.rows.length === 0) {
-        return res.status(409).json({
-          success: false,
-          error: 'Proposal was already actioned by another request',
-        });
-      }
-
-      const latestInbound = await db.getLatestInboundMessage(caseId);
-      const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
-      const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
-      // REFORMULATE_REQUEST / SEND_INITIAL_REQUEST are new requests, not replies
-      const FRESH_EMAIL_ACTIONS = ['REFORMULATE_REQUEST', 'SEND_INITIAL_REQUEST'];
-      const isFreshEmail = FRESH_EMAIL_ACTIONS.includes(refreshedProposal.action_type);
-      const replyHeaders =
-        !isFreshEmail && latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
-          ? {
-              'In-Reply-To': latestInbound.message_id,
-              'References': latestInbound.message_id
-            }
-          : null;
-      const emailResult = await emailExecutor.sendEmail({
-        to: caseData.agency_email,
-        subject: refreshedProposal.draft_subject,
-        bodyText: refreshedProposal.draft_body_text,
-        bodyHtml: refreshedProposal.draft_body_html || null,
-        headers: replyHeaders,
-        caseId,
-        proposalId,
-        runId: null,
-        actionType: refreshedProposal.action_type,
-        delayMs: 0,
-      });
-
-      if (!emailResult || emailResult.success !== true) {
-        // Roll back to PENDING_APPROVAL so the user can retry
-        await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
-        throw new Error(emailResult?.error || 'Email send failed');
-      }
-
-      await db.updateProposal(proposalId, { status: 'EXECUTED' });
-      await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
-      await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
-        case_id: caseId, proposal_id: proposalId, action_type: refreshedProposal.action_type
-      });
-
-      logger.info('Legacy proposal executed via direct email send', { caseId, proposalId, action });
+      await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
       return res.json({
         success: true,
         message: 'Email sent directly',

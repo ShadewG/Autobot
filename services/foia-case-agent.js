@@ -57,9 +57,7 @@ async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, optio
  */
 class FOIACaseAgent {
     constructor() {
-        this.openai = new OpenAI({
-            apiKey: process.env.OPENAI_API_KEY
-        });
+        this.openai = null;
 
         this.systemPrompt = `You are a FOIA Case Manager Agent for a YouTube true-crime media company.
 
@@ -129,7 +127,21 @@ PROCESS:
 6. Log decision for learning (REQUIRED)
 
 Always explain your reasoning before taking action.
-You MUST call log_decision at the end of every run with your reasoning, action, and confidence.`;
+        You MUST call log_decision at the end of every run with your reasoning, action, and confidence.`;
+    }
+
+    getOpenAIClient() {
+        if (this.openai) {
+            return this.openai;
+        }
+
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+            throw new Error('OPENAI_API_KEY is missing');
+        }
+
+        this.openai = new OpenAI({ apiKey });
+        return this.openai;
     }
 
     /**
@@ -418,7 +430,7 @@ Then analyze the situation and decide what action to take.`
                 iteration++;
                 console.log(`\n   🔄 Agent iteration ${iteration}/${maxIterations}`);
 
-                const response = await this.openai.chat.completions.create({
+                const response = await this.getOpenAIClient().chat.completions.create({
                     model: 'gpt-5.2-2025-12-11',
                     messages: messages,
                     tools: this.getToolDefinitions(),

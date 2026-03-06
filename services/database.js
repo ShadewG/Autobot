@@ -26,7 +26,7 @@ const FOLLOWUP_TERMINAL_CASE_STATUSES = ['completed', 'cancelled', 'needs_phone_
 
 class DatabaseService {
     constructor() {
-        this.pool = new Pool({
+        this.poolConfig = {
             connectionString: process.env.DATABASE_URL,
             ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
             // Keep connections alive through Railway's proxy (prevents "Connection is closed" errors)
@@ -34,23 +34,77 @@ class DatabaseService {
             keepAliveInitialDelayMillis: 10000,
             idleTimeoutMillis: 30000,
             connectionTimeoutMillis: 10000
-        });
-
-        this.pool.on('error', (err) => {
-            console.error('Unexpected database error:', err);
-        });
+        };
+        this.pool = this._createPool();
     }
 
-    async query(text, params) {
-        const start = Date.now();
-        try {
-            const res = await this.pool.query(text, params);
-            const duration = Date.now() - start;
-            console.log('Executed query', { text: text.substring(0, 100), duration, rows: res.rowCount });
-            return res;
-        } catch (error) {
-            console.error('Database query error:', error);
-            throw error;
+    _createPool() {
+        const pool = new Pool(this.poolConfig);
+        pool.on('error', (err) => {
+            console.error('Unexpected database error:', err);
+        });
+        return pool;
+    }
+
+    _isRetryableQueryError(error) {
+        const code = String(error?.code || '').toUpperCase();
+        const message = String(error?.message || '').toLowerCase();
+        return [
+            'ECONNRESET',
+            'ETIMEDOUT',
+            '57P01',
+            '57P02',
+            '57P03',
+            '08000',
+            '08003',
+            '08006',
+        ].includes(code)
+            || message.includes('connection terminated')
+            || message.includes('connection timeout')
+            || message.includes('read econnreset')
+            || message.includes('socket hang up')
+            || message.includes('the client was closed')
+            || message.includes('server closed the connection unexpectedly');
+    }
+
+    async _resetPool() {
+        const previousPool = this.pool;
+        this.pool = this._createPool();
+        if (previousPool) {
+            try {
+                await previousPool.end();
+            } catch (_) {
+                // Ignore teardown failures while replacing a poisoned pool.
+            }
+        }
+    }
+
+    async query(text, params, options = {}) {
+        const maxAttempts = Number.isFinite(options.maxAttempts) ? options.maxAttempts : 3;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            const start = Date.now();
+            try {
+                const res = await this.pool.query(text, params);
+                const duration = Date.now() - start;
+                console.log('Executed query', { text: text.substring(0, 100), duration, rows: res.rowCount, attempt });
+                return res;
+            } catch (error) {
+                const retryable = this._isRetryableQueryError(error);
+                console.error('Database query error:', {
+                    attempt,
+                    retryable,
+                    code: error?.code,
+                    message: error?.message,
+                });
+
+                if (!retryable || attempt >= maxAttempts) {
+                    throw error;
+                }
+
+                await this._resetPool();
+                await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+            }
         }
     }
 
@@ -2258,12 +2312,13 @@ class DatabaseService {
     }
 
     /**
-     * Get pending proposals for a case.
+     * Get active review proposals for a case.
      */
     async getPendingProposalsByCaseId(caseId) {
         const result = await this.query(
             `SELECT * FROM proposals
-             WHERE case_id = $1 AND status = 'PENDING_APPROVAL'
+             WHERE case_id = $1
+               AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')
              ORDER BY created_at DESC`,
             [caseId]
         );

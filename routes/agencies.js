@@ -70,6 +70,29 @@ function normalizeStateToken(value) {
     return US_STATE_NAMES[trimmed.toLowerCase()] || null;
 }
 
+function extractStateFromEmailAddress(email) {
+    const value = String(email || '').trim().toLowerCase().replace(/^mailto:/, '');
+    if (!value.includes('@')) return null;
+
+    const domain = value.split('@').pop() || '';
+    if (!domain) return null;
+
+    const shortUsMatch = domain.match(/\.([a-z]{2})\.us$/i);
+    if (shortUsMatch) {
+        return normalizeStateToken(shortUsMatch[1]);
+    }
+
+    const fullStatePattern = Object.keys(US_STATE_NAMES)
+        .sort((a, b) => b.length - a.length)
+        .join('|');
+    const fullStateMatch = domain.match(new RegExp(`(?:^|\\.)(${fullStatePattern})(?:\\.|$)`, 'i'));
+    if (fullStateMatch) {
+        return normalizeStateToken(fullStateMatch[1]);
+    }
+
+    return null;
+}
+
 function extractTrailingAgencyState(name) {
     let remaining = String(name || '').trim();
     if (!remaining) return null;
@@ -103,10 +126,11 @@ function stripTrailingAgencyState(name) {
     return cleaned || String(name || '').trim();
 }
 
-function normalizeAgencyState(state, agencyName, caseState) {
+function normalizeAgencyState(state, agencyName, caseState, ...emails) {
     return (
         normalizeStateToken(state) ||
         extractTrailingAgencyState(agencyName) ||
+        emails.map(extractStateFromEmailAddress).find(Boolean) ||
         normalizeStateToken(caseState) ||
         null
     );
@@ -118,7 +142,13 @@ function normalizeAgencyListKey(row) {
         .replace(/[^\w\s]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-    const state = normalizeAgencyState(row?.state, row?.name, row?.case_state) || '';
+    const state = normalizeAgencyState(
+        row?.state,
+        row?.name,
+        row?.case_state,
+        row?.email_main,
+        row?.email_foia
+    ) || '';
     return `${name}|${state}`;
 }
 
@@ -128,11 +158,40 @@ function scoreAgencyRow(row) {
         (row.portal_url ? 3 : 0) +
         (row.email_main ? 2 : 0) +
         (row.email_foia ? 2 : 0) +
-        (normalizeAgencyState(row.state, row.name, row.case_state) ? 1 : 0)
+        (normalizeAgencyState(
+            row.state,
+            row.name,
+            row.case_state,
+            row.email_main,
+            row.email_foia
+        ) ? 1 : 0)
     );
 }
 
 function dedupeAgencyRows(rows = []) {
+    const inferredStatesByName = new Map();
+
+    for (const row of rows) {
+        const name = stripTrailingAgencyState(row?.name || '');
+        if (!name) continue;
+        const nameKey = name
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const normalizedState = normalizeAgencyState(
+            row?.state,
+            row?.name,
+            row?.case_state,
+            row?.email_main,
+            row?.email_foia
+        );
+        if (!normalizedState) continue;
+        const existingStates = inferredStatesByName.get(nameKey) || new Set();
+        existingStates.add(normalizedState);
+        inferredStatesByName.set(nameKey, existingStates);
+    }
+
     const deduped = new Map();
 
     for (const row of rows) {
@@ -142,7 +201,25 @@ function dedupeAgencyRows(rows = []) {
             continue;
         }
 
-        const key = normalizeAgencyListKey(row);
+        const nameKey = stripTrailingAgencyState(name)
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const inferredStates = inferredStatesByName.get(nameKey);
+        const wildcardState = inferredStates && inferredStates.size === 1
+            ? Array.from(inferredStates)[0]
+            : null;
+        const key = normalizeAgencyListKey({
+            ...row,
+            state: normalizeAgencyState(
+                row?.state,
+                row?.name,
+                row?.case_state,
+                row?.email_main,
+                row?.email_foia
+            ) || wildcardState,
+        });
         const existing = deduped.get(key);
         if (!existing || scoreAgencyRow(row) > scoreAgencyRow(existing)) {
             deduped.set(key, row);
@@ -195,9 +272,40 @@ router.get('/', async (req, res) => {
                         END
                     )::INTEGER as avg_response_days,
                     MAX(updated_at) as last_activity_at,
-                    MAX(NULLIF(c.state, '{}')) as case_state
+                    MAX(NULLIF(COALESCE(preferred_case_agency.state, c.state), '{}')) as case_state
                 FROM cases c
-                WHERE c.agency_id = a.id OR c.agency_name = a.name
+                LEFT JOIN LATERAL (
+                    SELECT
+                        ca.agency_id,
+                        COALESCE(ca.agency_name, agency_ref.name) as agency_name,
+                        agency_ref.state as state
+                    FROM case_agencies ca
+                    LEFT JOIN agencies agency_ref ON agency_ref.id = ca.agency_id
+                    WHERE ca.case_id = c.id
+                    ORDER BY
+                        ca.is_primary DESC,
+                        COALESCE(ca.is_active, true) DESC,
+                        CASE
+                            WHEN ca.status = 'active' THEN 0
+                            WHEN ca.status = 'pending' THEN 1
+                            ELSE 2
+                        END,
+                        ca.updated_at DESC NULLS LAST,
+                        ca.id DESC
+                    LIMIT 1
+                ) preferred_case_agency ON true
+                WHERE (
+                    preferred_case_agency.agency_id = a.id
+                    OR (
+                        preferred_case_agency.agency_id IS NULL
+                        AND preferred_case_agency.agency_name = a.name
+                    )
+                    OR (
+                        preferred_case_agency.agency_id IS NULL
+                        AND preferred_case_agency.agency_name IS NULL
+                        AND (c.agency_id = a.id OR c.agency_name = a.name)
+                    )
+                )
             ) stats ON true
             ${whereClause}
             ORDER BY COALESCE(stats.total_requests, 0) DESC, a.name ASC
@@ -213,7 +321,13 @@ router.get('/', async (req, res) => {
         const agencies = dedupeAgencyRows(result.rows).map(row => ({
             id: String(row.id),
             name: stripTrailingAgencyState(row.name),
-            state: normalizeAgencyState(row.state, row.name, row.case_state),
+            state: normalizeAgencyState(
+                row.state,
+                row.name,
+                row.case_state,
+                row.email_main,
+                row.email_foia
+            ),
             county: row.county || null,
             submission_method: row.portal_url ? 'PORTAL' : (row.email_main ? 'EMAIL' : 'UNKNOWN'),
             portal_url: row.portal_url || null,

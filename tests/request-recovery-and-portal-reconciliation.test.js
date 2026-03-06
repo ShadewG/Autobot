@@ -5,6 +5,7 @@ const {
   dedupeCaseAgencies,
   filterExistingAgencyCandidates,
   extractLatestSupportedPortalUrl,
+  toThreadMessage,
 } = require('../routes/requests/_helpers');
 const sendgridService = require('../services/sendgrid-service');
 const db = require('../services/database');
@@ -95,6 +96,35 @@ describe('Request recovery helpers and portal reconciliation', function () {
         portalUrl,
         'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx'
       );
+    });
+
+    it('normalizes tracked portal links and stale agency names in thread bodies', function () {
+      const threadMessage = toThreadMessage(
+        {
+          id: 740,
+          direction: 'outbound',
+          subject: 'Portal submission completed',
+          body_text: [
+            'Portal request submitted.',
+            'Portal URL: https://u8387778.ct.sendgrid.net/ls/click?upn=abc',
+            'To Stow Police Department Public Records Officer,',
+          ].join('\n'),
+          sent_at: '2026-03-06T00:59:26.529Z',
+        },
+        [],
+        {
+          agency_name: 'Lubbock Police Department, Texas',
+          portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+        }
+      );
+
+      assert.match(threadMessage.body, /Lubbock Police Department/i);
+      assert.doesNotMatch(threadMessage.body, /Stow Police Department/i);
+      assert.match(
+        threadMessage.body,
+        /https:\/\/lubbocktx\.govqa\.us\/WEBAPP\/_rs\/SupportHome\.aspx/i
+      );
+      assert.doesNotMatch(threadMessage.body, /sendgrid\.net\/ls\/click/i);
     });
   });
 

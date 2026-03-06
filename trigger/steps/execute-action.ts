@@ -682,10 +682,10 @@ export async function executeAction(
           String(caseData?.agency_name || "").trim() ||
           null;
         let existingCaseAgencyPhone: string | null = null;
-        let existingCaseAgencyRows: Array<{ agency_name: string | null; phone: string | null; fax: string | null }> = [];
+        let existingCaseAgencyRows: Array<{ agency_name: string | null; phone: string | null; fax: string | null; notes: string | null }> = [];
         try {
           const existingCaseAgencies = await db.query(
-            `SELECT COALESCE(ca.agency_name, a.name) AS agency_name, a.phone, a.fax
+            `SELECT COALESCE(ca.agency_name, a.name) AS agency_name, a.phone, a.fax, ca.notes
                FROM case_agencies ca
                LEFT JOIN agencies a ON ca.agency_id = a.id
               WHERE ca.case_id = $1
@@ -737,6 +737,17 @@ export async function executeAction(
             source: "Current case agency (fax)",
             agency_name: row.agency_name || null,
           });
+          for (const notedCandidate of extractPhoneCandidatesFromText(
+            row.notes || "",
+            `${row.agency_name || "Case agency"} notes`
+          )) {
+            pushCandidate({
+              phone: notedCandidate.phone,
+              kind: notedCandidate.kind,
+              source: notedCandidate.source,
+              agency_name: row.agency_name || fallbackAgencyName,
+            });
+          }
         }
         for (const inboundCandidate of inboundPhoneCandidates) {
           pushCandidate({

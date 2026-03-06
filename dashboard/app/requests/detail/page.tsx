@@ -1115,8 +1115,15 @@ function RequestDetailContent() {
   };
 
   const handleSendMessage = async (content: string) => {
-    console.log("Send message:", content);
-    mutate();
+    if (!id || !content.trim()) return;
+    try {
+      const result = await requestsAPI.sendManual(id, content.trim());
+      await mutate();
+      toast.success(`Manual email sent to ${result.to_email}`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to send manual email");
+      throw error;
+    }
   };
 
   // Hooks that depend on data must be called unconditionally (before early returns).

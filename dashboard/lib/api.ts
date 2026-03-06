@@ -5,8 +5,39 @@ import type {
   ScopeItem,
 } from './types';
 
+function resolveApiBase(): string {
+  const configured = process.env.NEXT_PUBLIC_API_URL;
+
+  if (typeof window !== 'undefined') {
+    if (!configured) return '/api';
+
+    try {
+      const resolved = new URL(configured, window.location.origin);
+      const normalizedPath = resolved.pathname.replace(/\/$/, '') || '/api';
+
+      // When the dashboard is served locally behind a same-origin proxy on :3001,
+      // keep browser traffic on that origin so cookies and auth behave consistently.
+      if (
+        window.location.hostname === 'localhost' &&
+        resolved.hostname === 'localhost' &&
+        resolved.port !== window.location.port
+      ) {
+        return normalizedPath;
+      }
+
+      if (resolved.origin === window.location.origin) {
+        return normalizedPath;
+      }
+    } catch {
+      return configured;
+    }
+  }
+
+  return configured || '/api';
+}
+
 // API is at root /api, not under /dashboard
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
+const API_BASE = resolveApiBase();
 
 // Generic fetch wrapper with error handling
 export async function fetchAPI<T>(
@@ -208,6 +239,29 @@ export const requestsAPI = {
     return fetchAPI(`/requests/${id}/resolve-review`, {
       method: 'POST',
       body: JSON.stringify({ action, instruction }),
+    });
+  },
+
+  // Send a manual outbound message from case detail
+  sendManual: (
+    id: string,
+    body: string,
+    options?: { subject?: string; to_email?: string }
+  ): Promise<{
+    success: boolean;
+    message: string;
+    to_email: string;
+    subject: string;
+    sendgrid_message_id?: string | null;
+    replying_to_message_id?: string | null;
+  }> => {
+    return fetchAPI(`/requests/${id}/send-manual`, {
+      method: 'POST',
+      body: JSON.stringify({
+        body,
+        subject: options?.subject,
+        to_email: options?.to_email,
+      }),
     });
   },
 

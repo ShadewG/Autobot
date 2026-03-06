@@ -14,9 +14,10 @@ function normalizeHref(url: string): string {
 interface LinkifiedTextProps {
   text: string;
   className?: string;
+  fallbackUrlForTrackedLinks?: string | null;
 }
 
-export function LinkifiedText({ text, className }: LinkifiedTextProps) {
+export function LinkifiedText({ text, className, fallbackUrlForTrackedLinks }: LinkifiedTextProps) {
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
 
@@ -31,16 +32,20 @@ export function LinkifiedText({ text, className }: LinkifiedTextProps) {
     }
 
     const { label, isTracked } = sanitizeDisplayUrl(url);
+    const resolvedUrl = isTracked && fallbackUrlForTrackedLinks ? fallbackUrlForTrackedLinks : url;
+    const resolvedLabel = isTracked && fallbackUrlForTrackedLinks
+      ? sanitizeDisplayUrl(fallbackUrlForTrackedLinks).label
+      : label;
     parts.push(
       <a
         key={`${index}-${url}`}
-        href={normalizeHref(url)}
+        href={normalizeHref(resolvedUrl)}
         target="_blank"
         rel="noopener noreferrer"
         className={cn("hover:underline break-all", isTracked ? "text-muted-foreground" : "text-blue-400")}
-        title={url}
+        title={resolvedUrl}
       >
-        {label}
+        {resolvedLabel}
       </a>
     );
 

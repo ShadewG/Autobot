@@ -215,7 +215,7 @@ export function formatAgencyDisplay(
   agencyName: string,
   state: string | null | undefined
 ): string {
-  const normalizedState = normalizeStateCode(state) ?? parseStateFromAgencyName(agencyName);
+  const normalizedState = parseStateFromAgencyName(agencyName) ?? normalizeStateCode(state);
   const normalizedAgencyName = stripTrailingStateFromAgencyName(agencyName, normalizedState);
 
   if (!normalizedState) return normalizedAgencyName;
@@ -224,7 +224,7 @@ export function formatAgencyDisplay(
 
 // Check if agency name looks unresolved/generic
 export function isUnknownAgency(request: { state: string | null | undefined; agency_name: string }): boolean {
-  const normalizedState = normalizeStateCode(request.state) ?? parseStateFromAgencyName(request.agency_name);
+  const normalizedState = parseStateFromAgencyName(request.agency_name) ?? normalizeStateCode(request.state);
   if (!normalizedState) return true;
 
   const normalizedAgencyName = stripTrailingStateFromAgencyName(request.agency_name, normalizedState)
@@ -370,7 +370,8 @@ export function stripHtmlTags(value: string | null | undefined): string {
   return value.replace(/<[^>]+>/g, "").trim();
 }
 
-const TRACKING_URL_RE = /sendgrid\.net|\.ct\.sendgrid\.net|click\.mailchimp\.com|track\.hubspot\.com|links\.govdelivery\.com|email\.mg\./i;
+const TRACKING_URL_RE =
+  /sendgrid\.net|\.ct\.sendgrid\.net|click\.mailchimp\.com|track\.hubspot\.com|links\.govdelivery\.com|email\.mg\.|(?:^|\/\/)(?:url\d+\.)?request\.justfoia\.com\/ls\/click/i;
 
 export function isTrackingUrl(url: string): boolean {
   return TRACKING_URL_RE.test(url);

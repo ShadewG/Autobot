@@ -278,15 +278,15 @@ export default function RunsPage() {
             </div>
           ) : (
             <div className="w-full overflow-x-auto">
-            <Table className="min-w-[960px]">
+            <Table className="min-w-[520px] md:min-w-[960px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Status</TableHead>
                   <TableHead>Case</TableHead>
-                  <TableHead>Trigger</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Duration</TableHead>
-                  <TableHead>Result</TableHead>
+                  <TableHead className="hidden md:table-cell">Trigger</TableHead>
+                  <TableHead className="hidden md:table-cell">Started</TableHead>
+                  <TableHead className="hidden md:table-cell">Duration</TableHead>
+                  <TableHead className="hidden md:table-cell">Result</TableHead>
                   <TableHead className="w-[100px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -320,24 +320,44 @@ export default function RunsPage() {
                       <TableCell>
                         <Link
                           href={`/requests/detail-v2?id=${run.case_id}`}
-                          className="hover:underline text-primary"
+                          className="block max-w-[180px] truncate hover:underline text-primary md:max-w-none"
                           onClick={(e) => e.stopPropagation()}
                         >
                           {stripHtmlTags(run.case_name) || run.case_id.slice(0, 8)}
                         </Link>
+                        <div className="mt-1 space-y-1 text-[11px] text-muted-foreground md:hidden">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline" className="text-[10px]">
+                              {run.trigger_type || "unknown"}
+                            </Badge>
+                            <span>{formatDate(run.started_at)}</span>
+                            <span>{duration !== null ? `${duration}s` : "—"}</span>
+                          </div>
+                          {run.failure_category === "superseded" ? (
+                            <p className="line-clamp-2 text-amber-400">
+                              Superseded by newer run
+                            </p>
+                          ) : run.error_message ? (
+                            <p className="line-clamp-2 text-red-400">{run.error_message}</p>
+                          ) : run.final_action ? (
+                            <p>{run.final_action}</p>
+                          ) : run.gated_reason ? (
+                            <p className="line-clamp-2 text-amber-400">Gated: {run.gated_reason}</p>
+                          ) : null}
+                        </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         <Badge variant="outline" className="text-xs">
                           {run.trigger_type || "unknown"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
                         {formatDate(run.started_at)}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="hidden md:table-cell text-sm">
                         {duration !== null ? `${duration}s` : "—"}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         {run.failure_category === "superseded" ? (
                           <div className="space-y-0.5">
                             <span className="text-xs text-amber-400 block">

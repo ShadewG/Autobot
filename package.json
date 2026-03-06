@@ -27,7 +27,9 @@
     "verify:migrations": "node scripts/verify-migrations.js",
     "dashboard": "cd dashboard && npm run dev",
     "dashboard:build": "cd dashboard && npm run build",
-    "dashboard:install": "cd dashboard && npm install"
+    "dashboard:install": "cd dashboard && npm install",
+    "dashboard:serve": "node scripts/serve-dashboard-static.js",
+    "dashboard:local": "npm run dashboard:build && npm run dashboard:serve"
   },
   "keywords": [
     "foia",

@@ -9,6 +9,15 @@ const {
     HUMAN_REVIEW_PROPOSAL_STATUSES_SQL,
     buildCaseTruth,
 } = require('../../lib/case-truth');
+const {
+    extractResearchSuggestedAgency,
+    normalizePortalTimeoutSubstatus,
+    shouldSuppressPlaceholderAgencyDisplay,
+} = require('../../utils/request-normalization');
+
+const LIVE_OVERVIEW_CACHE_TTL_MS = 15_000;
+const LIVE_OVERVIEW_STALE_TTL_MS = 5 * 60_000;
+const liveOverviewCache = new Map();
 
 function buildReadableResearchSummary(rawNotes) {
     if (!rawNotes) return null;
@@ -359,6 +368,21 @@ router.get('/config', async (req, res) => {
  * Operational summary focused on missed routing / missed response paths.
  */
 router.get('/live-overview', async (req, res) => {
+    const cacheKey = JSON.stringify({
+        limit: Math.min(parseInt(req.query.limit, 10) || 25, 100),
+        user_id: req.query.user_id || null,
+    });
+    const cachedEntry = liveOverviewCache.get(cacheKey);
+    const now = Date.now();
+
+    if (cachedEntry && (now - cachedEntry.createdAt) <= LIVE_OVERVIEW_CACHE_TTL_MS) {
+        return res.json({
+            ...cachedEntry.payload,
+            cache_state: 'fresh',
+            cached_at: new Date(cachedEntry.createdAt).toISOString(),
+        });
+    }
+
     try {
         const limit = Math.min(parseInt(req.query.limit, 10) || 25, 100);
         const userIdParam = req.query.user_id;
@@ -437,6 +461,7 @@ router.get('/live-overview', async (req, res) => {
                 c.substatus AS case_substatus,
                 c.portal_url,
                 c.agency_email,
+                c.contact_research_notes,
                 COALESCE(
                     c.agency_email,
                     (
@@ -515,6 +540,35 @@ router.get('/live-overview', async (req, res) => {
             }, new Map());
         }
 
+        let primaryCaseAgencyByCase = new Map();
+        if (caseIdsForReasoning.length > 0) {
+            const caseAgencyCtx = await db.query(`
+                SELECT DISTINCT ON (ca.case_id)
+                    ca.case_id,
+                    ca.agency_name,
+                    ca.agency_email,
+                    ca.portal_url,
+                    ca.added_source
+                FROM case_agencies ca
+                WHERE ca.case_id = ANY($1::int[])
+                  AND COALESCE(ca.is_active, true) = true
+                ORDER BY
+                    ca.case_id,
+                    ca.is_primary DESC,
+                    CASE
+                        WHEN LOWER(COALESCE(ca.status, 'active')) = 'active' THEN 0
+                        WHEN LOWER(COALESCE(ca.status, '')) = 'pending' THEN 1
+                        ELSE 2
+                    END,
+                    ca.updated_at DESC NULLS LAST,
+                    ca.id DESC
+            `, [caseIdsForReasoning]);
+            primaryCaseAgencyByCase = caseAgencyCtx.rows.reduce((acc, row) => {
+                acc.set(Number(row.case_id), row);
+                return acc;
+            }, new Map());
+        }
+
         let attachmentsByMessage = new Map();
         if (triggerMessageIds.length > 0) {
             const attachmentResult = await db.query(`
@@ -554,6 +608,16 @@ router.get('/live-overview', async (req, res) => {
             const messageId = Number(row.trigger_message_id);
             const attachments = attachmentsByMessage.get(messageId) || [];
             const reviewCtx = latestReviewByCase.get(Number(row.case_id)) || {};
+            const primaryCaseAgency = primaryCaseAgencyByCase.get(Number(row.case_id)) || null;
+            const researchSuggestedAgency = row.action_type === 'RESEARCH_AGENCY'
+                ? extractResearchSuggestedAgency(row.contact_research_notes)
+                : null;
+            const suppressPlaceholderDisplay = shouldSuppressPlaceholderAgencyDisplay({
+                contactResearchNotes: row.contact_research_notes,
+                agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
+                portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
+                addedSource: primaryCaseAgency?.added_source || 'case_row_backfill',
+            });
             const truth = buildCaseTruth({
                 caseData: {
                     id: row.case_id,
@@ -569,6 +633,10 @@ router.get('/live-overview', async (req, res) => {
             });
             return {
                 ...row,
+                agency_name: suppressPlaceholderDisplay
+                    ? 'Unknown agency'
+                    : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
+                case_substatus: normalizePortalTimeoutSubstatus(row.case_substatus),
                 review_state: truth.review_state,
                 reasoning: normalizeProposalReasoning(row, {
                     reviewAction: reviewCtx.review_action,
@@ -725,9 +793,56 @@ router.get('/live-overview', async (req, res) => {
             LIMIT $1
         `, [limit]);
 
+        const humanReviewCaseIds = [...new Set(
+            (humanReviewResult.rows || [])
+                .map((row) => Number(row.id))
+                .filter((id) => Number.isFinite(id) && id > 0)
+        )];
+        let primaryHumanReviewAgencyByCase = new Map();
+        if (humanReviewCaseIds.length > 0) {
+            const humanReviewAgencyCtx = await db.query(`
+                SELECT DISTINCT ON (ca.case_id)
+                    ca.case_id,
+                    ca.agency_name,
+                    ca.agency_email,
+                    ca.portal_url,
+                    ca.added_source
+                FROM case_agencies ca
+                WHERE ca.case_id = ANY($1::int[])
+                  AND COALESCE(ca.is_active, true) = true
+                ORDER BY
+                    ca.case_id,
+                    ca.is_primary DESC,
+                    CASE
+                        WHEN LOWER(COALESCE(ca.status, 'active')) = 'active' THEN 0
+                        WHEN LOWER(COALESCE(ca.status, '')) = 'pending' THEN 1
+                        ELSE 2
+                    END,
+                    ca.updated_at DESC NULLS LAST,
+                    ca.id DESC
+            `, [humanReviewCaseIds]);
+            primaryHumanReviewAgencyByCase = humanReviewAgencyCtx.rows.reduce((acc, agencyRow) => {
+                acc.set(Number(agencyRow.case_id), agencyRow);
+                return acc;
+            }, new Map());
+        }
+
         const humanReviewCases = (humanReviewResult.rows || []).map((row) => {
             const research_summary = buildReadableResearchSummary(row.contact_research_notes);
             const phone_call_plan = extractPhoneCallPlan(row.contact_research_notes, row);
+            const primaryCaseAgency = primaryHumanReviewAgencyByCase.get(Number(row.id)) || null;
+            const researchSuggestedAgency = (
+                row.pause_reason === 'RESEARCH_HANDOFF'
+                || String(row.substatus || '').includes('agency_research')
+            )
+                ? extractResearchSuggestedAgency(row.contact_research_notes)
+                : null;
+            const suppressPlaceholderDisplay = shouldSuppressPlaceholderAgencyDisplay({
+                contactResearchNotes: row.contact_research_notes,
+                agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
+                portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
+                addedSource: primaryCaseAgency?.added_source || 'case_row_backfill',
+            });
             const truth = buildCaseTruth({
                 caseData: {
                     id: row.id,
@@ -740,13 +855,17 @@ router.get('/live-overview', async (req, res) => {
             });
             return {
                 ...row,
+                agency_name: suppressPlaceholderDisplay
+                    ? 'Unknown agency'
+                    : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
+                substatus: normalizePortalTimeoutSubstatus(row.substatus),
                 review_state: truth.review_state,
                 research_summary,
                 phone_call_plan,
             };
         });
 
-        res.json({
+        const payload = {
             success: true,
             summary: {
                 inbound_24h: parseInt(summaryResult.rows[0]?.inbound_24h || 0, 10),
@@ -780,8 +899,24 @@ router.get('/live-overview', async (req, res) => {
             unprocessed_inbound: unprocessedInboundResult.rows,
             stuck_runs: stuckRunsResult.rows,
             human_review_cases: humanReviewCases
+        };
+
+        liveOverviewCache.set(cacheKey, {
+            createdAt: Date.now(),
+            payload,
         });
+
+        res.json(payload);
     } catch (error) {
+        if (cachedEntry && (now - cachedEntry.createdAt) <= LIVE_OVERVIEW_STALE_TTL_MS) {
+            return res.json({
+                ...cachedEntry.payload,
+                cache_state: 'stale',
+                cached_at: new Date(cachedEntry.createdAt).toISOString(),
+                warning: `Serving cached live overview after upstream error: ${error.message}`,
+            });
+        }
+
         res.status(500).json({ success: false, error: error.message });
     }
 });

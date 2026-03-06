@@ -198,13 +198,6 @@ export default function RequestsPage() {
     const waitingItems: RequestListItem[] = [];
 
     for (const r of filtered) {
-      const statusUpper = String(r.status || "").toUpperCase();
-      const isExplicitNeedsStatus =
-        statusUpper === "NEEDS_HUMAN_REVIEW" ||
-        statusUpper === "NEEDS_HUMAN_FEE_APPROVAL" ||
-        statusUpper === "NEEDS_PHONE_CALL" ||
-        statusUpper === "NEEDS_CONTACT_INFO";
-
       if (r.review_state) {
         // Use review_state as primary discriminator (canonical)
         switch (r.review_state) {
@@ -218,9 +211,9 @@ export default function RequestsPage() {
           case "WAITING_AGENCY":
           case "IDLE":
           default:
-            if (isExplicitNeedsStatus) {
-              // Reconcile queue semantics: explicit needs_* case statuses should
-              // remain visible in Needs Decision even when no proposal object is active.
+            if (r.control_state === "NEEDS_DECISION") {
+              // Safety net for older rows that still expose the canonical control
+              // state but have a stale or missing review_state value.
               needsDecisionItems.push(r);
             } else {
               waitingItems.push(r);

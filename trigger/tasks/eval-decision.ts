@@ -13,23 +13,37 @@ import { task } from "@trigger.dev/sdk";
 import { generateObject } from "ai";
 import { z } from "zod";
 import db, { logger } from "../lib/db";
-import { fallbackDraftModel } from "../lib/ai";
+import { decisionModel, decisionOptions } from "../lib/ai";
 
 const AUTO_CAPTURE_NOTES_PREFIX = "Auto-captured from monitor decision:%";
 const DEDUPED_EVAL_CASES_SQL = `
   WITH ranked_eval_cases AS (
     SELECT
       ec.*,
+      regexp_replace(COALESCE(ec.simulated_subject, c.case_name, ''), '<[^>]+>', '', 'g') AS normalized_case_name,
       ROW_NUMBER() OVER (
         PARTITION BY CASE
+          WHEN COALESCE(ec.notes, '') LIKE '${AUTO_CAPTURE_NOTES_PREFIX}'
+          THEN CONCAT(
+            'auto-monitor:',
+            COALESCE(
+              NULLIF(
+                lower(trim(regexp_replace(COALESCE(ec.simulated_subject, c.case_name, ''), '<[^>]+>', '', 'g'))),
+                ''
+              ),
+              COALESCE(ec.case_id::text, 'none')
+            ),
+            ':',
+            COALESCE(ec.expected_action, 'none')
+          )
           WHEN ec.proposal_id IS NOT NULL
-           AND COALESCE(ec.notes, '') LIKE '${AUTO_CAPTURE_NOTES_PREFIX}'
-          THEN CONCAT('auto-monitor:', COALESCE(ec.case_id::text, 'none'))
+          THEN CONCAT('proposal:', ec.proposal_id::text)
           ELSE CONCAT('eval-case:', ec.id::text)
         END
         ORDER BY ec.created_at DESC, ec.id DESC
       ) AS logical_rank
     FROM eval_cases ec
+    LEFT JOIN cases c ON c.id = ec.case_id
     WHERE ec.is_active = true
   ),
   deduped_eval_cases AS (
@@ -120,9 +134,10 @@ If the action is wrong, categorize the failure:
 - **CONTEXT_MISSED**: Ignored important case history or prior communications`;
 
   const { object } = await generateObject({
-    model: fallbackDraftModel,
+    model: decisionModel,
     schema: judgeSchema,
     prompt,
+    providerOptions: decisionOptions,
   });
 
   return {

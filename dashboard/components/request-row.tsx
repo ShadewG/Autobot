@@ -240,7 +240,7 @@ export function RequestRow({
       {/* Subject / Agency + WhyHereChip + unknown agency badge */}
       <TableCell>
         <div className="flex flex-col gap-0.5">
-          <span className="font-medium truncate max-w-[280px]">
+          <span className="font-medium truncate max-w-[180px] sm:max-w-[240px] md:max-w-[280px]">
             {truncate(request.subject, 50)}
           </span>
           <span className="text-xs text-muted-foreground">{agencyDisplay}</span>
@@ -253,6 +253,69 @@ export function RequestRow({
             </Badge>
           )}
           <WhyHereChip request={request} variant={variant} />
+          <div className="mt-1 space-y-1 text-[11px] text-muted-foreground md:hidden">
+            {isCompleted ? (
+              <>
+                <div className="flex items-center gap-2">
+                  <OutcomeBadge outcomeType={request.outcome_type} />
+                  {request.closed_at && (
+                    <span>
+                      Closed{" "}
+                      {new Date(request.closed_at).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  )}
+                </div>
+                <p className="line-clamp-2">
+                  {request.outcome_summary || request.substatus || "Closed"}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  {isNeedsDecision ? (
+                    request.pause_reason ? (
+                      <GateChip reason={request.pause_reason} costAmount={request.cost_amount} />
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="gap-1 text-amber-300 border-amber-700/50 bg-amber-500/10"
+                      >
+                        <HelpCircle className="h-3 w-3" />
+                        Unknown
+                      </Badge>
+                    )
+                  ) : (
+                    <StageChip
+                      status={request.status}
+                      autopilotMode={request.autopilot_mode}
+                      pauseReason={request.pause_reason}
+                      nextDueAt={request.next_due_at}
+                    />
+                  )}
+                  {request.cost_amount ? (
+                    <span className="inline-flex items-center gap-1">
+                      <DollarSign className="h-3 w-3" />
+                      {request.cost_amount.toLocaleString()}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {!isCompleted && inboundDisplay ? <span>Inbound {inboundDisplay}</span> : null}
+                  {dueInfo.text ? (
+                    <span className={cn(dueInfo.isOverdue && "text-red-400 font-medium")}>
+                      Due {dueInfo.text}
+                      {dueInfo.overdueDays && dueInfo.overdueDays > 0
+                        ? ` · ${dueInfo.overdueDays}d overdue`
+                        : ""}
+                    </span>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
           {showDetails && (
             <div className="text-[11px] text-muted-foreground pt-1 space-y-0.5">
               <p>Case status: {request.status.replace(/_/g, " ")}</p>
@@ -281,11 +344,11 @@ export function RequestRow({
 
       {/* Gate / Outcome / Stage column */}
       {isCompleted ? (
-        <TableCell>
+        <TableCell className="hidden md:table-cell">
           <OutcomeBadge outcomeType={request.outcome_type} />
         </TableCell>
       ) : isNeedsDecision ? (
-        <TableCell>
+        <TableCell className="hidden md:table-cell">
           {request.pause_reason ? (
             <GateChip reason={request.pause_reason} costAmount={request.cost_amount} />
           ) : (
@@ -299,7 +362,7 @@ export function RequestRow({
           )}
         </TableCell>
       ) : (
-        <TableCell>
+        <TableCell className="hidden md:table-cell">
           <StageChip
             status={request.status}
             autopilotMode={request.autopilot_mode}
@@ -311,21 +374,21 @@ export function RequestRow({
 
       {/* Inbound or Summary */}
       {isCompleted ? (
-        <TableCell>
+        <TableCell className="hidden md:table-cell">
           <span className="text-xs text-muted-foreground line-clamp-2">
             {request.outcome_summary || request.substatus || "Closed"}
           </span>
         </TableCell>
       ) : (
         <TableCell
-          className={cn("text-sm", !request.last_inbound_at && "text-muted-foreground")}
+          className={cn("hidden md:table-cell text-sm", !request.last_inbound_at && "text-muted-foreground")}
         >
           {inboundDisplay}
         </TableCell>
       )}
 
       {/* Due / Closed date */}
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         {isCompleted && request.closed_at ? (
           <span className="text-sm text-muted-foreground">
             {new Date(request.closed_at).toLocaleDateString("en-US", {
@@ -358,7 +421,7 @@ export function RequestRow({
       </TableCell>
 
       {/* Cost */}
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         {request.cost_amount ? (
           <div className="flex items-center gap-1">
             <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
@@ -370,8 +433,8 @@ export function RequestRow({
       </TableCell>
 
       {/* Action — variant-specific */}
-      <TableCell onClick={(e) => e.stopPropagation()} className="text-right">
-        <div className="flex items-center justify-end gap-1.5">
+      <TableCell onClick={(e) => e.stopPropagation()} className="text-right align-top">
+        <div className="flex flex-col items-end gap-1.5 md:flex-row md:items-center md:justify-end">
           {/* Toggle details */}
           <Button
             size="icon"

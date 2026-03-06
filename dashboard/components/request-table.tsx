@@ -10,6 +10,7 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { RequestRow } from "./request-row";
 import type { RequestListItem } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export type TableVariant = "needs_decision" | "bot_working" | "waiting" | "completed";
 
@@ -66,7 +67,7 @@ export function RequestTable({
 
   return (
     <div className="w-full overflow-x-auto">
-      <Table className="min-w-[900px]">
+      <Table className="min-w-[520px] md:min-w-[900px]">
         <TableHeader>
           <TableRow>
             {hasSelection && (
@@ -81,22 +82,22 @@ export function RequestTable({
             <TableHead className="w-[70px]">ID</TableHead>
             <TableHead className="min-w-[220px]">Subject / Agency</TableHead>
             {isCompleted ? (
-              <TableHead className="w-[130px]">Outcome</TableHead>
+              <TableHead className="hidden md:table-cell w-[130px]">Outcome</TableHead>
             ) : isNeedsDecision ? (
-              <TableHead className="w-[130px]">Gate</TableHead>
+              <TableHead className="hidden md:table-cell w-[130px]">Gate</TableHead>
             ) : (
-              <TableHead className="w-[110px]">Stage</TableHead>
+              <TableHead className="hidden md:table-cell w-[110px]">Stage</TableHead>
             )}
             {isCompleted ? (
-              <TableHead className="min-w-[200px]">Summary</TableHead>
+              <TableHead className="hidden md:table-cell min-w-[200px]">Summary</TableHead>
             ) : (
-              <TableHead className="w-[90px]">Inbound</TableHead>
+              <TableHead className="hidden md:table-cell w-[90px]">Inbound</TableHead>
             )}
-            <TableHead className={isCompleted ? "w-[100px]" : "w-[130px]"}>
+            <TableHead className={cn("hidden md:table-cell", isCompleted ? "w-[100px]" : "w-[130px]")}>
               {isCompleted ? "Closed" : "Due"}
             </TableHead>
-            <TableHead className="w-[80px]">Cost</TableHead>
-            <TableHead className="w-[140px] text-right">Action</TableHead>
+            <TableHead className="hidden md:table-cell w-[80px]">Cost</TableHead>
+            <TableHead className="w-[110px] md:w-[140px] text-right">Action</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

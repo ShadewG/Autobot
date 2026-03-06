@@ -5,6 +5,11 @@ const notionService = require('../services/notion-service');
 const pdContactService = require('../services/pd-contact-service');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { normalizeAgencyEmailHint, findCanonicalAgency } = require('../services/canonical-agency');
+const {
+    extractResearchSuggestedAgency,
+    isPlaceholderAgencyEmail,
+    shouldSuppressPlaceholderAgencyDisplay,
+} = require('../utils/request-normalization');
 
 function firstNonEmpty(...values) {
     for (const value of values) {
@@ -13,6 +18,62 @@ function firstNonEmpty(...values) {
         }
     }
     return null;
+}
+
+function normalizeAgencyNameKey(name = '') {
+    return String(name || '')
+        .toLowerCase()
+        .replace(/,\s*[a-z]{2}$/i, '')
+        .replace(/,\s*(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|district of columbia|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)$/i, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeEmailKey(email = '') {
+    const value = normalizeAgencyEmailHint(email);
+    return value ? value.toLowerCase() : null;
+}
+
+function normalizePortalKey(portalUrl = '') {
+    const normalized = normalizePortalUrl(portalUrl);
+    return normalized ? normalized.toLowerCase() : null;
+}
+
+function dedupeCanonicalCaseAgencies(caseAgencies = []) {
+    const deduped = new Map();
+
+    for (const agency of caseAgencies) {
+        const dedupeKey =
+            [normalizeAgencyNameKey(agency?.agency_name), normalizeEmailKey(agency?.agency_email), normalizePortalKey(agency?.portal_url)]
+                .filter(Boolean)
+                .join('|')
+            || `case-agency-${agency?.id ?? deduped.size + 1}`;
+
+        const existing = deduped.get(dedupeKey);
+        if (!existing) {
+            deduped.set(dedupeKey, agency);
+            continue;
+        }
+
+        const existingUpdatedAt = new Date(existing.updated_at || existing.created_at || 0).getTime();
+        const nextUpdatedAt = new Date(agency.updated_at || agency.created_at || 0).getTime();
+        const preferred = nextUpdatedAt > existingUpdatedAt ? agency : existing;
+        const fallback = preferred === agency ? existing : agency;
+
+        deduped.set(dedupeKey, {
+            ...preferred,
+            is_primary: Boolean(existing.is_primary || agency.is_primary),
+            is_active: existing.is_active !== false || agency.is_active !== false,
+            agency_email: preferred.agency_email || fallback.agency_email || null,
+            portal_url: normalizePortalUrl(preferred.portal_url || fallback.portal_url || null),
+            portal_provider: preferred.portal_provider || fallback.portal_provider || null,
+            notes: preferred.notes || fallback.notes || null,
+            contact_research_notes: preferred.contact_research_notes || fallback.contact_research_notes || null,
+        });
+    }
+
+    return Array.from(deduped.values());
 }
 
 function buildExistingContactFallback(caseAgency, caseData) {
@@ -42,30 +103,57 @@ function buildExistingContactFallback(caseAgency, caseData) {
 }
 
 async function canonicalizeCaseAgency(caseAgency, caseData) {
+    const researchSuggestedAgency = extractResearchSuggestedAgency(caseData?.contact_research_notes);
+    const shouldPreferResearchDisplay = Boolean(
+        researchSuggestedAgency
+        && ['case_row_backfill', 'case_row_fallback'].includes(caseAgency?.added_source)
+        && isPlaceholderAgencyEmail(caseAgency?.agency_email || caseData?.agency_email)
+        && !normalizePortalUrl(caseAgency?.portal_url || caseData?.portal_url)
+    );
+    const suppressPlaceholderDisplay = shouldSuppressPlaceholderAgencyDisplay({
+        contactResearchNotes: caseData?.contact_research_notes,
+        agencyEmail: caseAgency?.agency_email || caseData?.agency_email,
+        portalUrl: caseAgency?.portal_url || caseData?.portal_url,
+        addedSource: caseAgency?.added_source,
+    });
     const canonicalAgency = await findCanonicalAgency(db, {
-        portalUrl: caseAgency?.portal_url,
-        portalMailbox: caseAgency?.agency_email || caseData?.agency_email || null,
-        agencyEmail: caseAgency?.agency_email,
-        agencyName: caseAgency?.agency_name,
+        portalUrl: (shouldPreferResearchDisplay || suppressPlaceholderDisplay) ? null : caseAgency?.portal_url,
+        portalMailbox: (shouldPreferResearchDisplay || suppressPlaceholderDisplay) ? null : (caseAgency?.agency_email || caseData?.agency_email || null),
+        agencyEmail: (shouldPreferResearchDisplay || suppressPlaceholderDisplay) ? null : caseAgency?.agency_email,
+        agencyName: shouldPreferResearchDisplay ? researchSuggestedAgency.name : caseAgency?.agency_name,
         stateHint: caseData?.state,
     });
 
     const resolvedPortalUrl = [
-        caseAgency?.portal_url,
+        suppressPlaceholderDisplay ? null : caseAgency?.portal_url,
         canonicalAgency?.portal_url,
         canonicalAgency?.portal_url_alt,
     ].map((value) => normalizePortalUrl(value)).find(Boolean) || null;
 
     return {
         ...caseAgency,
-        agency_id: canonicalAgency?.id || caseAgency?.agency_id || null,
-        agency_name: canonicalAgency?.name || caseAgency?.agency_name,
-        agency_email: normalizeAgencyEmailHint(caseAgency?.agency_email)
+        agency_id: suppressPlaceholderDisplay
+            ? null
+            : shouldPreferResearchDisplay
+            ? (canonicalAgency?.id || null)
+            : (canonicalAgency?.id || caseAgency?.agency_id || null),
+        agency_name: suppressPlaceholderDisplay
+            ? 'Unknown agency'
+            : (canonicalAgency?.name || (shouldPreferResearchDisplay ? researchSuggestedAgency?.name : caseAgency?.agency_name)),
+        agency_email: suppressPlaceholderDisplay
+            ? null
+            : shouldPreferResearchDisplay
+            ? (normalizeAgencyEmailHint(canonicalAgency?.email_foia)
+                || normalizeAgencyEmailHint(canonicalAgency?.email_main)
+                || null)
+            : (normalizeAgencyEmailHint(caseAgency?.agency_email)
             || normalizeAgencyEmailHint(canonicalAgency?.email_foia)
             || normalizeAgencyEmailHint(canonicalAgency?.email_main)
-            || null,
-        portal_url: resolvedPortalUrl,
-        portal_provider:
+            || null),
+        portal_url: suppressPlaceholderDisplay ? null : resolvedPortalUrl,
+        portal_provider: suppressPlaceholderDisplay
+            ? null
+            :
             caseAgency?.portal_provider
             || canonicalAgency?.portal_provider
             || detectPortalProviderByUrl(resolvedPortalUrl)?.name
@@ -90,7 +178,7 @@ router.get('/:id/agencies', async (req, res) => {
         const canonicalAgencies = await Promise.all(
             agencies.map((agency) => canonicalizeCaseAgency(agency, caseData))
         );
-        res.json({ success: true, agencies: canonicalAgencies });
+        res.json({ success: true, agencies: dedupeCanonicalCaseAgencies(canonicalAgencies) });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

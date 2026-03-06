@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { db, logger, triggerDispatch, parseConstraints, generateOutcomeSummary } = require('./_helpers');
+const sendgridService = require('../../services/sendgrid-service');
+const { transitionCaseRuntime } = require('../../services/case-runtime');
 
 /**
  * POST /api/requests/:id/research-exemption
@@ -163,6 +165,118 @@ router.post('/:id/withdraw', async (req, res) => {
         });
     } catch (error) {
         log.error(`Error withdrawing request: ${error.message}`);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/requests/:id/send-manual
+ * Send a manual outbound email from the case detail page.
+ */
+router.post('/:id/send-manual', async (req, res) => {
+    const requestId = parseInt(req.params.id, 10);
+    const { body, subject, to_email } = req.body || {};
+    const log = logger.forCase(requestId);
+
+    try {
+        const trimmedBody = typeof body === 'string' ? body.trim() : '';
+        const explicitTo = typeof to_email === 'string' ? to_email.trim().toLowerCase() : '';
+        const explicitSubject = typeof subject === 'string' ? subject.trim() : '';
+
+        if (!trimmedBody) {
+            return res.status(400).json({
+                success: false,
+                error: 'body is required'
+            });
+        }
+
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        const latestInbound = await db.getLatestInboundMessage(requestId);
+        const currentThread = await db.getThreadByCaseId(requestId);
+
+        const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
+        const caseAgencyEmail = String(caseData.agency_email || '').trim().toLowerCase();
+        const targetEmail = explicitTo || inboundFrom || caseAgencyEmail;
+
+        if (!targetEmail) {
+            return res.status(400).json({
+                success: false,
+                error: 'No destination email is available for this case'
+            });
+        }
+
+        const baseSubject =
+            explicitSubject ||
+            String(latestInbound?.subject || currentThread?.subject || '').trim() ||
+            `Public Records Request - ${caseData.subject_name || caseData.case_name || `Case ${requestId}`}`;
+
+        const replyingToInbound = Boolean(latestInbound?.message_id) && inboundFrom === targetEmail;
+        const subjectLine = replyingToInbound && !/^re:/i.test(baseSubject)
+            ? `Re: ${baseSubject}`
+            : baseSubject;
+
+        const threadIdentifier = replyingToInbound
+            ? latestInbound.message_id
+            : (currentThread?.thread_id || currentThread?.initial_message_id || null);
+
+        const sendResult = await sendgridService.sendEmail({
+            to: targetEmail,
+            subject: subjectLine,
+            text: trimmedBody,
+            caseId: requestId,
+            messageType: replyingToInbound ? 'manual_reply' : 'manual_outbound',
+            ...(threadIdentifier ? {
+                inReplyTo: threadIdentifier,
+                references: threadIdentifier
+            } : {})
+        });
+
+        if (replyingToInbound) {
+            await transitionCaseRuntime(requestId, 'CASE_RECONCILED', {
+                targetStatus: 'awaiting_response',
+                substatus: 'Manual reply sent'
+            });
+        } else {
+            await transitionCaseRuntime(requestId, 'CASE_SENT', {
+                sendDate: new Date().toISOString(),
+                substatus: 'Manual email sent'
+            });
+        }
+
+        await db.logActivity(
+            'manual_reply_sent',
+            `Manual email sent to ${targetEmail}`,
+            {
+                case_id: requestId,
+                to_email: targetEmail,
+                subject: subjectLine,
+                sendgrid_message_id: sendResult.sendgridMessageId || null,
+                message_type: replyingToInbound ? 'manual_reply' : 'manual_outbound'
+            }
+        );
+
+        log.info(`Manual email sent to ${targetEmail}`);
+
+        res.json({
+            success: true,
+            message: 'Manual email sent',
+            to_email: targetEmail,
+            subject: subjectLine,
+            sendgrid_message_id: sendResult.sendgridMessageId || null,
+            replying_to_message_id: replyingToInbound ? latestInbound.message_id : null
+        });
+    } catch (error) {
+        log.error(`Error sending manual email: ${error.message}`);
         res.status(500).json({
             success: false,
             error: error.message

@@ -17,16 +17,30 @@ const DEDUPED_EVAL_CASES_CTE = `
     WITH ranked_eval_cases AS (
         SELECT
             ec.*,
+            regexp_replace(COALESCE(ec.simulated_subject, c.case_name, ''), '<[^>]+>', '', 'g') AS normalized_case_name,
             ROW_NUMBER() OVER (
                 PARTITION BY CASE
+                    WHEN COALESCE(ec.notes, '') LIKE '${AUTO_CAPTURE_NOTES_PREFIX}'
+                    THEN CONCAT(
+                        'auto-monitor:',
+                        COALESCE(
+                            NULLIF(
+                                lower(trim(regexp_replace(COALESCE(ec.simulated_subject, c.case_name, ''), '<[^>]+>', '', 'g'))),
+                                ''
+                            ),
+                            COALESCE(ec.case_id::text, 'none')
+                        ),
+                        ':',
+                        COALESCE(ec.expected_action, 'none')
+                    )
                     WHEN ec.proposal_id IS NOT NULL
-                     AND COALESCE(ec.notes, '') LIKE '${AUTO_CAPTURE_NOTES_PREFIX}'
-                    THEN CONCAT('auto-monitor:', COALESCE(ec.case_id::text, 'none'))
+                    THEN CONCAT('proposal:', ec.proposal_id::text)
                     ELSE CONCAT('eval-case:', ec.id::text)
                 END
                 ORDER BY ec.created_at DESC, ec.id DESC
             ) AS logical_rank
         FROM eval_cases ec
+        LEFT JOIN cases c ON c.id = ec.case_id
         WHERE ec.is_active = true
     ),
     deduped_eval_cases AS (
@@ -66,7 +80,7 @@ router.get('/cases', async (req, res) => {
                 ec.created_at,
                 ec.simulated_subject,
                 p.action_type AS proposal_action,
-                c.case_name,
+                NULLIF(regexp_replace(COALESCE(ec.simulated_subject, c.case_name, ''), '<[^>]+>', '', 'g'), '') AS case_name,
                 c.agency_name,
                 -- Latest eval run
                 er.id AS last_run_id,
@@ -343,7 +357,7 @@ router.get('/export', async (req, res) => {
                 ec.notes,
                 ec.created_at,
                 p.action_type      AS ai_proposed_action,
-                c.case_name,
+                NULLIF(regexp_replace(COALESCE(ec.simulated_subject, c.case_name, ''), '<[^>]+>', '', 'g'), '') AS case_name,
                 c.agency_name,
                 c.state,
                 er.id              AS last_run_id,

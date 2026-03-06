@@ -268,6 +268,19 @@ describe('Case agency and run guards', function () {
             added_source: 'case_row_backfill',
             status: 'active',
           },
+          {
+            id: 62,
+            case_id: 25207,
+            agency_id: 152,
+            agency_name: 'Stow Police Department',
+            agency_email: 'ORR@mylubbock.us',
+            portal_url: 'https://u8387778.ct.sendgrid.net/ls/click?def',
+            portal_provider: 'govqa',
+            is_primary: false,
+            is_active: true,
+            added_source: 'case_row_backfill',
+            status: 'active',
+          },
         ]),
         query: sinon.stub().resolves({
           rows: [{
@@ -300,6 +313,7 @@ describe('Case agency and run guards', function () {
         assert.strictEqual(response.status, 200);
         assert.strictEqual(response.body.success, true);
         assert(Array.isArray(response.body.agencies), 'expected agencies array');
+        assert.strictEqual(response.body.agencies.length, 1);
         assert.strictEqual(response.body.agencies[0].agency_name, 'Lubbock Police Department, Texas');
         assert.strictEqual(response.body.agencies[0].agency_id, 1365);
         assert.strictEqual(response.body.agencies[0].agency_email, 'orr@mylubbock.us');

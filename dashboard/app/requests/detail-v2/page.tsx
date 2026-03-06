@@ -55,7 +55,7 @@ import type {
   AgencyCandidate,
   ThreadMessage,
 } from "@/lib/types";
-import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS, formatCurrency, isTrackingUrl } from "@/lib/utils";
+import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS, formatCurrency, isTrackingUrl, stripHtmlTags } from "@/lib/utils";
 import {
   ArrowLeft,
   Loader2,
@@ -334,7 +334,10 @@ function DetailV2Content() {
   const [bottomDrawer, setBottomDrawer] = useState<"runs" | "agent-log" | null>(null);
   const [conversationTab, setConversationTab] = useState<string>("all");
   // Multi-agency state
-  const [agencyActionLoadingId, setAgencyActionLoadingId] = useState<number | null>(null);
+  const [agencyActionLoading, setAgencyActionLoading] = useState<{
+    id: number;
+    action: "primary" | "research";
+  } | null>(null);
   const [agencyStartLoadingId, setAgencyStartLoadingId] = useState<number | null>(null);
   const [candidateActionLoadingName, setCandidateActionLoadingName] = useState<string | null>(null);
   const [candidateStartLoadingName, setCandidateStartLoadingName] = useState<string | null>(null);
@@ -394,7 +397,7 @@ function DetailV2Content() {
   const { data, error, isLoading, mutate } = useSWR<RequestWorkspaceResponse>(
     id ? `/requests/${id}/workspace` : null,
     fetcher,
-    { refreshInterval }
+    { refreshInterval, keepPreviousData: true }
   );
 
   useEffect(() => {
@@ -423,7 +426,7 @@ function DetailV2Content() {
   const { data: runsData, mutate: mutateRuns } = useSWR<{ runs: AgentRun[] }>(
     id ? `/requests/${id}/agent-runs` : null,
     fetcher,
-    { refreshInterval }
+    { refreshInterval, keepPreviousData: true }
   );
 
   const startPolling = useCallback(() => {
@@ -981,7 +984,15 @@ function DetailV2Content() {
   };
 
   const handleSendMessage = async (content: string) => {
-    mutate();
+    if (!id || !content.trim()) return;
+    try {
+      const result = await requestsAPI.sendManual(id, content.trim());
+      await mutate();
+      toast.success(`Manual email sent to ${result.to_email}`);
+    } catch (error: any) {
+      toast.error(error.message || "Failed to send manual email");
+      throw error;
+    }
   };
 
   const handleAddToPhoneQueue = async () => {
@@ -1012,7 +1023,7 @@ function DetailV2Content() {
 
   const handleSetPrimaryAgency = async (caseAgencyId: number) => {
     if (!id) return;
-    setAgencyActionLoadingId(caseAgencyId);
+    setAgencyActionLoading({ id: caseAgencyId, action: "primary" });
     try {
       const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/set-primary`, { method: "POST" });
       const json = await res.json();
@@ -1021,23 +1032,23 @@ function DetailV2Content() {
     } catch (e: any) {
       toast.error(e.message || "Failed to set primary agency");
     } finally {
-      setAgencyActionLoadingId(null);
+      setAgencyActionLoading(null);
     }
   };
 
   const handleResearchAgency = async (caseAgencyId: number) => {
     if (!id) return;
-    setAgencyActionLoadingId(caseAgencyId);
+    setAgencyActionLoading({ id: caseAgencyId, action: "research" });
     try {
       const res = await fetch(`/api/cases/${id}/agencies/${caseAgencyId}/research`, { method: "POST" });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || "Failed to research agency");
-      mutate();
+      await mutate();
       toast.success("Agency research completed");
     } catch (e: any) {
       toast.error(e.message || "Failed to research agency");
     } finally {
-      setAgencyActionLoadingId(null);
+      setAgencyActionLoading(null);
     }
   };
 
@@ -1166,7 +1177,7 @@ function DetailV2Content() {
     );
   }
 
-  if (isLoading) {
+  if (isLoading && !data) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -1251,7 +1262,7 @@ function DetailV2Content() {
   // ══════════════════════════════════════════════════════════════════════════
 
   return (
-    <div className="flex flex-col h-[calc(100vh-48px)]">
+    <div className="flex flex-col h-[calc(100vh-48px)] min-w-0 overflow-x-hidden">
       {/* ── HEADER ─── 2 lines, max ~56px ──────────────────────────────────── */}
       <div className="shrink-0 border-b border-border/50 px-3 py-1.5">
         {/* Line 1: back + case identity + controls */}
@@ -1264,7 +1275,7 @@ function DetailV2Content() {
             <ArrowLeft className="h-3.5 w-3.5" />
           </button>
           <span className="text-xs font-mono text-muted-foreground">#{request.id}</span>
-          <span className="text-sm font-semibold truncate">{request.subject}</span>
+          <span className="text-sm font-semibold truncate">{stripHtmlTags(request.subject)}</span>
           <div className="flex-1 hidden md:block" />
           {/* Row 2 on mobile: controls */}
           <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
@@ -1469,7 +1480,12 @@ function DetailV2Content() {
 
               {/* Thread (flex-1, fills remaining space) */}
               <div className="flex-1 min-h-0 overflow-hidden">
-                <Thread messages={visibleThreadMessages} maxHeight="h-full" />
+                <Thread
+                  messages={visibleThreadMessages}
+                  maxHeight="h-full"
+                  canonicalPortalUrl={resolvePortalUrl(request.portal_url, agency_summary?.portal_url ?? null)}
+                  canonicalAgencyName={agency_summary?.name || request.agency_name}
+                />
               </div>
 
               {/* Bottom action area (shrink-0, pinned at bottom) */}
@@ -1810,6 +1826,12 @@ function DetailV2Content() {
                     {/* Agency list */}
                     {_activeCaseAgencies.map((ca) => {
                       const stats = agencyMessageStats.get(ca.id);
+                      const isSettingPrimary =
+                        agencyActionLoading?.id === ca.id &&
+                        agencyActionLoading.action === "primary";
+                      const isResearchingAgency =
+                        agencyActionLoading?.id === ca.id &&
+                        agencyActionLoading.action === "research";
                       return (
                         <div key={ca.id} className="rounded border p-3 space-y-1.5">
                           <div className="flex items-center gap-2">
@@ -1836,12 +1858,26 @@ function DetailV2Content() {
                           )}
                           <div className="flex items-center gap-1.5 pt-1">
                             {!ca.is_primary && (
-                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleSetPrimaryAgency(ca.id)} disabled={agencyActionLoadingId === ca.id}>
-                                {agencyActionLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : "Set Primary"}
+                              <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleSetPrimaryAgency(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
+                                {isSettingPrimary ? (
+                                  <>
+                                    <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                    Setting...
+                                  </>
+                                ) : (
+                                  "Set Primary"
+                                )}
                               </Button>
                             )}
-                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleResearchAgency(ca.id)} disabled={agencyActionLoadingId === ca.id}>
-                              {agencyActionLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : "Research"}
+                            <Button size="sm" variant="outline" className="h-6 text-[10px]" onClick={() => handleResearchAgency(ca.id)} disabled={agencyActionLoading?.id === ca.id}>
+                              {isResearchingAgency ? (
+                                <>
+                                  <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" />
+                                  Researching...
+                                </>
+                              ) : (
+                                "Research"
+                              )}
                             </Button>
                             <Button size="sm" className="h-6 text-[10px]" onClick={() => handleStartRequestForAgency(ca.id)} disabled={agencyStartLoadingId === ca.id}>
                               {agencyStartLoadingId === ca.id ? <Loader2 className="h-2.5 w-2.5 mr-1 animate-spin" /> : <Play className="h-2.5 w-2.5 mr-1" />}
@@ -2133,7 +2169,7 @@ function DetailV2Content() {
 
       {/* ── BOTTOM TAB BAR ─────────────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-border/50">
-        <div className="flex items-center gap-0 px-3 h-8">
+        <div className="flex h-8 items-center gap-0 overflow-x-auto whitespace-nowrap px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {/* Main view tabs */}
           {(["thread", "case-info", "agency"] as const).map((tab) => (
             <button

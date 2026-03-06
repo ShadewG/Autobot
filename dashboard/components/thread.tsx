@@ -346,13 +346,53 @@ function AttachmentList({ attachments }: { attachments: ThreadMessage["attachmen
 interface MessageBubbleProps {
   message: ThreadMessage;
   showRaw: boolean;
+  canonicalPortalUrl?: string | null;
+  canonicalAgencyName?: string | null;
 }
 
-const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageBubbleProps) {
+function normalizeAgencyToken(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function normalizeHistoricalOutboundText(text: string, canonicalAgencyName?: string | null): string {
+  if (!text || !canonicalAgencyName) return text;
+
+  const canonicalShort = canonicalAgencyName.split(",")[0]?.trim() || canonicalAgencyName.trim();
+  if (!canonicalShort) return text;
+
+  const canonicalToken = normalizeAgencyToken(canonicalShort);
+  const replaceIfStale = (candidate: string, replacement: string): string => {
+    if (!candidate || normalizeAgencyToken(candidate) === canonicalToken) return candidate;
+    return replacement;
+  };
+
+  return text
+    .replace(
+      /\bTo ([A-Z][A-Za-z'’ .()-]+?(?:Police Department|Sheriff(?:'s|’s) Office|Department|Office)) Public Records Officer\b/g,
+      (_, candidate) => `To ${replaceIfStale(candidate, canonicalShort)} Public Records Officer`
+    )
+    .replace(
+      /\bfor the ([A-Z][A-Za-z'’ .()-]+?(?:Police Department|Sheriff(?:'s|’s) Office|Department|Office))(?=[.,\n])/g,
+      (_, candidate) => `for the ${replaceIfStale(candidate, canonicalShort)}`
+    );
+}
+
+const MessageBubble = memo(function MessageBubble({
+  message,
+  showRaw,
+  canonicalPortalUrl,
+  canonicalAgencyName,
+}: MessageBubbleProps) {
   const isOutbound = message.direction === "OUTBOUND";
   const style = getMessageStyle(message);
 
   const displayBody = showRaw && message.raw_body ? message.raw_body : message.body;
+  const normalizedSubject = isOutbound
+    ? normalizeHistoricalOutboundText(message.subject || "", canonicalAgencyName)
+    : (message.subject || "");
+  const normalizedBody = isOutbound
+    ? normalizeHistoricalOutboundText(displayBody || "", canonicalAgencyName)
+    : (displayBody || "");
   const hasRawVersion = message.raw_body && message.raw_body !== message.body;
 
   return (
@@ -412,9 +452,10 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
 
       {/* Message bubble */}
       <div className={cn("p-3 w-full border-l-4 overflow-hidden", style.borderColor, style.bgColor)}>
-        <p className="text-xs font-semibold mb-1.5">{message.subject}</p>
+        <p className="text-xs font-semibold mb-1.5">{normalizedSubject}</p>
         <LinkifiedText
-          text={displayBody || ""}
+          text={normalizedBody}
+          fallbackUrlForTrackedLinks={canonicalPortalUrl}
           className="text-sm whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
         />
       </div>
@@ -437,11 +478,13 @@ const MessageBubble = memo(function MessageBubble({ message, showRaw }: MessageB
 interface ThreadProps {
   messages: ThreadMessage[];
   maxHeight?: string;
+  canonicalPortalUrl?: string | null;
+  canonicalAgencyName?: string | null;
 }
 
 const STORAGE_KEY = 'email-view-mode';
 
-export function Thread({ messages, maxHeight }: ThreadProps) {
+export function Thread({ messages, maxHeight, canonicalPortalUrl, canonicalAgencyName }: ThreadProps) {
   const [showRaw, setShowRaw] = useState(false);
 
   useEffect(() => {
@@ -499,7 +542,15 @@ export function Thread({ messages, maxHeight }: ThreadProps) {
           {[...messages].reverse().map((message) => (
             message.channel === "CALL"
               ? <PhoneCallBubble key={message.id} message={message} />
-              : <MessageBubble key={message.id} message={message} showRaw={showRaw} />
+              : (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  showRaw={showRaw}
+                  canonicalPortalUrl={canonicalPortalUrl}
+                  canonicalAgencyName={canonicalAgencyName}
+                />
+              )
           ))}
         </div>
       </ScrollArea>

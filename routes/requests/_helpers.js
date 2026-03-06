@@ -6,6 +6,12 @@ const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { resolveReviewState } = require('../../lib/resolve-review-state');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../../utils/portal-utils');
+const {
+    normalizePortalTimeoutSubstatus,
+    deriveDisplayState,
+    extractResearchSuggestedAgency,
+    isPlaceholderAgencyEmail,
+} = require('../../utils/request-normalization');
 
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
@@ -241,6 +247,13 @@ function normalizePortalKey(portalUrl = '') {
     return normalized && isSupportedPortalUrl(normalized) ? normalized.toLowerCase() : null;
 }
 
+function stripTrailingAgencyStateLabel(agencyName = '') {
+    return String(agencyName || '')
+        .replace(/,\s*[a-z]{2}$/i, '')
+        .replace(/,\s*(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|district of columbia|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)$/i, '')
+        .trim();
+}
+
 function dedupeCaseAgencies(caseAgencies = []) {
     const deduped = new Map();
 
@@ -352,6 +365,38 @@ function extractLatestSupportedPortalUrl(activityRows = [], caseAgencies = [], .
     return null;
 }
 
+function normalizeThreadBody(text, caseData = null) {
+    if (!text) return text || '';
+
+    let normalized = String(text);
+    const preferredPortalUrl = normalizePortalUrl(caseData?.portal_url || caseData?.last_portal_task_url || null);
+
+    normalized = normalized.replace(
+        /(Portal URL:\s*)(https?:\/\/\S+)/gi,
+        (match, prefix, rawUrl) => {
+            const supportedUrl = normalizePortalUrl(rawUrl);
+            if (supportedUrl && isSupportedPortalUrl(supportedUrl)) {
+                return `${prefix}${supportedUrl}`;
+            }
+            if (preferredPortalUrl) {
+                return `${prefix}${preferredPortalUrl}`;
+            }
+            return `${prefix}[tracked portal link redacted]`;
+        }
+    );
+
+    const canonicalAgencyName = stripTrailingAgencyStateLabel(caseData?.agency_name || '');
+    if (
+        canonicalAgencyName
+        && !/stow police department/i.test(canonicalAgencyName)
+        && /stow police department/i.test(normalized)
+    ) {
+        normalized = normalized.replace(/Stow Police Department/gi, canonicalAgencyName);
+    }
+
+    return normalized;
+}
+
 function extractAgencyCandidatesFromResearchNotes(contactResearchNotes) {
     const parsed = safeJsonParse(contactResearchNotes);
     if (!parsed || typeof parsed !== 'object') return [];
@@ -397,6 +442,19 @@ function extractAgencyCandidatesFromResearchNotes(contactResearchNotes) {
                 contact_phone: contact.contact_phone || null,
             });
         }
+    }
+
+    const fallbackSuggestedAgency = extractResearchSuggestedAgency(contactResearchNotes);
+    if (fallbackSuggestedAgency) {
+        candidates.push({
+            name: fallbackSuggestedAgency.name,
+            reason: fallbackSuggestedAgency.reason || null,
+            confidence: fallbackSuggestedAgency.confidence ?? null,
+            source: fallbackSuggestedAgency.source || 'research_suggestion',
+            agency_email: null,
+            portal_url: null,
+            contact_phone: null,
+        });
     }
 
     const deduped = new Map();
@@ -561,12 +619,18 @@ function resolveControlState({ caseData, reviewState, pendingProposal, activeRun
     const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
     const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
     const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
-    const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(String(pendingProposal.status || '').toUpperCase()));
+    const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'].includes(String(pendingProposal.status || '').toUpperCase()));
     const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
+    const substatus = String(caseData?.substatus || '').trim();
     const isManualHandoffReview =
         caseStatus === 'needs_phone_call' ||
         pauseReason === 'RESEARCH_HANDOFF' ||
-        pauseReason === 'AGENCY_RESEARCH_COMPLETE';
+        pauseReason === 'AGENCY_RESEARCH_COMPLETE' ||
+        (
+            caseStatus === 'needs_human_review' &&
+            pauseReason === 'UNSPECIFIED' &&
+            /ready to send via (portal|email)/i.test(substatus)
+        );
 
     if (['completed', 'cancelled'].includes(caseStatus)) return 'DONE';
 
@@ -599,12 +663,18 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
     const hasActiveRun = ['created', 'queued', 'processing', 'running', 'waiting'].includes(runStatus);
     const portalStatus = String(activePortalTaskStatus || '').toUpperCase();
     const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
-    const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'].includes(String(pendingProposal.status || '').toUpperCase()));
+    const hasPendingProposal = Boolean(pendingProposal && ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'].includes(String(pendingProposal.status || '').toUpperCase()));
     const pauseReason = String(caseData?.pause_reason || '').toUpperCase();
+    const substatus = String(caseData?.substatus || '').trim();
     const isManualHandoffReview =
         caseStatus === 'needs_phone_call' ||
         pauseReason === 'RESEARCH_HANDOFF' ||
-        pauseReason === 'AGENCY_RESEARCH_COMPLETE';
+        pauseReason === 'AGENCY_RESEARCH_COMPLETE' ||
+        (
+            caseStatus === 'needs_human_review' &&
+            pauseReason === 'UNSPECIFIED' &&
+            /ready to send via (portal|email)/i.test(substatus)
+        );
 
     if ((reviewState === 'PROCESSING' || reviewState === 'DECISION_APPLYING') && Boolean(caseData?.requires_human)) {
         issues.push({
@@ -642,6 +712,9 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
  * Transform case data to RequestListItem format
  */
 function toRequestListItem(caseData) {
+    const normalizedSubstatus = normalizePortalTimeoutSubstatus(caseData.substatus || null);
+    const displayAgencyName = caseData.agency_name || '—';
+    const displayState = deriveDisplayState(caseData.state, displayAgencyName);
     const subject = caseData.subject_name
         ? `${caseData.subject_name}${caseData.requested_records?.length ? ` — ${Array.isArray(caseData.requested_records) ? caseData.requested_records.slice(0, 2).join(', ') : 'Records Request'}` : ''}`
         : caseData.case_name || 'Unknown Request';
@@ -667,12 +740,6 @@ function toRequestListItem(caseData) {
         ? { status: caseData.active_proposal_status }
         : null;
 
-    // Use derived review_state as the UI source of truth so stale requires_human
-    // flags in DB don't misclassify actively-processing cases in the queue.
-    const effectiveRequiresHuman = review_state === 'DECISION_REQUIRED';
-    const effectivePauseReason = effectiveRequiresHuman
-        ? (caseData.pause_reason || null)
-        : null;
     const control_state = resolveControlState({
         caseData,
         reviewState: review_state,
@@ -700,12 +767,20 @@ function toRequestListItem(caseData) {
             effectiveDbStatus = 'awaiting_response';
         }
     }
+    // Use derived review/control state as the UI source of truth so stale
+    // requires_human flags in DB don't hide blocked manual work.
+    const effectiveRequiresHuman =
+        review_state === 'DECISION_REQUIRED' ||
+        (control_state === 'BLOCKED' && REVIEW_DB_STATUSES.has(effectiveDbStatus));
+    const effectivePauseReason = effectiveRequiresHuman
+        ? (caseData.pause_reason || null)
+        : null;
 
     return {
         id: String(caseData.id),
         subject: subject,
-        agency_name: caseData.agency_name || '—',
-        state: caseData.state && caseData.state !== '{}' ? caseData.state : '—',
+        agency_name: displayAgencyName,
+        state: displayState || '—',
         status: STATUS_MAP[effectiveDbStatus] || 'DRAFT',
         last_inbound_at: caseData.last_response_date || null,
         last_activity_at: caseData.updated_at || caseData.created_at,
@@ -720,7 +795,7 @@ function toRequestListItem(caseData) {
         outcome_type: caseData.outcome_type || null,
         outcome_summary: caseData.outcome_summary || null,
         closed_at: caseData.closed_at || null,
-        substatus: caseData.substatus || null,
+        substatus: normalizedSubstatus,
         active_run_status: caseData.active_run_status || null,
         active_run_trigger_type: caseData.active_run_trigger_type || null,
         active_run_started_at: caseData.active_run_started_at || null,
@@ -807,19 +882,26 @@ function extractPhoneCallPlan(rawNotes, row = {}) {
     const suggested = Array.isArray(brief.suggested_agencies) ? brief.suggested_agencies : [];
     const topSuggested = suggested[0] || {};
     const target = execution.phone_call_target || {};
+    const fallbackSuggestedAgency = extractResearchSuggestedAgency(rawNotes);
+    const preferSuggestedAgencyName = isPlaceholderAgencyEmail(row.agency_email) && fallbackSuggestedAgency?.name;
 
     const agency_name =
         String(target.agency_name || '').trim() ||
-        String(row.agency_name || '').trim() ||
+        (preferSuggestedAgencyName ? String(fallbackSuggestedAgency.name || '').trim() : String(row.agency_name || '').trim()) ||
         String(contact.agency_name || contact.name || '').trim() ||
         String(topSuggested.name || '').trim() ||
+        String(fallbackSuggestedAgency?.name || '').trim() ||
         null;
     const agency_phone =
         String(target.agency_phone || '').trim() ||
         String(contact.contact_phone || contact.phone || '').trim() ||
         null;
     const agency_email =
-        String(row.agency_email || contact.contact_email || contact.email || '').trim() || null;
+        (isPlaceholderAgencyEmail(row.agency_email)
+            ? null
+            : String(row.agency_email || '').trim()) ||
+        String(contact.contact_email || contact.email || '').trim() ||
+        null;
     const portal_url =
         String(row.portal_url || contact.portal_url || '').trim() || null;
     const reason =
@@ -844,7 +926,11 @@ function extractPhoneCallPlan(rawNotes, row = {}) {
  * Transform case data to RequestDetail format
  */
 function toRequestDetail(caseData) {
-    const listItem = toRequestListItem(caseData);
+    const normalizedSubstatus = normalizePortalTimeoutSubstatus(caseData.substatus || null);
+    const listItem = toRequestListItem({
+        ...caseData,
+        substatus: normalizedSubstatus,
+    });
     const scopeItems = parseScopeItems(caseData);
     const constraints = parseConstraints(caseData);
     const feeQuote = parseFeeQuote(caseData);
@@ -880,7 +966,7 @@ function toRequestDetail(caseData) {
         submitted_at: caseData.send_date || null,
         statutory_due_at: listItem.due_info.statutory_due_at,
         attachments: [], // Will be populated from messages
-        substatus: caseData.substatus || null,
+        substatus: normalizedSubstatus,
         review_reason: (caseData.requires_human || REVIEW_DB_STATUSES.has(String(caseData.status || '').toLowerCase()))
             ? detectReviewReason(caseData)
             : undefined,
@@ -892,9 +978,10 @@ function toRequestDetail(caseData) {
  * Transform message to ThreadMessage format
  * Includes cleaned body (boilerplate removed) and raw_body (original)
  */
-function toThreadMessage(message, attachments = []) {
+function toThreadMessage(message, attachments = [], caseData = null) {
     // Prefer body_text; fall back to body_html converted to plain text
-    const rawBody = message.body_text || (message.body_html ? htmlToPlainText(message.body_html) : '');
+    const sourceBody = message.body_text || (message.body_html ? htmlToPlainText(message.body_html) : '');
+    const rawBody = normalizeThreadBody(sourceBody, caseData);
     const cleanedBody = cleanEmailBody(rawBody);
     const timestamp = message.sent_at || message.received_at || message.created_at;
 
@@ -1112,17 +1199,41 @@ function mapTimelineType(eventType, meta = {}) {
 /**
  * Transform activity log to TimelineEvent format
  */
-function toTimelineEvent(activity, analysisMap = {}) {
+function toTimelineEvent(activity, analysisMap = {}, caseData = null) {
     // Extract meta from meta_jsonb if available
     const meta = activity.meta_jsonb || activity.metadata || {};
     const eventType = activity.event_type;
     const category = mapTimelineCategory(eventType, meta);
+    let summary = activity.description || eventType;
+
+    const normalizedSubjectName = typeof caseData?.subject_name === 'string'
+        ? caseData.subject_name.trim()
+        : '';
+    const normalizedSubject = typeof caseData?.subject === 'string'
+        ? caseData.subject.trim()
+        : '';
+    const caseLabel = normalizedSubjectName
+        ? `${normalizedSubjectName}${caseData.requested_records?.length ? ` — ${Array.isArray(caseData.requested_records) ? caseData.requested_records.slice(0, 2).join(', ') : 'Records Request'}` : ''}`
+        : normalizedSubject || `case #${activity.case_id || meta.case_id || caseData?.id || 'unknown'}`;
+
+    if (eventType === 'portal_stuck_escalated') {
+        const rawError = typeof meta.portal_error === 'string' ? meta.portal_error.trim() : '';
+        const normalizedError = /^Status:\s*created$/i.test(rawError)
+            ? 'No active submit-portal run'
+            : rawError || 'No active submit-portal run';
+        summary = `Portal task was auto-failed after being stuck in IN_PROGRESS for more than 30 minutes with no active run. ${normalizedError}.`;
+    } else if ((eventType === 'portal_workflow_triggered' || eventType === 'portal_run_started') && caseData) {
+        const prefix = eventType === 'portal_workflow_triggered'
+            ? 'Skyvern workflow triggered for'
+            : 'Skyvern portal automation started for';
+        summary = `${prefix} ${caseLabel}.`;
+    }
 
     const event = {
         id: String(activity.id),
         timestamp: activity.created_at,
         type: mapTimelineType(eventType, meta),
-        summary: activity.description || eventType,
+        summary,
         category,
         raw_content: meta.raw_content || activity.metadata?.raw_content || null,
         metadata: {
@@ -1269,7 +1380,7 @@ module.exports = {
     // Functions
     generateOutcomeSummary, deriveCostStatus, buildDueInfo, parseScopeItems, safeJsonParse,
     extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates,
-    extractLatestSupportedPortalUrl, parseConstraints, parseFeeQuote, isAtRisk,
+    extractLatestSupportedPortalUrl, normalizeThreadBody, parseConstraints, parseFeeQuote, isAtRisk,
     resolveControlState, detectControlMismatches, toRequestListItem, attachActivePortalTask,
     detectReviewReason, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
     toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones

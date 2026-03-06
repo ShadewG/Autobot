@@ -118,9 +118,13 @@ describe('Request list and agency directory normalization', function () {
 
   describe('GET /api/agencies', function () {
     let originalQuery;
+    let sawPreferredCaseAgencyQuery;
+    let sawInvalidCaseAgencyStateColumn;
 
     beforeEach(function () {
       originalQuery = agenciesDb.query;
+      sawPreferredCaseAgencyQuery = false;
+      sawInvalidCaseAgencyStateColumn = false;
     });
 
     afterEach(function () {
@@ -130,6 +134,8 @@ describe('Request list and agency directory normalization', function () {
     it('dedupes agencies that only differ by trailing state label and derives a state code', async function () {
       agenciesDb.query = async (sql) => {
         if (sql.includes('FROM agencies a')) {
+          sawPreferredCaseAgencyQuery = sql.includes('FROM case_agencies ca');
+          sawInvalidCaseAgencyStateColumn = sql.includes('ca.state');
           return {
             rows: [
               {
@@ -198,12 +204,78 @@ describe('Request list and agency directory normalization', function () {
                 notion_page_id: 'ghi',
                 notes: 'Distinct agency',
               },
+              {
+                id: 910,
+                name: 'Allegheny County Police Department',
+                state: null,
+                case_state: null,
+                county: null,
+                portal_url: null,
+                portal_provider: null,
+                email_main: 'records@alleghenypd.gov',
+                email_foia: null,
+                phone: null,
+                default_autopilot_mode: 'SUPERVISED',
+                total_requests: '4',
+                completed_requests: '2',
+                avg_response_days: 4,
+                rating: '4',
+                last_activity_at: '2026-03-05T15:17:18.665Z',
+                last_info_verified_at: null,
+                sync_status: 'synced',
+                notion_page_id: 'jkl',
+                notes: 'Missing state',
+              },
+              {
+                id: 911,
+                name: 'Allegheny County Police Department, Pennsylvania',
+                state: 'PA',
+                case_state: 'PA',
+                county: null,
+                portal_url: null,
+                portal_provider: null,
+                email_main: 'records@alleghenypd.gov',
+                email_foia: null,
+                phone: null,
+                default_autopilot_mode: 'SUPERVISED',
+                total_requests: '5',
+                completed_requests: '3',
+                avg_response_days: 4,
+                rating: '4',
+                last_activity_at: '2026-03-05T15:17:18.665Z',
+                last_info_verified_at: null,
+                sync_status: 'synced',
+                notion_page_id: 'mno',
+                notes: 'Stateful duplicate',
+              },
+              {
+                id: 1201,
+                name: 'Stow Police Department',
+                state: null,
+                case_state: null,
+                county: null,
+                portal_url: null,
+                portal_provider: null,
+                email_main: 'stowpd@stow.oh.us',
+                email_foia: null,
+                phone: null,
+                default_autopilot_mode: 'SUPERVISED',
+                total_requests: '11',
+                completed_requests: '5',
+                avg_response_days: 3,
+                rating: '4',
+                last_activity_at: '2026-03-05T15:17:18.665Z',
+                last_info_verified_at: null,
+                sync_status: 'synced',
+                notion_page_id: 'stow',
+                notes: 'Email-derived state',
+              },
             ],
           };
         }
 
         if (sql.startsWith('SELECT COUNT(*) FROM agencies')) {
-          return { rows: [{ count: '3' }] };
+          return { rows: [{ count: '5' }] };
         }
 
         throw new Error(`Unexpected query in agencies test: ${sql}`);
@@ -216,7 +288,9 @@ describe('Request list and agency directory normalization', function () {
 
       assert.strictEqual(response.status, 200);
       assert.strictEqual(response.body.success, true);
-      assert.strictEqual(response.body.agencies.length, 2);
+      assert.strictEqual(sawPreferredCaseAgencyQuery, true);
+      assert.strictEqual(sawInvalidCaseAgencyStateColumn, false);
+      assert.strictEqual(response.body.agencies.length, 4);
 
       const rockford = response.body.agencies.find((agency) => agency.name === 'Rockford Police Department');
       assert(rockford, 'expected Rockford duplicate rows to collapse');
@@ -225,6 +299,14 @@ describe('Request list and agency directory normalization', function () {
       const austin = response.body.agencies.find((agency) => agency.name === 'Austin PD');
       assert(austin, 'expected distinct agency row to remain');
       assert.strictEqual(austin.state, 'TX');
+
+      const allegheny = response.body.agencies.find((agency) => agency.name === 'Allegheny County Police Department');
+      assert(allegheny, 'expected null-state duplicate to collapse into the stateful row');
+      assert.strictEqual(allegheny.state, 'PA');
+
+      const stow = response.body.agencies.find((agency) => agency.name === 'Stow Police Department');
+      assert(stow, 'expected missing-state agency to remain visible');
+      assert.strictEqual(stow.state, 'OH');
     });
   });
 });

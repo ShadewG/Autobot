@@ -2,6 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { db, logger, triggerDispatch } = require('./_helpers');
 
+function buildHumanDecision(action, extras = {}) {
+    return {
+        action,
+        decidedAt: new Date().toISOString(),
+        ...extras,
+    };
+}
+
 /**
  * GET /api/requests/:id/proposals
  * Get all proposals for a case
@@ -149,7 +157,10 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
         // Mark decision received (terminal-protected) before queueing resume
         await db.updateProposal(proposalId, {
             status: 'DECISION_RECEIVED',
-            humanDecision: 'APPROVE',
+            humanDecision: buildHumanDecision('APPROVE', {
+                proposalId,
+                decidedBy: req.body?.decidedBy || 'human',
+            }),
             humanDecidedAt: new Date()
         });
 
@@ -232,7 +243,12 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
         // Update proposal with adjustment request
         await db.updateProposal(proposalId, {
             status: 'ADJUSTMENT_REQUESTED',
-            humanDecision: 'ADJUST',
+            humanDecision: buildHumanDecision('ADJUST', {
+                proposalId,
+                decidedBy: req.body?.decidedBy || 'human',
+                instruction: instruction || null,
+                adjustments: adjustments || null,
+            }),
             humanDecidedAt: new Date(),
             adjustmentCount: (proposal.adjustment_count || 0) + 1
         });
@@ -311,7 +327,11 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
         // Update proposal as dismissed
         await db.updateProposal(proposalId, {
             status: 'DISMISSED',
-            humanDecision: 'DISMISS',
+            humanDecision: buildHumanDecision('DISMISS', {
+                proposalId,
+                decidedBy: req.body?.decidedBy || 'human',
+                reason: reason || null,
+            }),
             humanDecidedAt: new Date()
         });
 
@@ -386,7 +406,11 @@ router.post('/:id/proposals/:proposalId/withdraw', async (req, res) => {
         // Update proposal as withdrawn
         await db.updateProposal(proposalId, {
             status: 'WITHDRAWN',
-            humanDecision: 'WITHDRAW',
+            humanDecision: buildHumanDecision('WITHDRAW', {
+                proposalId,
+                decidedBy: req.body?.decidedBy || 'human',
+                reason: reason || null,
+            }),
             humanDecidedAt: new Date()
         });
 

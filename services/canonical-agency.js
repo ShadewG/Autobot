@@ -5,6 +5,13 @@ function normalizeAgencyEmailHint(email) {
     return value.includes('@') ? value : null;
 }
 
+function isTestAgencyEmail(email) {
+    const normalized = normalizeAgencyEmailHint(email);
+    if (!normalized) return false;
+    const configured = normalizeAgencyEmailHint(process.env.DEFAULT_TEST_EMAIL || 'shadewofficial@gmail.com');
+    return normalized === configured;
+}
+
 function normalizeAgencyTenantHint(value) {
     const lower = String(value || '').trim().toLowerCase();
     if (!lower) return '';
@@ -22,8 +29,8 @@ function normalizeAgencyTenantHint(value) {
 
 async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, agencyName, stateHint }) {
     const normalizedPortalUrl = normalizePortalUrl(portalUrl);
-    const normalizedAgencyEmail = normalizeAgencyEmailHint(agencyEmail);
-    const normalizedPortalMailbox = normalizeAgencyEmailHint(portalMailbox);
+    const normalizedAgencyEmail = isTestAgencyEmail(agencyEmail) ? null : normalizeAgencyEmailHint(agencyEmail);
+    const normalizedPortalMailbox = isTestAgencyEmail(portalMailbox) ? null : normalizeAgencyEmailHint(portalMailbox);
     const portalHost = normalizedPortalUrl ? new URL(normalizedPortalUrl).hostname.toLowerCase() : null;
     const portalTenantHint = normalizeAgencyTenantHint(portalHost ? portalHost.split('.')[0] : '');
     const mailboxTenantHint = normalizeAgencyTenantHint(normalizedPortalMailbox ? normalizedPortalMailbox.split('@')[0] : '');
@@ -138,5 +145,6 @@ async function findCanonicalAgency(db, { portalUrl, portalMailbox, agencyEmail, 
 
 module.exports = {
     normalizeAgencyEmailHint,
+    isTestAgencyEmail,
     findCanonicalAgency,
 };
