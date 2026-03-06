@@ -291,6 +291,13 @@ class SendGridService {
         }
     }
 
+    isSharedPortalHost(hostname) {
+        if (!hostname) return false;
+        return Object.keys(PORTAL_EMAIL_DOMAINS).some((domain) =>
+            hostname === domain || hostname.endsWith(`.${domain}`)
+        );
+    }
+
     parseStateSuffixHint(value) {
         if (!value) return null;
         const lower = String(value).toLowerCase();
@@ -305,6 +312,50 @@ class SendGridService {
         return stateCodes.has(m[2]) ? m[1] : lower;
     }
 
+    normalizeAgencySignalHint(value) {
+        const normalized = this.parseStateSuffixHint(value);
+        if (!normalized) return null;
+
+        const compact = String(normalized)
+            .toLowerCase()
+            .replace(/[^a-z0-9]/g, '');
+        if (compact.length < 4) return null;
+
+        const weakHints = new Set([
+            'admin',
+            'alerts',
+            'contact',
+            'custhelp',
+            'email',
+            'foia',
+            'govqa',
+            'help',
+            'helpdesk',
+            'info',
+            'mail',
+            'message',
+            'messages',
+            'notification',
+            'notifications',
+            'noreply',
+            'openrecords',
+            'portal',
+            'publicrecords',
+            'record',
+            'records',
+            'request',
+            'requests',
+            'response',
+            'responses',
+            'support',
+            'system',
+            'team',
+            'updates'
+        ]);
+
+        return weakHints.has(compact) ? null : compact;
+    }
+
     normalizeContactEmail(rawEmail) {
         if (!rawEmail) return null;
         const candidate = String(rawEmail).trim().toLowerCase().replace(/^mailto:/, '');
@@ -316,15 +367,20 @@ class SendGridService {
 
         const normalizedPortalUrl = normalizePortalUrl(portalUrl || caseData.portal_url || null);
         const portalHost = this.extractPortalHost(normalizedPortalUrl);
-        const fromDomain = this.emailDomain(fromEmail || '');
-        const portalSubdomain = portalHost ? portalHost.split('.')[0] : '';
-        const cityHint = this.parseStateSuffixHint(portalSubdomain);
+        const normalizedFromEmail = this.normalizeContactEmail(fromEmail);
+        const fromDomain = this.emailDomain(normalizedFromEmail || '');
+        const portalEmailInfo = this.detectPortalProviderFromEmail(normalizedFromEmail || '');
+        const providerSubdomain = portalEmailInfo?.subdomain || null;
+        const portalSubdomain = portalHost ? portalHost.split('.')[0] : (providerSubdomain || '');
+        const cityHint = this.normalizeAgencySignalHint(portalSubdomain);
+        const mailboxHint = this.normalizeAgencySignalHint(providerSubdomain || '');
+        const safeEmailDomain = this.isSharedPortalHost(fromDomain) ? null : fromDomain;
 
-        if (!portalHost && !fromDomain) return null;
+        if (!portalHost && !normalizedFromEmail && !cityHint && !mailboxHint) return null;
 
         const candidates = await db.query(
             `SELECT
-                id, name, state, email_main, email_foia, portal_url, portal_url_alt,
+                id, name, state, email_main, email_foia, portal_url, portal_url_alt, portal_provider,
                 (
                   CASE
                     WHEN $1::text IS NOT NULL AND (
@@ -334,17 +390,30 @@ class SendGridService {
                   END
                   + CASE
                     WHEN $2::text IS NOT NULL AND (
-                      LOWER(COALESCE(email_main, '')) LIKE '%' || $2
-                      OR LOWER(COALESCE(email_foia, '')) LIKE '%' || $2
-                    ) THEN 4 ELSE 0
+                      LOWER(COALESCE(email_main, '')) = LOWER($2)
+                      OR LOWER(REPLACE(COALESCE(email_foia, ''), 'mailto:', '')) = LOWER($2)
+                    ) THEN 5 ELSE 0
                   END
                   + CASE
                     WHEN $3::text <> '' AND LOWER(name) LIKE '%' || $3 || '%' THEN 5 ELSE 0
                   END
                   + CASE
-                    WHEN $4::text <> '' AND LOWER(name) LIKE '%' || $4 || '%' THEN 2 ELSE 0
+                    WHEN $4::text <> '' AND LOWER(name) LIKE '%' || $4 || '%' THEN 4 ELSE 0
                   END
-                ) AS score
+                  + CASE
+                    WHEN $5::text IS NOT NULL AND (
+                      LOWER(COALESCE(email_main, '')) LIKE '%' || $5
+                      OR LOWER(REPLACE(COALESCE(email_foia, ''), 'mailto:', '')) LIKE '%' || $5
+                    ) THEN 2 ELSE 0
+                  END
+                ) AS score,
+                (
+                    CASE WHEN email_main IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN email_foia IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN portal_url IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN portal_url_alt IS NOT NULL THEN 1 ELSE 0 END
+                    + CASE WHEN state IS NOT NULL AND state <> '{}' THEN 1 ELSE 0 END
+                ) AS completeness
              FROM agencies
              WHERE
                ($1::text IS NOT NULL AND (
@@ -352,29 +421,42 @@ class SendGridService {
                  OR LOWER(COALESCE(portal_url_alt, '')) LIKE '%' || $1 || '%'
                ))
                OR ($2::text IS NOT NULL AND (
-                 LOWER(COALESCE(email_main, '')) LIKE '%' || $2
-                 OR LOWER(COALESCE(email_foia, '')) LIKE '%' || $2
+                 LOWER(COALESCE(email_main, '')) = LOWER($2)
+                 OR LOWER(REPLACE(COALESCE(email_foia, ''), 'mailto:', '')) = LOWER($2)
                ))
-             ORDER BY score DESC, id DESC
+               OR ($3::text <> '' AND LOWER(name) LIKE '%' || $3 || '%')
+               OR ($4::text <> '' AND LOWER(name) LIKE '%' || $4 || '%')
+               OR ($5::text IS NOT NULL AND (
+                 LOWER(COALESCE(email_main, '')) LIKE '%' || $5
+                 OR LOWER(REPLACE(COALESCE(email_foia, ''), 'mailto:', '')) LIKE '%' || $5
+               ))
+             ORDER BY score DESC, completeness DESC, id DESC
              LIMIT 10`,
             [
                 portalHost || null,
-                fromDomain || null,
+                normalizedFromEmail || null,
                 cityHint || '',
-                portalSubdomain || ''
+                mailboxHint || '',
+                safeEmailDomain || null
             ]
         );
 
         const chosen = (candidates.rows || [])[0];
-        if (!chosen || Number(chosen.score || 0) <= 0) return null;
+        if (!chosen || Number(chosen.score || 0) < 8) return null;
 
         const agencyEmail =
-            this.normalizeContactEmail(fromEmail) ||
             this.normalizeContactEmail(chosen.email_main) ||
             this.normalizeContactEmail(chosen.email_foia) ||
+            normalizedFromEmail ||
             null;
-        const agencyPortalUrl = normalizedPortalUrl || chosen.portal_url || chosen.portal_url_alt || null;
-        const agencyProvider = provider || detectPortalProviderByUrl(agencyPortalUrl)?.name || null;
+        const chosenPortalUrl =
+            normalizePortalUrl(chosen.portal_url) ||
+            normalizePortalUrl(chosen.portal_url_alt) ||
+            null;
+        const agencyPortalUrl = (!portalHost || this.isSharedPortalHost(portalHost))
+            ? (chosenPortalUrl || normalizedPortalUrl || null)
+            : (normalizedPortalUrl || chosenPortalUrl || null);
+        const agencyProvider = provider || chosen.portal_provider || detectPortalProviderByUrl(agencyPortalUrl)?.name || null;
 
         let caseAgency = (await db.query(
             `SELECT * FROM case_agencies
@@ -383,6 +465,21 @@ class SendGridService {
              LIMIT 1`,
             [caseData.id, chosen.id]
         )).rows[0] || null;
+
+        if (!caseAgency && normalizedFromEmail) {
+            caseAgency = (await db.query(
+                `SELECT * FROM case_agencies
+                 WHERE case_id = $1
+                   AND is_active = true
+                   AND (
+                     LOWER(COALESCE(agency_email, '')) = LOWER($2)
+                     OR LOWER(REPLACE(COALESCE(agency_email, ''), 'mailto:', '')) = LOWER($2)
+                   )
+                 ORDER BY is_primary DESC, id DESC
+                 LIMIT 1`,
+                [caseData.id, normalizedFromEmail]
+            )).rows[0] || null;
+        }
 
         if (!caseAgency) {
             caseAgency = await db.addCaseAgency(caseData.id, {
@@ -397,8 +494,23 @@ class SendGridService {
                 notes: `Reconciled from inbound portal/email signal (${fromEmail || 'unknown'})`
             });
         } else {
+            const canRewriteAgencyIdentity =
+                !caseAgency.agency_id ||
+                (
+                    caseAgency.agency_id !== chosen.id &&
+                    ['case_row_backfill', 'case_row_fallback', 'portal_signal_reconciliation'].includes(caseAgency.added_source)
+                );
+            const reconciledAgencyId = canRewriteAgencyIdentity
+                ? chosen.id
+                : (caseAgency.agency_id || chosen.id);
+            const reconciledAgencyName =
+                canRewriteAgencyIdentity || reconciledAgencyId === chosen.id || !caseAgency.agency_name
+                    ? chosen.name
+                    : caseAgency.agency_name;
+
             await db.updateCaseAgency(caseAgency.id, {
-                agency_name: chosen.name,
+                agency_id: reconciledAgencyId,
+                agency_name: reconciledAgencyName,
                 agency_email: agencyEmail || caseAgency.agency_email || null,
                 portal_url: agencyPortalUrl || caseAgency.portal_url || null,
                 portal_provider: agencyProvider || caseAgency.portal_provider || null
@@ -772,14 +884,16 @@ class SendGridService {
                     provider: portalDetection.provider
                 });
 
-                const portalUrl = caseData.portal_url || portalDetection.portal_url || null;
+                const currentPortalUrl = normalizePortalUrl(caseData.portal_url);
+                const detectedPortalUrl = normalizePortalUrl(portalDetection.portal_url);
+                const portalUrl = currentPortalUrl || detectedPortalUrl || null;
                 portalNotificationInfo = {
                     ...portalDetection,
                     portal_url: portalUrl
                 };
 
                 // If we inferred a portal URL and case is missing one, update it
-                if (portalUrl && !caseData.portal_url) {
+                if (portalUrl && !currentPortalUrl) {
                     await db.updateCasePortalStatus(caseData.id, {
                         portal_url: portalUrl,
                         portal_provider: portalDetection.provider
@@ -1771,6 +1885,7 @@ class SendGridService {
 
     detectPortalNotification({ fromEmail, subject = '', text = '' }) {
         const emailDomain = (fromEmail || '').split('@')[1]?.toLowerCase() || '';
+        const portalEmailInfo = this.detectPortalProviderFromEmail(fromEmail || '');
         // Only use subject for keyword matching — body text contains quoted reply
         // chains that trigger false positives on agency replies to portal-submitted requests
         const subjectLower = (subject || '').toLowerCase();
@@ -1783,7 +1898,9 @@ class SendGridService {
             // Only trust domain match — keyword-in-body is unreliable (quoted threads)
             if (domainMatch) {
                 const inferredDomain = emailDomain.split('>').shift() || null;
-                const portalUrl = inferredDomain
+                const canInferDirectPortalUrl = inferredDomain &&
+                    !(portalEmailInfo?.subdomain && this.isSharedPortalHost(inferredDomain));
+                const portalUrl = canInferDirectPortalUrl
                     ? `https://${inferredDomain}${provider.defaultPath}`
                     : null;
 

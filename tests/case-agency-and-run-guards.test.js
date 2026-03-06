@@ -166,7 +166,9 @@ describe('Case agency and run guards', function () {
         assert.strictEqual(response.body.success, true);
         assert.strictEqual(response.body.research.source, 'existing-case-data');
         assert.strictEqual(response.body.research.contact_email, '911audio@portercountyin.gov');
-        sinon.assert.calledOnce(pdContactStub.lookupContact);
+        assert.strictEqual(response.body.research.fallback_reason, 'existing_channels_available');
+        assert.strictEqual(response.body.research.immediate_reuse, true);
+        sinon.assert.notCalled(pdContactStub.lookupContact);
         sinon.assert.calledWithExactly(
           dbStub.updateCaseAgency,
           24,
@@ -183,8 +185,9 @@ describe('Case agency and run guards', function () {
           sinon.match({
             case_id: 25169,
             case_agency_id: 24,
-            fallback_reason: 'lookup_returned_no_data',
+            fallback_reason: 'existing_channels_available',
             reused_email: '911audio@portercountyin.gov',
+            immediate_reuse: true,
           })
         );
       } finally {

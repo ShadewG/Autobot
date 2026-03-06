@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
+const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
 const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
 const HUMAN_REVIEW_CASE_STATUSES = [
@@ -471,9 +472,12 @@ class DatabaseService {
         cleaned.last_portal_run_id = normalize(cleaned.last_portal_run_id, 255);
         cleaned.last_portal_account_email = normalize(cleaned.last_portal_account_email, 255);
 
-        // Ignore common email-tracking click wrappers; keep existing portal URL when available.
-        if (cleaned.portal_url && /sendgrid\.net\/ls\/click/i.test(cleaned.portal_url)) {
-            cleaned.portal_url = existingCase?.portal_url || null;
+        if (cleaned.portal_url !== undefined) {
+            const normalizedPortalUrl = normalizePortalUrl(cleaned.portal_url);
+            cleaned.portal_url = normalizedPortalUrl || normalizePortalUrl(existingCase?.portal_url) || null;
+            if (cleaned.portal_url && !cleaned.portal_provider) {
+                cleaned.portal_provider = detectPortalProviderByUrl(cleaned.portal_url)?.name || cleaned.portal_provider;
+            }
         }
 
         return cleaned;
@@ -2968,6 +2972,13 @@ class DatabaseService {
             return this.getCaseAgencyById(caseAgencyId);
         }
 
+        if (updates.portal_url !== undefined) {
+            updates.portal_url = normalizePortalUrl(updates.portal_url);
+        }
+        if (updates.portal_url && !updates.portal_provider) {
+            updates.portal_provider = detectPortalProviderByUrl(updates.portal_url)?.name || null;
+        }
+
         const entries = Object.entries(updates).filter(([, v]) => v !== undefined);
         if (entries.length === 0) return this.getCaseAgencyById(caseAgencyId);
 
@@ -2990,6 +3001,17 @@ class DatabaseService {
     }
 
     async syncPrimaryAgencyToCase(caseId, primaryCaseAgency) {
+        const currentCase = await this.getCaseById(caseId);
+        const normalizedPortalUrl =
+            normalizePortalUrl(primaryCaseAgency.portal_url) ||
+            normalizePortalUrl(currentCase?.portal_url) ||
+            null;
+        const normalizedPortalProvider =
+            primaryCaseAgency.portal_provider ||
+            detectPortalProviderByUrl(normalizedPortalUrl)?.name ||
+            currentCase?.portal_provider ||
+            null;
+
         await this.query(`
             UPDATE cases SET
                 agency_name = $2,
@@ -3002,8 +3024,8 @@ class DatabaseService {
             caseId,
             primaryCaseAgency.agency_name,
             primaryCaseAgency.agency_email,
-            primaryCaseAgency.portal_url,
-            primaryCaseAgency.portal_provider
+            normalizedPortalUrl,
+            normalizedPortalProvider
         ]);
     }
 

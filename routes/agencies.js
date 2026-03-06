@@ -3,6 +3,51 @@ const router = express.Router();
 const db = require('../services/database');
 const agencyNotionSync = require('../services/agency-notion-sync');
 
+function normalizeAgencyState(state) {
+    if (!state || state === '{}') return null;
+    const trimmed = String(state).trim();
+    return trimmed || null;
+}
+
+function normalizeAgencyListKey(row) {
+    const name = String(row?.name || '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+    const state = normalizeAgencyState(row?.state) || '';
+    return `${name}|${state}`;
+}
+
+function scoreAgencyRow(row) {
+    return (
+        (parseInt(row.total_requests, 10) || 0) * 10 +
+        (row.portal_url ? 3 : 0) +
+        (row.email_main ? 2 : 0) +
+        (row.email_foia ? 2 : 0) +
+        (normalizeAgencyState(row.state) ? 1 : 0)
+    );
+}
+
+function dedupeAgencyRows(rows = []) {
+    const deduped = new Map();
+
+    for (const row of rows) {
+        const name = String(row?.name || '').trim();
+        if (!name) continue;
+        if (/^[a-z]{2,4}$/i.test(name) && !/\s/.test(name)) {
+            continue;
+        }
+
+        const key = normalizeAgencyListKey(row);
+        const existing = deduped.get(key);
+        if (!existing || scoreAgencyRow(row) > scoreAgencyRow(existing)) {
+            deduped.set(key, row);
+        }
+    }
+
+    return Array.from(deduped.values());
+}
+
 /**
  * GET /api/agencies
  * List all agencies from the agencies table
@@ -60,10 +105,10 @@ router.get('/', async (req, res) => {
             params
         );
 
-        const agencies = result.rows.map(row => ({
+        const agencies = dedupeAgencyRows(result.rows).map(row => ({
             id: String(row.id),
             name: row.name,
-            state: (row.state && row.state !== '{}') ? row.state : null,
+            state: normalizeAgencyState(row.state),
             county: row.county || null,
             submission_method: row.portal_url ? 'PORTAL' : (row.email_main ? 'EMAIL' : 'UNKNOWN'),
             portal_url: row.portal_url || null,
@@ -74,7 +119,9 @@ router.get('/', async (req, res) => {
             default_autopilot_mode: row.default_autopilot_mode || 'SUPERVISED',
             total_requests: parseInt(row.total_requests) || 0,
             completed_requests: parseInt(row.completed_requests) || 0,
-            avg_response_days: row.avg_response_days || null,
+            avg_response_days: row.avg_response_days != null && Number(row.avg_response_days) >= 0
+                ? Number(row.avg_response_days)
+                : null,
             rating: row.rating ? parseFloat(row.rating) : null,
             last_activity_at: row.last_activity_at || null,
             last_info_verified_at: row.last_info_verified_at || null,
@@ -86,7 +133,7 @@ router.get('/', async (req, res) => {
         res.json({
             success: true,
             count: agencies.length,
-            total: parseInt(countResult.rows[0].count),
+            total: agencies.length,
             agencies
         });
     } catch (error) {

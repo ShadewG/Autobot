@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const pdContactService = require('../services/pd-contact-service');
+const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 
 function firstNonEmpty(...values) {
     for (const value of values) {
@@ -20,8 +21,8 @@ function buildExistingContactFallback(caseAgency, caseData) {
         caseAgency?.is_primary ? caseData?.alternate_agency_email : null
     );
     const existingPortalUrl = firstNonEmpty(
-        caseAgency?.portal_url,
-        caseAgency?.is_primary ? caseData?.portal_url : null
+        normalizePortalUrl(caseAgency?.portal_url),
+        caseAgency?.is_primary ? normalizePortalUrl(caseData?.portal_url) : null
     );
     const existingPortalProvider = firstNonEmpty(
         caseAgency?.portal_provider,
@@ -71,11 +72,13 @@ router.post('/:id/agencies', express.json(), async (req, res) => {
         // Try to find matching agency in agencies table
         const matchedAgency = await db.findAgencyByName(agency_name);
 
+        const normalizedPortalUrl = normalizePortalUrl(portal_url || matchedAgency?.portal_url || null);
+
         const caseAgency = await db.addCaseAgency(caseId, {
             agency_name,
             agency_email: agency_email || matchedAgency?.email_main || null,
-            portal_url: portal_url || matchedAgency?.portal_url || null,
-            portal_provider: portal_provider || null,
+            portal_url: normalizedPortalUrl,
+            portal_provider: portal_provider || detectPortalProviderByUrl(normalizedPortalUrl)?.name || null,
             agency_id: matchedAgency?.id || null,
             notes,
             added_source: added_source || 'manual'
@@ -109,6 +112,12 @@ router.patch('/:id/agencies/:caId', express.json(), async (req, res) => {
         const updates = {};
         for (const key of allowed) {
             if (req.body[key] !== undefined) updates[key] = req.body[key];
+        }
+        if (updates.portal_url !== undefined) {
+            updates.portal_url = normalizePortalUrl(updates.portal_url);
+        }
+        if (updates.portal_url && !updates.portal_provider) {
+            updates.portal_provider = detectPortalProviderByUrl(updates.portal_url)?.name || null;
         }
 
         const updated = await db.updateCaseAgency(caseAgencyId, updates);
@@ -230,6 +239,14 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
             res.json({ success: true, case_agency: updated, research });
             return updated;
         };
+
+        const existingFallback = buildExistingContactFallback(caseAgency, caseData);
+        if (existingFallback) {
+            const reused = await reuseExistingSignals('existing_channels_available', { immediate_reuse: true });
+            if (reused) {
+                return;
+            }
+        }
 
         const RESEARCH_TIMEOUT_MS = 30_000;
         let lookup;

@@ -88,7 +88,6 @@ export function InboxSections({
     activePresetId,
     selectPreset,
     deleteCustomPreset,
-    getFilterState,
   } = useFilterPresets();
 
   // Apply preset when selected
@@ -103,9 +102,6 @@ export function InboxSections({
       setShowOnlyOutOfSync(false);
       return;
     }
-    const state = getFilterState();
-    if (!state) return;
-    // Defer to next tick so getFilterState picks up the new activePresetId
     const preset = presets.find((p) => p.id === presetId);
     if (!preset) return;
     setGateFilters(new Set(preset.filter.gateTypes));

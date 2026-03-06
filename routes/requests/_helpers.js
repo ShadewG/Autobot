@@ -5,6 +5,7 @@ const logger = require('../../services/logger');
 const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
 const { resolveReviewState } = require('../../lib/resolve-review-state');
+const { normalizePortalUrl, isSupportedPortalUrl } = require('../../utils/portal-utils');
 
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
@@ -218,6 +219,137 @@ function safeJsonParse(value) {
     } catch (_) {
         return null;
     }
+}
+
+function normalizeAgencyNameKey(agencyName = '') {
+    return String(agencyName || '')
+        .toLowerCase()
+        .replace(/,\s*[a-z]{2}$/i, '')
+        .replace(/,\s*(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|district of columbia|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming)$/i, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeEmailKey(email = '') {
+    const value = String(email || '').trim().toLowerCase().replace(/^mailto:/, '');
+    return value || null;
+}
+
+function normalizePortalKey(portalUrl = '') {
+    const normalized = normalizePortalUrl(portalUrl);
+    return normalized && isSupportedPortalUrl(normalized) ? normalized.toLowerCase() : null;
+}
+
+function dedupeCaseAgencies(caseAgencies = []) {
+    const deduped = new Map();
+
+    for (const agency of caseAgencies) {
+        const nameKey = normalizeAgencyNameKey(agency?.agency_name);
+        const emailKey = normalizeEmailKey(agency?.agency_email);
+        const portalKey = normalizePortalKey(agency?.portal_url);
+        const dedupeKey =
+            [nameKey, emailKey, portalKey].filter(Boolean).join('|') ||
+            `case-agency-${agency?.id ?? deduped.size + 1}`;
+
+        const existing = deduped.get(dedupeKey);
+        if (!existing) {
+            deduped.set(dedupeKey, {
+                ...agency,
+                agency_email: emailKey ? String(agency.agency_email).trim() : agency.agency_email || null,
+                portal_url: portalKey ? normalizePortalUrl(agency.portal_url) : null,
+            });
+            continue;
+        }
+
+        const existingUpdatedAt = new Date(existing.updated_at || existing.created_at || 0).getTime();
+        const nextUpdatedAt = new Date(agency.updated_at || agency.created_at || 0).getTime();
+        const preferred = nextUpdatedAt > existingUpdatedAt ? agency : existing;
+        const fallback = preferred === agency ? existing : agency;
+
+        deduped.set(dedupeKey, {
+            ...preferred,
+            is_primary: Boolean(existing.is_primary || agency.is_primary),
+            is_active: existing.is_active !== false || agency.is_active !== false,
+            agency_email: preferred.agency_email || fallback.agency_email || null,
+            portal_url: normalizePortalUrl(preferred.portal_url || fallback.portal_url || null),
+            portal_provider: preferred.portal_provider || fallback.portal_provider || null,
+            notes: preferred.notes || fallback.notes || null,
+            contact_research_notes: preferred.contact_research_notes || fallback.contact_research_notes || null,
+        });
+    }
+
+    return Array.from(deduped.values());
+}
+
+function filterExistingAgencyCandidates(candidates = [], caseAgencies = [], requestContact = null) {
+    const existingNames = new Set();
+    const existingEmails = new Set();
+    const existingPortals = new Set();
+
+    for (const agency of caseAgencies) {
+        const nameKey = normalizeAgencyNameKey(agency?.agency_name);
+        const emailKey = normalizeEmailKey(agency?.agency_email);
+        const portalKey = normalizePortalKey(agency?.portal_url);
+        if (nameKey) existingNames.add(nameKey);
+        if (emailKey) existingEmails.add(emailKey);
+        if (portalKey) existingPortals.add(portalKey);
+    }
+
+    if (requestContact) {
+        const requestNameKey = normalizeAgencyNameKey(requestContact.agency_name);
+        const requestEmailKey = normalizeEmailKey(requestContact.agency_email);
+        const requestPortalKey = normalizePortalKey(requestContact.portal_url);
+        if (requestNameKey) existingNames.add(requestNameKey);
+        if (requestEmailKey) existingEmails.add(requestEmailKey);
+        if (requestPortalKey) existingPortals.add(requestPortalKey);
+    }
+
+    return candidates.filter((candidate) => {
+        const candidateNameKey = normalizeAgencyNameKey(candidate?.name);
+        const candidateEmailKey = normalizeEmailKey(candidate?.agency_email);
+        const candidatePortalKey = normalizePortalKey(candidate?.portal_url);
+
+        if (candidateEmailKey && existingEmails.has(candidateEmailKey)) return false;
+        if (candidatePortalKey && existingPortals.has(candidatePortalKey)) return false;
+        if (!candidateNameKey) return true;
+
+        if (!existingNames.has(candidateNameKey)) {
+            return true;
+        }
+
+        return Boolean(candidateEmailKey && !existingEmails.has(candidateEmailKey))
+            || Boolean(candidatePortalKey && !existingPortals.has(candidatePortalKey));
+    });
+}
+
+function extractLatestSupportedPortalUrl(activityRows = [], caseAgencies = [], ...rawValues) {
+    const candidates = [];
+
+    for (const row of activityRows) {
+        if (!row) continue;
+        const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : row.meta_jsonb;
+        if (metadata && typeof metadata === 'object' && metadata.portal_url) {
+            candidates.push(metadata.portal_url);
+        }
+    }
+
+    for (const agency of caseAgencies) {
+        if (agency?.portal_url) {
+            candidates.push(agency.portal_url);
+        }
+    }
+
+    candidates.push(...rawValues);
+
+    for (const rawValue of candidates) {
+        const normalized = normalizePortalUrl(rawValue);
+        if (normalized && isSupportedPortalUrl(normalized)) {
+            return normalized;
+        }
+    }
+
+    return null;
 }
 
 function extractAgencyCandidatesFromResearchNotes(contactResearchNotes) {
@@ -1136,7 +1268,8 @@ module.exports = {
     STATUS_MAP, CONSTRAINT_LABELS, CONSTRAINT_CANONICAL, EVENT_CATEGORY_MAP,
     // Functions
     generateOutcomeSummary, deriveCostStatus, buildDueInfo, parseScopeItems, safeJsonParse,
-    extractAgencyCandidatesFromResearchNotes, parseConstraints, parseFeeQuote, isAtRisk,
+    extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates,
+    extractLatestSupportedPortalUrl, parseConstraints, parseFeeQuote, isAtRisk,
     resolveControlState, detectControlMismatches, toRequestListItem, attachActivePortalTask,
     detectReviewReason, toRequestDetail, toThreadMessage, mapTimelineCategory, mapTimelineType,
     toTimelineEvent, dedupeTimelineEvents, businessDaysDiff, buildDeadlineMilestones

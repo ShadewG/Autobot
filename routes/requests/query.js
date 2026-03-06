@@ -1,7 +1,144 @@
 const express = require('express');
 const router = express.Router();
-const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff } = require('./_helpers');
+const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimelineEvent, dedupeTimelineEvents, buildDeadlineMilestones, attachActivePortalTask, parseScopeItems, parseConstraints, parseFeeQuote, safeJsonParse, extractAgencyCandidatesFromResearchNotes, dedupeCaseAgencies, filterExistingAgencyCandidates, extractLatestSupportedPortalUrl, resolveReviewState, resolveControlState, detectControlMismatches, STATUS_MAP, buildDueInfo, detectReviewReason, businessDaysDiff } = require('./_helpers');
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
+const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
+
+function normalizeAgencyEmailHint(email) {
+    const value = String(email || '').trim().toLowerCase().replace(/^mailto:/, '');
+    return value.includes('@') ? value : null;
+}
+
+function normalizeAgencyTenantHint(value) {
+    const lower = String(value || '').trim().toLowerCase();
+    if (!lower) return '';
+    const compact = lower.replace(/[^a-z0-9]/g, '');
+    const match = compact.match(/^([a-z]{4,})([a-z]{2})$/);
+    if (!match) return compact;
+    const stateCodes = new Set([
+        'al', 'ak', 'az', 'ar', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 'hi', 'id', 'il',
+        'in', 'ia', 'ks', 'ky', 'la', 'me', 'md', 'ma', 'mi', 'mn', 'ms', 'mo', 'mt',
+        'ne', 'nv', 'nh', 'nj', 'nm', 'ny', 'nc', 'nd', 'oh', 'ok', 'or', 'pa', 'ri',
+        'sc', 'sd', 'tn', 'tx', 'ut', 'vt', 'va', 'wa', 'wv', 'wi', 'wy', 'dc'
+    ]);
+    return stateCodes.has(match[2]) ? match[1] : compact;
+}
+
+async function findCanonicalAgency({ portalUrl, portalMailbox, agencyEmail, agencyName, stateHint }) {
+    const normalizedPortalUrl = normalizePortalUrl(portalUrl);
+    const normalizedAgencyEmail = normalizeAgencyEmailHint(agencyEmail);
+    const normalizedPortalMailbox = normalizeAgencyEmailHint(portalMailbox);
+    const portalHost = normalizedPortalUrl ? new URL(normalizedPortalUrl).hostname.toLowerCase() : null;
+    const portalTenantHint = normalizeAgencyTenantHint(portalHost ? portalHost.split('.')[0] : '');
+    const mailboxTenantHint = normalizeAgencyTenantHint(normalizedPortalMailbox ? normalizedPortalMailbox.split('@')[0] : '');
+    const normalizedAgencyName = String(agencyName || '').trim();
+    const normalizedStateHint = stateHint && stateHint !== '{}' ? String(stateHint).trim() : null;
+
+    const candidateQuery = await db.query(
+        `SELECT
+            a.id,
+            a.name,
+            a.state,
+            a.email_main,
+            a.email_foia,
+            a.portal_url,
+            a.portal_url_alt,
+            a.portal_provider,
+            (
+                CASE
+                    WHEN $1::text IS NOT NULL AND (
+                        LOWER(COALESCE(a.portal_url, '')) = LOWER($1)
+                        OR LOWER(COALESCE(a.portal_url_alt, '')) = LOWER($1)
+                    ) THEN 20 ELSE 0
+                END
+                + CASE
+                    WHEN $2::text IS NOT NULL AND (
+                        LOWER(COALESCE(a.email_main, '')) = LOWER($2)
+                        OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) = LOWER($2)
+                    ) THEN 15 ELSE 0
+                END
+                + CASE
+                    WHEN $3::text IS NOT NULL AND (
+                        LOWER(COALESCE(a.email_main, '')) = LOWER($3)
+                        OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) = LOWER($3)
+                    ) THEN 12 ELSE 0
+                END
+                + CASE
+                    WHEN $4::text <> '' AND (
+                        LOWER(a.name) LIKE '%' || $4 || '%'
+                        OR LOWER(COALESCE(a.portal_url, '')) LIKE '%' || $4 || '%'
+                        OR LOWER(COALESCE(a.portal_url_alt, '')) LIKE '%' || $4 || '%'
+                        OR LOWER(COALESCE(a.email_main, '')) LIKE '%' || $4 || '%'
+                        OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) LIKE '%' || $4 || '%'
+                    ) THEN 8 ELSE 0
+                END
+                + CASE
+                    WHEN $5::text <> '' AND (
+                        LOWER(a.name) LIKE '%' || $5 || '%'
+                        OR LOWER(COALESCE(a.portal_url, '')) LIKE '%' || $5 || '%'
+                        OR LOWER(COALESCE(a.portal_url_alt, '')) LIKE '%' || $5 || '%'
+                        OR LOWER(COALESCE(a.email_main, '')) LIKE '%' || $5 || '%'
+                        OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) LIKE '%' || $5 || '%'
+                    ) THEN 7 ELSE 0
+                END
+                + CASE
+                    WHEN $6::text <> '' AND LOWER(a.name) = LOWER($6) THEN 6 ELSE 0
+                END
+                + CASE
+                    WHEN $7::text IS NOT NULL AND a.state = $7 THEN 2 ELSE 0
+                END
+            ) AS score,
+            (
+                CASE WHEN a.email_main IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN a.email_foia IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN a.portal_url IS NOT NULL THEN 1 ELSE 0 END
+                + CASE WHEN a.state IS NOT NULL AND a.state <> '{}' THEN 1 ELSE 0 END
+            ) AS completeness
+         FROM agencies a
+         WHERE
+            ($1::text IS NOT NULL AND (
+                LOWER(COALESCE(a.portal_url, '')) = LOWER($1)
+                OR LOWER(COALESCE(a.portal_url_alt, '')) = LOWER($1)
+            ))
+            OR ($2::text IS NOT NULL AND (
+                LOWER(COALESCE(a.email_main, '')) = LOWER($2)
+                OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) = LOWER($2)
+            ))
+            OR ($3::text IS NOT NULL AND (
+                LOWER(COALESCE(a.email_main, '')) = LOWER($3)
+                OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) = LOWER($3)
+            ))
+            OR ($4::text <> '' AND (
+                LOWER(a.name) LIKE '%' || $4 || '%'
+                OR LOWER(COALESCE(a.portal_url, '')) LIKE '%' || $4 || '%'
+                OR LOWER(COALESCE(a.portal_url_alt, '')) LIKE '%' || $4 || '%'
+                OR LOWER(COALESCE(a.email_main, '')) LIKE '%' || $4 || '%'
+                OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) LIKE '%' || $4 || '%'
+            ))
+            OR ($5::text <> '' AND (
+                LOWER(a.name) LIKE '%' || $5 || '%'
+                OR LOWER(COALESCE(a.portal_url, '')) LIKE '%' || $5 || '%'
+                OR LOWER(COALESCE(a.portal_url_alt, '')) LIKE '%' || $5 || '%'
+                OR LOWER(COALESCE(a.email_main, '')) LIKE '%' || $5 || '%'
+                OR LOWER(REPLACE(COALESCE(a.email_foia, ''), 'mailto:', '')) LIKE '%' || $5 || '%'
+            ))
+            OR ($6::text <> '' AND LOWER(a.name) = LOWER($6))
+         ORDER BY score DESC, completeness DESC, a.id DESC
+         LIMIT 5`,
+        [
+            normalizedPortalUrl,
+            normalizedAgencyEmail,
+            normalizedPortalMailbox,
+            portalTenantHint,
+            mailboxTenantHint,
+            normalizedAgencyName,
+            normalizedStateHint,
+        ]
+    );
+
+    const best = candidateQuery.rows[0];
+    return best && Number(best.score || 0) >= 8 ? best : null;
+}
 
 /**
  * GET /api/requests
@@ -219,7 +356,7 @@ router.get('/:id/workspace', async (req, res) => {
 
         // Fetch case data
         const rawCaseData = await db.getCaseById(requestId);
-        const caseData = await attachActivePortalTask(rawCaseData);
+        let caseData = await attachActivePortalTask(rawCaseData);
         if (!caseData) {
             return res.status(404).json({
                 success: false,
@@ -302,7 +439,8 @@ router.get('/:id/workspace', async (req, res) => {
              LIMIT 50`,
             [requestId]
         );
-        const timelineEvents = dedupeTimelineEvents(activityResult.rows.map(a => toTimelineEvent(a, analysisMap)));
+        const activityRows = activityResult.rows || [];
+        const timelineEvents = dedupeTimelineEvents(activityRows.map(a => toTimelineEvent(a, analysisMap)));
 
         // Build next action proposal from latest pending reply
         let nextActionProposal = null;
@@ -345,10 +483,40 @@ router.get('/:id/workspace', async (req, res) => {
         const feeQuote = parseFeeQuote(caseData);
         const constraints = parseConstraints(caseData);
 
+        const caseAgencies = await db.getCaseAgencies(requestId, false);
+        const recoveredPortalUrl = extractLatestSupportedPortalUrl(activityRows, caseAgencies, caseData.portal_url);
+        if (recoveredPortalUrl && recoveredPortalUrl !== caseData.portal_url) {
+            caseData = {
+                ...caseData,
+                portal_url: recoveredPortalUrl,
+                portal_provider: caseData.portal_provider || detectPortalProviderByUrl(recoveredPortalUrl)?.name || null,
+            };
+        } else if (!normalizePortalUrl(caseData.portal_url) && caseData.portal_url) {
+            caseData = {
+                ...caseData,
+                portal_url: null,
+            };
+        }
+
+        const latestInboundPortalMessage = [...threadMessages]
+            .reverse()
+            .find((message) =>
+                message.direction === 'INBOUND' &&
+                /@(govqa\.us|custhelp\.com|mycusthelp\.com|mycusthelp\.net|nextrequest\.com|request\.justfoia\.com|civicplus\.com)$/i.test(String(message.from_email || '').trim())
+            );
+
+        const canonicalAgency = await findCanonicalAgency({
+            portalUrl: caseData.portal_url,
+            portalMailbox: latestInboundPortalMessage?.from_email || latestThread?.agency_email || null,
+            agencyEmail: caseData.agency_email,
+            agencyName: caseData.agency_name,
+            stateHint: caseData.state,
+        });
+
         // Resolve canonical agency id for deep-linking to /agencies/detail.
         // Never use case id as an agency id.
-        let resolvedAgencyId = caseData.agency_id || null;
-        let resolvedAgencyName = null;
+        let resolvedAgencyId = canonicalAgency?.id || caseData.agency_id || null;
+        let resolvedAgencyName = canonicalAgency?.name || null;
         if (!resolvedAgencyId && caseData.agency_name) {
             const agencyLookup = await db.query(
                 `SELECT id
@@ -395,7 +563,7 @@ router.get('/:id/workspace', async (req, res) => {
                  LIMIT 1`,
                 [resolvedAgencyId]
             );
-            resolvedAgencyName = canonicalAgency.rows[0]?.name || null;
+            resolvedAgencyName = resolvedAgencyName || canonicalAgency.rows[0]?.name || null;
         }
 
         const agencySummary = {
@@ -417,8 +585,39 @@ router.get('/:id/workspace', async (req, res) => {
             }
         };
 
-        const caseAgencies = await db.getCaseAgencies(requestId, false);
-        let sortedCaseAgencies = [...caseAgencies].sort((a, b) => {
+        let sortedCaseAgencies = dedupeCaseAgencies(caseAgencies.map((agency) => ({
+            ...agency,
+            portal_url: normalizePortalUrl(agency.portal_url) || null,
+        }))).map((agency) => {
+            const isBackfilledAgency =
+                agency.added_source === 'case_row_backfill' ||
+                agency.added_source === 'case_row_fallback';
+            if (!canonicalAgency || !isBackfilledAgency) {
+                return agency;
+            }
+
+            const canonicalPortalUrl = normalizePortalUrl(
+                agency.portal_url ||
+                canonicalAgency.portal_url ||
+                canonicalAgency.portal_url_alt ||
+                caseData.portal_url
+            );
+            const canonicalEmail =
+                normalizeAgencyEmailHint(agency.agency_email) ||
+                normalizeAgencyEmailHint(caseData.agency_email) ||
+                normalizeAgencyEmailHint(canonicalAgency.email_foia) ||
+                normalizeAgencyEmailHint(canonicalAgency.email_main) ||
+                null;
+
+            return {
+                ...agency,
+                agency_id: canonicalAgency.id,
+                agency_name: canonicalAgency.name,
+                agency_email: canonicalEmail,
+                portal_url: canonicalPortalUrl,
+                portal_provider: agency.portal_provider || canonicalAgency.portal_provider || detectPortalProviderByUrl(canonicalPortalUrl)?.name || null,
+            };
+        }).sort((a, b) => {
             if (a.is_primary !== b.is_primary) return a.is_primary ? -1 : 1;
             const aStatus = String(a.status || 'pending').toLowerCase();
             const bStatus = String(b.status || 'pending').toLowerCase();
@@ -462,7 +661,15 @@ router.get('/:id/workspace', async (req, res) => {
                 }];
             }
         }
-        const agencyCandidates = extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes);
+        const agencyCandidates = filterExistingAgencyCandidates(
+            extractAgencyCandidatesFromResearchNotes(caseData.contact_research_notes),
+            sortedCaseAgencies,
+            {
+                agency_name: resolvedAgencyName || caseData.agency_name,
+                agency_email: caseData.agency_email,
+                portal_url: caseData.portal_url,
+            }
+        );
 
         // Build state deadline info (static data - would come from state_deadlines table)
         const STATE_DEADLINES = {
