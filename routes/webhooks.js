@@ -8,9 +8,6 @@ const { analysisQueue, portalQueue } = require('../queues/email-queue');
 const { notify } = require('../services/event-bus');
 const { transitionCaseRuntime } = require('../services/case-runtime');
 
-// In-memory guard: track page IDs currently being imported to prevent concurrent duplicates
-const _importingPages = new Set();
-
 /**
  * Detect verification code emails and forward to Skyvern TOTP API
  * No Zapier needed - we handle it directly in our inbound email webhook
@@ -581,14 +578,14 @@ router.post('/notion', express.json(), async (req, res) => {
         const notionService = require('../services/notion-service');
 
         if (!existing) {
-            // Concurrent import guard — skip if already importing this page
-            if (_importingPages.has(pageId)) {
+            const importLockKey = `notion-webhook-import:${strippedId}`;
+            const releaseImportLock = await db.acquireAdvisoryLock(importLockKey);
+            if (!releaseImportLock) {
                 console.log(`[notion-webhook] Import already in progress for ${pageId}, skipping`);
                 return res.status(200).json({ success: true, action: 'import_already_in_progress', page_id: pageId });
             }
 
             // Fire-and-forget: respond immediately, import in background
-            _importingPages.add(pageId);
             notionService.processSinglePage(strippedId)
                 .then(newCase => {
                     if (newCase && newCase.id) {
@@ -608,7 +605,9 @@ router.post('/notion', express.json(), async (req, res) => {
                     }).catch(() => {});
                 })
                 .finally(() => {
-                    _importingPages.delete(pageId);
+                    releaseImportLock().catch((unlockErr) => {
+                        console.warn(`[notion-webhook] Failed to release advisory lock for ${pageId}:`, unlockErr.message);
+                    });
                 });
 
             return res.status(200).json({ success: true, action: 'import_queued', page_id: pageId

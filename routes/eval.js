@@ -10,7 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { tasks } = require('@trigger.dev/sdk/v3');
+const { tasks } = require('@trigger.dev/sdk');
 
 const KNOWN_ACTION_TYPES = new Set([
     'SEND_FOLLOWUP', 'SEND_REBUTTAL', 'SEND_CLARIFICATION', 'SEND_APPEAL',

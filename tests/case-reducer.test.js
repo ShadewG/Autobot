@@ -95,6 +95,7 @@ function testCaseSent() {
   assertEq(m.cases.send_date, '2025-01-15T12:00:00Z', 'send_date set');
   assertEq(m.cases.requires_human, false, 'requires_human cleared');
   assertEq(m.cases.pause_reason, null, 'pause_reason cleared');
+  assertEq(m.portal_tasks_cancel_active, true, 'active portal tasks cancelled');
   assert(m.proposals_dismiss_all, 'active proposals dismissed');
 
   // Without explicit sendDate
@@ -238,7 +239,7 @@ function testCaseResponded() {
   assertEq(m.cases.requires_human, false, 'requires_human cleared');
   assertEq(m.cases.last_response_date, '2025-02-01T10:00:00Z', 'last_response_date set');
   assertEq(m.cases.substatus, 'Agency replied with records', 'substatus set');
-  assert(m.proposals_dismiss_all, 'proposals dismissed for responded');
+  assert(!m.proposals_dismiss_all, 'proposals are not dismissed for responded');
 }
 
 function testCaseCompleted() {

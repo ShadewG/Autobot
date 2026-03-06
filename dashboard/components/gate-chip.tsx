@@ -124,6 +124,18 @@ const GATE_CONFIG: Record<PauseReason, GateConfig> = {
     bgColor: "bg-orange-500/15",
     textColor: "text-orange-300",
   },
+  RESEARCH_HANDOFF: {
+    label: "Research Handoff",
+    icon: <Phone className="h-3.5 w-3.5" />,
+    bgColor: "bg-yellow-500/15",
+    textColor: "text-yellow-300",
+  },
+  RESEARCH_COMPLETE_EXISTING_CHANNELS: {
+    label: "Research Complete",
+    icon: <Mail className="h-3.5 w-3.5" />,
+    bgColor: "bg-sky-500/15",
+    textColor: "text-sky-300",
+  },
   UNSPECIFIED: {
     label: "Needs Review",
     icon: <HelpCircle className="h-3.5 w-3.5" />,
@@ -175,5 +187,7 @@ export const GATE_TYPE_LABELS: Record<PauseReason, string> = {
   agent_run_failed: "Agent Error",
   stuck_portal_task: "Portal Stuck",
   portal_stuck: "Portal Stuck",
+  RESEARCH_HANDOFF: "Research Handoff",
+  RESEARCH_COMPLETE_EXISTING_CHANNELS: "Research Complete",
   UNSPECIFIED: "Needs Review",
 };

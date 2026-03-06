@@ -1,8 +1,11 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -21,6 +24,10 @@ import {
   Clock,
   Globe,
   Shield,
+  Edit,
+  Save,
+  X,
+  Loader2,
 } from "lucide-react";
 import type {
   RequestDetail,
@@ -29,12 +36,18 @@ import type {
   StateDeadline,
   ScopeItem,
   ThreadMessage,
+  CaseAgency,
 } from "@/lib/types";
+import { requestsAPI } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
+import { toast } from "sonner";
 
 interface CaseInfoTabProps {
+  caseId: string | number;
   request: RequestDetail;
   agencySummary: AgencySummary;
+  caseAgencies?: CaseAgency[];
+  onContactsUpdated?: () => void | Promise<unknown>;
   deadlineMilestones?: DeadlineMilestone[];
   stateDeadline?: StateDeadline;
   threadMessages?: ThreadMessage[];
@@ -68,7 +81,78 @@ function feeStatusBadge(status: string) {
   return <Badge variant={variant}>{status}</Badge>;
 }
 
-export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateDeadline, threadMessages = [] }: CaseInfoTabProps) {
+export function CaseInfoTab({
+  caseId,
+  request,
+  agencySummary,
+  caseAgencies = [],
+  onContactsUpdated,
+  deadlineMilestones,
+  stateDeadline,
+  threadMessages = [],
+}: CaseInfoTabProps) {
+  const primaryCaseAgency = useMemo(
+    () => caseAgencies.find((ca) => ca.is_primary) || null,
+    [caseAgencies]
+  );
+  const primaryAgencyId = primaryCaseAgency && Number(primaryCaseAgency.id) > 0 ? Number(primaryCaseAgency.id) : null;
+
+  const [isEditingDelivery, setIsEditingDelivery] = useState(false);
+  const [isSavingDelivery, setIsSavingDelivery] = useState(false);
+  const [editAgencyName, setEditAgencyName] = useState(request.agency_name || "");
+  const [editAgencyEmail, setEditAgencyEmail] = useState(request.agency_email || "");
+  const [editPortalUrl, setEditPortalUrl] = useState(request.portal_url || "");
+  const [editPortalProvider, setEditPortalProvider] = useState(request.portal_provider || "");
+
+  useEffect(() => {
+    setEditAgencyName(request.agency_name || "");
+    setEditAgencyEmail(request.agency_email || "");
+    setEditPortalUrl(request.portal_url || "");
+    setEditPortalProvider(request.portal_provider || "");
+  }, [request.agency_name, request.agency_email, request.portal_url, request.portal_provider]);
+
+  const handleCancelDeliveryEdit = () => {
+    setEditAgencyName(request.agency_name || "");
+    setEditAgencyEmail(request.agency_email || "");
+    setEditPortalUrl(request.portal_url || "");
+    setEditPortalProvider(request.portal_provider || "");
+    setIsEditingDelivery(false);
+  };
+
+  const handleSaveDelivery = async () => {
+    setIsSavingDelivery(true);
+    try {
+      const payload = {
+        agency_name: editAgencyName.trim() || null,
+        agency_email: editAgencyEmail.trim() || null,
+        portal_url: editPortalUrl.trim() || null,
+        portal_provider: editPortalProvider.trim() || null,
+      };
+
+      if (primaryAgencyId) {
+        const res = await fetch(`/api/cases/${caseId}/agencies/${primaryAgencyId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || "Failed to update agency contact info");
+        }
+      } else {
+        await requestsAPI.update(String(caseId), payload);
+      }
+
+      await onContactsUpdated?.();
+      setIsEditingDelivery(false);
+      toast.success("Agency contact info updated");
+    } catch (error: any) {
+      toast.error(error?.message || "Failed to update agency contact info");
+    } finally {
+      setIsSavingDelivery(false);
+    }
+  };
+
   const attachmentRows = threadMessages.flatMap((message) =>
     (message.attachments || []).map((att) => ({
       id: att.id,
@@ -205,12 +289,55 @@ export function CaseInfoTab({ request, agencySummary, deadlineMilestones, stateD
       {/* Section C: Delivery & Portal */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Globe className="h-4 w-4" />
-            Delivery & Portal
-          </CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Globe className="h-4 w-4" />
+              Delivery & Portal
+            </CardTitle>
+            {!isEditingDelivery ? (
+              <Button size="sm" variant="outline" onClick={() => setIsEditingDelivery(true)}>
+                <Edit className="h-3.5 w-3.5 mr-1.5" />
+                Edit
+              </Button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={handleCancelDeliveryEdit} disabled={isSavingDelivery}>
+                  <X className="h-3.5 w-3.5 mr-1.5" />
+                  Cancel
+                </Button>
+                <Button size="sm" onClick={handleSaveDelivery} disabled={isSavingDelivery}>
+                  {isSavingDelivery ? (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  ) : (
+                    <Save className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Save
+                </Button>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-3">
+          {isEditingDelivery && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded border bg-muted/20">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Agency Name</p>
+                <Input value={editAgencyName} onChange={(e) => setEditAgencyName(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Agency Email</p>
+                <Input value={editAgencyEmail} onChange={(e) => setEditAgencyEmail(e.target.value)} placeholder="records@agency.gov" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Portal URL</p>
+                <Input value={editPortalUrl} onChange={(e) => setEditPortalUrl(e.target.value)} placeholder="https://..." />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Portal Provider</p>
+                <Input value={editPortalProvider} onChange={(e) => setEditPortalProvider(e.target.value)} placeholder="GovQA / NextRequest / etc." />
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             {request.agency_email && (
               <div>

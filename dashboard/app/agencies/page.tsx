@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/table";
 import { fetcher } from "@/lib/api";
 import type { AgenciesListResponse } from "@/lib/types";
-import { formatRelativeTime } from "@/lib/utils";
+import { formatRelativeTime, normalizeStateCode, stripTrailingStateFromAgencyName } from "@/lib/utils";
 import { Search, Loader2, Building, Mail, Globe } from "lucide-react";
 
 export default function AgenciesPage() {
@@ -36,7 +36,9 @@ export default function AgenciesPage() {
     const query = searchQuery.toLowerCase();
     return agencies.agencies.filter(
       (a) =>
+        stripTrailingStateFromAgencyName(a.name || "", a.state).toLowerCase().includes(query) ||
         a.name?.toLowerCase().includes(query) ||
+        normalizeStateCode(a.state)?.toLowerCase().includes(query) ||
         a.state?.toLowerCase().includes(query)
     );
   };
@@ -146,10 +148,12 @@ export default function AgenciesPage() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Building className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{agency.name}</span>
+                          <span className="font-medium">
+                            {stripTrailingStateFromAgencyName(agency.name, agency.state)}
+                          </span>
                         </div>
                       </TableCell>
-                      <TableCell>{agency.state || '—'}</TableCell>
+                      <TableCell>{normalizeStateCode(agency.state) || '—'}</TableCell>
                       <TableCell>
                         <Badge
                           variant="outline"
@@ -172,7 +176,7 @@ export default function AgenciesPage() {
                         </span>
                       </TableCell>
                       <TableCell>
-                        {agency.avg_response_days !== null
+                        {agency.avg_response_days !== null && agency.avg_response_days >= 0
                           ? `${agency.avg_response_days}d`
                           : "—"}
                       </TableCell>

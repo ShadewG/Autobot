@@ -152,6 +152,8 @@ export const requestsAPI = {
       requires_human?: boolean;
       pause_reason?: string | null;
       next_due_at?: string;
+      agency_name?: string | null;
+      agency_email?: string | null;
       portal_url?: string | null;
       portal_provider?: string | null;
     }

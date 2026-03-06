@@ -19,8 +19,7 @@ import { WhyHereChip } from "./why-here-chip";
 import { HealthIndicator } from "./health-indicator";
 import type { RequestListItem } from "@/lib/types";
 import type { TableVariant } from "./request-table";
-import { formatRelativeTime, truncate, cn, isUnknownAgency } from "@/lib/utils";
-import { requestsAPI } from "@/lib/api";
+import { formatRelativeTime, truncate, cn, isUnknownAgency, formatAgencyDisplay } from "@/lib/utils";
 import {
   Eye,
   ArrowRight,
@@ -40,6 +39,7 @@ import {
   Wrench,
   Search as SearchIcon,
   ExternalLink,
+  Loader2,
 } from "lucide-react";
 
 interface RequestRowProps {
@@ -51,6 +51,7 @@ interface RequestRowProps {
   onSnooze?: (id: string) => void;
   onRepair?: (id: string) => void;
   onFollowUp?: (id: string) => void;
+  onResearchAgency?: (id: string) => Promise<void>;
   onTakeOver?: (id: string) => void;
   onGuideAI?: (id: string) => void;
   onCancelRun?: (id: string) => void;
@@ -145,6 +146,7 @@ export function RequestRow({
   onSnooze,
   onRepair,
   onFollowUp,
+  onResearchAgency,
   onTakeOver,
   onGuideAI,
   onCancelRun,
@@ -153,6 +155,7 @@ export function RequestRow({
 }: RequestRowProps) {
   const router = useRouter();
   const [showDetails, setShowDetails] = useState(false);
+  const [isResearchingAgency, setIsResearchingAgency] = useState(false);
   const isNeedsDecision = variant === "needs_decision";
   const isBotWorking = variant === "bot_working";
   const isWaiting = variant === "waiting";
@@ -163,12 +166,20 @@ export function RequestRow({
     router.push(`/requests/detail-v2?id=${request.id}`);
   };
 
+  const handleResearchAgency = async () => {
+    if (!onResearchAgency || isResearchingAgency) return;
+    setIsResearchingAgency(true);
+    try {
+      await onResearchAgency(request.id);
+    } finally {
+      setIsResearchingAgency(false);
+    }
+  };
+
   const dueInfo = formatDueWithSeverity(request);
 
   const agencyDisplay =
-    request.state && request.state !== "—"
-      ? `${request.agency_name}, ${request.state}`
-      : request.agency_name;
+    formatAgencyDisplay(request.agency_name, request.state);
 
   const unknownAgency = isUnknownAgency(request);
 
@@ -444,12 +455,15 @@ export function RequestRow({
                   </DropdownMenuItem>
                   {unknownAgency && (
                     <DropdownMenuItem
-                      onClick={() => {
-                        requestsAPI.invokeAgent(request.id, "research_agency");
-                      }}
+                      onClick={handleResearchAgency}
+                      disabled={isResearchingAgency}
                     >
-                      <SearchIcon className="h-3.5 w-3.5 mr-2" />
-                      Research agency
+                      {isResearchingAgency ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                      ) : (
+                        <SearchIcon className="h-3.5 w-3.5 mr-2" />
+                      )}
+                      {isResearchingAgency ? "Researching..." : "Research agency"}
                     </DropdownMenuItem>
                   )}
                 </DropdownMenuContent>

@@ -8,7 +8,7 @@
  */
 
 require('dotenv').config();
-const { tasks, runs } = require('@trigger.dev/sdk/v3');
+const { tasks, runs } = require('@trigger.dev/sdk');
 const { Pool } = require('pg');
 
 const DB_URL = process.env.DATABASE_URL;

@@ -176,20 +176,85 @@ function parseStateFromAgencyName(agencyName: string): string | null {
   return null;
 }
 
-// Check if agency name looks unresolved/generic
-export function isUnknownAgency(request: { state: string | null | undefined; agency_name: string }): boolean {
-  // If state is present, trust it
-  let hasState = !!(request.state && request.state !== '—' && request.state.trim() !== '');
+export function normalizeStateCode(state: string | null | undefined): string | null {
+  if (!state || state === '—') return null;
+  const trimmed = state.trim();
+  if (!trimmed) return null;
 
-  // Fallback: try to parse state from agency name suffix (e.g. "Lawrence County Sheriff's Office, Alabama")
-  if (!hasState) {
-    hasState = parseStateFromAgencyName(request.agency_name) !== null;
+  const upper = trimmed.toUpperCase();
+  if (/^[A-Z]{2}$/.test(upper) && VALID_STATE_CODES.has(upper)) return upper;
+
+  const mapped = US_STATES[trimmed.toLowerCase()];
+  if (mapped) return mapped;
+
+  return trimmed;
+}
+
+export function stripTrailingStateFromAgencyName(
+  agencyName: string,
+  state?: string | null
+): string {
+  let cleaned = agencyName.trim();
+  if (!cleaned) return cleaned;
+
+  const targetState = normalizeStateCode(state) ?? parseStateFromAgencyName(cleaned);
+  if (!targetState) return cleaned;
+
+  while (true) {
+    const match = cleaned.match(/^(.*?),\s*([^,]+)$/);
+    if (!match) break;
+    const suffixState = normalizeStateCode(match[2]);
+    if (suffixState !== targetState) break;
+    cleaned = match[1].trim();
   }
 
-  if (!hasState) return true;
+  return cleaned || agencyName.trim();
+}
 
-  const generic = /^(Police|Fire|City|County|Sheriff|School|Water|Transit)\s+(Department|District|Board|Authority)$/i;
-  return generic.test(request.agency_name.trim());
+export function formatAgencyDisplay(
+  agencyName: string,
+  state: string | null | undefined
+): string {
+  const normalizedState = normalizeStateCode(state) ?? parseStateFromAgencyName(agencyName);
+  const normalizedAgencyName = stripTrailingStateFromAgencyName(agencyName, normalizedState);
+
+  if (!normalizedState) return normalizedAgencyName;
+  return `${normalizedAgencyName}, ${normalizedState}`;
+}
+
+// Check if agency name looks unresolved/generic
+export function isUnknownAgency(request: { state: string | null | undefined; agency_name: string }): boolean {
+  const normalizedState = normalizeStateCode(request.state) ?? parseStateFromAgencyName(request.agency_name);
+  if (!normalizedState) return true;
+
+  const normalizedAgencyName = stripTrailingStateFromAgencyName(request.agency_name, normalizedState)
+    .toLowerCase()
+    .replace(/[^\w\s']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalizedAgencyName) return true;
+  if (/^[a-z]{2,4}$/.test(normalizedAgencyName)) return true;
+
+  const genericAgencyNames = new Set([
+    'police',
+    'police department',
+    'fire department',
+    "sheriff's office",
+    'sheriff office',
+    'records division',
+    'records department',
+    'communications',
+    'communications division',
+    'city department',
+    'county department',
+  ]);
+
+  if (genericAgencyNames.has(normalizedAgencyName)) return true;
+
+  return /^(police|fire|sheriff|city|county|school|water|transit|records|communications)\s+(department|district|board|authority|office|division|bureau)$/i.test(
+    normalizedAgencyName
+  );
 }
 
 // Risk flag humanization — maps raw SCREAMING_SNAKE flags to user-friendly text

@@ -9,6 +9,7 @@ import { useUserFilter } from "@/components/user-filter";
 import { requestsAPI, fetcher } from "@/lib/api";
 import type { RequestsListResponse, RequestListItem, PauseReason } from "@/lib/types";
 import { Search, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 // Pause reason priority for sorting (lower = higher priority)
 const PAUSE_PRIORITY: Record<string, number> = {
@@ -110,6 +111,18 @@ export default function RequestsPage() {
       mutate();
     } catch (err) {
       console.error("Failed to send follow-up:", err);
+    }
+  }, [mutate]);
+
+  const handleResearchAgency = useCallback(async (id: string) => {
+    try {
+      await requestsAPI.invokeAgent(id, "research_agency");
+      await mutate();
+      toast.success("Agency research started");
+    } catch (err) {
+      console.error("Failed to research agency:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to start agency research");
+      throw err;
     }
   }, [mutate]);
 
@@ -250,10 +263,10 @@ export default function RequestsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <h1 className="text-2xl font-bold">Requests</h1>
-        <div className="flex items-center gap-3">
-          <div className="relative w-64">
+        <div className="flex w-full flex-col gap-3 sm:flex-row md:w-auto">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search requests..."
@@ -283,6 +296,7 @@ export default function RequestsPage() {
           onSnooze={handleSnooze}
           onRepair={handleRepair}
           onFollowUp={handleFollowUp}
+          onResearchAgency={handleResearchAgency}
           onTakeOver={handleTakeOver}
           onGuideAI={handleGuideAI}
           onCancelRun={handleCancelRun}

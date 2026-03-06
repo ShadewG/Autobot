@@ -759,7 +759,7 @@ function MonitorPageContent() {
     selectedCaseId ? `/api/monitor/cases/${selectedCaseId}/audit?limit=5` : null
   );
 
-  // ── Inbound / Phone data (lazy: only fetch when tab is active) ──
+  // ── Inbound / Phone data (lazy: fetch phone queue on queue/calls tabs) ──
 
   const { data: inboundData, mutate: mutateInbound } = useSWR<InboundResponse>(
     activeTab === "inbound" ? appendUser("/api/monitor/inbound?limit=100") : null,
@@ -767,9 +767,24 @@ function MonitorPageContent() {
   );
 
   const { data: phoneData, mutate: mutatePhone } = useSWR<PhoneCallsResponse>(
-    activeTab === "calls" ? appendUser("/api/phone-calls?status=pending&limit=50") : null,
+    (activeTab === "calls" || activeTab === "queue")
+      ? appendUser("/api/phone-calls?limit=200")
+      : null,
     { refreshInterval: 30000 }
   );
+
+  const activePhoneQueueCaseIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const task of phoneData?.tasks || []) {
+      if ((task.status === "pending" || task.status === "claimed") && Number.isFinite(task.case_id)) {
+        ids.add(task.case_id);
+      }
+    }
+    return ids;
+  }, [phoneData?.tasks]);
+
+  const selectedCaseAlreadyInPhoneQueue =
+    selectedCaseId != null && activePhoneQueueCaseIds.has(selectedCaseId);
 
   // ── SSE ────────────────────────────────────
 
@@ -2136,20 +2151,30 @@ function MonitorPageContent() {
                 </>
               );
             })()}
-            {/* Add to phone queue — always available */}
-            <Button
-              variant="outline"
-              className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
-              onClick={() => handleAddToPhoneQueue(selectedItem.data.case_id, "clarification_needed")}
-              disabled={addingToPhoneQueue || isSubmitting}
-            >
-              {addingToPhoneQueue ? (
-                <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-              ) : (
+            {selectedCaseAlreadyInPhoneQueue ? (
+              <Button
+                variant="outline"
+                className="w-full text-amber-300/80 border-amber-700/40"
+                disabled
+              >
                 <Phone className="h-3 w-3 mr-1.5" />
-              )}
-              ADD TO PHONE QUEUE
-            </Button>
+                ALREADY IN PHONE QUEUE
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+                onClick={() => handleAddToPhoneQueue(selectedItem.data.case_id, "clarification_needed")}
+                disabled={addingToPhoneQueue || isSubmitting}
+              >
+                {addingToPhoneQueue ? (
+                  <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                ) : (
+                  <Phone className="h-3 w-3 mr-1.5" />
+                )}
+                ADD TO PHONE QUEUE
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -2469,19 +2494,30 @@ function MonitorPageContent() {
                         <Phone className="h-3 w-3 mr-1.5" />
                         MAKE PHONE CALL
                       </Button>
-                      <Button
-                        variant="outline"
-                        className="flex-1"
-                        onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "research_handoff")}
-                        disabled={addingToPhoneQueue || isSubmitting || !hasCallablePhone(selectedItem.data.phone_call_plan?.agency_phone)}
-                      >
-                        {addingToPhoneQueue ? (
-                          <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                        ) : (
+                      {selectedCaseAlreadyInPhoneQueue ? (
+                        <Button
+                          variant="outline"
+                          className="flex-1 text-amber-300/80 border-amber-700/40"
+                          disabled
+                        >
                           <Phone className="h-3 w-3 mr-1.5" />
-                        )}
-                        QUEUE PHONE CALL
-                      </Button>
+                          ALREADY IN PHONE QUEUE
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "research_handoff")}
+                          disabled={addingToPhoneQueue || isSubmitting || !hasCallablePhone(selectedItem.data.phone_call_plan?.agency_phone)}
+                        >
+                          {addingToPhoneQueue ? (
+                            <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                          ) : (
+                            <Phone className="h-3 w-3 mr-1.5" />
+                          )}
+                          QUEUE PHONE CALL
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2560,21 +2596,32 @@ function MonitorPageContent() {
                   </Link>
                 </div>
 
-                {/* Add to phone queue — always available (except dedicated phone category) */}
+                {/* Add to phone queue (except dedicated phone category) */}
                 {category !== "phone" && (
-                  <Button
-                    variant="outline"
-                    className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
-                    onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "clarification_needed")}
-                    disabled={addingToPhoneQueue || isSubmitting}
-                  >
-                    {addingToPhoneQueue ? (
-                      <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                    ) : (
+                  selectedCaseAlreadyInPhoneQueue ? (
+                    <Button
+                      variant="outline"
+                      className="w-full text-amber-300/80 border-amber-700/40"
+                      disabled
+                    >
                       <Phone className="h-3 w-3 mr-1.5" />
-                    )}
-                    ADD TO PHONE QUEUE
-                  </Button>
+                      ALREADY IN PHONE QUEUE
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      className="w-full text-amber-400 border-amber-700/50 hover:bg-amber-950/20"
+                      onClick={() => handleAddToPhoneQueue(selectedItem.data.id, "clarification_needed")}
+                      disabled={addingToPhoneQueue || isSubmitting}
+                    >
+                      {addingToPhoneQueue ? (
+                        <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                      ) : (
+                        <Phone className="h-3 w-3 mr-1.5" />
+                      )}
+                      ADD TO PHONE QUEUE
+                    </Button>
+                  )
                 )}
               </div>
             );

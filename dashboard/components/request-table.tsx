@@ -22,6 +22,7 @@ interface RequestTableProps {
   onSnooze?: (id: string) => void;
   onRepair?: (id: string) => void;
   onFollowUp?: (id: string) => void;
+  onResearchAgency?: (id: string) => Promise<void>;
   onTakeOver?: (id: string) => void;
   onGuideAI?: (id: string) => void;
   onCancelRun?: (id: string) => void;
@@ -40,6 +41,7 @@ export function RequestTable({
   onSnooze,
   onRepair,
   onFollowUp,
+  onResearchAgency,
   onTakeOver,
   onGuideAI,
   onCancelRun,
@@ -63,59 +65,62 @@ export function RequestTable({
   const allSelected = hasSelection && allIds.every((id) => selectedIds.has(id));
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          {hasSelection && (
-            <TableHead className="w-[40px]">
-              <Checkbox
-                checked={allSelected}
-                onCheckedChange={() => onToggleSelectAll?.(allIds)}
-                aria-label="Select all"
-              />
+    <div className="w-full overflow-x-auto">
+      <Table className="min-w-[900px]">
+        <TableHeader>
+          <TableRow>
+            {hasSelection && (
+              <TableHead className="w-[40px]">
+                <Checkbox
+                  checked={allSelected}
+                  onCheckedChange={() => onToggleSelectAll?.(allIds)}
+                  aria-label="Select all"
+                />
+              </TableHead>
+            )}
+            <TableHead className="w-[70px]">ID</TableHead>
+            <TableHead className="min-w-[220px]">Subject / Agency</TableHead>
+            {isCompleted ? (
+              <TableHead className="w-[130px]">Outcome</TableHead>
+            ) : isNeedsDecision ? (
+              <TableHead className="w-[130px]">Gate</TableHead>
+            ) : (
+              <TableHead className="w-[110px]">Stage</TableHead>
+            )}
+            {isCompleted ? (
+              <TableHead className="min-w-[200px]">Summary</TableHead>
+            ) : (
+              <TableHead className="w-[90px]">Inbound</TableHead>
+            )}
+            <TableHead className={isCompleted ? "w-[100px]" : "w-[130px]"}>
+              {isCompleted ? "Closed" : "Due"}
             </TableHead>
-          )}
-          <TableHead className="w-[70px]">ID</TableHead>
-          <TableHead className="min-w-[220px]">Subject / Agency</TableHead>
-          {isCompleted ? (
-            <TableHead className="w-[130px]">Outcome</TableHead>
-          ) : isNeedsDecision ? (
-            <TableHead className="w-[130px]">Gate</TableHead>
-          ) : (
-            <TableHead className="w-[110px]">Stage</TableHead>
-          )}
-          {isCompleted ? (
-            <TableHead className="min-w-[200px]">Summary</TableHead>
-          ) : (
-            <TableHead className="w-[90px]">Inbound</TableHead>
-          )}
-          <TableHead className={isCompleted ? "w-[100px]" : "w-[130px]"}>
-            {isCompleted ? "Closed" : "Due"}
-          </TableHead>
-          <TableHead className="w-[80px]">Cost</TableHead>
-          <TableHead className="w-[140px] text-right">Action</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {requests.map((request) => (
-          <RequestRow
-            key={request.id}
-            request={request}
-            variant={variant}
-            isAdmin={isAdmin}
-            onApprove={onApprove}
-            onAdjust={onAdjust}
-            onSnooze={onSnooze}
-            onRepair={onRepair}
-            onFollowUp={onFollowUp}
-            onTakeOver={onTakeOver}
-            onGuideAI={onGuideAI}
-            onCancelRun={onCancelRun}
-            isSelected={selectedIds?.has(request.id)}
-            onToggleSelect={onToggleSelect}
-          />
-        ))}
-      </TableBody>
-    </Table>
+            <TableHead className="w-[80px]">Cost</TableHead>
+            <TableHead className="w-[140px] text-right">Action</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {requests.map((request) => (
+            <RequestRow
+              key={request.id}
+              request={request}
+              variant={variant}
+              isAdmin={isAdmin}
+              onApprove={onApprove}
+              onAdjust={onAdjust}
+              onSnooze={onSnooze}
+              onRepair={onRepair}
+              onFollowUp={onFollowUp}
+              onResearchAgency={onResearchAgency}
+              onTakeOver={onTakeOver}
+              onGuideAI={onGuideAI}
+              onCancelRun={onCancelRun}
+              isSelected={selectedIds?.has(request.id)}
+              onToggleSelect={onToggleSelect}
+            />
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

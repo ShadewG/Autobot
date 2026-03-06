@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
@@ -22,6 +22,17 @@ interface NotionImportProps {
   onImported?: (caseId: number) => void;
 }
 
+interface BulkImportItemResult {
+  notionUrl: string;
+  success: boolean;
+  message: string;
+  caseId?: number;
+  caseName?: string;
+  autoSendStatus?: "pending" | "success" | "error";
+  autoSendMessage?: string;
+  autoSendError?: string;
+}
+
 export function NotionImport({ onImported }: NotionImportProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -29,6 +40,8 @@ export function NotionImport({ onImported }: NotionImportProps) {
   const [autoSend, setAutoSend] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
   const [isAutoSending, setIsAutoSending] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ total: number; processed: number } | null>(null);
+  const [bulkResults, setBulkResults] = useState<BulkImportItemResult[] | null>(null);
   const [result, setResult] = useState<{
     success: boolean;
     message: string;
@@ -39,63 +52,102 @@ export function NotionImport({ onImported }: NotionImportProps) {
     autoSendError?: string;
   } | null>(null);
 
+  const parseNotionInputs = (input: string): string[] => {
+    const parsed = input
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return Array.from(new Set(parsed));
+  };
+
+  const runSingleImport = async (url: string): Promise<BulkImportItemResult> => {
+    const response = await casesAPI.createFromNotion(url);
+    const item: BulkImportItemResult = {
+      notionUrl: url,
+      success: Boolean(response.success),
+      message: response.message || "Imported",
+      caseId: response.case_id,
+      caseName: (response as any).case?.case_name || (response.case_id ? `Case #${response.case_id}` : undefined),
+      autoSendStatus: autoSend ? "pending" : undefined,
+    };
+
+    if (response.success && response.case_id) {
+      onImported?.(response.case_id);
+      if (autoSend) {
+        try {
+          const runResponse = await casesAPI.runInitial(response.case_id, { autopilotMode: "AUTO" });
+          item.autoSendStatus = "success";
+          item.autoSendMessage = runResponse.message || "Initial request queued to send";
+        } catch (error: any) {
+          item.autoSendStatus = "error";
+          item.autoSendError = error?.message || "Failed to start initial send";
+        }
+      }
+    }
+
+    return item;
+  };
+
   const handleImport = async () => {
-    if (!notionUrl.trim()) return;
+    const inputs = parseNotionInputs(notionUrl);
+    if (inputs.length === 0) return;
 
     setIsImporting(true);
+    setIsAutoSending(false);
     setResult(null);
+    setBulkResults(null);
+    setBulkProgress(null);
 
     try {
-      const response = await casesAPI.createFromNotion(notionUrl.trim());
-
-      if (response.success) {
+      if (inputs.length === 1) {
+        const single = await runSingleImport(inputs[0]);
         setResult({
-          success: true,
-          message: response.message,
-          caseId: response.case_id,
-          caseName: (response as any).case?.case_name || `Case #${response.case_id}`,
-          autoSendStatus: autoSend ? "pending" : undefined,
+          success: single.success,
+          message: single.message,
+          caseId: single.caseId,
+          caseName: single.caseName,
+          autoSendStatus: single.autoSendStatus,
+          autoSendMessage: single.autoSendMessage,
+          autoSendError: single.autoSendError,
         });
-
-        onImported?.(response.case_id);
-
-        if (autoSend) {
-          setIsAutoSending(true);
-          try {
-            const runResponse = await casesAPI.runInitial(response.case_id, {
-              autopilotMode: "AUTO",
-            });
-
-            setResult((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    autoSendStatus: "success",
-                    autoSendMessage:
-                      runResponse.message || "Initial request queued to send",
-                  }
-                : prev
-            );
-          } catch (error: any) {
-            setResult((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    autoSendStatus: "error",
-                    autoSendError: error?.message || "Failed to start initial send",
-                  }
-                : prev
-            );
-          } finally {
-            setIsAutoSending(false);
-          }
-        }
-      } else {
-        setResult({
-          success: false,
-          message: (response as any).error || "Import failed",
-        });
+        return;
       }
+
+      const concurrency = 3;
+      const queue = [...inputs];
+      const collected: BulkImportItemResult[] = [];
+      let processed = 0;
+      setBulkProgress({ total: inputs.length, processed: 0 });
+      setIsAutoSending(autoSend);
+
+      const workers = Array.from({ length: Math.min(concurrency, queue.length) }).map(async () => {
+        while (queue.length > 0) {
+          const current = queue.shift();
+          if (!current) return;
+          try {
+            const item = await runSingleImport(current);
+            collected.push(item);
+          } catch (error: any) {
+            collected.push({
+              notionUrl: current,
+              success: false,
+              message: error?.message || "Import failed",
+            });
+          }
+          processed += 1;
+          setBulkProgress({ total: inputs.length, processed });
+        }
+      });
+
+      await Promise.all(workers);
+      const sorted = inputs.map((input) => collected.find((row) => row.notionUrl === input)).filter(Boolean) as BulkImportItemResult[];
+      setBulkResults(sorted);
+      const successCount = sorted.filter((row) => row.success).length;
+      const failedCount = sorted.length - successCount;
+      setResult({
+        success: failedCount === 0,
+        message: `Processed ${sorted.length} cases: ${successCount} succeeded, ${failedCount} failed.`,
+      });
     } catch (error: any) {
       setResult({
         success: false,
@@ -103,13 +155,17 @@ export function NotionImport({ onImported }: NotionImportProps) {
       });
     } finally {
       setIsImporting(false);
+      setIsAutoSending(false);
     }
   };
 
+  const firstSuccessfulBulkCaseId = bulkResults?.find((row) => row.caseId)?.caseId;
+
   const handleViewCase = () => {
-    if (result?.caseId) {
+    const caseId = result?.caseId || firstSuccessfulBulkCaseId;
+    if (caseId) {
       setOpen(false);
-      router.push(`/requests/detail-v2?id=${result.caseId}`);
+      router.push(`/requests/detail-v2?id=${caseId}`);
     }
   };
 
@@ -117,6 +173,8 @@ export function NotionImport({ onImported }: NotionImportProps) {
     setNotionUrl("");
     setAutoSend(true);
     setResult(null);
+    setBulkProgress(null);
+    setBulkResults(null);
   };
 
   return (
@@ -129,9 +187,9 @@ export function NotionImport({ onImported }: NotionImportProps) {
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Import Case from Notion</DialogTitle>
+          <DialogTitle>Import Case(s) from Notion</DialogTitle>
           <DialogDescription>
-            Paste a Notion page URL to import case details automatically.
+            Paste one or multiple Notion page URLs (one per line) to import in bulk safely.
           </DialogDescription>
         </DialogHeader>
 
@@ -157,10 +215,31 @@ export function NotionImport({ onImported }: NotionImportProps) {
                     {result.autoSendStatus === "error" && result.autoSendError && (
                       <p className="text-xs text-red-300 mt-1">{result.autoSendError}</p>
                     )}
+                    {bulkResults && bulkResults.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Bulk import complete.
+                      </p>
+                    )}
                   </div>
                 </div>
+                {bulkResults && bulkResults.length > 0 && (
+                  <div className="max-h-56 overflow-auto rounded border p-2 space-y-1">
+                    {bulkResults.map((row, idx) => (
+                      <div key={`${row.notionUrl}-${idx}`} className="text-xs">
+                        <span className={row.success ? "text-green-400" : "text-red-400"}>
+                          {row.success ? "✓" : "✗"}
+                        </span>{" "}
+                        <span className="truncate">{row.notionUrl}</span>
+                        {row.caseId ? <span className="text-muted-foreground"> · #{row.caseId}</span> : null}
+                        {row.autoSendStatus === "error" && row.autoSendError ? (
+                          <span className="text-red-300"> · send: {row.autoSendError}</span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="flex gap-2">
-                  <Button onClick={handleViewCase} className="flex-1 gap-1">
+                  <Button onClick={handleViewCase} className="flex-1 gap-1" disabled={!result.caseId && !firstSuccessfulBulkCaseId}>
                     <ExternalLink className="h-4 w-4" />
                     View Case
                   </Button>
@@ -189,28 +268,24 @@ export function NotionImport({ onImported }: NotionImportProps) {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium" htmlFor="notion-url">
-                  Notion Page URL
+                  Notion Page URL(s)
                 </label>
-                <Input
+                <Textarea
                   id="notion-url"
-                  placeholder="https://www.notion.so/workspace/Case-Name-abc123..."
+                  placeholder={"https://www.notion.so/workspace/Case-Name-abc123...\nhttps://www.notion.so/workspace/Another-Case-def456..."}
                   value={notionUrl}
                   onChange={(e) => setNotionUrl(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && notionUrl.trim()) {
-                      handleImport();
-                    }
-                  }}
+                  rows={6}
                 />
                 <p className="text-xs text-muted-foreground">
-                  The Notion integration must have access to this page.
+                  One URL per line. Bulk import runs with controlled concurrency to avoid queue spikes.
                 </p>
               </div>
               <div className="flex items-center justify-between rounded-lg border p-3">
                 <div>
                   <Label className="text-sm">Auto-send after import</Label>
                   <p className="text-xs text-muted-foreground">
-                    Imports, then immediately queues generation + send in AUTO mode.
+                    Imports, then queues generation + send in AUTO mode per case.
                   </p>
                 </div>
                 <Switch
@@ -219,6 +294,11 @@ export function NotionImport({ onImported }: NotionImportProps) {
                   onCheckedChange={(checked) => setAutoSend(!!checked)}
                 />
               </div>
+              {bulkProgress && (
+                <p className="text-xs text-muted-foreground">
+                  Processing {bulkProgress.processed}/{bulkProgress.total}...
+                </p>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>
@@ -234,7 +314,7 @@ export function NotionImport({ onImported }: NotionImportProps) {
                     Importing...
                   </>
                 ) : (
-                  "Import Case"
+                  "Import Case(s)"
                 )}
               </Button>
             </DialogFooter>

@@ -2834,18 +2834,24 @@ class DatabaseService {
                     `UPDATE case_agencies SET ${setClauses.join(', ')} WHERE id = $1`,
                     [existingRow.id, ...vals]
                 );
-                const refreshed = await this.query('SELECT * FROM case_agencies WHERE id = $1', [existingRow.id]);
-                const merged = refreshed.rows[0] || existingRow;
+            }
 
-                const isPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : existingRow.is_primary;
-                if (isPrimary) {
-                    await this.syncPrimaryAgencyToCase(caseId, merged);
-                }
-                return merged;
+            let effectiveRow = existingRow;
+            const refreshed = await this.query('SELECT * FROM case_agencies WHERE id = $1', [existingRow.id]);
+            effectiveRow = refreshed.rows[0] || existingRow;
+
+            const wantsPrimary = agencyData.is_primary === true;
+            if (wantsPrimary && !effectiveRow.is_primary) {
+                const switched = await this.switchPrimaryAgency(caseId, effectiveRow.id);
+                return switched || effectiveRow;
+            }
+
+            if (effectiveRow.is_primary && Object.keys(mergeUpdates).length > 0) {
+                await this.syncPrimaryAgencyToCase(caseId, effectiveRow);
             }
 
             // Nothing new to merge — return existing row as-is
-            return existingRow;
+            return effectiveRow;
         }
 
         // Check if this is the first agency for this case
@@ -3397,7 +3403,7 @@ class DatabaseService {
         const result = await this.query(`
             SELECT * FROM agent_runs
             WHERE case_id = $1
-              AND status IN ('created', 'queued', 'running', 'paused', 'waiting')
+              AND status IN ('created', 'queued', 'processing', 'running', 'paused', 'waiting')
             ORDER BY started_at DESC
             LIMIT 1
         `, [caseId]);

@@ -2611,8 +2611,11 @@ function RequestDetailContent() {
         {/* Case Info Tab */}
         <TabsContent value="case-info" className="mt-4">
           <CaseInfoTab
+            caseId={id!}
             request={request}
             agencySummary={agency_summary}
+            caseAgencies={case_agencies}
+            onContactsUpdated={() => mutate()}
             deadlineMilestones={deadline_milestones}
             stateDeadline={state_deadline}
             threadMessages={thread_messages}

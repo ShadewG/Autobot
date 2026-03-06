@@ -592,7 +592,7 @@ async function executePhase(run) {
                     threadId: run.artifacts.thread_id  // Per-run thread for isolation
                 };
 
-                const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+                const { tasks: triggerTasks } = require('@trigger.dev/sdk');
                 const taskId = run.artifacts.inbound_message_id ? 'process-inbound' : 'process-followup';
                 const taskPayload = run.artifacts.inbound_message_id
                     ? { caseId: run.case_id, messageId: run.artifacts.inbound_message_id, autopilotMode: 'on' }
@@ -652,7 +652,7 @@ async function executePhase(run) {
                 if (pendingProposal.rows.length > 0) {
                     const proposal = pendingProposal.rows[0];
                     if (proposal.waitpoint_token) {
-                        const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+                        const { wait: triggerWait } = require('@trigger.dev/sdk');
                         await triggerWait.completeToken(proposal.waitpoint_token, decision);
                         run.logs.push(`Completed waitpoint for proposal ${proposal.id}: ${decision.action}`);
                     }

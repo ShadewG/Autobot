@@ -47,6 +47,11 @@ function triggerRunUrl(triggerRunId: string): string {
   return `${TRIGGER_PROJECT_URL}/runs/${triggerRunId}`;
 }
 
+function stripHtmlTags(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.replace(/<[^>]+>/g, "").trim();
+}
+
 const STATUS_CONFIG: Record<AgentRun['status'], {
   icon: React.ComponentType<{ className?: string }>;
   color: string;
@@ -198,7 +203,7 @@ export default function RunsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Bot className="h-6 w-6" />
@@ -208,8 +213,8 @@ export default function RunsPage() {
             Monitor agent executions, errors, and debug issues
           </p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="relative w-64">
+        <div className="flex w-full flex-col gap-3 sm:flex-row md:w-auto">
+          <div className="relative w-full sm:w-64">
             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search runs..."
@@ -238,7 +243,7 @@ export default function RunsPage() {
             {recentOnly ? "Show all time" : "Show last 7 days"}
           </button>
         </div>
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
         {(['running', 'completed', 'failed', 'gated', 'cancelled'] as const).map((status) => {
           const count = statsRunsList.filter((r) => r.status === status).length;
           const config = STATUS_CONFIG[status];
@@ -277,7 +282,8 @@ export default function RunsPage() {
               No agent runs found
             </div>
           ) : (
-            <Table>
+            <div className="w-full overflow-x-auto">
+            <Table className="min-w-[960px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Status</TableHead>
@@ -322,7 +328,7 @@ export default function RunsPage() {
                           className="hover:underline text-primary"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {run.case_name || run.case_id.slice(0, 8)}
+                          {stripHtmlTags(run.case_name) || run.case_id.slice(0, 8)}
                         </Link>
                       </TableCell>
                       <TableCell>
@@ -373,7 +379,12 @@ export default function RunsPage() {
                               onClick={(e) => e.stopPropagation()}
                               title="View in Trigger.dev"
                             >
-                              <Button variant="ghost" size="sm">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                aria-label="View run in Trigger.dev"
+                                title="View run in Trigger.dev"
+                              >
                                 <ExternalLink className="h-4 w-4" />
                               </Button>
                             </a>
@@ -381,6 +392,8 @@ export default function RunsPage() {
                           <Button
                             variant="ghost"
                             size="sm"
+                            aria-label="Open run details"
+                            title="Open run details"
                             onClick={(e) => {
                               e.stopPropagation();
                               handleViewRun(run);
@@ -392,6 +405,8 @@ export default function RunsPage() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              aria-label="Replay failed run"
+                              title="Replay failed run"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleReplay(run);
@@ -407,6 +422,7 @@ export default function RunsPage() {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

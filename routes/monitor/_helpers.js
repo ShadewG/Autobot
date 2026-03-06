@@ -1,6 +1,6 @@
 const db = require('../../services/database');
 const sgMail = require('@sendgrid/mail');
-const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+const { wait: triggerWait } = require('@trigger.dev/sdk');
 const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { portalQueue } = require('../../queues/email-queue');
 const crypto = require('crypto');

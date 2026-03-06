@@ -4,6 +4,41 @@ const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const pdContactService = require('../services/pd-contact-service');
 
+function firstNonEmpty(...values) {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim();
+        }
+    }
+    return null;
+}
+
+function buildExistingContactFallback(caseAgency, caseData) {
+    const existingEmail = firstNonEmpty(
+        caseAgency?.agency_email,
+        caseAgency?.is_primary ? caseData?.agency_email : null,
+        caseAgency?.is_primary ? caseData?.alternate_agency_email : null
+    );
+    const existingPortalUrl = firstNonEmpty(
+        caseAgency?.portal_url,
+        caseAgency?.is_primary ? caseData?.portal_url : null
+    );
+    const existingPortalProvider = firstNonEmpty(
+        caseAgency?.portal_provider,
+        caseAgency?.is_primary ? caseData?.portal_provider : null
+    );
+
+    if (!existingEmail && !existingPortalUrl) {
+        return null;
+    }
+
+    return {
+        agency_email: existingEmail,
+        portal_url: existingPortalUrl,
+        portal_provider: existingPortalProvider,
+    };
+}
+
 /**
  * GET /api/cases/:id/agencies
  * List all agencies for a case
@@ -150,6 +185,52 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
             return res.status(404).json({ success: false, error: 'Case agency not found' });
         }
 
+        const reuseExistingSignals = async (reason, extraMeta = {}) => {
+            const fallback = buildExistingContactFallback(caseAgency, caseData);
+            if (!fallback) {
+                return null;
+            }
+
+            const research = {
+                source: 'existing-case-data',
+                reused_existing_channels: true,
+                fallback_reason: reason,
+                contact_email: fallback.agency_email,
+                portal_url: fallback.portal_url,
+                portal_provider: fallback.portal_provider,
+                ...extraMeta,
+            };
+
+            const mergedNotes = JSON.stringify({
+                researched_at: new Date().toISOString(),
+                ...research,
+            });
+
+            const updated = await db.updateCaseAgency(caseAgencyId, {
+                agency_email: fallback.agency_email || caseAgency.agency_email || null,
+                portal_url: fallback.portal_url || caseAgency.portal_url || null,
+                portal_provider: fallback.portal_provider || caseAgency.portal_provider || null,
+                status: caseAgency.status || 'pending',
+                contact_research_notes: mergedNotes,
+            });
+
+            await db.logActivity(
+                'case_agency_research_reused_existing',
+                `Agency research reused existing contact info for "${caseAgency.agency_name}"`,
+                {
+                    case_id: caseId,
+                    case_agency_id: caseAgencyId,
+                    fallback_reason: reason,
+                    reused_email: fallback.agency_email || null,
+                    reused_portal: fallback.portal_url || null,
+                    ...extraMeta,
+                }
+            );
+
+            res.json({ success: true, case_agency: updated, research });
+            return updated;
+        };
+
         const RESEARCH_TIMEOUT_MS = 30_000;
         let lookup;
         try {
@@ -165,6 +246,10 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
             ]);
         } catch (timeoutErr) {
             if (timeoutErr.message.includes('timed out')) {
+                const reused = await reuseExistingSignals('lookup_timed_out', { timed_out: true });
+                if (reused) {
+                    return;
+                }
                 return res.status(504).json({
                     success: false,
                     error: 'Agency research timed out after 30 seconds. Try again or add contact info manually.',
@@ -173,6 +258,10 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
             throw timeoutErr;
         }
         if (!lookup) {
+            const reused = await reuseExistingSignals('lookup_returned_no_data');
+            if (reused) {
+                return;
+            }
             await db.logActivity(
                 'case_agency_research_failed',
                 `Agency research found no contact info for "${caseAgency.agency_name}"`,

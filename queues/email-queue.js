@@ -434,7 +434,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                 let triggerEnqueued = false;
                 let run = null;
                 try {
-                    const { tasks } = require('@trigger.dev/sdk/v3');
+                    const { tasks } = require('@trigger.dev/sdk');
 
                     const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 

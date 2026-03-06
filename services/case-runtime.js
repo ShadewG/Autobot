@@ -46,7 +46,7 @@ async function loadCaseSnapshot(txQuery, caseId) {
     txQuery('SELECT * FROM cases WHERE id = $1', [caseId]),
     txQuery(
       `SELECT * FROM agent_runs
-       WHERE case_id = $1 AND status IN ('created','queued','running','paused','waiting')
+       WHERE case_id = $1 AND status IN ('created','queued','processing','running','paused','waiting')
        ORDER BY started_at DESC LIMIT 1`,
       [caseId]
     ),
@@ -115,7 +115,7 @@ async function applyMutations(txQuery, caseId, mutations) {
     const exceptId = mutations.agent_runs_cancel_others.exceptRunId;
     promises.push(txQuery(
       `UPDATE agent_runs SET status = 'failed', error = 'superseded', ended_at = NOW()
-       WHERE case_id = $1 AND id != $2 AND status IN ('created','queued','running','paused','waiting')`,
+       WHERE case_id = $1 AND id != $2 AND status IN ('created','queued','processing','running','paused','waiting')`,
       [caseId, exceptId]
     ));
   }

@@ -97,13 +97,15 @@ interface AdminCase {
   updated_at: string;
 }
 
-const apiBase = process.env.NEXT_PUBLIC_API_URL || "/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
+const adminEndpoint = (path: string) => `/admin${path}`;
+const adminApiUrl = (path: string) => `${API_BASE}/admin${path}`;
 
 // ── Overview Tab ──────────────────────────────────────────────
 
 function OverviewTab() {
   const { data, isLoading, error } = useSWR<{ success: boolean } & Overview>(
-    `${apiBase}/admin/overview`,
+    adminEndpoint("/overview"),
     fetcher,
     { refreshInterval: 30000 }
   );
@@ -215,7 +217,7 @@ function OverviewTab() {
 
 function UsersTab() {
   const { data, isLoading, error, mutate } = useSWR<{ success: boolean; users: AdminUser[] }>(
-    `${apiBase}/admin/users`,
+    adminEndpoint("/users"),
     fetcher
   );
   const [showCreate, setShowCreate] = useState(false);
@@ -224,7 +226,7 @@ function UsersTab() {
   const [saving, setSaving] = useState(false);
 
   const toggleAdmin = async (user: AdminUser) => {
-    await fetch(`${apiBase}/admin/users/${user.id}`, {
+    await fetch(adminApiUrl(`/users/${user.id}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -234,7 +236,7 @@ function UsersTab() {
   };
 
   const toggleActive = async (user: AdminUser) => {
-    await fetch(`${apiBase}/admin/users/${user.id}`, {
+    await fetch(adminApiUrl(`/users/${user.id}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -246,7 +248,7 @@ function UsersTab() {
   const resetPassword = async () => {
     if (!resetTarget || !newPassword) return;
     setSaving(true);
-    await fetch(`${apiBase}/admin/users/${resetTarget.id}`, {
+    await fetch(adminApiUrl(`/users/${resetTarget.id}`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -388,7 +390,7 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`${apiBase}/admin/users`, {
+      const res = await fetch(adminApiUrl("/users"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -449,10 +451,10 @@ function CreateUserDialog({ open, onClose, onCreated }: { open: boolean; onClose
 function ActivityTab() {
   const [filterUserId, setFilterUserId] = useState<string>("");
   const url = filterUserId
-    ? `${apiBase}/admin/activity?limit=200&user_id=${filterUserId}`
-    : `${apiBase}/admin/activity?limit=200`;
+    ? `${adminEndpoint("/activity")}?limit=200&user_id=${filterUserId}`
+    : `${adminEndpoint("/activity")}?limit=200`;
   const { data, isLoading, error } = useSWR<{ success: boolean; activity: ActivityEntry[] }>(url, fetcher, { refreshInterval: 15000 });
-  const { data: usersData } = useSWR<{ success: boolean; users: AdminUser[] }>(`${apiBase}/admin/users`, fetcher);
+  const { data: usersData } = useSWR<{ success: boolean; users: AdminUser[] }>(adminEndpoint("/users"), fetcher);
 
   if (isLoading) {
     return <div className="flex items-center gap-2 text-xs text-muted-foreground py-8"><Loader2 className="h-3 w-3 animate-spin" /> Loading...</div>;
@@ -486,10 +488,10 @@ function ActivityTab() {
 function CasesTab() {
   const [filterUserId, setFilterUserId] = useState<string>("");
   const url = filterUserId
-    ? `${apiBase}/admin/cases?limit=100&user_id=${filterUserId}`
-    : `${apiBase}/admin/cases?limit=100`;
+    ? `${adminEndpoint("/cases")}?limit=100&user_id=${filterUserId}`
+    : `${adminEndpoint("/cases")}?limit=100`;
   const { data, isLoading, error } = useSWR<{ success: boolean; cases: AdminCase[] }>(url, fetcher);
-  const { data: usersData } = useSWR<{ success: boolean; users: AdminUser[] }>(`${apiBase}/admin/users`, fetcher);
+  const { data: usersData } = useSWR<{ success: boolean; users: AdminUser[] }>(adminEndpoint("/users"), fetcher);
 
   if (isLoading) {
     return <div className="flex items-center gap-2 text-xs text-muted-foreground py-8"><Loader2 className="h-3 w-3 animate-spin" /> Loading...</div>;

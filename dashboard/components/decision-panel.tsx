@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -600,6 +600,10 @@ export function DecisionPanel({
   const [customInstruction, setCustomInstruction] = useState("");
   const [showCustomInstruction, setShowCustomInstruction] = useState(false);
   const [reviewActionLoading, setReviewActionLoading] = useState<string | null>(null);
+  const customInstructionRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const getCustomInstructionText = () =>
+    (customInstructionRef.current?.value ?? customInstruction ?? "");
 
   // Use server-derived review_state when available, fall back to legacy heuristic
   const isDecisionRequired = reviewState
@@ -706,7 +710,7 @@ export function DecisionPanel({
         } else if (actionId === "queue_phone_call" && onAddToPhoneQueue) {
           await onAddToPhoneQueue();
         } else {
-          await onResolveReview(actionId, customInstruction || undefined);
+          await onResolveReview(actionId, getCustomInstructionText().trim() || undefined);
         }
       } finally {
         setReviewActionLoading(null);
@@ -714,10 +718,10 @@ export function DecisionPanel({
     };
 
     const handleCustomSend = async () => {
-      if (!customInstruction.trim()) return;
+      if (!getCustomInstructionText().trim()) return;
       setReviewActionLoading("custom");
       try {
-        await onResolveReview("custom", customInstruction);
+        await onResolveReview("custom", getCustomInstructionText().trim());
         setCustomInstruction("");
       } finally {
         setReviewActionLoading(null);
@@ -871,15 +875,17 @@ export function DecisionPanel({
           <div className="flex gap-2">
             <Textarea
               placeholder="Custom instruction (optional)..."
+              ref={customInstructionRef}
               value={customInstruction}
               onChange={(e) => setCustomInstruction(e.target.value)}
+              onInput={(e) => setCustomInstruction((e.target as HTMLTextAreaElement).value)}
               className="text-xs bg-background min-h-[60px] flex-1"
             />
             <Button
               variant="outline"
               className="self-end"
               onClick={handleCustomSend}
-              disabled={actionLoading("custom") || !customInstruction.trim()}
+              disabled={actionLoading("custom") || !getCustomInstructionText().trim()}
             >
               {spinnerFor("custom") ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Send className="h-3 w-3 mr-1" />}
               SEND

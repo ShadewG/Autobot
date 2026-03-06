@@ -183,7 +183,7 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
 
         if (trigger_agent) {
             try {
-                const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+                const { tasks: triggerTasks } = require('@trigger.dev/sdk');
                 const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 
                 // Trigger Trigger.dev inbound processing task
@@ -351,7 +351,7 @@ router.post('/cases/:caseId/setup-for-e2e', async (req, res) => {
 
         // Optionally trigger initial request
         if (run_initial) {
-            const { tasks: triggerTasks } = require('@trigger.dev/sdk/v3');
+            const { tasks: triggerTasks } = require('@trigger.dev/sdk');
 
             // Trigger Trigger.dev initial request task
             const handle = await triggerTasks.trigger('process-initial-request', {

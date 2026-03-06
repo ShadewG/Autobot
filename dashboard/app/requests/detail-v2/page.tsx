@@ -1734,8 +1734,11 @@ function DetailV2Content() {
             <ScrollArea className="flex-1 h-0">
               <div className="p-3">
                 <CaseInfoTab
+                  caseId={id!}
                   request={request}
                   agencySummary={agency_summary}
+                  caseAgencies={case_agencies}
+                  onContactsUpdated={() => mutate()}
                   deadlineMilestones={deadline_milestones}
                   stateDeadline={state_deadline}
                   threadMessages={_threadMessages}

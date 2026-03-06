@@ -11,7 +11,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { tasks, runs } = require('@trigger.dev/sdk/v3');
+const { tasks, runs } = require('@trigger.dev/sdk');
 const db = require('../services/database');
 const logger = console;
 

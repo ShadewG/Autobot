@@ -15,7 +15,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
-const { wait: triggerWait } = require('@trigger.dev/sdk/v3');
+const { wait: triggerWait } = require('@trigger.dev/sdk');
 const triggerDispatch = require('../services/trigger-dispatch-service');
 const logger = require('../services/logger');
 const { emailExecutor } = require('../services/executor-adapter');

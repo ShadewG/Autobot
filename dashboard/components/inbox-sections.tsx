@@ -39,6 +39,7 @@ interface InboxSectionsProps {
   onSnooze: (id: string) => void;
   onRepair: (id: string) => void;
   onFollowUp: (id: string) => void;
+  onResearchAgency: (id: string) => Promise<void>;
   onTakeOver: (id: string) => void;
   onGuideAI: (id: string) => void;
   onCancelRun: (id: string) => void;
@@ -66,6 +67,7 @@ export function InboxSections({
   onSnooze,
   onRepair,
   onFollowUp,
+  onResearchAgency,
   onTakeOver,
   onGuideAI,
   onCancelRun,
@@ -409,6 +411,7 @@ export function InboxSections({
             isAdmin={isAdmin}
             onRepair={onRepair}
             onFollowUp={onFollowUp}
+            onResearchAgency={onResearchAgency}
             onTakeOver={onTakeOver}
             selectedIds={selected}
             onToggleSelect={toggle}

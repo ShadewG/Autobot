@@ -347,6 +347,8 @@ export type PauseReason =
   | 'agent_run_failed'
   | 'stuck_portal_task'
   | 'portal_stuck'
+  | 'RESEARCH_HANDOFF'
+  | 'RESEARCH_COMPLETE_EXISTING_CHANNELS'
   | 'UNSPECIFIED';
 
 export type ReviewReason =
