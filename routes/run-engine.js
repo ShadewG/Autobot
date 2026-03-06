@@ -44,6 +44,28 @@ function triggerOptsDebounced(caseId, taskType, uniqueId) {
   };
 }
 
+function getTriggerRunId(run) {
+  if (!run) return null;
+  const metadata = (() => {
+    if (!run.metadata) return {};
+    if (typeof run.metadata === 'string') {
+      try {
+        return JSON.parse(run.metadata);
+      } catch {
+        return {};
+      }
+    }
+    return run.metadata;
+  })();
+  return run.trigger_run_id || metadata.triggerRunId || metadata.trigger_run_id || null;
+}
+
+function isOrphanedWaitingRun(run) {
+  if (!run) return false;
+  if (!['waiting', 'paused'].includes(String(run.status || '').toLowerCase())) return false;
+  return !getTriggerRunId(run);
+}
+
 async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   const caseId = proposal.case_id;
   const proposalId = proposal.id;
@@ -498,7 +520,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
   try {
     // Validate action
-    const validActions = ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW', 'MANUAL_SUBMIT'];
+    const validActions = ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW', 'MANUAL_SUBMIT', 'RETRY_RESEARCH'];
     if (!action || !validActions.includes(action)) {
       return res.status(400).json({
         success: false,
@@ -507,7 +529,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
     }
 
     // Fetch proposal
-    const proposal = await db.getProposalById(proposalId);
+    let proposal = await db.getProposalById(proposalId);
     if (!proposal) {
       return res.status(404).json({
         success: false,
@@ -525,10 +547,18 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
+    if (proposal.gate_options && Array.isArray(proposal.gate_options) && !proposal.gate_options.includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: `Action '${action}' is not allowed for this proposal. Allowed: ${proposal.gate_options.join(', ')}`
+      });
+    }
+
     const caseId = proposal.case_id;
 
     // Check for existing active run
     const existingRun = await db.getActiveRunForCase(caseId);
+    const orphanedWaitingRun = isOrphanedWaitingRun(existingRun);
     if (existingRun) {
       // 'waiting' = Trigger.dev task waiting on the waitpoint token for this decision.
       // 'paused' = legacy state, same idea. Both should be allowed through.
@@ -536,13 +566,16 @@ router.post('/proposals/:id/decision', async (req, res) => {
         logger.info('Run is waiting for this decision, proceeding', {
           runId: existingRun.id,
           status: existingRun.status,
-          proposalId
+          proposalId,
+          triggerRunId: getTriggerRunId(existingRun),
+          orphaned: orphanedWaitingRun
         });
         // For legacy 'paused' runs (no waitpoint), mark completed so we can proceed.
-        if (existingRun.status === 'paused') {
+        if (existingRun.status === 'paused' || orphanedWaitingRun) {
           await db.updateAgentRun(existingRun.id, {
             status: 'completed',
-            ended_at: new Date()
+            ended_at: new Date(),
+            ...(orphanedWaitingRun ? { error: 'orphaned_waiting_run_recovered' } : {})
           });
         }
       } else {
@@ -565,7 +598,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
       const draftUpdates = {};
       if (draft_body_text !== undefined) draftUpdates.draft_body_text = draft_body_text;
       if (draft_subject !== undefined) draftUpdates.draft_subject = draft_subject;
+      if (draft_body_text !== undefined) draftUpdates.draft_body_html = null;
       await db.updateProposal(proposalId, draftUpdates);
+      proposal = await db.getProposalById(proposalId);
       logger.info('Applied inline draft edits before approval', { proposalId, fields: Object.keys(draftUpdates) });
     }
 
@@ -579,6 +614,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
           const chainUpdates = {};
           if (chain_draft_body_text !== undefined) chainUpdates.draft_body_text = chain_draft_body_text;
           if (chain_draft_subject !== undefined) chainUpdates.draft_subject = chain_draft_subject;
+          if (chain_draft_body_text !== undefined) chainUpdates.draft_body_html = null;
           if (Object.keys(chainUpdates).length > 0) {
             await db.updateProposal(followUp.id, chainUpdates);
             logger.info('Applied chain follow-up draft edits', { proposalId: followUp.id, chainId: proposal.chain_id, fields: Object.keys(chainUpdates) });
@@ -616,6 +652,78 @@ router.post('/proposals/:id/decision', async (req, res) => {
          ON CONFLICT (proposal_id) DO NOTHING`,
         [proposalId, proposal.case_id, proposal.trigger_message_id || null, proposal.action_type, instruction || reason || null]
       ).catch(err => logger.warn('Auto eval-case insert failed (non-fatal)', { proposalId, error: err.message }));
+    }
+
+    if (action === 'RETRY_RESEARCH') {
+      const retryDecision = {
+        action,
+        proposalId,
+        instruction: null,
+        reason: reason || 'User requested research retry',
+        decidedAt: new Date().toISOString(),
+        decidedBy: req.body.decidedBy || 'human'
+      };
+
+      await db.updateProposal(proposalId, {
+        human_decision: retryDecision,
+        status: 'DISMISSED'
+      });
+
+      await db.updateCase(caseId, {
+        contact_research_notes: JSON.stringify({
+          cleared: true,
+          retryReason: 'user_retry',
+          previouslyClearedAt: new Date().toISOString(),
+        }),
+      });
+
+      const latestInbound = await db.query(
+        `SELECT id
+         FROM messages
+         WHERE case_id = $1 AND direction = 'inbound'
+         ORDER BY COALESCE(received_at, created_at) DESC
+         LIMIT 1`,
+        [caseId]
+      );
+      const messageId = latestInbound.rows[0]?.id || proposal.trigger_message_id || null;
+
+      let handle;
+      try {
+        handle = (await triggerDispatch.triggerTask('process-inbound', {
+          runId: 0,
+          caseId,
+          messageId,
+          autopilotMode: proposal.autopilot_mode || 'SUPERVISED',
+          triggerType: 'HUMAN_REVIEW_RESOLUTION',
+          reviewAction: 'RETRY_RESEARCH',
+          reviewInstruction: 'Research failed previously. Retry agency research from scratch.',
+        }, triggerOpts(caseId, 'retry-research', proposalId))).handle;
+      } catch (triggerError) {
+        await db.updateProposal(proposalId, {
+          status: 'PENDING_APPROVAL',
+          human_decision: null
+        });
+        await db.logActivity('proposal_dispatch_failed', `Retry research for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
+          case_id: caseId,
+          proposal_id: proposalId,
+          error: triggerError.message
+        });
+        throw triggerError;
+      }
+
+      await db.logActivity('proposal_retry_research', `Research retry triggered for proposal #${proposalId} — re-processing case ${caseId}`, {
+        case_id: caseId,
+        proposal_id: proposalId,
+        trigger_run_id: handle.id,
+      });
+
+      return res.json({
+        success: true,
+        message: 'Research retry started. A new research proposal will be generated.',
+        proposal_id: proposalId,
+        action,
+        trigger_run_id: handle.id,
+      });
     }
 
     // === MANUAL_SUBMIT: user filled the portal form manually ===
@@ -665,7 +773,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
     }
 
     // === Trigger.dev path: complete waitpoint token ===
-    if (proposal.waitpoint_token) {
+    if (proposal.waitpoint_token && !orphanedWaitingRun) {
       // Resolve token ID: gate-or-execute stores a UUID idempotencyKey initially,
       // waitForHumanDecision overwrites with real waitpoint_xxx ID.
       // Handle both formats for robustness.
@@ -720,20 +828,29 @@ router.post('/proposals/:id/decision', async (req, res) => {
           action === 'APPROVE' &&
           refreshedProposal?.draft_body_text &&
           refreshedProposal?.draft_subject;
+        const canFallbackToDirectPdfEmail =
+          action === 'APPROVE' &&
+          refreshedProposal?.action_type === 'SEND_PDF_EMAIL';
 
-        if (canFallbackToDirectEmail) {
-          logger.warn('Waitpoint completion failed; falling back to direct email execution', {
+        if (canFallbackToDirectPdfEmail || canFallbackToDirectEmail) {
+          logger.warn('Waitpoint completion failed; falling back to direct execution', {
             proposalId,
             caseId,
             error: waitpointError.message,
           });
-          await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
+          if (canFallbackToDirectPdfEmail) {
+            await executeApprovedProposalPdfEmailDirectly(refreshedProposal, humanDecision);
+          } else {
+            await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
+          }
           return res.json({
             success: true,
-            message: 'Email sent directly after waitpoint fallback',
+            message: canFallbackToDirectPdfEmail
+              ? 'PDF email sent directly after waitpoint fallback'
+              : 'Email sent directly after waitpoint fallback',
             proposal_id: proposalId,
             action,
-            fallback: 'direct_email',
+            fallback: canFallbackToDirectPdfEmail ? 'direct_pdf_email' : 'direct_email',
           });
         }
 

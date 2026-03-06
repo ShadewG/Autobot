@@ -611,16 +611,16 @@ export async function executeAction(
             proposalKey: handoffProposalKey,
             caseId,
             runId: runId || null,
-            actionType: "RESEARCH_AGENCY",
+            actionType: "ESCALATE",
             disableResearchAutoDismiss: true,
-            draftSubject: opts?.subject || `Research handoff needed - case ${caseId}`,
+            draftSubject: opts?.subject || `Human action needed - case ${caseId}`,
             draftBodyText: body,
             reasoning: [handoffReason],
             confidence: 0.4,
             requiresHuman: true,
             canAutoExecute: false,
             status: "PENDING_APPROVAL",
-            gateOptions: opts?.gateOptions || null,
+            gateOptions: opts?.gateOptions || ["ADJUST", "DISMISS"],
           });
         } catch (proposalErr: any) {
           logger.warn("Failed to create research handoff proposal", {

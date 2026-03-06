@@ -1473,20 +1473,49 @@ class CronService {
                     console.log(`Auto-failed stuck portal_task ${pt.id} for case ${pt.case_id}`);
 
                     try {
-                        await db.upsertProposal({
-                            proposalKey: `${pt.case_id}:stuck_portal_task:${pt.id}:SUBMIT_PORTAL`,
-                            caseId: pt.case_id,
-                            actionType: 'SUBMIT_PORTAL',
-                            reasoning: [
+                        const caseSnapshot = await db.getCaseById(pt.case_id);
+                        const latestPortalFailure = await db.query(
+                            `SELECT completion_notes, status
+                               FROM portal_tasks
+                              WHERE case_id = $1
+                                AND id != $2
+                              ORDER BY updated_at DESC
+                              LIMIT 1`,
+                            [pt.case_id, pt.id]
+                        );
+                        const failureContext = [
+                            caseSnapshot?.last_portal_status || '',
+                            latestPortalFailure.rows[0]?.completion_notes || '',
+                        ].join('\n').toLowerCase();
+                        const retryLikelyBlocked = /blocked words|spam filter|cannot determine which specific words|cannot alter the user-provided text|generic error message about blocked words/.test(failureContext);
+                        const proposalActionType = retryLikelyBlocked ? 'ESCALATE' : 'SUBMIT_PORTAL';
+                        const proposalBody = retryLikelyBlocked
+                            ? `Portal task #${pt.id} was auto-failed after being stuck in IN_PROGRESS for more than 30 minutes with no active run.\n\nThe most recent portal failure indicates the request text is being rejected by a blocked-words or spam filter, so retrying unchanged automation is unlikely to work.\n\nUse the Manual Submit Helper to complete the portal submission manually or adjust the submission plan before retrying.`
+                            : `Portal task #${pt.id} was auto-failed after being stuck in IN_PROGRESS for more than 30 minutes with no active run.\n\nApprove to retry portal submission, or choose manual fallback.`;
+                        const proposalReasoning = retryLikelyBlocked
+                            ? [
+                                `Portal task #${pt.id} was stuck IN_PROGRESS for over 30 minutes with no active submit-portal run.`,
+                                'The last portal failure indicates blocked-words/spam-filter rejection, so manual fallback is safer than retrying unchanged automation.'
+                            ]
+                            : [
                                 `Portal task #${pt.id} was stuck IN_PROGRESS for over 30 minutes with no active submit-portal run.`,
                                 'Review and approve to retry portal submission or switch to manual handling.'
-                            ],
+                            ];
+
+                        await db.upsertProposal({
+                            proposalKey: `${pt.case_id}:stuck_portal_task:${pt.id}:${proposalActionType}`,
+                            caseId: pt.case_id,
+                            actionType: proposalActionType,
+                            reasoning: proposalReasoning,
                             confidence: 0,
                             requiresHuman: true,
                             canAutoExecute: false,
-                            draftSubject: `Portal retry recommended for case ${pt.case_id}`,
-                            draftBodyText: `Portal task #${pt.id} was auto-failed after being stuck in IN_PROGRESS for more than 30 minutes with no active run.\n\nApprove to retry portal submission, or choose manual fallback.`,
-                            status: 'PENDING_APPROVAL'
+                            draftSubject: retryLikelyBlocked
+                                ? `Manual portal fallback recommended for case ${pt.case_id}`
+                                : `Portal retry recommended for case ${pt.case_id}`,
+                            draftBodyText: proposalBody,
+                            status: 'PENDING_APPROVAL',
+                            gateOptions: retryLikelyBlocked ? ['ADJUST', 'DISMISS'] : ['APPROVE', 'ADJUST', 'DISMISS']
                         });
                     } catch (proposalErr) {
                         console.error(`Failed to create stuck portal retry proposal for case ${pt.case_id}:`, proposalErr.message);

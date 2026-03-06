@@ -28,9 +28,24 @@ router.post('/proposals/:id/approve', express.json(), async (req, res) => {
 router.post('/proposals/:id/decision', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
-        const { action, instruction = null, reason = null, dismiss_reason = null, route_mode = null } = req.body || {};
+        const {
+            action,
+            instruction = null,
+            reason = null,
+            dismiss_reason = null,
+            route_mode = null,
+            draft_body_text = undefined,
+            draft_subject = undefined,
+        } = req.body || {};
         const userId = req.headers['x-user-id'] || null;
-        const result = await processProposalDecision(proposalId, action, { instruction, reason: reason || dismiss_reason, route_mode, userId });
+        const result = await processProposalDecision(proposalId, action, {
+            instruction,
+            reason: reason || dismiss_reason,
+            route_mode,
+            userId,
+            draft_body_text,
+            draft_subject,
+        });
         res.status(action === 'DISMISS' ? 200 : 202).json(result);
     } catch (error) {
         const status = error.status || 500;

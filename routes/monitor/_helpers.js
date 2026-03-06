@@ -196,7 +196,19 @@ async function queueInboundRunForMessage(message, { autopilotMode = 'SUPERVISED'
     };
 }
 
-async function processProposalDecision(proposalId, action, { instruction = null, reason = null, route_mode = null, decidedBy = 'monitor', userId = null } = {}) {
+async function processProposalDecision(
+    proposalId,
+    action,
+    {
+        instruction = null,
+        reason = null,
+        route_mode = null,
+        decidedBy = 'monitor',
+        userId = null,
+        draft_body_text = undefined,
+        draft_subject = undefined,
+    } = {}
+) {
     const allowedActions = ['APPROVE', 'ADJUST', 'DISMISS', 'RETRY_RESEARCH'];
     if (!allowedActions.includes(action)) {
         const err = new Error(`action must be one of: ${allowedActions.join(', ')}`);
@@ -204,7 +216,7 @@ async function processProposalDecision(proposalId, action, { instruction = null,
         throw err;
     }
 
-    const proposal = await db.getProposalById(proposalId);
+    let proposal = await db.getProposalById(proposalId);
     if (!proposal) {
         const err = new Error(`Proposal ${proposalId} not found`);
         err.status = 404;
@@ -259,6 +271,15 @@ async function processProposalDecision(proposalId, action, { instruction = null,
     }
 
     const trimmedInstruction = typeof instruction === 'string' ? instruction.trim() : '';
+
+    if (action === 'APPROVE' && (draft_body_text !== undefined || draft_subject !== undefined)) {
+        const draftUpdates = {};
+        if (draft_body_text !== undefined) draftUpdates.draft_body_text = draft_body_text;
+        if (draft_subject !== undefined) draftUpdates.draft_subject = draft_subject;
+        if (draft_body_text !== undefined) draftUpdates.draft_body_html = null;
+        await db.updateProposal(proposalId, draftUpdates);
+        proposal = await db.getProposalById(proposalId);
+    }
 
     const humanDecision = {
         action,

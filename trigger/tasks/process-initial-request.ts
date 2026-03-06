@@ -222,10 +222,15 @@ export const processInitialRequest = task({
           await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
           const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
           const adjustedExecutionActionType = (adjustedProposalRow?.action_type || originalActionType) as ActionType;
+          const adjustedExecutionDraft = {
+            subject: adjustedProposalRow?.draft_subject ?? adjustedDraft.subject,
+            bodyText: adjustedProposalRow?.draft_body_text ?? adjustedDraft.bodyText,
+            bodyHtml: adjustedProposalRow?.draft_body_html ?? adjustedDraft.bodyHtml,
+          };
           await markStep("execute_action", `Run #${runId}: executing adjusted initial action`, { action_type: adjustedExecutionActionType });
           const execution = await executeAction(
             caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
-            adjustedDraft, null, adjustmentReasoning
+            adjustedExecutionDraft, null, adjustmentReasoning
           );
 
           if (execution.actionExecuted) {
@@ -489,10 +494,15 @@ export const processInitialRequest = task({
     // Step 4: Execute
     const executionProposal = await db.getProposalById(draft.proposalId);
     const executionActionType = executionProposal?.action_type || draft.actionType;
+    const executionDraft = {
+      subject: executionProposal?.draft_subject ?? draft.subject,
+      bodyText: executionProposal?.draft_body_text ?? draft.bodyText,
+      bodyHtml: executionProposal?.draft_body_html ?? draft.bodyHtml,
+    };
     await markStep("execute_action", `Run #${runId}: executing initial request`, { action_type: executionActionType });
     const execution = await executeAction(
       caseId, draft.proposalId, executionActionType, runId,
-      { subject: draft.subject, bodyText: draft.bodyText, bodyHtml: draft.bodyHtml },
+      executionDraft,
       null, draft.reasoning
     );
 

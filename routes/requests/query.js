@@ -935,6 +935,26 @@ router.get('/:id/workspace', async (req, res) => {
             LIMIT 1
         `, [requestId]);
         const pendingProposal = pendingProposalResult.rows[0] || null;
+        if (!nextActionProposal && pendingProposal) {
+            nextActionProposal = {
+                id: String(pendingProposal.id),
+                action_type: pendingProposal.action_type,
+                proposal: pendingProposal.draft_subject || pendingProposal.action_type,
+                proposal_short: pendingProposal.draft_subject || pendingProposal.action_type,
+                reasoning: Array.isArray(pendingProposal.reasoning)
+                    ? pendingProposal.reasoning
+                    : (pendingProposal.reasoning ? [pendingProposal.reasoning] : []),
+                confidence: pendingProposal.confidence ? parseFloat(pendingProposal.confidence) : 0.8,
+                risk_flags: [],
+                warnings: [],
+                can_auto_execute: false,
+                blocked_reason: null,
+                draft_content: pendingProposal.draft_body_text || null,
+                draft_preview: pendingProposal.draft_body_text ? pendingProposal.draft_body_text.substring(0, 200) : null,
+                gate_options: Array.isArray(pendingProposal.gate_options) ? pendingProposal.gate_options : null,
+                status: pendingProposal.status || null,
+            };
+        }
 
         // Build portal_helper for SUBMIT_PORTAL proposals — one-stop copy-paste cheat sheet
         let portalHelper = null;

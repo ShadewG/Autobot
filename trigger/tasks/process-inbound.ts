@@ -802,10 +802,15 @@ export const processInbound = task({
 
         const adjustedProposalRow = await db.getProposalById(adjustedOutcome.proposalId);
         const adjustedExecutionActionType = (adjustedProposalRow?.action_type || decision.actionType) as ActionType;
+        const adjustedExecutionDraft = {
+          subject: adjustedProposalRow?.draft_subject ?? adjustedOutcome.draft.subject,
+          bodyText: adjustedProposalRow?.draft_body_text ?? adjustedOutcome.draft.bodyText,
+          bodyHtml: adjustedProposalRow?.draft_body_html ?? adjustedOutcome.draft.bodyHtml,
+        };
         await markStep("execute_action", `Run #${runId}: executing adjusted approved action`, { action_type: adjustedExecutionActionType });
         const adjustedExecution = await executeAction(
           caseId, adjustedOutcome.proposalId, adjustedExecutionActionType, runId,
-          adjustedOutcome.draft, null, adjustedOutcome.reasoning,
+          adjustedExecutionDraft, null, adjustedOutcome.reasoning,
           undefined, undefined,
           classification.classification
         );
@@ -828,6 +833,13 @@ export const processInbound = task({
     // Step 9: Execute primary action
     const currentProposal = await db.getProposalById(gate.proposalId);
     const executionActionType = (currentProposal?.action_type || decision.actionType) as ActionType;
+    const executionDraft = {
+      subject: currentProposal?.draft_subject ?? draft.subject,
+      bodyText: currentProposal?.draft_body_text ?? draft.bodyText,
+      bodyHtml: currentProposal?.draft_body_html ?? draft.bodyHtml,
+      researchContactResult: draft.researchContactResult,
+      researchBrief: draft.researchBrief,
+    };
     if (executionActionType !== decision.actionType) {
       logger.warn("Execution action diverged from decision action; using proposal action", {
         caseId,
@@ -839,8 +851,8 @@ export const processInbound = task({
     await markStep("execute_action", `Run #${runId}: executing action`, { action_type: executionActionType });
     const execution = await executeAction(
       caseId, gate.proposalId, executionActionType, runId,
-      draft, null, decision.reasoning,
-      draft.researchContactResult, draft.researchBrief,
+      executionDraft, null, decision.reasoning,
+      executionDraft.researchContactResult, executionDraft.researchBrief,
       classification.classification
     );
 
