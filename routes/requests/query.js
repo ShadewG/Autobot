@@ -484,6 +484,21 @@ router.get('/:id/workspace', async (req, res) => {
         const constraints = parseConstraints(caseData);
 
         const caseAgencies = await db.getCaseAgencies(requestId, false);
+        const normalizedCaseAgencies = dedupeCaseAgencies(caseAgencies.map((agency) => ({
+            ...agency,
+            portal_url: normalizePortalUrl(agency.portal_url) || null,
+        })));
+        const primaryCaseAgency =
+            normalizedCaseAgencies.find((agency) => agency.is_primary) ||
+            normalizedCaseAgencies[0] ||
+            null;
+        const primaryCaseAgencyIsSynthetic = Boolean(
+            primaryCaseAgency &&
+            ['case_row_backfill', 'case_row_fallback'].includes(primaryCaseAgency.added_source)
+        );
+        const preferredCaseAgency = primaryCaseAgency && !primaryCaseAgencyIsSynthetic
+            ? primaryCaseAgency
+            : null;
         const recoveredPortalUrl = extractLatestSupportedPortalUrl(activityRows, caseAgencies, caseData.portal_url);
         if (recoveredPortalUrl && recoveredPortalUrl !== caseData.portal_url) {
             caseData = {
@@ -515,9 +530,31 @@ router.get('/:id/workspace', async (req, res) => {
 
         // Resolve canonical agency id for deep-linking to /agencies/detail.
         // Never use case id as an agency id.
-        let resolvedAgencyId = canonicalAgency?.id || caseData.agency_id || null;
-        let resolvedAgencyName = canonicalAgency?.name || null;
-        if (!resolvedAgencyId && caseData.agency_name) {
+        const useCanonicalDisplay = Boolean(canonicalAgency && (!preferredCaseAgency || primaryCaseAgencyIsSynthetic));
+        let resolvedAgencyId = useCanonicalDisplay
+            ? canonicalAgency.id
+            : (preferredCaseAgency?.agency_id || caseData.agency_id || null);
+        let resolvedAgencyName = useCanonicalDisplay
+            ? canonicalAgency.name
+            : (preferredCaseAgency?.agency_name || null);
+        let resolvedAgencyEmail = normalizeAgencyEmailHint(
+            useCanonicalDisplay
+                ? (canonicalAgency?.email_foia || canonicalAgency?.email_main || caseData.agency_email)
+                : (preferredCaseAgency?.agency_email || caseData.agency_email)
+        );
+        let resolvedPortalUrl = normalizePortalUrl(
+            useCanonicalDisplay
+                ? (canonicalAgency?.portal_url || canonicalAgency?.portal_url_alt || caseData.portal_url)
+                : (preferredCaseAgency?.portal_url || caseData.portal_url)
+        );
+        let resolvedPortalProvider =
+            (useCanonicalDisplay
+                ? (canonicalAgency?.portal_provider || caseData.portal_provider)
+                : (preferredCaseAgency?.portal_provider || caseData.portal_provider)) ||
+            detectPortalProviderByUrl(resolvedPortalUrl)?.name ||
+            null;
+
+        if (!resolvedAgencyId && (resolvedAgencyName || caseData.agency_name)) {
             const agencyLookup = await db.query(
                 `SELECT id
                  FROM agencies
@@ -530,48 +567,48 @@ router.get('/:id/workspace', async (req, res) => {
                          ELSE 2
                     END
                  LIMIT 1`,
-                [caseData.agency_name, `%${caseData.agency_name}%`]
+                [resolvedAgencyName || caseData.agency_name, `%${resolvedAgencyName || caseData.agency_name}%`]
             );
             resolvedAgencyId = agencyLookup.rows[0]?.id || null;
         }
-        if (!resolvedAgencyId && caseData.portal_url) {
+        if (!resolvedAgencyId && resolvedPortalUrl) {
             const agencyLookupByPortal = await db.query(
                 `SELECT id
                  FROM agencies
                  WHERE portal_url = $1 OR portal_url_alt = $1
                  LIMIT 1`,
-                [caseData.portal_url]
+                [resolvedPortalUrl]
             );
             resolvedAgencyId = agencyLookupByPortal.rows[0]?.id || null;
         }
-        if (!resolvedAgencyId && caseData.agency_email) {
+        if (!resolvedAgencyId && resolvedAgencyEmail) {
             const agencyLookupByEmail = await db.query(
                 `SELECT id
                  FROM agencies
                  WHERE LOWER(email_main) = LOWER($1)
                     OR LOWER(email_foia) = LOWER($1)
                  LIMIT 1`,
-                [caseData.agency_email]
+                [resolvedAgencyEmail]
             );
             resolvedAgencyId = agencyLookupByEmail.rows[0]?.id || null;
         }
         if (resolvedAgencyId) {
-            const canonicalAgency = await db.query(
+            const canonicalAgencyName = await db.query(
                 `SELECT name
                  FROM agencies
                  WHERE id = $1
                  LIMIT 1`,
                 [resolvedAgencyId]
             );
-            resolvedAgencyName = resolvedAgencyName || canonicalAgency.rows[0]?.name || null;
+            resolvedAgencyName = resolvedAgencyName || canonicalAgencyName.rows[0]?.name || null;
         }
 
         const agencySummary = {
             id: resolvedAgencyId != null ? String(resolvedAgencyId) : '',
             name: resolvedAgencyName || caseData.agency_name || '—',
             state: caseData.state || '—',
-            submission_method: caseData.portal_url ? 'PORTAL' : 'EMAIL',
-            portal_url: caseData.portal_url || undefined,
+            submission_method: resolvedPortalUrl ? 'PORTAL' : 'EMAIL',
+            portal_url: resolvedPortalUrl || undefined,
             default_autopilot_mode: caseData.autopilot_mode || 'SUPERVISED',
             notes: caseData.contact_research_notes || undefined,
             // Agency rules (derived or default - in full implementation these would be stored)
@@ -585,10 +622,7 @@ router.get('/:id/workspace', async (req, res) => {
             }
         };
 
-        let sortedCaseAgencies = dedupeCaseAgencies(caseAgencies.map((agency) => ({
-            ...agency,
-            portal_url: normalizePortalUrl(agency.portal_url) || null,
-        }))).map((agency) => {
+        let sortedCaseAgencies = normalizedCaseAgencies.map((agency) => {
             const isBackfilledAgency =
                 agency.added_source === 'case_row_backfill' ||
                 agency.added_source === 'case_row_fallback';
@@ -829,6 +863,15 @@ router.get('/:id/workspace', async (req, res) => {
         }
         if (resolvedAgencyName) {
             requestDetail.agency_name = resolvedAgencyName;
+        }
+        if (resolvedAgencyEmail) {
+            requestDetail.agency_email = resolvedAgencyEmail;
+        }
+        if (resolvedPortalUrl) {
+            requestDetail.portal_url = resolvedPortalUrl;
+        }
+        if (resolvedPortalProvider) {
+            requestDetail.portal_provider = resolvedPortalProvider;
         }
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
