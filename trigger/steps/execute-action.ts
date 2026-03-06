@@ -1194,7 +1194,7 @@ export async function executeAction(
           await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
             targetStatus: "needs_human_review",
             substatus: "research_exhausted_existing_channels",
-            pauseReason: "RESEARCH_COMPLETE_EXISTING_CHANNELS",
+            pauseReason: "RESEARCH_HANDOFF",
           });
           executionResult = { action: "research_complete", followup: "existing_channels_available" };
           break;
