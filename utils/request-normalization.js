@@ -116,6 +116,103 @@ function shouldSuppressPlaceholderAgencyDisplay({ contactResearchNotes, agencyEm
   );
 }
 
+function cleanMetadataLine(value) {
+  return String(value || '')
+    .replace(/\u200c/g, ' ')
+    .replace(/\*\*/g, '')
+    .replace(/\[[^\]]+\]\([^)]+\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.:;,]+$/, '');
+}
+
+function extractMetadataAgencyHint(additionalDetails) {
+  const text = String(additionalDetails || '');
+  if (!text.trim()) return null;
+
+  const patterns = [
+    /(?:^|\n)\*{0,2}Police Department:\*{0,2}\s*([^\n\r]+)/i,
+    /(?:^|\n)\*{0,2}Sheriff(?:'s)? Office:\*{0,2}\s*([^\n\r]+)/i,
+    /(?:^|\n)\*{0,2}Agency:\*{0,2}\s*([^\n\r]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+
+    const name = cleanMetadataLine(match[1]);
+    if (!name) continue;
+
+    return {
+      name,
+      state: parseStateFromAgencyName(name),
+      source: 'additional_details',
+    };
+  }
+
+  return null;
+}
+
+const AGENCY_COMPARISON_STOPWORDS = new Set([
+  'agency',
+  'bureau',
+  'city',
+  'county',
+  'department',
+  'division',
+  'office',
+  'police',
+  'public',
+  'records',
+  'sheriff',
+  'state',
+  'unit',
+  'the',
+  'of',
+]);
+
+function agencyComparisonTokens(name) {
+  return Array.from(new Set(
+    String(name || '')
+      .toLowerCase()
+      .replace(/[’']/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((token) => token.length > 2)
+      .filter((token) => !AGENCY_COMPARISON_STOPWORDS.has(token))
+  ));
+}
+
+function detectCaseMetadataAgencyMismatch({ currentAgencyName, additionalDetails }) {
+  const hintedAgency = extractMetadataAgencyHint(additionalDetails);
+  const currentName = String(currentAgencyName || '').trim();
+  if (!hintedAgency?.name || !currentName) return null;
+
+  const currentTokens = agencyComparisonTokens(currentName);
+  const hintedTokens = agencyComparisonTokens(hintedAgency.name);
+  if (!currentTokens.length || !hintedTokens.length) return null;
+
+  const overlap = hintedTokens.filter((token) => currentTokens.includes(token));
+  const overlapRatio = overlap.length / Math.min(currentTokens.length, hintedTokens.length);
+
+  const currentState = parseStateFromAgencyName(currentName);
+  const hintedState = hintedAgency.state;
+  const strongStateConflict = Boolean(currentState && hintedState && currentState !== hintedState);
+  const noMeaningfulOverlap = overlap.length === 0 || overlapRatio < 0.5;
+
+  if (!noMeaningfulOverlap && !strongStateConflict) {
+    return null;
+  }
+
+  return {
+    expectedAgencyName: hintedAgency.name,
+    expectedState: hintedAgency.state || null,
+    currentAgencyName: currentName,
+    source: hintedAgency.source,
+  };
+}
+
 module.exports = {
   safeJsonParse,
   isPlaceholderAgencyEmail,
@@ -124,4 +221,6 @@ module.exports = {
   extractResearchSuggestedAgency,
   hasUnresolvedResearchPlaceholder,
   shouldSuppressPlaceholderAgencyDisplay,
+  extractMetadataAgencyHint,
+  detectCaseMetadataAgencyMismatch,
 };

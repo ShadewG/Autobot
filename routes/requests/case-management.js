@@ -292,6 +292,7 @@ router.post('/:id/resolve-review', async (req, res) => {
     const requestId = parseInt(req.params.id);
     const { action, instruction } = req.body;
     const log = logger.forCase(requestId);
+    let triggerRun = null;
 
     try {
         if (!action) {
@@ -511,6 +512,20 @@ router.post('/:id/resolve-review', async (req, res) => {
             [JSON.stringify(`Superseded by human review action: ${action}`), requestId]
         );
 
+        // Supersede any still-active runs for this case before creating a fresh
+        // human_review_resolution run. Otherwise a waiting/gated run can leave
+        // the case locked behind the one-active-run constraint even after its
+        // proposal was dismissed.
+        await db.query(
+            `UPDATE agent_runs
+             SET status = 'failed',
+                 ended_at = NOW(),
+                 error = COALESCE(error, $2)
+             WHERE case_id = $1
+               AND status IN ('created', 'queued', 'processing', 'running', 'paused', 'waiting', 'gated')`,
+            [requestId, `Superseded by human review action: ${action}`]
+        );
+
         // Clear review flags and normalize stale review statuses so the UI
         // doesn't remain in "decision required" with no active proposal.
         const isReviewStatus = String(caseData.status || '').startsWith('needs_');
@@ -531,7 +546,7 @@ router.post('/:id/resolve-review', async (req, res) => {
 
         // Trigger Trigger.dev task for re-processing — pass review action + instruction
         const latestMsg = await db.query('SELECT id FROM messages WHERE case_id = $1 AND direction = \'inbound\' ORDER BY created_at DESC LIMIT 1', [requestId]);
-        const triggerRun = await db.createAgentRunFull({
+        triggerRun = await db.createAgentRunFull({
             case_id: requestId,
             trigger_type: 'human_review_resolution',
             status: 'queued',
@@ -579,6 +594,13 @@ router.post('/:id/resolve-review', async (req, res) => {
         // Rollback: re-flag for human review so the case doesn't get stuck with
         // requires_human=false and a stale "Resolving:" substatus
         try {
+            if (triggerRun?.id) {
+                await db.updateAgentRun(triggerRun.id, {
+                    status: 'failed',
+                    ended_at: new Date(),
+                    error: `Review resolve dispatch failed: ${error.message}`
+                });
+            }
             await db.updateCase(requestId, {
                 requires_human: true,
                 substatus: 'Reprocess dispatch failed',

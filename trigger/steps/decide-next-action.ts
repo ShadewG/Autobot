@@ -19,6 +19,8 @@ import type {
   ActionType,
   HumanDecision,
 } from "../lib/types";
+// @ts-ignore
+const { detectCaseMetadataAgencyMismatch } = require("../../utils/request-normalization");
 
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || "100");
 const FEE_NEGOTIATE_THRESHOLD = parseFloat(process.env.FEE_NEGOTIATE_THRESHOLD || "500");
@@ -1719,11 +1721,26 @@ async function deterministicRouting(
     const resolvedSubtype = denialSubtype || (await db.getLatestResponseAnalysis(caseId))?.full_analysis_json?.denial_subtype || null;
 
     switch (resolvedSubtype) {
-      case "no_records":
+      case "no_records": {
+        const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+          currentAgencyName: caseData?.agency_name,
+          additionalDetails: caseData?.additional_details,
+        });
+        if (metadataAgencyMismatch) {
+          return decision("RESEARCH_AGENCY", {
+            pauseReason: "DENIAL",
+            researchLevel: "deep",
+            reasoning: [
+              ...reasoning,
+              `No-records denial came from ${metadataAgencyMismatch.currentAgencyName}, but case metadata names ${metadataAgencyMismatch.expectedAgencyName}; researching the correct custodian instead of rebutting the wrong agency`,
+            ],
+          });
+        }
         if (!caseData?.contact_research_notes) {
           return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "deep", reasoning: [...reasoning, "No records - researching correct agency (deep)"] });
         }
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Already researched - reformulating request"] });
+      }
       case "wrong_agency": {
         // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
