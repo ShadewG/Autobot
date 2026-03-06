@@ -3,18 +3,122 @@ const router = express.Router();
 const db = require('../services/database');
 const agencyNotionSync = require('../services/agency-notion-sync');
 
-function normalizeAgencyState(state) {
-    if (!state || state === '{}') return null;
-    const trimmed = String(state).trim();
-    return trimmed || null;
+const US_STATE_NAMES = {
+    alabama: 'AL',
+    alaska: 'AK',
+    arizona: 'AZ',
+    arkansas: 'AR',
+    california: 'CA',
+    colorado: 'CO',
+    connecticut: 'CT',
+    delaware: 'DE',
+    'district of columbia': 'DC',
+    florida: 'FL',
+    georgia: 'GA',
+    hawaii: 'HI',
+    idaho: 'ID',
+    illinois: 'IL',
+    indiana: 'IN',
+    iowa: 'IA',
+    kansas: 'KS',
+    kentucky: 'KY',
+    louisiana: 'LA',
+    maine: 'ME',
+    maryland: 'MD',
+    massachusetts: 'MA',
+    michigan: 'MI',
+    minnesota: 'MN',
+    mississippi: 'MS',
+    missouri: 'MO',
+    montana: 'MT',
+    nebraska: 'NE',
+    nevada: 'NV',
+    'new hampshire': 'NH',
+    'new jersey': 'NJ',
+    'new mexico': 'NM',
+    'new york': 'NY',
+    'north carolina': 'NC',
+    'north dakota': 'ND',
+    ohio: 'OH',
+    oklahoma: 'OK',
+    oregon: 'OR',
+    pennsylvania: 'PA',
+    'rhode island': 'RI',
+    'south carolina': 'SC',
+    'south dakota': 'SD',
+    tennessee: 'TN',
+    texas: 'TX',
+    utah: 'UT',
+    vermont: 'VT',
+    virginia: 'VA',
+    washington: 'WA',
+    'west virginia': 'WV',
+    wisconsin: 'WI',
+    wyoming: 'WY',
+};
+
+const US_STATE_CODES = new Set(Object.values(US_STATE_NAMES));
+
+function normalizeStateToken(value) {
+    if (!value || value === '{}') return null;
+    const trimmed = String(value).trim().replace(/[.,]+$/, '');
+    if (!trimmed) return null;
+
+    const upper = trimmed.toUpperCase();
+    if (US_STATE_CODES.has(upper)) return upper;
+
+    return US_STATE_NAMES[trimmed.toLowerCase()] || null;
+}
+
+function extractTrailingAgencyState(name) {
+    let remaining = String(name || '').trim();
+    if (!remaining) return null;
+
+    while (true) {
+        const match = remaining.match(/^(.*?),\s*([^,]+)$/);
+        if (!match) break;
+        const suffixState = normalizeStateToken(match[2]);
+        if (suffixState) return suffixState;
+        remaining = match[1].trim();
+    }
+
+    return null;
+}
+
+function stripTrailingAgencyState(name) {
+    let cleaned = String(name || '').trim();
+    if (!cleaned) return cleaned;
+
+    const targetState = extractTrailingAgencyState(cleaned);
+    if (!targetState) return cleaned;
+
+    while (true) {
+        const match = cleaned.match(/^(.*?),\s*([^,]+)$/);
+        if (!match) break;
+        const suffixState = normalizeStateToken(match[2]);
+        if (suffixState !== targetState) break;
+        cleaned = match[1].trim();
+    }
+
+    return cleaned || String(name || '').trim();
+}
+
+function normalizeAgencyState(state, agencyName, caseState) {
+    return (
+        normalizeStateToken(state) ||
+        extractTrailingAgencyState(agencyName) ||
+        normalizeStateToken(caseState) ||
+        null
+    );
 }
 
 function normalizeAgencyListKey(row) {
-    const name = String(row?.name || '')
+    const name = stripTrailingAgencyState(row?.name || '')
         .toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-    const state = normalizeAgencyState(row?.state) || '';
+    const state = normalizeAgencyState(row?.state, row?.name, row?.case_state) || '';
     return `${name}|${state}`;
 }
 
@@ -24,7 +128,7 @@ function scoreAgencyRow(row) {
         (row.portal_url ? 3 : 0) +
         (row.email_main ? 2 : 0) +
         (row.email_foia ? 2 : 0) +
-        (normalizeAgencyState(row.state) ? 1 : 0)
+        (normalizeAgencyState(row.state, row.name, row.case_state) ? 1 : 0)
     );
 }
 
@@ -90,7 +194,8 @@ router.get('/', async (req, res) => {
                         THEN EXTRACT(EPOCH FROM (last_response_date - send_date)) / 86400
                         END
                     )::INTEGER as avg_response_days,
-                    MAX(updated_at) as last_activity_at
+                    MAX(updated_at) as last_activity_at,
+                    MAX(NULLIF(c.state, '{}')) as case_state
                 FROM cases c
                 WHERE c.agency_id = a.id OR c.agency_name = a.name
             ) stats ON true
@@ -107,8 +212,8 @@ router.get('/', async (req, res) => {
 
         const agencies = dedupeAgencyRows(result.rows).map(row => ({
             id: String(row.id),
-            name: row.name,
-            state: normalizeAgencyState(row.state),
+            name: stripTrailingAgencyState(row.name),
+            state: normalizeAgencyState(row.state, row.name, row.case_state),
             county: row.county || null,
             submission_method: row.portal_url ? 'PORTAL' : (row.email_main ? 'EMAIL' : 'UNKNOWN'),
             portal_url: row.portal_url || null,

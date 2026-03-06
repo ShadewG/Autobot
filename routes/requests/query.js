@@ -245,7 +245,87 @@ router.get('/', async (req, res) => {
         `;
 
         const result = await db.query(query, params);
-        const requests = result.rows.map(toRequestListItem);
+        const caseIds = result.rows
+            .map((row) => Number(row.id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+
+        const listAgencyOverrides = new Map();
+        if (caseIds.length > 0) {
+            const caseAgencyResult = await db.query(
+                `SELECT DISTINCT ON (ca.case_id)
+                    ca.case_id,
+                    ca.agency_id,
+                    ca.agency_name,
+                    ca.agency_email,
+                    ca.portal_url,
+                    ca.portal_provider,
+                    a.name AS canonical_agency_name,
+                    a.state AS canonical_state,
+                    a.email_main AS canonical_email_main,
+                    a.email_foia AS canonical_email_foia,
+                    a.portal_url AS canonical_portal_url,
+                    a.portal_url_alt AS canonical_portal_url_alt,
+                    a.portal_provider AS canonical_portal_provider
+                 FROM case_agencies ca
+                 LEFT JOIN agencies a ON a.id = ca.agency_id
+                 WHERE ca.case_id = ANY($1::int[])
+                   AND COALESCE(ca.is_active, true) = true
+                 ORDER BY
+                    ca.case_id,
+                    ca.is_primary DESC,
+                    CASE
+                        WHEN LOWER(COALESCE(ca.status, 'active')) = 'active' THEN 0
+                        WHEN LOWER(COALESCE(ca.status, '')) = 'pending' THEN 1
+                        ELSE 2
+                    END,
+                    ca.updated_at DESC NULLS LAST,
+                    ca.id DESC`,
+                [caseIds]
+            );
+
+            for (const row of caseAgencyResult.rows) {
+                listAgencyOverrides.set(Number(row.case_id), row);
+            }
+        }
+
+        const requests = result.rows.map((row) => {
+            const override = listAgencyOverrides.get(Number(row.id));
+            if (!override) return toRequestListItem(row);
+
+            const resolvedAgencyName =
+                override.canonical_agency_name ||
+                override.agency_name ||
+                row.agency_name ||
+                null;
+            const resolvedAgencyEmail = normalizeAgencyEmailHint(
+                override.agency_email ||
+                override.canonical_email_foia ||
+                override.canonical_email_main ||
+                row.agency_email
+            );
+            const resolvedPortalUrl = normalizePortalUrl(
+                override.portal_url ||
+                override.canonical_portal_url ||
+                override.canonical_portal_url_alt ||
+                row.portal_url
+            );
+            const resolvedPortalProvider =
+                override.portal_provider ||
+                override.canonical_portal_provider ||
+                detectPortalProviderByUrl(resolvedPortalUrl)?.name ||
+                row.portal_provider ||
+                null;
+
+            return toRequestListItem({
+                ...row,
+                agency_id: override.agency_id || row.agency_id || null,
+                agency_name: resolvedAgencyName,
+                agency_email: resolvedAgencyEmail || row.agency_email || null,
+                state: override.canonical_state || row.state || null,
+                portal_url: resolvedPortalUrl || row.portal_url || null,
+                portal_provider: resolvedPortalProvider,
+            });
+        });
 
         // Fetch completed cases separately (most recent 50)
         const completedResult = await db.query(`
