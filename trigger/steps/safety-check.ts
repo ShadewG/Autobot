@@ -5,7 +5,7 @@
  */
 
 import { generateObject } from "ai";
-import { decisionModel } from "../lib/ai";
+import { decisionModel, telemetry } from "../lib/ai";
 import { safetyReviewSchema, type SafetyReviewOutput } from "../lib/schemas";
 import { logger } from "../lib/db";
 import type { SafetyResult, ScopeItem } from "../lib/types";
@@ -151,6 +151,7 @@ async function runAiSafetyReview(params: {
   const { object } = await generateObject({
     model: decisionModel,
     schema: safetyReviewSchema,
+    experimental_telemetry: telemetry,
     prompt: `Review this outbound draft for safety before sending to a government agency.
 
 ## Action type

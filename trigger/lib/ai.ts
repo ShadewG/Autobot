@@ -28,3 +28,8 @@ export const researchOptions = { openai: { reasoningEffort: "medium" as const } 
 
 // Fallback (Anthropic if OpenAI fails)
 export const fallbackDraftModel = anthropic("claude-sonnet-4-6");
+
+// Braintrust telemetry — pass to every generateObject/generateText call
+export const telemetry = {
+  isEnabled: true,
+} as const;

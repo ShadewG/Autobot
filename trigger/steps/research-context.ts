@@ -7,7 +7,7 @@
  */
 
 import { generateObject } from "ai";
-import { researchModel, researchOptions } from "../lib/ai";
+import { researchModel, researchOptions, telemetry } from "../lib/ai";
 import { researchContextSchema } from "../lib/schemas";
 import db, { aiService, logger, pdContactService } from "../lib/db";
 import type { ResearchContext, ResearchLevel, Classification, ReferralContact } from "../lib/types";
@@ -304,6 +304,7 @@ ${caseContextNotes || "No case context research available"}
 
 Extract the most useful structured information for drafting a response.`,
         providerOptions: researchOptions,
+        experimental_telemetry: telemetry,
       });
 
       // Merge structured output into result

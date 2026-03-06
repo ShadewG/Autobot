@@ -6,7 +6,7 @@
  */
 
 import { generateObject } from "ai";
-import { decisionModel } from "../lib/ai";
+import { decisionModel, telemetry } from "../lib/ai";
 import { constraintExtractionSchema } from "../lib/schemas";
 import db, { logger } from "../lib/db";
 import type { ScopeItem } from "../lib/types";
@@ -133,6 +133,7 @@ Body:
 ${(message?.body_text || message?.body_html || "").substring(0, 4000)}
 
 Return constraint tags and scope item updates only when supported by the message content.`,
+        experimental_telemetry: telemetry,
       });
 
       extractedConstraints = object.constraintsToAdd;

@@ -6,7 +6,7 @@
  */
 
 import { generateObject } from "ai";
-import { decisionModel, decisionOptions } from "../lib/ai";
+import { decisionModel, decisionOptions, telemetry } from "../lib/ai";
 import { decisionSchema, type DecisionOutput } from "../lib/schemas";
 import db, { logger, caseRuntime } from "../lib/db";
 // @ts-ignore
@@ -758,6 +758,7 @@ async function makeAIDecisionV2(params: {
         schema: decisionSchema,
         prompt: prompt + repairHint,
         providerOptions: decisionOptions,
+        experimental_telemetry: telemetry,
       });
 
       // Validate structure
@@ -1524,6 +1525,7 @@ async function aiDecision(params: {
       schema: decisionSchema,
       prompt,
       providerOptions: decisionOptions,
+      experimental_telemetry: telemetry,
     });
 
     const validation = await validateDecision(object, {

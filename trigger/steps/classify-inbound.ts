@@ -8,7 +8,7 @@
  */
 
 import { generateObject } from "ai";
-import { classifyModel, classifyOptions } from "../lib/ai";
+import { classifyModel, classifyOptions, telemetry } from "../lib/ai";
 import { classificationSchema, type ClassificationOutput } from "../lib/schemas";
 import db, { aiService, logger } from "../lib/db";
 import type { ClassificationResult, CaseContext, Classification } from "../lib/types";
@@ -428,6 +428,7 @@ export async function classifyInbound(
       schema: classificationSchema,
       prompt: buildClassificationPrompt(message, context.caseData, threadMessages, messageAttachments, enrichment),
       providerOptions: classifyOptions,
+      experimental_telemetry: telemetry,
     });
     aiResult = object;
   } catch (aiError: any) {
@@ -578,6 +579,7 @@ export async function classifyMessageContent(
       schema: classificationSchema,
       prompt: buildClassificationPrompt(message, caseData, priorMessages, attachments),
       providerOptions: classifyOptions,
+      experimental_telemetry: telemetry,
     });
     aiResult = object;
   } catch (aiError: any) {

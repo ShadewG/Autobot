@@ -13,7 +13,7 @@ import { task } from "@trigger.dev/sdk";
 import { generateObject } from "ai";
 import { z } from "zod";
 import db, { logger } from "../lib/db";
-import { decisionModel, decisionOptions } from "../lib/ai";
+import { decisionModel, decisionOptions, telemetry } from "../lib/ai";
 
 const AUTO_CAPTURE_NOTES_PREFIX = "Auto-captured from monitor decision:%";
 const DEDUPED_EVAL_CASES_SQL = `
@@ -138,6 +138,7 @@ If the action is wrong, categorize the failure:
     schema: judgeSchema,
     prompt,
     providerOptions: decisionOptions,
+    experimental_telemetry: telemetry,
   });
 
   return {

@@ -1,11 +1,20 @@
 import { defineConfig } from "@trigger.dev/sdk";
 import { syncEnvVars } from "@trigger.dev/build/extensions/core";
+import { BraintrustExporter } from "@braintrust/otel";
 
 export default defineConfig({
   project: "proj_afwkrlynxcczbgflspqf",
   runtime: "node",
   logLevel: "log",
   maxDuration: 300,
+  telemetry: {
+    exporters: [
+      new BraintrustExporter({
+        parent: "project_name:Autobot",
+        filterAISpans: true,
+      }),
+    ],
+  },
   retries: {
     enabledInDev: true,
     default: {
@@ -44,6 +53,7 @@ export default defineConfig({
           "AI_ROUTER_V2",
           "FIRECRAWL_API_KEY",
           "PARALLEL_API_KEY",
+          "BRAINTRUST_API_KEY",
         ];
         const result = vars
           .filter((name) => process.env[name])
