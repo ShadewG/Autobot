@@ -5,6 +5,10 @@ import type {
   ScopeItem,
 } from './types';
 
+function isLoopbackHost(hostname: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]"].includes(String(hostname || "").toLowerCase());
+}
+
 function resolveApiBase(): string {
   const configured = process.env.NEXT_PUBLIC_API_URL;
 
@@ -14,12 +18,14 @@ function resolveApiBase(): string {
     try {
       const resolved = new URL(configured, window.location.origin);
       const normalizedPath = resolved.pathname.replace(/\/$/, '') || '/api';
+      const currentIsLoopback = isLoopbackHost(window.location.hostname);
+      const resolvedIsLoopback = isLoopbackHost(resolved.hostname);
 
       // When the dashboard is served locally behind a same-origin proxy on :3001,
       // keep browser traffic on that origin so cookies and auth behave consistently.
       if (
-        window.location.hostname === 'localhost' &&
-        resolved.hostname === 'localhost' &&
+        currentIsLoopback &&
+        resolvedIsLoopback &&
         resolved.port !== window.location.port
       ) {
         return normalizedPath;

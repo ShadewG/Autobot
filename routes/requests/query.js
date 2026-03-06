@@ -6,6 +6,7 @@ const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/p
 const { normalizeAgencyEmailHint, isTestAgencyEmail, findCanonicalAgency } = require('../../services/canonical-agency');
 const {
     deriveDisplayState,
+    detectCaseMetadataAgencyMismatch,
     extractResearchSuggestedAgency,
     isPlaceholderAgencyEmail,
     shouldSuppressPlaceholderAgencyDisplay,
@@ -17,6 +18,93 @@ function shouldPreferResearchAgencyDisplay({ researchSuggestedAgency, agencyEmai
         && isPlaceholderAgencyEmail(agencyEmail)
         && !normalizePortalUrl(portalUrl)
         && (!addedSource || ['case_row_backfill', 'case_row_fallback'].includes(addedSource))
+    );
+}
+
+function hasSyntheticPlaceholderBackfill({ agencyEmail, portalUrl, addedSource }) {
+    return Boolean(
+        ['case_row_backfill', 'case_row_fallback'].includes(String(addedSource || ''))
+        && isPlaceholderAgencyEmail(agencyEmail)
+        && !normalizePortalUrl(portalUrl)
+    );
+}
+
+function shouldForceCorrectedAgencyDisplay({
+    currentAgencyName,
+    caseAgencyName,
+    additionalDetails,
+    researchSuggestedAgency,
+    currentAgencyEmail,
+    currentPortalUrl,
+}) {
+    const mismatch = detectCaseMetadataAgencyMismatch({
+        currentAgencyName,
+        additionalDetails,
+    });
+    if (!mismatch) return false;
+
+    const correctedAgencyName = String(
+        researchSuggestedAgency?.name ||
+        caseAgencyName ||
+        mismatch.expectedAgencyName ||
+        ''
+    ).trim();
+    if (!correctedAgencyName) return false;
+
+    const normalizedCurrentName = String(currentAgencyName || '').trim().toLowerCase();
+    if (normalizedCurrentName && normalizedCurrentName === correctedAgencyName.toLowerCase()) {
+        return false;
+    }
+
+    return Boolean(
+        normalizeAgencyEmailHint(currentAgencyEmail) ||
+        normalizePortalUrl(currentPortalUrl)
+    );
+}
+
+function buildCorrectedAgencyDisplay({ researchCanonical, researchSuggestedAgency, caseAgencyName, caseState }) {
+    const name = researchCanonical?.name || researchSuggestedAgency?.name || caseAgencyName || null;
+    const email = normalizeAgencyEmailHint(
+        researchCanonical?.email_foia ||
+        researchCanonical?.email_main ||
+        null
+    );
+    const portalUrl = normalizePortalUrl(
+        researchCanonical?.portal_url ||
+        researchCanonical?.portal_url_alt ||
+        null
+    );
+
+    return {
+        id: researchCanonical?.id || null,
+        name,
+        email: email || null,
+        portalUrl,
+        portalProvider: researchCanonical?.portal_provider || detectPortalProviderByUrl(portalUrl)?.name || null,
+        state: deriveDisplayState(researchCanonical?.state || caseState, name),
+    };
+}
+
+function shouldOverrideStaleExistingChannelDisplay({
+    contactResearchNotes,
+    currentAgencyName,
+    researchSuggestedAgency,
+    currentAgencyEmail,
+    currentPortalUrl,
+}) {
+    const parsedNotes = safeJsonParse(contactResearchNotes);
+    const outcome = String(parsedNotes?.execution?.outcome || '').trim().toLowerCase();
+    if (outcome !== 'research_complete_existing_channels') return false;
+
+    const normalizedCurrentName = String(currentAgencyName || '').trim().toLowerCase();
+    const normalizedSuggestedName = String(researchSuggestedAgency?.name || '').trim().toLowerCase();
+    if (!normalizedCurrentName || !normalizedSuggestedName || normalizedCurrentName === normalizedSuggestedName) {
+        return false;
+    }
+
+    return Boolean(
+        normalizeAgencyEmailHint(currentAgencyEmail) ||
+        normalizePortalUrl(currentPortalUrl)
     );
 }
 
@@ -194,6 +282,11 @@ router.get('/', async (req, res) => {
                         portal_provider: row.portal_provider || override.portal_provider || null,
                     }
                     : row;
+                const syntheticPlaceholderDisplay = hasSyntheticPlaceholderBackfill({
+                    agencyEmail: displayRow.agency_email,
+                    portalUrl: displayRow.portal_url,
+                    addedSource: ignoreOverrideForDisplay ? override.added_source : 'case_row_backfill',
+                });
                 const preferResearchDisplay = shouldPreferResearchAgencyDisplay({
                     researchSuggestedAgency,
                     agencyEmail: displayRow.agency_email,
@@ -205,25 +298,57 @@ router.get('/', async (req, res) => {
                     agencyEmail: displayRow.agency_email,
                     portalUrl: displayRow.portal_url,
                     addedSource: ignoreOverrideForDisplay ? override.added_source : 'case_row_backfill',
+                }) || (syntheticPlaceholderDisplay && !researchSuggestedAgency);
+                const forceCorrectedAgencyDisplay = shouldForceCorrectedAgencyDisplay({
+                    currentAgencyName: displayRow.agency_name,
+                    caseAgencyName: row.agency_name,
+                    additionalDetails: row.additional_details,
+                    researchSuggestedAgency,
+                    currentAgencyEmail: displayRow.agency_email,
+                    currentPortalUrl: displayRow.portal_url,
+                }) || shouldOverrideStaleExistingChannelDisplay({
+                    contactResearchNotes: row.contact_research_notes,
+                    currentAgencyName: displayRow.agency_name,
+                    researchSuggestedAgency,
+                    currentAgencyEmail: displayRow.agency_email,
+                    currentPortalUrl: displayRow.portal_url,
+                });
+                const correctedAgencyDisplay = buildCorrectedAgencyDisplay({
+                    researchCanonical,
+                    researchSuggestedAgency,
+                    caseAgencyName: row.agency_name,
+                    caseState: normalizedRowState,
                 });
                 return toRequestListItem({
                     ...displayRow,
                     agency_id: suppressPlaceholderDisplay
                         ? null
-                        : (preferResearchDisplay ? (researchCanonical?.id || displayRow.agency_id || null) : displayRow.agency_id),
-                    agency_name: preferResearchDisplay
+                        : (forceCorrectedAgencyDisplay
+                            ? correctedAgencyDisplay.id
+                            : (preferResearchDisplay ? (researchCanonical?.id || displayRow.agency_id || null) : displayRow.agency_id)),
+                    agency_name: forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.name
+                        : preferResearchDisplay
                         ? (researchCanonical?.name || researchSuggestedAgency.name)
                         : (suppressPlaceholderDisplay ? 'Unknown agency' : displayRow.agency_name),
-                    agency_email: preferResearchDisplay
+                    agency_email: forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.email
+                        : preferResearchDisplay
                         ? (normalizeAgencyEmailHint(researchCanonical?.email_foia || researchCanonical?.email_main) || null)
                         : (suppressPlaceholderDisplay ? null : displayRow.agency_email),
-                    state: preferResearchDisplay
+                    state: forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.state
+                        : preferResearchDisplay
                         ? deriveDisplayState(researchCanonical?.state || normalizedRowState, researchCanonical?.name || researchSuggestedAgency?.name)
                         : normalizedRowState,
-                    portal_url: preferResearchDisplay
+                    portal_url: forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.portalUrl
+                        : preferResearchDisplay
                         ? normalizePortalUrl(researchCanonical?.portal_url || researchCanonical?.portal_url_alt || null)
                         : (suppressPlaceholderDisplay ? null : displayRow.portal_url),
-                    portal_provider: preferResearchDisplay
+                    portal_provider: forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.portalProvider
+                        : preferResearchDisplay
                         ? (researchCanonical?.portal_provider || null)
                         : (suppressPlaceholderDisplay ? null : displayRow.portal_provider),
                 });
@@ -244,16 +369,43 @@ router.get('/', async (req, res) => {
                 portalUrl: override.portal_url || row.portal_url,
                 addedSource: override.added_source,
             });
+            const syntheticPlaceholderDisplay = hasSyntheticPlaceholderBackfill({
+                agencyEmail: override.agency_email || row.agency_email,
+                portalUrl: override.portal_url || row.portal_url,
+                addedSource: override.added_source,
+            });
             const suppressPlaceholderDisplay = shouldSuppressPlaceholderAgencyDisplay({
                 contactResearchNotes: row.contact_research_notes,
                 agencyEmail: override.agency_email || row.agency_email,
                 portalUrl: override.portal_url || row.portal_url,
                 addedSource: override.added_source,
+            }) || (syntheticPlaceholderDisplay && !researchSuggestedAgency);
+            const forceCorrectedAgencyDisplay = shouldForceCorrectedAgencyDisplay({
+                currentAgencyName: canonicalOverride?.name || override.canonical_agency_name || override.agency_name || row.agency_name,
+                caseAgencyName: row.agency_name,
+                additionalDetails: row.additional_details,
+                researchSuggestedAgency,
+                currentAgencyEmail: override.agency_email || row.agency_email,
+                currentPortalUrl: override.portal_url || row.portal_url,
+            }) || shouldOverrideStaleExistingChannelDisplay({
+                contactResearchNotes: row.contact_research_notes,
+                currentAgencyName: canonicalOverride?.name || override.canonical_agency_name || override.agency_name || row.agency_name,
+                researchSuggestedAgency,
+                currentAgencyEmail: override.agency_email || row.agency_email,
+                currentPortalUrl: override.portal_url || row.portal_url,
+            });
+            const correctedAgencyDisplay = buildCorrectedAgencyDisplay({
+                researchCanonical,
+                researchSuggestedAgency,
+                caseAgencyName: row.agency_name,
+                caseState: normalizedRowState,
             });
 
             const resolvedAgencyName =
                 suppressPlaceholderDisplay
                     ? 'Unknown agency'
+                    : forceCorrectedAgencyDisplay
+                    ? correctedAgencyDisplay.name
                     : preferResearchDisplay
                     ? (researchCanonical?.name || researchSuggestedAgency?.name || null)
                     : (
@@ -266,6 +418,8 @@ router.get('/', async (req, res) => {
             const resolvedAgencyEmail = normalizeAgencyEmailHint(
                 suppressPlaceholderDisplay
                     ? null
+                    : forceCorrectedAgencyDisplay
+                    ? correctedAgencyDisplay.email
                     : preferResearchDisplay
                     ? (researchCanonical?.email_foia || researchCanonical?.email_main || null)
                     : (
@@ -278,6 +432,7 @@ router.get('/', async (req, res) => {
                     )
             );
             const resolvedPortalUrl = [
+                forceCorrectedAgencyDisplay ? correctedAgencyDisplay.portalUrl : null,
                 (preferResearchDisplay || suppressPlaceholderDisplay) ? null : override.portal_url,
                 preferResearchDisplay ? researchCanonical?.portal_url : canonicalOverride?.portal_url,
                 preferResearchDisplay ? researchCanonical?.portal_url_alt : canonicalOverride?.portal_url_alt,
@@ -288,6 +443,8 @@ router.get('/', async (req, res) => {
             const resolvedPortalProvider =
                 (suppressPlaceholderDisplay
                     ? null
+                    : forceCorrectedAgencyDisplay
+                    ? correctedAgencyDisplay.portalProvider
                     : (preferResearchDisplay
                     ? researchCanonical?.portal_provider
                     : (
@@ -309,16 +466,18 @@ router.get('/', async (req, res) => {
                 agency_name: resolvedAgencyName,
                 agency_email: preferResearchDisplay
                     ? (resolvedAgencyEmail || null)
-                    : (resolvedAgencyEmail || row.agency_email || null),
+                    : (forceCorrectedAgencyDisplay ? (resolvedAgencyEmail || null) : (resolvedAgencyEmail || row.agency_email || null)),
                 state: deriveDisplayState(
-                    preferResearchDisplay
+                    forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.state
+                        : preferResearchDisplay
                         ? (researchCanonical?.state || normalizedRowState)
                         : (canonicalOverrideState || normalizedCanonicalState || normalizedRowState || null),
                     resolvedAgencyName
                 ),
                 portal_url: preferResearchDisplay
                     ? (resolvedPortalUrl || null)
-                    : (resolvedPortalUrl || row.portal_url || null),
+                    : (forceCorrectedAgencyDisplay ? (resolvedPortalUrl || null) : (resolvedPortalUrl || row.portal_url || null)),
                 portal_provider: resolvedPortalProvider,
             });
         }));
@@ -622,11 +781,36 @@ router.get('/:id/workspace', async (req, res) => {
             portalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
             addedSource: primaryCaseAgency?.added_source || (primaryCaseAgencyIsSynthetic ? 'case_row_backfill' : null),
         });
+        const syntheticPlaceholderAgencyDisplay = hasSyntheticPlaceholderBackfill({
+            agencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
+            portalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
+            addedSource: primaryCaseAgency?.added_source || (primaryCaseAgencyIsSynthetic ? 'case_row_backfill' : null),
+        });
         const suppressPlaceholderAgencyDisplay = shouldSuppressPlaceholderAgencyDisplay({
             contactResearchNotes: caseData.contact_research_notes,
             agencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
             portalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
             addedSource: primaryCaseAgency?.added_source || (primaryCaseAgencyIsSynthetic ? 'case_row_backfill' : null),
+        }) || (syntheticPlaceholderAgencyDisplay && !researchSuggestedAgency);
+        const forceCorrectedAgencyDisplay = shouldForceCorrectedAgencyDisplay({
+            currentAgencyName: canonicalAgency?.name || preferredCaseAgency?.agency_name || caseData.agency_name,
+            caseAgencyName: caseData.agency_name,
+            additionalDetails: caseData.additional_details,
+            researchSuggestedAgency,
+            currentAgencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
+            currentPortalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
+        }) || shouldOverrideStaleExistingChannelDisplay({
+            contactResearchNotes: caseData.contact_research_notes,
+            currentAgencyName: canonicalAgency?.name || preferredCaseAgency?.agency_name || caseData.agency_name,
+            researchSuggestedAgency,
+            currentAgencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
+            currentPortalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
+        });
+        const correctedAgencyDisplay = buildCorrectedAgencyDisplay({
+            researchCanonical: researchCanonicalAgency,
+            researchSuggestedAgency,
+            caseAgencyName: caseData.agency_name,
+            caseState: caseData.state,
         });
 
         // Resolve canonical agency id for deep-linking to /agencies/detail.
@@ -634,6 +818,7 @@ router.get('/:id/workspace', async (req, res) => {
         const useCanonicalDisplay = Boolean(
             !suppressPlaceholderAgencyDisplay &&
             !useResearchSuggestedDisplay
+            && !forceCorrectedAgencyDisplay
             && canonicalAgency
             && (!preferredCaseAgency || primaryCaseAgencyIsSynthetic)
         );
@@ -642,6 +827,8 @@ router.get('/:id/workspace', async (req, res) => {
             : (
                 suppressPlaceholderAgencyDisplay
                     ? null
+                    : forceCorrectedAgencyDisplay
+                    ? correctedAgencyDisplay.id
                     : useResearchSuggestedDisplay
                     ? (researchCanonicalAgency?.id || preferredCaseAgency?.agency_id || caseData.agency_id || null)
                     : (preferredCaseAgency?.agency_id || caseData.agency_id || null)
@@ -651,6 +838,8 @@ router.get('/:id/workspace', async (req, res) => {
             : (
                 suppressPlaceholderAgencyDisplay
                     ? 'Unknown agency'
+                    : forceCorrectedAgencyDisplay
+                    ? correctedAgencyDisplay.name
                     : useResearchSuggestedDisplay
                     ? (researchCanonicalAgency?.name || researchSuggestedAgency?.name || preferredCaseAgency?.agency_name || null)
                     : (preferredCaseAgency?.agency_name || null)
@@ -658,6 +847,8 @@ router.get('/:id/workspace', async (req, res) => {
         let resolvedAgencyEmail = normalizeAgencyEmailHint(
             suppressPlaceholderAgencyDisplay
                 ? null
+                : forceCorrectedAgencyDisplay
+                ? correctedAgencyDisplay.email
                 : useCanonicalDisplay
                 ? (canonicalAgency?.email_foia || canonicalAgency?.email_main || caseData.agency_email)
                 : (
@@ -669,6 +860,8 @@ router.get('/:id/workspace', async (req, res) => {
         let resolvedPortalUrl = normalizePortalUrl(
             suppressPlaceholderAgencyDisplay
                 ? null
+                : forceCorrectedAgencyDisplay
+                ? correctedAgencyDisplay.portalUrl
                 : useCanonicalDisplay
                 ? (canonicalAgency?.portal_url || canonicalAgency?.portal_url_alt || caseData.portal_url)
                 : (
@@ -680,6 +873,8 @@ router.get('/:id/workspace', async (req, res) => {
         let resolvedPortalProvider =
             (suppressPlaceholderAgencyDisplay
                 ? null
+                : forceCorrectedAgencyDisplay
+                ? correctedAgencyDisplay.portalProvider
                 : useCanonicalDisplay
                 ? (canonicalAgency?.portal_provider || caseData.portal_provider)
                 : (
@@ -812,6 +1007,17 @@ router.get('/:id/workspace', async (req, res) => {
                     notes: agency.notes || researchSuggestedAgency?.reason || null,
                 };
             }
+            if (forceCorrectedAgencyDisplay && isBackfilledAgency) {
+                return {
+                    ...agency,
+                    agency_id: correctedAgencyDisplay.id,
+                    agency_name: correctedAgencyDisplay.name || agency.agency_name,
+                    agency_email: correctedAgencyDisplay.email,
+                    portal_url: correctedAgencyDisplay.portalUrl,
+                    portal_provider: correctedAgencyDisplay.portalProvider,
+                    notes: agency.notes || researchSuggestedAgency?.reason || 'Display corrected from stale case-row channels.',
+                };
+            }
             if (suppressPlaceholderAgencyDisplay && isBackfilledAgency) {
                 return {
                     ...agency,
@@ -865,6 +1071,7 @@ router.get('/:id/workspace', async (req, res) => {
             sortedCaseAgencies.length === 0
             && !suppressPlaceholderAgencyDisplay
             && !useResearchSuggestedDisplay
+            && !forceCorrectedAgencyDisplay
             && (caseData.agency_name || caseData.agency_email || caseData.portal_url)
         ) {
             try {
@@ -1085,20 +1292,33 @@ router.get('/:id/workspace', async (req, res) => {
                 requestDetail.agency_email = fallbackEmailRaw;
             }
         }
-        if (resolvedAgencyName) {
-            requestDetail.agency_name = resolvedAgencyName;
-        }
-        if (resolvedAgencyEmail) {
-            requestDetail.agency_email = resolvedAgencyEmail;
+        const shouldOverrideAgencyFields = Boolean(
+            suppressPlaceholderAgencyDisplay ||
+            useResearchSuggestedDisplay ||
+            useCanonicalDisplay ||
+            forceCorrectedAgencyDisplay
+        );
+        if (shouldOverrideAgencyFields) {
+            requestDetail.agency_name = resolvedAgencyName || requestDetail.agency_name;
+            requestDetail.agency_email = resolvedAgencyEmail || null;
+            requestDetail.portal_url = resolvedPortalUrl || null;
+            requestDetail.portal_provider = resolvedPortalProvider || null;
+        } else {
+            if (resolvedAgencyName) {
+                requestDetail.agency_name = resolvedAgencyName;
+            }
+            if (resolvedAgencyEmail) {
+                requestDetail.agency_email = resolvedAgencyEmail;
+            }
+            if (resolvedPortalUrl) {
+                requestDetail.portal_url = resolvedPortalUrl;
+            }
+            if (resolvedPortalProvider) {
+                requestDetail.portal_provider = resolvedPortalProvider;
+            }
         }
         if (isPlaceholderAgencyEmail(requestDetail.agency_email)) {
             requestDetail.agency_email = null;
-        }
-        if (resolvedPortalUrl) {
-            requestDetail.portal_url = resolvedPortalUrl;
-        }
-        if (resolvedPortalProvider) {
-            requestDetail.portal_provider = resolvedPortalProvider;
         }
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
