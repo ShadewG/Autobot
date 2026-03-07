@@ -381,9 +381,12 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
             const caseData = await db.getCaseById(requestId);
             const isReviewStatus = String(caseData?.status || '').startsWith('needs_');
             await db.updateCase(requestId, {
-                status: isReviewStatus ? 'awaiting_response' : undefined,
-                requires_human: false,
-                pause_reason: null,
+                status: isReviewStatus
+                    ? (caseData?.status === 'needs_phone_call' ? 'needs_phone_call' : 'needs_human_review')
+                    : undefined,
+                requires_human: isReviewStatus ? true : false,
+                pause_reason: isReviewStatus ? 'EXECUTION_BLOCKED' : null,
+                substatus: isReviewStatus ? 'Proposal dismissed — manual action required' : undefined,
             });
         }
 
@@ -450,7 +453,7 @@ router.post('/:id/proposals/:proposalId/withdraw', async (req, res) => {
         // Mark case for manual handling (no auto-resume)
         await db.updateCase(requestId, {
             requires_human: true,
-            pause_reason: 'MANUAL',
+            pause_reason: 'EXECUTION_BLOCKED',
             autopilot_mode: 'MANUAL'
         });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -76,6 +76,14 @@ export function AdjustModal({
   const [selectedPresets, setSelectedPresets] = useState<string[]>([]);
   const [customInstruction, setCustomInstruction] = useState("");
   const [costCap, setCostCap] = useState("");
+
+  useEffect(() => {
+    if (!open) {
+      setSelectedPresets([]);
+      setCustomInstruction("");
+      setCostCap("");
+    }
+  }, [open]);
 
   const togglePreset = (presetId: string) => {
     setSelectedPresets((prev) =>

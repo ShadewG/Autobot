@@ -1655,8 +1655,8 @@ function DetailV2Content() {
                       </details>
                     )}
 
-                    {/* Manual submit helper for SUBMIT_PORTAL */}
-                    {pending_proposal.action_type === "SUBMIT_PORTAL" && portal_helper && (
+                    {/* Manual submit helper for portal submissions and manual portal fallback */}
+                    {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(pending_proposal.action_type) && (
                       <details className="text-xs">
                         <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground flex items-center gap-1">
                           <Globe className="h-2.5 w-2.5" /> Manual Submit Helper

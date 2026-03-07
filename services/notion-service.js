@@ -480,6 +480,19 @@ class NotionService {
             caseData.incident_location = locationFromText;
         }
 
+        const agencyFromText = pickLineValue([
+            /(?:^|\n)\s*pd:\s*([^\n\r]+)/i,
+            /(?:^|\n)\s*police department:\s*([^\n\r]+)/i,
+            /(?:^|\n)\s*agency:\s*([^\n\r]+)/i
+        ]);
+        if (agencyFromText && (!caseData.agency_name || caseData.agency_name === 'Police Department')) {
+            caseData.agency_name = agencyFromText
+                .replace(/\\\[/g, '[')
+                .replace(/\\\]/g, ']')
+                .replace(/\[[^\]]+\]\([^)]+\)/g, (match) => match.replace(/\[([^\]]+)\]\([^)]+\)/, '$1'))
+                .trim();
+        }
+
         const dateFromText = pickLineValue([
             /date of the incident:\s*([^\n\r]+)/i,
             /incident date:\s*([^\n\r]+)/i,

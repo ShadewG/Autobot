@@ -461,6 +461,91 @@ export async function executeAction(
       // If we get here, it means hasPortal was false but we didn't throw — should not happen.
       throw new Error(`SUBMIT_PORTAL reached switch but was not handled by portal check for case ${caseId}`);
 
+    case "SEND_PDF_EMAIL": {
+      if (!targetEmail) throw new Error("No agency_email for PDF email");
+      if (!subject) throw new Error("No subject for PDF email");
+      if (!originalBodyText && !originalBodyHtml) throw new Error("No body content for PDF email");
+
+      const fs = require("fs");
+      const pdfFormService = require("../../services/pdf-form-service");
+      const sendgridService = require("../../services/sendgrid-service");
+      const pdfAttachment = await pdfFormService.getLatestPreparedPdfAttachment(caseId);
+      if (!pdfAttachment) throw new Error("No prepared PDF attachment found for this proposal");
+
+      let pdfBuffer: Buffer | null = null;
+      if (pdfAttachment.storage_path && fs.existsSync(pdfAttachment.storage_path)) {
+        pdfBuffer = fs.readFileSync(pdfAttachment.storage_path);
+      } else {
+        const fullAttachment = await db.getAttachmentById(pdfAttachment.id);
+        if (fullAttachment?.file_data) {
+          pdfBuffer = Buffer.isBuffer(fullAttachment.file_data)
+            ? fullAttachment.file_data
+            : Buffer.from(fullAttachment.file_data.data || fullAttachment.file_data);
+        }
+      }
+
+      if (!pdfBuffer) {
+        throw new Error("Prepared PDF file is unavailable for this proposal");
+      }
+
+      const replyHeaders = buildReplyHeaders(targetEmail, latestInbound) || {};
+      let sendResult: any;
+      try {
+        sendResult = await sendgridService.sendEmail({
+          to: targetEmail,
+          subject,
+          text: originalBodyText,
+          html: originalBodyHtml,
+          inReplyTo: replyHeaders["In-Reply-To"],
+          references: replyHeaders.References,
+          caseId,
+          messageType: "send_pdf_email",
+          attachments: [{
+            content: pdfBuffer.toString("base64"),
+            filename: pdfAttachment.filename,
+            type: "application/pdf",
+            disposition: "attachment",
+          }],
+        });
+      } catch (sendErr: any) {
+        await db.updateProposal(proposalId, { execution_key: null });
+        await caseRuntime.transitionCaseRuntime(caseId, "EMAIL_FAILED", {
+          proposalId,
+          error: `PDF email send failed: ${sendErr?.message || "unknown"}`.substring(0, 100),
+        });
+        return { actionExecuted: false, executionResult: { action: "pdf_email_failed" } };
+      }
+
+      await createExecutionRecord({
+        caseId,
+        proposalId,
+        runId,
+        executionKey,
+        actionType: resolvedActionType,
+        status: "SENT",
+        provider: "email",
+        providerPayload: {
+          to: targetEmail,
+          subject,
+          attachmentId: pdfAttachment.id,
+          sendgridMessageId: sendResult?.sendgridMessageId || null,
+        },
+      });
+
+      await db.updateProposal(proposalId, {
+        emailJobId: sendResult?.sendgridMessageId || sendResult?.messageId || `pdf_email_${executionKey}`,
+      });
+
+      await caseRuntime.transitionCaseRuntime(caseId, "EMAIL_SENT", { proposalId });
+      executionResult = {
+        action: "pdf_email_sent",
+        attachmentId: pdfAttachment.id,
+        messageId: sendResult?.messageId || null,
+        sendgridMessageId: sendResult?.sendgridMessageId || null,
+      };
+      break;
+    }
+
     case "SEND_INITIAL_REQUEST":
     case "SEND_FOLLOWUP":
     case "SEND_REBUTTAL":

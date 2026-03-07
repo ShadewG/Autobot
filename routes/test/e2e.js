@@ -584,22 +584,34 @@ async function executePhase(run) {
                 // Invoke the graph (via worker or direct)
                 const triggerType = scenario.inbound ? 'agency_reply' : 'time_based_followup';
 
-                // Pass llm_stubs from persisted scenario config, thread_id for isolation
-                const invokeOptions = {
-                    e2e_run_id: run.id,
-                    messageId: run.artifacts.inbound_message_id,
-                    llmStubs: run.deterministic ? scenario.llm_stubs : null,
-                    threadId: run.artifacts.thread_id  // Per-run thread for isolation
-                };
+                const autopilotMode = scenario.case_setup?.autopilot_mode || 'SUPERVISED';
 
-                const { tasks: triggerTasks } = require('@trigger.dev/sdk');
-                const taskId = run.artifacts.inbound_message_id ? 'process-inbound' : 'process-followup';
-                const taskPayload = run.artifacts.inbound_message_id
-                    ? { caseId: run.case_id, messageId: run.artifacts.inbound_message_id, autopilotMode: 'on' }
-                    : { caseId: run.case_id };
-                const handle = await triggerTasks.trigger(taskId, taskPayload);
-                run.artifacts.trigger_run_id = handle.id;
-                run.logs.push(`Triggered Trigger.dev task: ${taskId} (run: ${handle.id})`);
+                if (run.use_worker === false || !process.env.TRIGGER_SECRET_KEY) {
+                    const routeName = run.artifacts.inbound_message_id ? 'run-inbound' : 'run-followup';
+                    const localPayload = run.artifacts.inbound_message_id
+                        ? {
+                            messageId: run.artifacts.inbound_message_id,
+                            autopilotMode,
+                            llmStubs: run.deterministic ? scenario.llm_stubs : null
+                        }
+                        : {
+                            autopilotMode,
+                            llmStubs: run.deterministic ? scenario.llm_stubs : null
+                        };
+                    const localResult = await invokeLocalRunRoute(run.case_id, routeName, localPayload);
+                    run.artifacts.trigger_run_id = localResult.trigger_run_id || null;
+                    run.artifacts.local_run_id = localResult.run?.id || null;
+                    run.logs.push(`Triggered local run route: ${routeName} (run: ${localResult.run?.id || 'n/a'})`);
+                } else {
+                    const { tasks: triggerTasks } = require('@trigger.dev/sdk');
+                    const taskId = run.artifacts.inbound_message_id ? 'process-inbound' : 'process-followup';
+                    const taskPayload = run.artifacts.inbound_message_id
+                        ? { caseId: run.case_id, messageId: run.artifacts.inbound_message_id, autopilotMode }
+                        : { caseId: run.case_id };
+                    const handle = await triggerTasks.trigger(taskId, taskPayload);
+                    run.artifacts.trigger_run_id = handle.id;
+                    run.logs.push(`Triggered Trigger.dev task: ${taskId} (run: ${handle.id})`);
+                }
 
                 const result = await waitForAgentRun(run.case_id, 60000);
                 run.logs.push(`Agent run completed: ${result.status}`);
@@ -651,12 +663,25 @@ async function executePhase(run) {
                 );
                 if (pendingProposal.rows.length > 0) {
                     const proposal = pendingProposal.rows[0];
-                    if (proposal.waitpoint_token) {
+                    const shouldUseLocalDecisionRoute =
+                        run.use_worker === false ||
+                        !process.env.TRIGGER_SECRET_KEY ||
+                        String(proposal.waitpoint_token || '').startsWith('local-');
+
+                    if (shouldUseLocalDecisionRoute) {
+                        await invokeLocalApi(`/api/proposals/${proposal.id}/decision`, {
+                            action: decision.action,
+                            instruction: decision.instruction || null
+                        });
+                        run.logs.push(`Submitted local proposal decision for ${proposal.id}: ${decision.action}`);
+                    } else if (proposal.waitpoint_token) {
                         const { wait: triggerWait } = require('@trigger.dev/sdk');
                         await triggerWait.completeToken(proposal.waitpoint_token, decision);
                         run.logs.push(`Completed waitpoint for proposal ${proposal.id}: ${decision.action}`);
                     }
-                    const result = await waitForAgentRun(run.case_id, 60000);
+                    const result = await waitForAgentRun(run.case_id, 60000, {
+                        treatWaitingAsInterrupt: decision.action === 'ADJUST'
+                    });
                     run.logs.push(`Agent run completed after human decision: ${result.status}`);
                 } else {
                     run.logs.push(`No pending proposal found for human decision`);
@@ -699,8 +724,9 @@ async function executePhase(run) {
  * Wait for the most recent agent run for a case to reach a terminal state.
  * Polls the agent_runs table since Trigger.dev tasks run in the cloud.
  */
-async function waitForAgentRun(caseId, timeoutMs = 60000) {
+async function waitForAgentRun(caseId, timeoutMs = 60000, options = {}) {
     const startTime = Date.now();
+    const { treatWaitingAsInterrupt = true } = options;
 
     while (Date.now() - startTime < timeoutMs) {
         const result = await db.query(
@@ -711,7 +737,7 @@ async function waitForAgentRun(caseId, timeoutMs = 60000) {
         if (status === 'completed' || status === 'failed') {
             return { status };
         }
-        if (status === 'waiting') {
+        if (status === 'waiting' && treatWaitingAsInterrupt) {
             // Task is waiting for human input — treat as interrupt
             return { status: 'interrupted' };
         }
@@ -719,6 +745,50 @@ async function waitForAgentRun(caseId, timeoutMs = 60000) {
     }
 
     return { status: 'timeout' };
+}
+
+async function invokeLocalRunRoute(caseId, routeName, payload) {
+    const baseUrl = process.env.APP_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
+    const response = await fetch(`${baseUrl}/api/cases/${caseId}/${routeName}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {})
+    });
+
+    let json = null;
+    try {
+        json = await response.json();
+    } catch (_) {
+        json = null;
+    }
+
+    if (!response.ok) {
+        throw new Error(json?.error || `Local ${routeName} failed with ${response.status}`);
+    }
+
+    return json;
+}
+
+async function invokeLocalApi(path, payload) {
+    const baseUrl = process.env.APP_BASE_URL || `http://127.0.0.1:${process.env.PORT || 3000}`;
+    const response = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {})
+    });
+
+    let json = null;
+    try {
+        json = await response.json();
+    } catch (_) {
+        json = null;
+    }
+
+    if (!response.ok) {
+        throw new Error(json?.error || `Local API ${path} failed with ${response.status}`);
+    }
+
+    return json;
 }
 
 /**
@@ -842,8 +912,13 @@ async function runE2EAssertions(run) {
         actual: `${keyCount} proposals with key`
     });
 
-    // A4: requires_human matches expected
-    if (expected.requires_human !== undefined) {
+    const hasExplicitFinalStateExpectation =
+        expected.final_requires_human !== undefined ||
+        expected.final_case_status !== undefined ||
+        expected.final_proposal_status !== undefined;
+
+    // A4: requires_human matches expected for scenarios that do not advance past a human decision.
+    if (expected.requires_human !== undefined && !hasExplicitFinalStateExpectation) {
         assertions.push({
             name: 'requires_human_matches',
             passed: caseData.requires_human === expected.requires_human,
@@ -852,8 +927,8 @@ async function runE2EAssertions(run) {
         });
     }
 
-    // A5: pause_reason matches expected
-    if (expected.pause_reason) {
+    // A5: pause_reason matches expected for scenarios that do not advance past a human decision.
+    if (expected.pause_reason && !hasExplicitFinalStateExpectation) {
         assertions.push({
             name: 'pause_reason_matches',
             passed: caseData.pause_reason === expected.pause_reason,

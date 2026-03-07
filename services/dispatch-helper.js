@@ -1,6 +1,83 @@
 const db = require('./database');
 const { notify } = require('./event-bus');
 const triggerDispatch = require('./trigger-dispatch-service');
+const aiService = require('./ai-service');
+
+function canMaterializeReadyToSendLocally(caseData) {
+    return (
+        process.env.NODE_ENV !== 'production' &&
+        !process.env.TRIGGER_SECRET_KEY &&
+        Boolean(caseData?.agency_email) &&
+        !caseData?.portal_url
+    );
+}
+
+async function materializeReadyToSendLocally(caseData, run, source) {
+    const generated = await aiService.generateFOIARequest(caseData);
+    const subject =
+        generated.subject ||
+        `Public Records Request - ${caseData.subject_name || 'Records Request'}`;
+    const bodyText = generated.body || generated.requestText || generated.request_text;
+
+    if (!bodyText || typeof bodyText !== 'string' || !bodyText.trim()) {
+        throw new Error(`Local ready_to_send materialization generated an empty draft for case ${caseData.id}`);
+    }
+
+    const bodyHtml = generated.body_html || null;
+    const proposal = await db.upsertProposal({
+        proposalKey: `${caseData.id}:initial:SEND_INITIAL_REQUEST:0`,
+        caseId: caseData.id,
+        runId: run.id,
+        triggerMessageId: null,
+        actionType: 'SEND_INITIAL_REQUEST',
+        draftSubject: subject,
+        draftBodyText: bodyText,
+        draftBodyHtml: bodyHtml,
+        reasoning: [
+            `Locally materialized initial request for ${caseData.agency_name}`,
+            `Delivery: Email: ${caseData.agency_email}`,
+            `Autopilot: SUPERVISED`,
+        ],
+        canAutoExecute: false,
+        requiresHuman: true,
+        status: 'PENDING_APPROVAL',
+        gateOptions: ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+    });
+
+    await db.updateProposal(proposal.id, {
+        waitpoint_token: `local-ready-to-send:${caseData.id}:${run.id}`,
+    });
+
+    await db.updateAgentRun(run.id, {
+        status: 'waiting',
+        started_at: new Date(),
+        metadata: {
+            ...(run.metadata || {}),
+            source,
+            local_materialized_initial_request: true,
+            proposalId: proposal.id,
+        },
+    });
+
+    try {
+        await db.logActivity('dispatch_run_created', `Locally materialized initial request for case ${caseData.case_name}`, {
+            case_id: caseData.id,
+            run_id: run.id,
+            proposal_id: proposal.id,
+            source,
+            local_materialized: true,
+        });
+        notify('info', `Case ${caseData.id} locally materialized (${source})`, {
+            case_id: caseData.id,
+            run_id: run.id,
+            proposal_id: proposal.id,
+        });
+    } catch (sideEffectErr) {
+        console.warn(`[dispatch] Local materialization side-effect failed for case ${caseData.id}:`, sideEffectErr.message);
+    }
+
+    return { dispatched: true, runId: run.id, localFallback: true, proposalId: proposal.id };
+}
 
 /**
  * Dispatch a ready_to_send case through the Run Engine.
@@ -61,6 +138,10 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
 
     // 4. Trigger Trigger.dev task (clean up run on failure)
     try {
+        if (canMaterializeReadyToSendLocally(caseData)) {
+            return await materializeReadyToSendLocally(caseData, run, source);
+        }
+
         await triggerDispatch.triggerTask('process-initial-request', {
             runId: run.id,
             caseId,

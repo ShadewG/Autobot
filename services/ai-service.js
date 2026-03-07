@@ -713,25 +713,30 @@ ${prompt}`
      */
     async generateAutoReply(messageData, analysis, caseData) {
         try {
-            console.log(`Generating auto-reply for case: ${caseData.case_name}, intent: ${analysis.intent}`);
+            const rawIntent = String(analysis?.intent || '').trim();
+            const normalizedIntent = rawIntent.toLowerCase() === 'clarification_request'
+                ? 'more_info_needed'
+                : rawIntent.toLowerCase();
+
+            console.log(`Generating auto-reply for case: ${caseData.case_name}, intent: ${rawIntent || normalizedIntent}`);
 
             // FIRST: Check if response is even needed
             const noResponseIntents = ['portal_redirect', 'acknowledgment', 'records_ready', 'delivery', 'partial_delivery'];
 
-            if (noResponseIntents.includes(analysis.intent)) {
-                console.log(`No response needed for intent: ${analysis.intent}`);
+            if (noResponseIntents.includes(normalizedIntent)) {
+                console.log(`No response needed for intent: ${normalizedIntent}`);
                 return {
                     should_auto_reply: false,
-                    reason: `No email response needed for ${analysis.intent}`,
-                    suggested_action: analysis.intent === 'portal_redirect' ? 'use_portal' :
-                                     analysis.intent === 'records_ready' ? 'download' :
-                                     analysis.intent === 'delivery' ? 'download' : 'wait',
+                    reason: `No email response needed for ${normalizedIntent}`,
+                    suggested_action: normalizedIntent === 'portal_redirect' ? 'use_portal' :
+                                     normalizedIntent === 'records_ready' ? 'download' :
+                                     normalizedIntent === 'delivery' ? 'download' : 'wait',
                     portal_url: analysis.portal_url || null
                 };
             }
 
             // Handle denials - but check if rebuttal makes sense first
-            if (analysis.intent === 'denial') {
+            if (normalizedIntent === 'denial') {
                 // Don't rebuttal portal redirects misclassified as denials
                 if (analysis.denial_subtype === 'format_issue' && analysis.portal_url) {
                     console.log('Portal redirect misclassified as denial - no response needed');
@@ -751,7 +756,7 @@ ${prompt}`
             const responseIntents = ['question', 'more_info_needed'];
 
             // Fee requests: only respond if over auto-approve threshold
-            if (analysis.intent === 'fee_request') {
+            if (normalizedIntent === 'fee_request') {
                 const feeAmount = analysis.extracted_fee_amount || 0;
                 const autoApproveMax = parseFloat(process.env.FEE_AUTO_APPROVE_MAX) || 100;
 
@@ -768,7 +773,7 @@ ${prompt}`
                 };
             }
 
-            if (!responseIntents.includes(analysis.intent)) {
+            if (!responseIntents.includes(normalizedIntent)) {
                 return {
                     should_auto_reply: false,
                     reason: 'Intent not suitable for auto-reply'
@@ -787,7 +792,7 @@ ${prompt}`
 ${cleanedBody}
 
 **Analysis:**
-- Intent: ${analysis.intent}
+- Intent: ${rawIntent || normalizedIntent}
 - What they need: ${analysis.suggested_action}
 
 Generate an appropriate reply that:
@@ -807,7 +812,7 @@ Return ONLY the email body text, no subject line or metadata.`;
             replyText = this.normalizeGeneratedDraftSignature(replyText, userSignature, { includeEmail: false, includeAddress: false });
 
             // Guardrail: if intent requires response but model says "no response needed", fallback
-            if (responseIntents.includes(analysis.intent) && /no response needed|no reply needed/i.test(replyText || '')) {
+            if (responseIntents.includes(normalizedIntent) && /no response needed|no reply needed/i.test(replyText || '')) {
                 const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
                 const requestedRecords = Array.isArray(scopeItems) && scopeItems.length > 0
                     ? scopeItems.map(item => item.name || item.description || item.item || JSON.stringify(item))

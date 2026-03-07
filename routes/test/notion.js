@@ -1,6 +1,66 @@
 const express = require('express');
 const router = express.Router();
 const { db, notionService, discordService, generateQueue, detectPortalProviderByUrl, transitionCaseRuntime } = require('./_helpers');
+const { dispatchReadyToSend } = require('../../services/dispatch-helper');
+
+async function enqueueOrDispatch(caseId, { instantMode = true, source = 'notion_test' } = {}) {
+    if (generateQueue) {
+        await generateQueue.add('generate-foia', {
+            caseId,
+            instantMode,
+        });
+        return { mode: 'queue' };
+    }
+
+    const result = await dispatchReadyToSend(caseId, { source });
+    return { mode: 'dispatch', result };
+}
+
+function applyTestDeliveryOverride(caseData, testEmail) {
+    if (!testEmail) return { ...caseData };
+
+    return {
+        ...caseData,
+        agency_email: testEmail,
+        alternate_agency_email: null,
+        portal_url: null,
+        portal_provider: null,
+        agency_id: null,
+        last_portal_status: null,
+        last_portal_status_at: null,
+        last_portal_engine: null,
+        last_portal_run_id: null,
+        last_portal_details: null,
+        last_portal_task_url: null,
+        last_portal_recording_url: null,
+        last_portal_account_email: null,
+        last_portal_screenshot_url: null,
+    };
+}
+
+async function persistTestDeliveryOverride(caseId, testEmail) {
+    if (!testEmail) return;
+
+    await db.query(
+        `UPDATE cases
+         SET agency_email = $1,
+             alternate_agency_email = NULL,
+             portal_url = NULL,
+             portal_provider = NULL,
+             agency_id = NULL,
+             last_portal_status = NULL,
+             last_portal_status_at = NULL,
+             last_portal_engine = NULL,
+             last_portal_run_id = NULL,
+             last_portal_details = NULL,
+             last_portal_task_url = NULL,
+             last_portal_recording_url = NULL,
+             last_portal_account_email = NULL,
+             last_portal_screenshot_url = NULL
+         WHERE id = $2`,
+        [testEmail, caseId]
+    );
+}
 
 /**
  * Test endpoint: Process a Notion page with instant mode
@@ -43,42 +103,65 @@ router.post('/process-notion', async (req, res) => {
             caseId = existing.rows[0].id;
             caseData = existing.rows[0];
 
-            // If test_email is provided, update it
             if (test_email) {
+                await persistTestDeliveryOverride(caseId, test_email);
                 await db.query(
-                    'UPDATE cases SET agency_email = $1, status = $2 WHERE id = $3',
-                    [test_email, 'ready_to_send', caseId]
+                    `UPDATE cases
+                     SET status = $1,
+                         requires_human = false,
+                         pause_reason = NULL,
+                         substatus = NULL
+                     WHERE id = $2`,
+                    ['ready_to_send', caseId]
                 );
-                caseData.agency_email = test_email;
+                caseData = applyTestDeliveryOverride(caseData, test_email);
+            } else {
+                await db.query(
+                    'UPDATE cases SET agency_email = COALESCE($1, agency_email), status = $2, requires_human = false, pause_reason = NULL, substatus = NULL WHERE id = $3',
+                    [null, 'ready_to_send', caseId]
+                );
             }
+            caseData.status = 'ready_to_send';
 
             console.log(`Using existing case ${caseId}, updated for testing`);
         } else {
             // Create new case from Notion data
-            const newCase = await db.createCase({
+            const seededCase = applyTestDeliveryOverride({
                 ...notionPage,
                 agency_email: test_email || notionPage.agency_email
-            });
+            }, test_email || null);
+            const newCase = await db.createCase(seededCase);
             caseId = newCase.id;
-            caseData = newCase;
+            await persistTestDeliveryOverride(caseId, test_email || null);
+
+            await db.query(
+                'UPDATE cases SET status = $1, requires_human = false, pause_reason = NULL, substatus = NULL WHERE id = $2',
+                ['ready_to_send', caseId]
+            );
+
+            caseData = {
+                ...newCase,
+                status: 'ready_to_send',
+                agency_email: test_email || notionPage.agency_email,
+            };
             console.log(`Created new case ${caseId} from Notion`);
         }
 
-        // Queue for generation and sending with instant mode
-        await generateQueue.add('generate-foia', {
-            caseId: caseId,
-            instantMode: instant_mode || true
+        const dispatch = await enqueueOrDispatch(caseId, {
+            instantMode: instant_mode !== false,
+            source: 'notion_test_process',
         });
 
-        console.log(`Queued case ${caseId} for instant processing`);
+        console.log(`Queued case ${caseId} for instant processing via ${dispatch.mode}`);
 
         res.json({
             success: true,
-            message: 'Case queued for instant processing',
+            message: dispatch.mode === 'queue' ? 'Case queued for instant processing' : 'Case dispatched directly for instant processing',
             case_id: caseId,
             case_name: caseData.case_name,
             email: caseData.agency_email,
-            instant_mode: instant_mode || true
+            instant_mode: instant_mode !== false,
+            dispatch
         });
 
     } catch (error) {
@@ -127,10 +210,11 @@ router.post('/sync-notion', async (req, res) => {
                 if (isReadyToSend) {
                     console.log(`Case exists but not sent yet, queueing: ${existingCase.case_name}`);
 
-                    await generateQueue.add('generate-foia', {
-                        caseId: existingCase.id
+                    const dispatch = await enqueueOrDispatch(existingCase.id, {
+                        instantMode: true,
+                        source: 'notion_test_sync_existing'
                     });
-                    console.log(`Queued existing case ${existingCase.id} for generation and sending`);
+                    console.log(`Queued/dispatched existing case ${existingCase.id} for generation and sending via ${dispatch.mode}`);
                     queued++;
 
                     results.push({
@@ -138,7 +222,8 @@ router.post('/sync-notion', async (req, res) => {
                         case_name: existingCase.case_name,
                         agency_email: existingCase.agency_email,
                         status: 'queued',
-                        reason: 'Existing case queued for sending (not sent yet)'
+                        reason: 'Existing case queued for sending (not sent yet)',
+                        dispatch
                     });
                 } else {
                     console.log(`Case already exists and was sent: ${existingCase.case_name}`);
@@ -158,10 +243,11 @@ router.post('/sync-notion', async (req, res) => {
             imported++;
 
             // Queue for email generation and sending
-            await generateQueue.add('generate-foia', {
-                caseId: newCase.id
+            const dispatch = await enqueueOrDispatch(newCase.id, {
+                instantMode: true,
+                source: 'notion_test_sync_new'
             });
-            console.log(`Queued case ${newCase.id} for generation and sending`);
+            console.log(`Queued/dispatched case ${newCase.id} for generation and sending via ${dispatch.mode}`);
             queued++;
 
             results.push({
@@ -169,7 +255,8 @@ router.post('/sync-notion', async (req, res) => {
                 case_name: newCase.case_name,
                 agency_email: newCase.agency_email,
                 status: 'queued',
-                reason: 'New case imported and queued for sending'
+                reason: 'New case imported and queued for sending',
+                dispatch
             });
         }
 
@@ -249,13 +336,14 @@ router.post('/force-notion-sync', async (req, res) => {
                 reviewCount++;
             } else {
                 // Has contact info - queue for processing
-                await generateQueue.add('generate-and-send', {
-                    caseId: caseData.id,
-                    instantMode: true
+                const dispatch = await enqueueOrDispatch(caseData.id, {
+                    instantMode: true,
+                    source: 'notion_test_force_sync'
                 });
 
                 result.status = 'queued';
                 result.message = hasPortal ? 'Queued for portal submission' : 'Queued for email';
+                result.dispatch = dispatch;
                 queuedCount++;
             }
 

@@ -13,6 +13,9 @@ const REVIEW_STATUSES = [
   "needs_phone_call",
   "needs_contact_info",
   "needs_human_fee_approval",
+  "needs_rebuttal",
+  "pending_fee_decision",
+  "id_state",
 ];
 
 export async function reconcileCaseAfterDismiss(caseId: number): Promise<void> {
@@ -24,9 +27,13 @@ export async function reconcileCaseAfterDismiss(caseId: number): Promise<void> {
   if (remaining.rows.length > 0) return; // Another proposal still active — stay paused
 
   const caseRow = await db.getCaseById(caseId);
-  if (!caseRow?.requires_human) return; // Already cleared
+  if (!caseRow) return;
 
-  if (REVIEW_STATUSES.includes(caseRow.status)) {
+  const caseStatus = String(caseRow.status || "").trim().toLowerCase();
+  const hasStaleReviewStatus = REVIEW_STATUSES.includes(caseStatus);
+  if (!caseRow.requires_human && !hasStaleReviewStatus) return; // Already reconciled
+
+  if (hasStaleReviewStatus) {
     // Determine target status: if case has inbound messages → responded, otherwise awaiting_response
     const hasInbound = await db.query(
       `SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`,

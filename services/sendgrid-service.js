@@ -2212,6 +2212,29 @@ class SendGridService {
                 }
             });
 
+            if (Array.isArray(messageData.attachments) && messageData.attachments.length > 0) {
+                for (const attachment of messageData.attachments) {
+                    try {
+                        const fileBuffer = typeof attachment?.content === 'string'
+                            ? Buffer.from(attachment.content, 'base64')
+                            : null;
+
+                        await db.createAttachment({
+                            message_id: message.id,
+                            case_id: messageData.case_id,
+                            filename: attachment?.filename || 'attachment',
+                            content_type: attachment?.type || 'application/octet-stream',
+                            size_bytes: fileBuffer?.length || 0,
+                            storage_path: null,
+                            storage_url: null,
+                            file_data: fileBuffer
+                        });
+                    } catch (attachmentError) {
+                        console.error('Error logging sent attachment:', attachmentError);
+                    }
+                }
+            }
+
             // Update thread
             const currentMessageCount = Number.isFinite(Number(thread.message_count)) ? Number(thread.message_count) : 0;
             await db.updateThread(thread.id, {
@@ -2364,7 +2387,8 @@ class SendGridService {
                     body_text: text,
                     body_html: html || this.formatEmailHtml(text),
                     message_type: messageType,
-                    thread_id: inReplyTo || messageId
+                    thread_id: inReplyTo || messageId,
+                    attachments: attachments || []
                 });
             }
 

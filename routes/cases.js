@@ -317,9 +317,9 @@ router.post('/import-direct', async (req, res) => {
 
     // Primary agency = first usable
     const primary = usable[0];
-    const recordsText = Array.isArray(primary.requested_records)
-      ? primary.requested_records.join(', ')
-      : primary.requested_records || null;
+    const requestedRecords = Array.isArray(primary.requested_records)
+      ? primary.requested_records
+      : (primary.requested_records ? [primary.requested_records] : null);
 
     const newCase = await db.createCase({
       notion_page_id: syntheticId,
@@ -330,7 +330,7 @@ router.post('/import-direct', async (req, res) => {
       state: normalizedState,
       incident_date: parsedDate,
       incident_location: incident_location || null,
-      requested_records: recordsText,
+      requested_records: requestedRecords,
       additional_details: [
         additional_details,
         source_article_url ? `Source: ${source_article_url}` : null,

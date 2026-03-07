@@ -1,8 +1,13 @@
 const assert = require('assert');
+const sinon = require('sinon');
 
 const aiService = require('../services/ai-service');
 
 describe('Clarification draft sanitization', function () {
+  afterEach(function () {
+    sinon.restore();
+  });
+
   it('fills stored mailing address and strips unsupported form-send claims', function () {
     const userSignature = {
       name: 'Samuel Hylton',
@@ -62,5 +67,31 @@ describe('Clarification draft sanitization', function () {
     assert(!sanitized.includes('[INSERT REQUESTER MAILING ADDRESS]'));
     assert(!/^Mailing address \(for CD\):/m.test(sanitized));
     assert(sanitized.includes('If needed, I can provide a mailing address separately.'));
+  });
+
+  it('treats CLARIFICATION_REQUEST as a reply-worthy clarification intent', async function () {
+    sinon.stub(aiService, 'callAI').resolves('Please confirm the incident date and location so I can narrow the request.');
+    sinon.stub(aiService, 'getUserSignatureForCase').resolves({
+      name: 'Samuel Hylton',
+      phone: '209-800-7702',
+      address: '',
+    });
+
+    const draft = await aiService.generateAutoReply(
+      { body_text: 'Please clarify the incident date and location.' },
+      {
+        intent: 'CLARIFICATION_REQUEST',
+        suggested_action: 'Provide the missing incident date and location',
+        confidence_score: 0.92,
+      },
+      {
+        case_name: 'QA Workflow - Clarification Path',
+        subject_name: 'Jordan Example',
+        agency_name: 'Synthetic QA Records Unit',
+      }
+    );
+
+    assert.strictEqual(draft.should_auto_reply, true);
+    assert.match(draft.body_text, /incident date and location/i);
   });
 });

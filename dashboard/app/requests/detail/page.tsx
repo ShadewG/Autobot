@@ -2005,8 +2005,8 @@ function RequestDetailContent() {
                             No outbound message draft for this action. Approve to continue processing this proposal.
                           </p>
                         )}
-                        {/* Manual Submit Helper — only for SUBMIT_PORTAL */}
-                        {pending_proposal.action_type === "SUBMIT_PORTAL" && portal_helper && (
+                        {/* Manual Submit Helper — shown for direct portal actions and manual portal fallback */}
+                        {portal_helper && ["SUBMIT_PORTAL", "ESCALATE"].includes(pending_proposal.action_type) && (
                           <div className="border rounded">
                             <button
                               className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"

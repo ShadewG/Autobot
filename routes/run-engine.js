@@ -19,8 +19,35 @@ const { wait: triggerWait } = require('@trigger.dev/sdk');
 const triggerDispatch = require('../services/trigger-dispatch-service');
 const logger = require('../services/logger');
 const { emailExecutor } = require('../services/executor-adapter');
-const { transitionCaseRuntime } = require('../services/case-runtime');
+const {
+  transitionCaseRuntime: transitionCaseRuntimeUnsafe,
+  CaseLockContention,
+} = require('../services/case-runtime');
 const { HUMAN_REVIEW_PROPOSAL_STATUSES, buildCaseTruth } = require('../lib/case-truth');
+const aiService = require('../services/ai-service');
+const pdfFormService = require('../services/pdf-form-service');
+
+async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
+  const maxAttempts = options.maxAttempts || 5;
+  const baseDelayMs = options.baseDelayMs || 150;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await transitionCaseRuntimeUnsafe(caseId, event, context);
+    } catch (error) {
+      if (!(error instanceof CaseLockContention) || attempt === maxAttempts) {
+        throw error;
+      }
+      logger.warn('Retrying case runtime transition after lock contention', {
+        caseId,
+        event,
+        attempt,
+        maxAttempts,
+      });
+      await new Promise(resolve => setTimeout(resolve, baseDelayMs * attempt));
+    }
+  }
+}
 
 // Trigger.dev queue + idempotency options for per-case concurrency control
 function triggerOpts(caseId, taskType, uniqueId) {
@@ -66,10 +93,744 @@ function isOrphanedWaitingRun(run) {
   return !getTriggerRunId(run);
 }
 
+async function reconcileCaseAfterDismiss(caseId, proposal = null) {
+  const remaining = await db.query(
+    `SELECT 1 FROM proposals WHERE case_id = $1 AND status IN ('PENDING_APPROVAL','BLOCKED','PENDING_PORTAL') LIMIT 1`,
+    [caseId]
+  );
+  if (remaining.rows.length > 0) return;
+
+  const caseRow = await db.getCaseById(caseId);
+  const REVIEW_STATUSES = ['needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval', 'needs_rebuttal', 'pending_fee_decision', 'id_state'];
+  const shouldReconcile = Boolean(caseRow) && (
+    Boolean(caseRow.requires_human) ||
+    REVIEW_STATUSES.includes(String(caseRow.status || ''))
+  );
+
+  if (!shouldReconcile) return;
+
+  const dismissMeansNoFurtherAction =
+    Boolean(proposal?.trigger_message_id) &&
+    ['SEND_REBUTTAL', 'ACCEPT_FEE', 'NEGOTIATE_FEE', 'SEND_FOLLOWUP', 'ESCALATE'].includes(String(proposal?.action_type || '').toUpperCase());
+
+  if (dismissMeansNoFurtherAction) {
+    await db.updateCase(caseId, {
+      status: 'responded',
+      requires_human: false,
+      pause_reason: null,
+      substatus: 'Proposal dismissed — no further action',
+    });
+    logger.info('Reconciled case after dismiss: cleared review state with no further action', {
+      caseId,
+      actionType: proposal.action_type,
+    });
+    return;
+  }
+
+  if (REVIEW_STATUSES.includes(String(caseRow.status || ''))) {
+    const currentStatus = String(caseRow.status || '').toLowerCase();
+    const manualTargetStatus =
+      currentStatus === 'needs_phone_call'
+        ? 'needs_phone_call'
+        : currentStatus === 'pending_fee_decision'
+        ? 'pending_fee_decision'
+        : currentStatus === 'needs_rebuttal'
+        ? 'needs_rebuttal'
+        : 'needs_human_review';
+    await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+      targetStatus: manualTargetStatus,
+      pauseReason: 'EXECUTION_BLOCKED',
+      substatus: 'Proposal dismissed — manual action required',
+      escalationReason: 'proposal_dismissed_manual_takeover',
+    });
+    await db.updateCase(caseId, {
+      status: manualTargetStatus,
+      requires_human: true,
+      pause_reason: 'EXECUTION_BLOCKED',
+      substatus: 'Proposal dismissed — manual action required',
+    });
+    logger.info('Reconciled case after dismiss: moved case to manual review', {
+      caseId,
+      from: caseRow.status,
+      to: manualTargetStatus,
+    });
+  } else {
+    await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: caseRow.status });
+    logger.info('Reconciled case after dismiss: cleared stale flags', { caseId, status: caseRow.status });
+  }
+}
+
+async function createAdjustedInitialRequestProposalLocally(proposal, humanDecision, existingRun) {
+  const caseId = proposal.case_id;
+  const caseData = await db.getCaseById(caseId);
+  if (!caseData) {
+    throw new Error(`Case ${caseId} not found for local adjustment`);
+  }
+
+  const adjustedCaseData = {
+    ...caseData,
+    additional_details: `${caseData.additional_details || ''}\n\nCRITICAL ADJUSTMENT INSTRUCTION: ${humanDecision.instruction || ''}`.trim(),
+  };
+  const generated = await aiService.generateFOIARequest(adjustedCaseData);
+  const subject =
+    generated.subject ||
+    `Public Records Request - ${adjustedCaseData.subject_name || 'Records Request'}`;
+  const bodyText = generated.body || generated.requestText || generated.request_text;
+  if (!bodyText || typeof bodyText !== 'string' || !bodyText.trim()) {
+    throw new Error(`Local adjustment generated an empty draft for case ${caseId}`);
+  }
+
+  await db.updateProposal(proposal.id, {
+    status: 'DISMISSED',
+    human_decision: humanDecision,
+  });
+
+  const adjustedProposal = await db.upsertProposal({
+    proposalKey: `${caseId}:initial:${proposal.action_type}:adjust:${Date.now()}`,
+    caseId,
+    runId: existingRun?.id || proposal.run_id || null,
+    triggerMessageId: null,
+    actionType: proposal.action_type,
+    draftSubject: subject,
+    draftBodyText: bodyText,
+    draftBodyHtml: generated.body_html || null,
+    reasoning: [
+      `Locally adjusted ${proposal.action_type} for ${adjustedCaseData.agency_name}`,
+      `Adjustment instruction: ${humanDecision.instruction || 'none'}`,
+    ],
+    canAutoExecute: false,
+    requiresHuman: true,
+    status: 'PENDING_APPROVAL',
+    gateOptions: Array.isArray(proposal.gate_options) && proposal.gate_options.length > 0
+      ? proposal.gate_options
+      : ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+  });
+
+  await db.updateProposal(adjustedProposal.id, {
+    waitpoint_token: `local-ready-to-send-adjust:${caseId}:${adjustedProposal.id}`,
+  });
+
+  if (existingRun?.id) {
+    await db.updateAgentRun(existingRun.id, {
+      status: 'waiting',
+      metadata: {
+        ...(existingRun.metadata || {}),
+        local_adjustment: true,
+        proposalId: adjustedProposal.id,
+      },
+    });
+  }
+
+  await db.query(
+    `UPDATE cases
+     SET requires_human = true,
+         pause_reason = 'PENDING_APPROVAL',
+         status = 'needs_human_review',
+         updated_at = NOW()
+     WHERE id = $1`,
+    [caseId]
+  );
+
+  return adjustedProposal;
+}
+
+async function createAdjustedClarificationProposalLocally(proposal, humanDecision, existingRun) {
+  const caseId = proposal.case_id;
+  const caseData = await db.getCaseById(caseId);
+  if (!caseData) {
+    throw new Error(`Case ${caseId} not found for local clarification adjustment`);
+  }
+
+  const triggerMessageId = proposal.trigger_message_id || existingRun?.message_id || null;
+  const inboundMessage = triggerMessageId
+    ? await db.getMessageById(triggerMessageId)
+    : await db.getLatestInboundMessage(caseId);
+
+  const revisionPrompt = `You are revising a clarification-response email for a public records request.
+
+Original draft:
+${proposal.draft_body_text || ''}
+
+Human instruction for revision:
+${humanDecision.instruction || ''}
+
+Context:
+- Agency: ${caseData.agency_name || 'Unknown agency'}
+- Subject: ${caseData.subject_name || caseData.case_name || 'Public Records Request'}
+- Inbound message subject: ${inboundMessage?.subject || 'N/A'}
+- Inbound message body:
+${(inboundMessage?.body_text || '').substring(0, 3000)}
+
+Requirements:
+- Follow the human instruction exactly.
+- Keep the draft professional and concise.
+- Preserve any already-known requester facts that belong in the draft.
+- Return ONLY the revised email body text.`;
+
+  let bodyText = await aiService.callAI(revisionPrompt, { effort: 'medium' });
+  const userSignature = await aiService.getUserSignatureForCase(caseData);
+  bodyText = aiService.normalizeGeneratedDraftSignature(bodyText, userSignature, {
+    includeEmail: false,
+    includeAddress: false,
+  });
+  bodyText = aiService.sanitizeClarificationDraft(bodyText, userSignature);
+
+  if (!bodyText || typeof bodyText !== 'string' || !bodyText.trim()) {
+    throw new Error(`Local clarification adjustment generated an empty draft for case ${caseId}`);
+  }
+
+  await db.updateProposal(proposal.id, {
+    status: 'DISMISSED',
+    human_decision: humanDecision,
+  });
+
+  const adjustedProposal = await db.upsertProposal({
+    proposalKey: `${caseId}:clarification:${proposal.action_type}:adjust:${Date.now()}`,
+    caseId,
+    runId: existingRun?.id || proposal.run_id || null,
+    triggerMessageId: triggerMessageId,
+    actionType: proposal.action_type,
+    draftSubject: proposal.draft_subject || inboundMessage?.subject || `RE: ${caseData.case_name || 'Public Records Request'}`,
+    draftBodyText: bodyText,
+    draftBodyHtml: null,
+    reasoning: [
+      `Locally adjusted ${proposal.action_type} for ${caseData.agency_name || 'agency'}`,
+      `Adjustment instruction: ${humanDecision.instruction || 'none'}`,
+    ],
+    canAutoExecute: false,
+    requiresHuman: true,
+    status: 'PENDING_APPROVAL',
+    gateOptions: Array.isArray(proposal.gate_options) && proposal.gate_options.length > 0
+      ? proposal.gate_options
+      : ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+  });
+
+  await db.updateProposal(adjustedProposal.id, {
+    waitpoint_token: `local-inbound-adjust:${caseId}:${adjustedProposal.id}`,
+  });
+
+  if (existingRun?.id) {
+    await db.updateAgentRun(existingRun.id, {
+      status: 'waiting',
+      metadata: {
+        ...(existingRun.metadata || {}),
+        local_adjustment: true,
+        proposalId: adjustedProposal.id,
+      },
+    });
+  }
+
+  await db.query(
+    `UPDATE cases
+     SET requires_human = true,
+         pause_reason = 'PENDING_APPROVAL',
+         status = 'needs_human_review',
+         updated_at = NOW()
+     WHERE id = $1`,
+    [caseId]
+  );
+
+  return adjustedProposal;
+}
+
+async function createAdjustedPdfEmailProposalLocally(proposal, humanDecision, existingRun) {
+  const caseId = proposal.case_id;
+  const caseData = await db.getCaseById(caseId);
+  if (!caseData) {
+    throw new Error(`Case ${caseId} not found for local PDF email adjustment`);
+  }
+
+  const prepared = await pdfFormService.prepareInboundPdfFormReply(caseData, {
+    adjustmentInstruction: humanDecision.instruction || null,
+  });
+
+  if (!prepared?.success || !String(prepared.draftBodyText || '').trim()) {
+    throw new Error(
+      prepared?.error || `Local PDF email adjustment failed for case ${caseId}`
+    );
+  }
+
+  await db.updateProposal(proposal.id, {
+    status: 'DISMISSED',
+    human_decision: humanDecision,
+  });
+
+  const adjustedProposal = await db.upsertProposal({
+    proposalKey: `${caseId}:pdf:${proposal.action_type}:adjust:${Date.now()}`,
+    caseId,
+    runId: existingRun?.id || proposal.run_id || null,
+    triggerMessageId: proposal.trigger_message_id || null,
+    actionType: proposal.action_type,
+    draftSubject: prepared.draftSubject || proposal.draft_subject || `Public Records Request - ${caseData.subject_name || 'Records Request'}`,
+    draftBodyText: prepared.draftBodyText,
+    draftBodyHtml: null,
+    reasoning: [
+      `Locally adjusted ${proposal.action_type} for ${caseData.agency_name || 'agency'}`,
+      `Adjustment instruction: ${humanDecision.instruction || 'none'}`,
+    ],
+    canAutoExecute: false,
+    requiresHuman: true,
+    status: 'PENDING_APPROVAL',
+    gateOptions: Array.isArray(proposal.gate_options) && proposal.gate_options.length > 0
+      ? proposal.gate_options
+      : ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+  });
+
+  await db.updateProposal(adjustedProposal.id, {
+    waitpoint_token: `local-pdf-adjust:${caseId}:${adjustedProposal.id}`,
+  });
+
+  if (existingRun?.id) {
+    await db.updateAgentRun(existingRun.id, {
+      status: 'waiting',
+      metadata: {
+        ...(existingRun.metadata || {}),
+        local_adjustment: true,
+        proposalId: adjustedProposal.id,
+      },
+    });
+  }
+
+  await db.query(
+    `UPDATE cases
+     SET requires_human = true,
+         pause_reason = 'PENDING_APPROVAL',
+         status = 'needs_human_review',
+         updated_at = NOW()
+     WHERE id = $1`,
+    [caseId]
+  );
+
+  return adjustedProposal;
+}
+
+function extractStubDraft(llmStubs, variant = 'draft') {
+  const draft = llmStubs?.[variant];
+  if (!draft || typeof draft !== 'object') return null;
+  const subject = typeof draft.subject === 'string' && draft.subject.trim()
+    ? draft.subject.trim()
+    : null;
+  const bodyText = typeof (draft.body_text || draft.body) === 'string' && String(draft.body_text || draft.body).trim()
+    ? String(draft.body_text || draft.body).trim()
+    : null;
+  const bodyHtml = typeof draft.body_html === 'string' && draft.body_html.trim()
+    ? draft.body_html.trim()
+    : null;
+  if (!subject && !bodyText && !bodyHtml) return null;
+  return { subject, bodyText, bodyHtml };
+}
+
+function extractFeeAmountForLocalMaterialization(message, llmStubs) {
+  const stubAmount = Number(llmStubs?.classify?.fee_amount);
+  if (Number.isFinite(stubAmount) && stubAmount > 0) return stubAmount;
+  const body = String(message?.body_text || message?.body || '');
+  const match = body.match(/\$([\d,]+(?:\.\d{2})?)/);
+  if (!match) return null;
+  const parsed = Number(String(match[1] || '').replace(/,/g, ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inferInboundLocalDecision({ classification, message, llmStubs, autopilotMode }) {
+  const normalizedClassification = String(classification || '').trim().toUpperCase();
+  const mode = String(autopilotMode || 'SUPERVISED').trim().toUpperCase();
+  const body = String(message?.body_text || message?.body || '');
+  const subject = String(message?.subject || '');
+  const combinedText = `${subject}\n${body}`.toLowerCase();
+  const sentiment = String(llmStubs?.classify?.sentiment || '').trim().toLowerCase();
+  const keyPoints = Array.isArray(llmStubs?.classify?.key_points)
+    ? llmStubs.classify.key_points.map((point) => String(point || '').toLowerCase())
+    : [];
+
+  if (normalizedClassification === 'CLARIFICATION_REQUEST') {
+    return {
+      actionType: 'SEND_CLARIFICATION',
+      requiresHuman: true,
+      pauseReason: 'SCOPE',
+      gateOptions: ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+    };
+  }
+
+  if (normalizedClassification === 'FEE_QUOTE') {
+    const feeAmount = extractFeeAmountForLocalMaterialization(message, llmStubs);
+    const requiresHuman = mode !== 'AUTO' || (feeAmount != null && feeAmount > 50);
+    return {
+      actionType: feeAmount != null && feeAmount >= 1000 ? 'NEGOTIATE_FEE' : 'ACCEPT_FEE',
+      requiresHuman,
+      pauseReason: requiresHuman ? 'FEE_QUOTE' : null,
+      gateOptions: requiresHuman ? ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'] : [],
+      feeAmount,
+    };
+  }
+
+  if (normalizedClassification === 'DENIAL') {
+    const hostile = sentiment === 'hostile' || /\b(final warning|do not contact|harassment|reported to law enforcement)\b/.test(combinedText);
+    const strongDenialSignals = hostile || keyPoints.some((point) =>
+      /(exemption|7\(a\)|ongoing investigation|sealed|law enforcement)/.test(point)
+    ) || /\b(exemption|7\(a\)|ongoing investigation|sealed)\b/.test(combinedText);
+
+    if (hostile) {
+      return {
+        actionType: 'ESCALATE',
+        requiresHuman: true,
+        pauseReason: 'SENSITIVE',
+        gateOptions: ['ADJUST', 'DISMISS'],
+      };
+    }
+
+    if (strongDenialSignals || mode !== 'AUTO') {
+      return {
+        actionType: 'SEND_REBUTTAL',
+        requiresHuman: true,
+        pauseReason: 'DENIAL',
+        gateOptions: ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+      };
+    }
+
+    return {
+      actionType: 'SEND_REBUTTAL',
+      requiresHuman: false,
+      pauseReason: null,
+      gateOptions: [],
+    };
+  }
+
+  return null;
+}
+
+async function createAdjustedGenericEmailProposalLocally(proposal, humanDecision, existingRun) {
+  const caseId = proposal.case_id;
+  const caseData = await db.getCaseById(caseId);
+  if (!caseData) {
+    throw new Error(`Case ${caseId} not found for local email adjustment`);
+  }
+
+  const stubDraft = extractStubDraft(existingRun?.metadata?.local_llm_stubs || null, 'redraft');
+  let bodyText = stubDraft?.bodyText || null;
+  let subject = stubDraft?.subject || proposal.draft_subject || `RE: ${caseData.case_name || 'Public Records Request'}`;
+
+  if (!bodyText) {
+    const revisionPrompt = `You are revising a public-records response email.
+
+Original draft:
+${proposal.draft_body_text || ''}
+
+Human instruction:
+${humanDecision.instruction || ''}
+
+Context:
+- Agency: ${caseData.agency_name || 'Unknown agency'}
+- Subject: ${caseData.subject_name || caseData.case_name || 'Public Records Request'}
+
+Requirements:
+- Follow the human instruction exactly.
+- Keep the response professional and concise.
+- Return ONLY the revised email body text.`;
+
+    bodyText = await aiService.callAI(revisionPrompt, { effort: 'medium' });
+  }
+
+  bodyText = String(bodyText || '').trim();
+  if (!bodyText) {
+    throw new Error(`Local generic email adjustment generated an empty draft for case ${caseId}`);
+  }
+
+  await db.updateProposal(proposal.id, {
+    status: 'DISMISSED',
+    human_decision: humanDecision,
+  });
+
+  const adjustedProposal = await db.upsertProposal({
+    proposalKey: `${caseId}:generic:${proposal.action_type}:adjust:${Date.now()}`,
+    caseId,
+    runId: existingRun?.id || proposal.run_id || null,
+    triggerMessageId: proposal.trigger_message_id || null,
+    actionType: proposal.action_type,
+    draftSubject: subject,
+    draftBodyText: bodyText,
+    draftBodyHtml: null,
+    reasoning: [
+      `Locally adjusted ${proposal.action_type} for ${caseData.agency_name || 'agency'}`,
+      `Adjustment instruction: ${humanDecision.instruction || 'none'}`,
+    ],
+    canAutoExecute: false,
+    requiresHuman: true,
+    status: 'PENDING_APPROVAL',
+    gateOptions: Array.isArray(proposal.gate_options) && proposal.gate_options.length > 0
+      ? proposal.gate_options
+      : ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+  });
+
+  await db.updateProposal(adjustedProposal.id, {
+    waitpoint_token: `local-email-adjust:${caseId}:${adjustedProposal.id}`,
+  });
+
+  if (existingRun?.id) {
+    await db.updateAgentRun(existingRun.id, {
+      status: 'waiting',
+      metadata: {
+        ...(existingRun.metadata || {}),
+        local_adjustment: true,
+        proposalId: adjustedProposal.id,
+      },
+    });
+  }
+
+  await db.query(
+    `UPDATE cases
+     SET requires_human = true,
+         pause_reason = 'PENDING_APPROVAL',
+         status = 'needs_human_review',
+         updated_at = NOW()
+     WHERE id = $1`,
+    [caseId]
+  );
+
+  return adjustedProposal;
+}
+
+async function materializeInboundProposalLocally({ caseData, message, run, autopilotMode, llmStubs }) {
+  if (process.env.NODE_ENV === 'production') {
+    return null;
+  }
+
+  const analysis = await db.getResponseAnalysisByMessageId(message.id);
+  const intent = String(llmStubs?.classify?.classification || analysis?.intent || '').trim().toUpperCase();
+  const localDecision = inferInboundLocalDecision({
+    classification: intent,
+    message,
+    llmStubs,
+    autopilotMode,
+  });
+  if (!localDecision) {
+    return null;
+  }
+
+  const stubDraft = extractStubDraft(llmStubs, 'draft');
+  let draft = stubDraft;
+
+  if (!draft && localDecision.actionType === 'SEND_CLARIFICATION') {
+    const generatedDraft = await aiService.generateAutoReply(message, analysis, caseData);
+    draft = {
+      subject: generatedDraft?.subject || null,
+      bodyText: generatedDraft?.body_text || generatedDraft?.body || null,
+      bodyHtml: generatedDraft?.body_html || null,
+    };
+  }
+
+  const fallbackSubject = message.subject || `RE: ${caseData.case_name || 'Public Records Request'}`;
+  const fallbackBody =
+    localDecision.actionType === 'ESCALATE'
+      ? 'Agency response requires manual review before any reply is sent.'
+      : caseData?.portal_url && ['ACCEPT_FEE', 'NEGOTIATE_FEE'].includes(localDecision.actionType)
+        ? `Portal fee workflow requires manual portal handling for ${caseData.agency_name || 'this agency'}.`
+        : null;
+  const draftSubject = draft?.subject || fallbackSubject;
+  const draftBodyText = draft?.bodyText || fallbackBody;
+  if (!draftBodyText || !String(draftBodyText).trim()) {
+    throw new Error(`Local inbound materialization generated an empty ${localDecision.actionType} draft for case ${caseData.id}`);
+  }
+
+  const proposal = await db.upsertProposal({
+    proposalKey: `${caseData.id}:inbound:${localDecision.actionType}:${message.id}`,
+    caseId: caseData.id,
+    runId: run.id,
+    triggerMessageId: message.id,
+    actionType: localDecision.actionType,
+    draftSubject,
+    draftBodyText,
+    draftBodyHtml: draft?.bodyHtml || null,
+    reasoning: [
+      `Locally materialized ${localDecision.actionType} response for ${caseData.agency_name || 'agency'}`,
+      `Inbound message ${message.id} classified as ${intent}`,
+      `Autopilot: ${autopilotMode || 'SUPERVISED'}`,
+    ],
+    canAutoExecute: !localDecision.requiresHuman,
+    requiresHuman: localDecision.requiresHuman,
+    status: localDecision.requiresHuman ? 'PENDING_APPROVAL' : 'EXECUTED',
+    gateOptions: localDecision.gateOptions,
+  });
+
+  if (localDecision.requiresHuman) {
+    await db.updateProposal(proposal.id, {
+      waitpoint_token: `local-inbound:${caseData.id}:${message.id}:${proposal.id}`,
+    });
+  } else {
+    await db.updateProposal(proposal.id, {
+      executionKey: `local-auto:${caseData.id}:${message.id}:${proposal.id}`,
+      executedAt: new Date(),
+    });
+  }
+
+  await db.updateAgentRun(run.id, {
+    status: localDecision.requiresHuman ? 'waiting' : 'completed',
+    started_at: new Date(),
+    ended_at: localDecision.requiresHuman ? null : new Date(),
+    metadata: {
+      ...(run.metadata || {}),
+      source: 'local_inbound_materialization',
+      local_materialized_inbound: true,
+      local_llm_stubs: llmStubs || null,
+      proposalId: proposal.id,
+      actionType: localDecision.actionType,
+      messageId: message.id,
+      classification: intent,
+    },
+  });
+  await db.markMessageProcessed(message.id, run.id, null);
+  await db.updateCase(caseData.id, {
+    status: localDecision.requiresHuman ? 'needs_human_review' : 'awaiting_response',
+    requires_human: localDecision.requiresHuman,
+    pause_reason: localDecision.requiresHuman ? localDecision.pauseReason : null,
+    substatus: localDecision.requiresHuman
+      ? `Proposal #${proposal.id} pending review`
+      : `Local ${localDecision.actionType} executed`,
+  });
+
+  return {
+    proposalId: proposal.id,
+    actionType: localDecision.actionType,
+    runStatus: localDecision.requiresHuman ? 'waiting' : 'completed',
+  };
+}
+
+async function materializeFollowupLocally({ caseData, run, autopilotMode, llmStubs }) {
+  if (process.env.NODE_ENV === 'production') {
+    return null;
+  }
+
+  const stubDraft = extractStubDraft(llmStubs, 'draft');
+  const draftSubject = stubDraft?.subject || `Follow-up: ${caseData.subject_name || caseData.case_name || 'Public Records Request'}`;
+  const draftBodyText = stubDraft?.bodyText || null;
+  if (!draftBodyText) {
+    return null;
+  }
+
+  const proposal = await db.upsertProposal({
+    proposalKey: `${caseData.id}:followup:SEND_FOLLOWUP:local`,
+    caseId: caseData.id,
+    runId: run.id,
+    triggerMessageId: null,
+    actionType: 'SEND_FOLLOWUP',
+    draftSubject,
+    draftBodyText,
+    draftBodyHtml: stubDraft?.bodyHtml || null,
+    reasoning: [
+      `Locally materialized follow-up for ${caseData.agency_name || 'agency'}`,
+      `Autopilot: ${autopilotMode || 'AUTO'}`,
+    ],
+    canAutoExecute: true,
+    requiresHuman: false,
+    status: 'EXECUTED',
+    gateOptions: [],
+  });
+
+  await db.updateProposal(proposal.id, {
+    executionKey: `local-followup:${caseData.id}:${proposal.id}`,
+    executedAt: new Date(),
+  });
+
+  await db.updateAgentRun(run.id, {
+    status: 'completed',
+    started_at: new Date(),
+    ended_at: new Date(),
+    metadata: {
+      ...(run.metadata || {}),
+      source: 'local_followup_materialization',
+      local_llm_stubs: llmStubs || null,
+      proposalId: proposal.id,
+      actionType: 'SEND_FOLLOWUP',
+    },
+  });
+
+  await db.updateCase(caseData.id, {
+    status: 'awaiting_response',
+    requires_human: false,
+    pause_reason: null,
+    substatus: 'Local SEND_FOLLOWUP executed',
+  });
+
+  return {
+    proposalId: proposal.id,
+    actionType: 'SEND_FOLLOWUP',
+    runStatus: 'completed',
+  };
+}
+
+async function materializeInitialRequestLocally({ caseData, run, autopilotMode, llmStubs }) {
+  if (process.env.NODE_ENV === 'production') {
+    return null;
+  }
+
+  const stubDraft = extractStubDraft(llmStubs, 'draft');
+  let draftSubject = stubDraft?.subject || null;
+  let draftBodyText = stubDraft?.bodyText || null;
+  let draftBodyHtml = stubDraft?.bodyHtml || null;
+
+  if (!draftBodyText) {
+    const generated = await aiService.generateFOIARequest(caseData);
+    draftSubject = draftSubject || generated?.subject || `Public Records Request - ${caseData.subject_name || 'Records Request'}`;
+    draftBodyText = generated?.body || generated?.requestText || generated?.request_text || null;
+    draftBodyHtml = draftBodyHtml || generated?.body_html || null;
+  }
+
+  if (!draftBodyText || !String(draftBodyText).trim()) {
+    throw new Error(`Local initial request materialization generated an empty draft for case ${caseData.id}`);
+  }
+
+  const proposal = await db.upsertProposal({
+    proposalKey: `${caseData.id}:initial:SEND_INITIAL_REQUEST:local`,
+    caseId: caseData.id,
+    runId: run.id,
+    triggerMessageId: null,
+    actionType: 'SEND_INITIAL_REQUEST',
+    draftSubject: draftSubject || `Public Records Request - ${caseData.subject_name || 'Records Request'}`,
+    draftBodyText,
+    draftBodyHtml,
+    reasoning: [
+      `Locally materialized initial request for ${caseData.agency_name || 'agency'}`,
+      `Autopilot: ${autopilotMode || 'SUPERVISED'}`,
+    ],
+    canAutoExecute: false,
+    requiresHuman: true,
+    status: 'PENDING_APPROVAL',
+    gateOptions: ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'],
+  });
+
+  await db.updateProposal(proposal.id, {
+    waitpoint_token: `local-ready-to-send:${caseData.id}:${proposal.id}`,
+  });
+
+  await db.updateAgentRun(run.id, {
+    status: 'waiting',
+    started_at: new Date(),
+    metadata: {
+      ...(run.metadata || {}),
+      source: 'local_initial_materialization',
+      local_llm_stubs: llmStubs || null,
+      proposalId: proposal.id,
+      actionType: 'SEND_INITIAL_REQUEST',
+    },
+  });
+
+  await db.updateCase(caseData.id, {
+    status: 'needs_human_review',
+    requires_human: true,
+    pause_reason: 'PENDING_APPROVAL',
+    substatus: `Proposal #${proposal.id} pending review`,
+  });
+
+  return {
+    proposalId: proposal.id,
+    actionType: 'SEND_INITIAL_REQUEST',
+    runStatus: 'waiting',
+  };
+}
+
 async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   const caseId = proposal.case_id;
   const proposalId = proposal.id;
   const caseData = await db.getCaseById(caseId);
+  const executionKey = proposal.execution_key || `direct-email:${proposalId}`;
 
   if (!caseData?.agency_email) {
     throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
@@ -87,6 +848,13 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   );
   if (claimed.rows.length === 0) {
     throw new Error('Proposal was already actioned by another request');
+  }
+
+  if (!proposal.execution_key) {
+    const executionClaimed = await db.claimProposalExecution(proposalId, executionKey);
+    if (!executionClaimed) {
+      throw new Error('Proposal execution was already claimed by another request');
+    }
   }
 
   const latestInbound = await db.getLatestInboundMessage(caseId);
@@ -116,7 +884,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   });
 
   if (!emailResult || emailResult.success !== true) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
     await db.query(
       `UPDATE cases
        SET requires_human = true,
@@ -129,7 +897,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   }
 
   await db.updateProposal(proposalId, { status: 'EXECUTED' });
-  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
+  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response', substatus: null });
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
     case_id: caseId,
     proposal_id: proposalId,
@@ -139,10 +907,32 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   logger.info('Proposal executed via direct email send fallback', { caseId, proposalId });
 }
 
+async function executeApprovedPortalActionLocally(proposal, humanDecision) {
+  const caseId = proposal.case_id;
+  const proposalId = proposal.id;
+
+  await db.updateProposal(proposalId, {
+    status: 'EXECUTED',
+    humanDecision,
+    executionKey: `local-portal:${proposalId}:${Date.now()}`,
+    executedAt: new Date(),
+  });
+
+  await db.updateCase(caseId, {
+    status: 'awaiting_response',
+    requires_human: false,
+    pause_reason: null,
+    substatus: 'Portal action approved locally',
+  });
+
+  return { executed: true };
+}
+
 async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) {
   const caseId = proposal.case_id;
   const proposalId = proposal.id;
   const caseData = await db.getCaseById(caseId);
+  const executionKey = proposal.execution_key || `direct-pdf-email:${proposalId}`;
 
   if (!caseData?.agency_email) {
     throw new Error(`Case ${caseId} has no agency_email — cannot send PDF email directly`);
@@ -162,6 +952,13 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     throw new Error('Proposal was already actioned by another request');
   }
 
+  if (!proposal.execution_key) {
+    const executionClaimed = await db.claimProposalExecution(proposalId, executionKey);
+    if (!executionClaimed) {
+      throw new Error('Proposal execution was already claimed by another request');
+    }
+  }
+
   // Reuse the prepared PDF if one already exists; otherwise this proposal is
   // stale and must be regenerated before approval.
   const fs = require('fs');
@@ -169,7 +966,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
   const pdfFormService = require('../services/pdf-form-service');
   const pdfAttachment = await pdfFormService.getLatestPreparedPdfAttachment(caseId);
   if (!pdfAttachment) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
     throw new Error('No prepared PDF attachment found for this proposal');
   }
 
@@ -185,7 +982,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     }
   }
   if (!pdfBuffer) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
     throw new Error('Prepared PDF file is unavailable for this proposal');
   }
 
@@ -217,7 +1014,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
       }],
     });
   } catch (error) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null });
+    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
     await db.query(
       `UPDATE cases
        SET requires_human = true,
@@ -230,7 +1027,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
   }
 
   await db.updateProposal(proposalId, { status: 'EXECUTED' });
-  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response' });
+  await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response', substatus: null });
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly with PDF attachment`, {
     case_id: caseId,
     proposal_id: proposalId,
@@ -326,6 +1123,28 @@ router.post('/cases/:id/run-initial', async (req, res) => {
         route_mode: normalizedRouteMode || null
       }
     });
+
+    const localMaterialization = await materializeInitialRequestLocally({
+      caseData,
+      run,
+      autopilotMode,
+      llmStubs,
+    });
+    if (localMaterialization) {
+      return res.status(202).json({
+        success: true,
+        message: 'Initial request generation processed locally',
+        fallback: 'local_initial_materialization',
+        proposal_id: localMaterialization.proposalId,
+        action_type: localMaterialization.actionType,
+        route_mode: normalizedRouteMode || null,
+        run: {
+          id: run.id,
+          status: localMaterialization.runStatus || 'waiting',
+          thread_id: run.langgraph_thread_id
+        }
+      });
+    }
 
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
@@ -456,6 +1275,39 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
       autopilot_mode: autopilotMode,
       langgraph_thread_id: `case:${caseId}:msg-${messageId}`
     });
+
+    let localMaterialization = null;
+    try {
+      localMaterialization = await materializeInboundProposalLocally({
+        caseData,
+        message,
+        run,
+        autopilotMode,
+        llmStubs,
+      });
+    } catch (localMaterializationError) {
+      await db.updateAgentRun(run.id, {
+        status: 'failed',
+        ended_at: new Date(),
+        error: `Local inbound materialization failed: ${localMaterializationError.message}`,
+      });
+      throw localMaterializationError;
+    }
+    if (localMaterialization) {
+      return res.status(202).json({
+        success: true,
+        message: 'Inbound message processed locally',
+        fallback: 'local_inbound_materialization',
+        proposal_id: localMaterialization.proposalId,
+        action_type: localMaterialization.actionType,
+        run: {
+          id: run.id,
+          status: localMaterialization.runStatus || 'waiting',
+          message_id: messageId,
+          thread_id: run.langgraph_thread_id
+        }
+      });
+    }
 
     // Trigger Trigger.dev task (clean up orphaned run on failure)
     let handle;
@@ -772,8 +1624,175 @@ router.post('/proposals/:id/decision', async (req, res) => {
       });
     }
 
+    const isLocalDirectApprovalEligible =
+      process.env.NODE_ENV !== 'production' &&
+      action === 'APPROVE' &&
+      Boolean(proposal.waitpoint_token) &&
+      (
+        (proposal.action_type === 'SEND_PDF_EMAIL') ||
+        (proposal.draft_body_text && proposal.draft_subject)
+      );
+
+    const isLocalDirectAdjustEligible =
+      process.env.NODE_ENV !== 'production' &&
+      action === 'ADJUST' &&
+      Boolean(proposal.waitpoint_token) &&
+      ['SEND_INITIAL_REQUEST', 'SEND_CLARIFICATION', 'SEND_PDF_EMAIL', 'SEND_REBUTTAL', 'ACCEPT_FEE', 'NEGOTIATE_FEE', 'SEND_FOLLOWUP'].includes(proposal.action_type) &&
+      Boolean(instruction);
+
+    if (isLocalDirectAdjustEligible) {
+      logger.info('Local dev adjustment bypassing waitpoint and re-drafting directly', {
+        proposalId,
+        caseId,
+        actionType: proposal.action_type,
+      });
+
+      const finalAdjustedProposal = proposal.action_type === 'SEND_CLARIFICATION'
+        ? await createAdjustedClarificationProposalLocally(
+            proposal,
+            humanDecision,
+            existingRun
+          )
+        : proposal.action_type === 'SEND_PDF_EMAIL'
+          ? await createAdjustedPdfEmailProposalLocally(
+              proposal,
+              humanDecision,
+              existingRun
+            )
+          : proposal.action_type === 'SEND_INITIAL_REQUEST'
+            ? await createAdjustedInitialRequestProposalLocally(
+                proposal,
+                humanDecision,
+                existingRun
+              )
+            : await createAdjustedGenericEmailProposalLocally(
+                proposal,
+                humanDecision,
+                existingRun
+              );
+
+      return res.json({
+        success: true,
+        message: `${proposal.action_type} adjusted locally`,
+        proposal_id: finalAdjustedProposal.id,
+        action,
+        fallback: 'local_direct_adjustment',
+      });
+    }
+
+    if (isLocalDirectApprovalEligible) {
+      logger.info('Local dev approval bypassing waitpoint and executing directly', {
+        proposalId,
+        caseId,
+        actionType: proposal.action_type,
+      });
+
+      const caseDataForLocalApproval = await db.getCaseById(caseId);
+      const shouldUsePortalLocalApproval =
+        Boolean(caseDataForLocalApproval?.portal_url) &&
+        ['ACCEPT_FEE', 'NEGOTIATE_FEE'].includes(proposal.action_type);
+
+      if (shouldUsePortalLocalApproval) {
+        await executeApprovedPortalActionLocally(proposal, humanDecision);
+      } else if (proposal.action_type === 'SEND_PDF_EMAIL') {
+        await executeApprovedProposalPdfEmailDirectly(proposal, humanDecision);
+      } else {
+        await executeApprovedProposalEmailDirectly(proposal, humanDecision);
+      }
+
+      if (existingRun?.id && ['waiting', 'paused'].includes(existingRun.status)) {
+        await db.updateAgentRun(existingRun.id, {
+          status: 'completed',
+          ended_at: new Date(),
+          error: 'local_direct_approval_bypass',
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: shouldUsePortalLocalApproval
+          ? 'Portal action completed directly via local approval path'
+          : proposal.action_type === 'SEND_PDF_EMAIL'
+            ? 'PDF email sent directly via local approval path'
+            : 'Email sent directly via local approval path',
+        proposal_id: proposalId,
+        action,
+        fallback: 'local_direct_approval',
+      });
+    }
+
+    const canResumeWaitpoint =
+      Boolean(proposal.waitpoint_token)
+      && Boolean(existingRun)
+      && !orphanedWaitingRun
+      && Boolean(getTriggerRunId(existingRun));
+
     // === Trigger.dev path: complete waitpoint token ===
-    if (proposal.waitpoint_token && !orphanedWaitingRun) {
+    if (canResumeWaitpoint) {
+      if (action === 'DISMISS' || action === 'WITHDRAW') {
+        const nextProposalStatus = action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED';
+        await db.updateProposal(proposalId, {
+          human_decision: humanDecision,
+          status: nextProposalStatus,
+        });
+
+        if (action === 'WITHDRAW') {
+          await transitionCaseRuntime(caseId, 'PROPOSAL_WITHDRAWN', { proposalId });
+          await transitionCaseRuntime(caseId, 'CASE_CANCELLED', { substatus: 'withdrawn_by_user' });
+        } else {
+          await reconcileCaseAfterDismiss(caseId, proposal);
+        }
+
+        if (existingRun?.id) {
+          await db.updateAgentRun(existingRun.id, {
+            status: 'completed',
+            ended_at: new Date(),
+            error: action === 'WITHDRAW'
+              ? 'waitpoint_withdraw_resolved_locally'
+              : 'waitpoint_dismiss_resolved_locally',
+          });
+        }
+
+        let waitpointCleanupError = null;
+        try {
+          const triggerApiUrl = process.env.TRIGGER_API_URL || 'https://api.trigger.dev';
+          const cleanupResp = await fetch(
+            `${triggerApiUrl}/api/v1/waitpoints/tokens/${proposal.waitpoint_token}/complete`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
+              },
+              body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null } }),
+            }
+          );
+
+          if (!cleanupResp.ok) {
+            const errorBody = await cleanupResp.text();
+            throw new Error(`Failed to complete waitpoint token ${proposal.waitpoint_token}: ${cleanupResp.status} ${errorBody}`);
+          }
+        } catch (error) {
+          waitpointCleanupError = error;
+          logger.warn('Waitpoint cleanup failed after local dismiss/withdraw resolution', {
+            proposalId,
+            caseId,
+            action,
+            error: error.message,
+          });
+        }
+
+        return res.json({
+          success: true,
+          message: action === 'WITHDRAW'
+            ? 'Proposal withdrawn and case cancelled'
+            : 'Proposal dismissed',
+          proposal_id: proposalId,
+          action,
+          ...(waitpointCleanupError ? { waitpoint_cleanup_error: waitpointCleanupError.message } : {}),
+        });
+      }
+
       // Resolve token ID: gate-or-execute stores a UUID idempotencyKey initially,
       // waitForHumanDecision overwrites with real waitpoint_xxx ID.
       // Handle both formats for robustness.
@@ -896,29 +1915,11 @@ router.post('/proposals/:id/decision', async (req, res) => {
       logger.info(`Legacy proposal ${action.toLowerCase()}ed`, { proposalId, action });
 
       // Reconcile case state so it doesn't stay orphaned in a review status
-      const remaining = await db.query(
-        `SELECT 1 FROM proposals WHERE case_id = $1 AND status IN ('PENDING_APPROVAL','BLOCKED') LIMIT 1`,
-        [caseId]
-      );
-      if (remaining.rows.length === 0) {
-        const caseRow = await db.getCaseById(caseId);
-        const REVIEW_STATUSES = ['needs_human_review','needs_phone_call','needs_contact_info','needs_human_fee_approval'];
-        const shouldReconcile = Boolean(caseRow) && (
-          Boolean(caseRow.requires_human) ||
-          REVIEW_STATUSES.includes(String(caseRow.status || ''))
-        );
-
-        if (shouldReconcile) {
-          if (REVIEW_STATUSES.includes(caseRow.status)) {
-            const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
-            const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
-            await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus });
-            logger.info('Reconciled case after legacy dismiss: cleared review state', { caseId, from: caseRow.status, to: targetStatus });
-          } else {
-            await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: caseRow.status });
-            logger.info('Reconciled case after legacy dismiss: cleared stale flags', { caseId, status: caseRow.status });
-          }
-        }
+      if (action === 'WITHDRAW') {
+        await transitionCaseRuntime(caseId, 'PROPOSAL_WITHDRAWN', { proposalId });
+        await transitionCaseRuntime(caseId, 'CASE_CANCELLED', { substatus: 'withdrawn_by_user' });
+      } else {
+        await reconcileCaseAfterDismiss(caseId, proposal);
       }
 
       return res.json({
@@ -1099,7 +2100,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
  */
 router.post('/cases/:id/run-followup', async (req, res) => {
   const caseId = parseInt(req.params.id);
-  const { autopilotMode = 'SUPERVISED', followupScheduleId } = req.body || {};
+  const { autopilotMode = 'SUPERVISED', followupScheduleId, llmStubs } = req.body || {};
 
   try {
     // Verify case exists
@@ -1180,6 +2181,31 @@ router.post('/cases/:id/run-followup', async (req, res) => {
             updated_at = NOW()
         WHERE id = $1
       `, [followupSchedule.id, scheduledKey, run.id]);
+    }
+
+    const localMaterialization = await materializeFollowupLocally({
+      caseData,
+      run,
+      autopilotMode,
+      llmStubs,
+    });
+    if (localMaterialization) {
+      return res.status(202).json({
+        success: true,
+        message: 'Follow-up processed locally',
+        fallback: 'local_followup_materialization',
+        proposal_id: localMaterialization.proposalId,
+        action_type: localMaterialization.actionType,
+        run: {
+          id: run.id,
+          status: localMaterialization.runStatus || 'completed',
+          thread_id: run.langgraph_thread_id
+        },
+        followup: {
+          count: followupCount,
+          schedule_id: followupSchedule?.id || null
+        }
+      });
     }
 
     // Trigger Trigger.dev task (clean up orphaned run on failure)

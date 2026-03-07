@@ -269,8 +269,28 @@ function testCaseCancelled() {
   });
 
   assertEq(m.cases.status, 'cancelled', 'status → cancelled');
+  assertEq(m.cases.requires_human, false, 'requires_human cleared');
+  assertEq(m.cases.pause_reason, null, 'pause_reason cleared');
   assertEq(m.cases.substatus, 'duplicate_case', 'substatus set');
   assert(m.proposals_dismiss_all, 'proposals dismissed');
+  assertEq(m.followups.status, 'cancelled', 'followups cancelled');
+}
+
+function testProposalWithdrawn() {
+  console.log('\n=== PROPOSAL_WITHDRAWN ===');
+
+  const snap = makeSnapshot();
+  const m = computeMutations(snap, CaseEvent.PROPOSAL_WITHDRAWN, {
+    proposalId: 7,
+    substatus: 'withdrawn_by_user',
+  });
+
+  assertEq(m.cases.status, 'cancelled', 'status → cancelled');
+  assertEq(m.cases.requires_human, false, 'requires_human cleared');
+  assertEq(m.cases.pause_reason, null, 'pause_reason cleared');
+  assertEq(m.cases.substatus, 'withdrawn_by_user', 'substatus set');
+  assertEq(m.proposals.id, 7, 'proposal ID set');
+  assertEq(m.proposals.status, 'WITHDRAWN', 'proposal → WITHDRAWN');
   assertEq(m.followups.status, 'cancelled', 'followups cancelled');
 }
 
@@ -284,6 +304,7 @@ function testEmailSent() {
 
   assertEq(m.cases.status, 'awaiting_response', 'status → awaiting_response');
   assertEq(m.cases.requires_human, false, 'requires_human cleared');
+  assertEq(m.cases.substatus, null, 'substatus cleared');
   assertEq(m.proposals.id, 5, 'proposal ID set');
   assertEq(m.proposals.status, 'EXECUTED', 'proposal → EXECUTED');
   assert(m.proposals_dismiss_all, 'other proposals dismissed');

@@ -396,10 +396,19 @@ async function processProposalDecision(
             if (caseRow?.requires_human) {
                 const REVIEW_STATUSES = ['needs_human_review','needs_phone_call','needs_contact_info','needs_human_fee_approval'];
                 if (REVIEW_STATUSES.includes(caseRow.status)) {
-                    const hasInbound = await db.query(`SELECT 1 FROM messages WHERE case_id = $1 AND direction = 'inbound' LIMIT 1`, [caseId]);
-                    const targetStatus = hasInbound.rows.length > 0 ? 'responded' : 'awaiting_response';
-                    await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus });
-                    console.log(`[reconcile] Case ${caseId}: cleared review state ${caseRow.status} → ${targetStatus}`);
+                    await transitionCaseRuntime(caseId, 'CASE_ESCALATED', {
+                        targetStatus: caseRow.status === 'needs_phone_call' ? 'needs_phone_call' : 'needs_human_review',
+                        pauseReason: 'EXECUTION_BLOCKED',
+                        substatus: 'Proposal dismissed — manual action required',
+                        escalationReason: 'proposal_dismissed_manual_takeover',
+                    });
+                    await db.updateCase(caseId, {
+                        status: caseRow.status === 'needs_phone_call' ? 'needs_phone_call' : 'needs_human_review',
+                        requires_human: true,
+                        pause_reason: 'EXECUTION_BLOCKED',
+                        substatus: 'Proposal dismissed — manual action required',
+                    });
+                    console.log(`[reconcile] Case ${caseId}: moved to manual review after dismiss (${caseRow.status})`);
                 } else {
                     await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: caseRow.status });
                     console.log(`[reconcile] Case ${caseId}: cleared stale flags (status: ${caseRow.status})`);

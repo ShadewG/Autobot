@@ -36,8 +36,9 @@ function shouldForceCorrectedAgencyDisplay({
     researchSuggestedAgency,
     currentAgencyEmail,
     currentPortalUrl,
+    metadataAgencyMismatch = null,
 }) {
-    const mismatch = detectCaseMetadataAgencyMismatch({
+    const mismatch = metadataAgencyMismatch || detectCaseMetadataAgencyMismatch({
         currentAgencyName,
         additionalDetails,
     });
@@ -45,8 +46,8 @@ function shouldForceCorrectedAgencyDisplay({
 
     const correctedAgencyName = String(
         researchSuggestedAgency?.name ||
-        caseAgencyName ||
         mismatch.expectedAgencyName ||
+        caseAgencyName ||
         ''
     ).trim();
     if (!correctedAgencyName) return false;
@@ -62,8 +63,19 @@ function shouldForceCorrectedAgencyDisplay({
     );
 }
 
-function buildCorrectedAgencyDisplay({ researchCanonical, researchSuggestedAgency, caseAgencyName, caseState }) {
-    const name = researchCanonical?.name || researchSuggestedAgency?.name || caseAgencyName || null;
+function buildCorrectedAgencyDisplay({
+    researchCanonical,
+    researchSuggestedAgency,
+    metadataAgencyMismatch,
+    caseAgencyName,
+    caseState,
+}) {
+    const name =
+        researchCanonical?.name ||
+        researchSuggestedAgency?.name ||
+        metadataAgencyMismatch?.expectedAgencyName ||
+        caseAgencyName ||
+        null;
     const email = normalizeAgencyEmailHint(
         researchCanonical?.email_foia ||
         researchCanonical?.email_main ||
@@ -81,7 +93,10 @@ function buildCorrectedAgencyDisplay({ researchCanonical, researchSuggestedAgenc
         email: email || null,
         portalUrl,
         portalProvider: researchCanonical?.portal_provider || detectPortalProviderByUrl(portalUrl)?.name || null,
-        state: deriveDisplayState(researchCanonical?.state || caseState, name),
+        state: deriveDisplayState(
+            researchCanonical?.state || metadataAgencyMismatch?.expectedState || caseState,
+            name
+        ),
     };
 }
 
@@ -106,6 +121,88 @@ function shouldOverrideStaleExistingChannelDisplay({
         normalizeAgencyEmailHint(currentAgencyEmail) ||
         normalizePortalUrl(currentPortalUrl)
     );
+}
+
+function normalizeNotionReferenceId(value = '') {
+    const normalized = String(value || '').trim().replace(/-/g, '').toLowerCase();
+    return /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
+}
+
+async function lookupAgencyByNotionReference(rawValue) {
+    const notionId = normalizeNotionReferenceId(rawValue);
+    if (!notionId) return null;
+
+    const result = await db.query(
+        `SELECT id, name, state, email_foia, email_main, portal_url, portal_url_alt, portal_provider
+         FROM agencies
+         WHERE LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', '')) = $1
+         LIMIT 1`,
+        [notionId]
+    );
+
+    return result.rows[0] || null;
+}
+
+function deriveDefaultGateOptions(actionType, draftBodyText = '') {
+    const normalizedAction = String(actionType || '').trim().toUpperCase();
+    const draftText = String(draftBodyText || '');
+
+    if (!normalizedAction) return null;
+
+    if (normalizedAction === 'RESEARCH_AGENCY') {
+        return ['RETRY_RESEARCH', 'ADJUST', 'DISMISS'];
+    }
+
+    if (normalizedAction === 'ESCALATE') {
+        if (/manual submit helper|portal submission manually|portal submission manual|open portal/i.test(draftText)) {
+            return ['ADJUST', 'DISMISS'];
+        }
+        return ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'];
+    }
+
+    if ([
+        'SEND_INITIAL_REQUEST',
+        'SEND_CLARIFICATION',
+        'SEND_PDF_EMAIL',
+        'REFORMULATE_REQUEST',
+        'SUBMIT_PORTAL',
+    ].includes(normalizedAction)) {
+        return ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW'];
+    }
+
+    return null;
+}
+
+function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
+    const lines = String(additionalDetails || '').split(/\r?\n/);
+    for (const rawLine of lines) {
+        const line = String(rawLine || '').trim();
+        if (!/^(\*\*)?Police Department:?/i.test(line)) continue;
+        const candidate = line
+            .replace(/^(\*\*)?Police Department:?\s*/i, '')
+            .replace(/\*\*$/g, '')
+            .trim();
+        if (!candidate || normalizeNotionReferenceId(candidate)) continue;
+        return candidate
+            .replace(/\s*,?\s*with\s+.+$/i, '')
+            .trim();
+    }
+    return null;
+}
+
+function pickAgencyDisplayName(...candidates) {
+    let fallback = null;
+
+    for (const rawCandidate of candidates) {
+        const candidate = String(rawCandidate || '').trim();
+        if (!candidate) continue;
+        if (!fallback) fallback = candidate;
+        if (!normalizeNotionReferenceId(candidate)) {
+            return candidate;
+        }
+    }
+
+    return fallback;
 }
 
 /**
@@ -282,6 +379,11 @@ router.get('/', async (req, res) => {
                         portal_provider: row.portal_provider || override.portal_provider || null,
                     }
                     : row;
+                const canForceCorrectedAgencyDisplay = !override || ['case_row_backfill', 'case_row_fallback'].includes(String(override.added_source || ''));
+                const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+                    currentAgencyName: displayRow.agency_name,
+                    additionalDetails: row.additional_details,
+                });
                 const syntheticPlaceholderDisplay = hasSyntheticPlaceholderBackfill({
                     agencyEmail: displayRow.agency_email,
                     portalUrl: displayRow.portal_url,
@@ -299,14 +401,15 @@ router.get('/', async (req, res) => {
                     portalUrl: displayRow.portal_url,
                     addedSource: ignoreOverrideForDisplay ? override.added_source : 'case_row_backfill',
                 }) || (syntheticPlaceholderDisplay && !researchSuggestedAgency);
-                const forceCorrectedAgencyDisplay = shouldForceCorrectedAgencyDisplay({
+                const forceCorrectedAgencyDisplay = (canForceCorrectedAgencyDisplay && shouldForceCorrectedAgencyDisplay({
                     currentAgencyName: displayRow.agency_name,
                     caseAgencyName: row.agency_name,
                     additionalDetails: row.additional_details,
                     researchSuggestedAgency,
                     currentAgencyEmail: displayRow.agency_email,
                     currentPortalUrl: displayRow.portal_url,
-                }) || shouldOverrideStaleExistingChannelDisplay({
+                    metadataAgencyMismatch,
+                })) || shouldOverrideStaleExistingChannelDisplay({
                     contactResearchNotes: row.contact_research_notes,
                     currentAgencyName: displayRow.agency_name,
                     researchSuggestedAgency,
@@ -316,41 +419,56 @@ router.get('/', async (req, res) => {
                 const correctedAgencyDisplay = buildCorrectedAgencyDisplay({
                     researchCanonical,
                     researchSuggestedAgency,
+                    metadataAgencyMismatch,
                     caseAgencyName: row.agency_name,
                     caseState: normalizedRowState,
                 });
+                const narrativeAgencyName = normalizeNotionReferenceId(displayRow.agency_name || row.agency_name)
+                    ? extractAgencyNameFromAdditionalDetails(row.additional_details)
+                    : null;
+                const notionAgencyOverride = (!suppressPlaceholderDisplay && !preferResearchDisplay && !forceCorrectedAgencyDisplay)
+                    ? await lookupAgencyByNotionReference(displayRow.agency_name || row.agency_name)
+                    : null;
+                const resolvedDisplayName = pickAgencyDisplayName(
+                    forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.name
+                        : preferResearchDisplay
+                        ? (researchCanonical?.name || researchSuggestedAgency.name)
+                        : (suppressPlaceholderDisplay ? 'Unknown agency' : notionAgencyOverride?.name),
+                    narrativeAgencyName,
+                    displayRow.agency_name,
+                    row.agency_name
+                );
                 return toRequestListItem({
                     ...displayRow,
                     agency_id: suppressPlaceholderDisplay
                         ? null
-                        : (forceCorrectedAgencyDisplay
-                            ? correctedAgencyDisplay.id
-                            : (preferResearchDisplay ? (researchCanonical?.id || displayRow.agency_id || null) : displayRow.agency_id)),
-                    agency_name: forceCorrectedAgencyDisplay
-                        ? correctedAgencyDisplay.name
+                        : forceCorrectedAgencyDisplay
+                        ? correctedAgencyDisplay.id
                         : preferResearchDisplay
-                        ? (researchCanonical?.name || researchSuggestedAgency.name)
-                        : (suppressPlaceholderDisplay ? 'Unknown agency' : displayRow.agency_name),
+                        ? (researchCanonical?.id || displayRow.agency_id || null)
+                        : (notionAgencyOverride?.id || displayRow.agency_id || null),
+                    agency_name: resolvedDisplayName,
                     agency_email: forceCorrectedAgencyDisplay
                         ? correctedAgencyDisplay.email
                         : preferResearchDisplay
                         ? (normalizeAgencyEmailHint(researchCanonical?.email_foia || researchCanonical?.email_main) || null)
-                        : (suppressPlaceholderDisplay ? null : displayRow.agency_email),
+                        : (suppressPlaceholderDisplay ? null : (normalizeAgencyEmailHint(notionAgencyOverride?.email_foia || notionAgencyOverride?.email_main) || displayRow.agency_email)),
                     state: forceCorrectedAgencyDisplay
                         ? correctedAgencyDisplay.state
                         : preferResearchDisplay
                         ? deriveDisplayState(researchCanonical?.state || normalizedRowState, researchCanonical?.name || researchSuggestedAgency?.name)
-                        : normalizedRowState,
+                        : deriveDisplayState(notionAgencyOverride?.state || normalizedRowState, notionAgencyOverride?.name || displayRow.agency_name),
                     portal_url: forceCorrectedAgencyDisplay
                         ? correctedAgencyDisplay.portalUrl
                         : preferResearchDisplay
                         ? normalizePortalUrl(researchCanonical?.portal_url || researchCanonical?.portal_url_alt || null)
-                        : (suppressPlaceholderDisplay ? null : displayRow.portal_url),
+                        : (suppressPlaceholderDisplay ? null : (normalizePortalUrl(notionAgencyOverride?.portal_url || notionAgencyOverride?.portal_url_alt || null) || displayRow.portal_url)),
                     portal_provider: forceCorrectedAgencyDisplay
                         ? correctedAgencyDisplay.portalProvider
                         : preferResearchDisplay
                         ? (researchCanonical?.portal_provider || null)
-                        : (suppressPlaceholderDisplay ? null : displayRow.portal_provider),
+                        : (suppressPlaceholderDisplay ? null : (notionAgencyOverride?.portal_provider || displayRow.portal_provider)),
                 });
             }
 
@@ -363,6 +481,11 @@ router.get('/', async (req, res) => {
             });
             const normalizedCanonicalState = override.canonical_state === '{}' ? null : override.canonical_state;
             const canonicalOverrideState = canonicalOverride?.state === '{}' ? null : canonicalOverride?.state;
+            const canForceCorrectedAgencyDisplay = ['case_row_backfill', 'case_row_fallback'].includes(String(override.added_source || ''));
+            const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+                currentAgencyName: canonicalOverride?.name || override.canonical_agency_name || override.agency_name || row.agency_name,
+                additionalDetails: row.additional_details,
+            });
             const preferResearchDisplay = shouldPreferResearchAgencyDisplay({
                 researchSuggestedAgency,
                 agencyEmail: override.agency_email || row.agency_email,
@@ -380,14 +503,15 @@ router.get('/', async (req, res) => {
                 portalUrl: override.portal_url || row.portal_url,
                 addedSource: override.added_source,
             }) || (syntheticPlaceholderDisplay && !researchSuggestedAgency);
-            const forceCorrectedAgencyDisplay = shouldForceCorrectedAgencyDisplay({
+            const forceCorrectedAgencyDisplay = (canForceCorrectedAgencyDisplay && shouldForceCorrectedAgencyDisplay({
                 currentAgencyName: canonicalOverride?.name || override.canonical_agency_name || override.agency_name || row.agency_name,
                 caseAgencyName: row.agency_name,
                 additionalDetails: row.additional_details,
                 researchSuggestedAgency,
                 currentAgencyEmail: override.agency_email || row.agency_email,
                 currentPortalUrl: override.portal_url || row.portal_url,
-            }) || shouldOverrideStaleExistingChannelDisplay({
+                metadataAgencyMismatch,
+            })) || shouldOverrideStaleExistingChannelDisplay({
                 contactResearchNotes: row.contact_research_notes,
                 currentAgencyName: canonicalOverride?.name || override.canonical_agency_name || override.agency_name || row.agency_name,
                 researchSuggestedAgency,
@@ -397,24 +521,31 @@ router.get('/', async (req, res) => {
             const correctedAgencyDisplay = buildCorrectedAgencyDisplay({
                 researchCanonical,
                 researchSuggestedAgency,
+                metadataAgencyMismatch,
                 caseAgencyName: row.agency_name,
                 caseState: normalizedRowState,
             });
+            const narrativeAgencyName = normalizeNotionReferenceId(override.agency_name || row.agency_name)
+                ? extractAgencyNameFromAdditionalDetails(row.additional_details)
+                : null;
+            const notionAgencyOverride = (!suppressPlaceholderDisplay && !preferResearchDisplay && !forceCorrectedAgencyDisplay)
+                ? await lookupAgencyByNotionReference(override.agency_name || row.agency_name)
+                : null;
 
-            const resolvedAgencyName =
+            const resolvedAgencyName = pickAgencyDisplayName(
                 suppressPlaceholderDisplay
                     ? 'Unknown agency'
                     : forceCorrectedAgencyDisplay
                     ? correctedAgencyDisplay.name
                     : preferResearchDisplay
                     ? (researchCanonical?.name || researchSuggestedAgency?.name || null)
-                    : (
-                        canonicalOverride?.name ||
-                        override.canonical_agency_name ||
-                        override.agency_name ||
-                        row.agency_name ||
-                        null
-                    );
+                    : notionAgencyOverride?.name,
+                narrativeAgencyName,
+                canonicalOverride?.name,
+                override.canonical_agency_name,
+                override.agency_name,
+                row.agency_name
+            );
             const resolvedAgencyEmail = normalizeAgencyEmailHint(
                 suppressPlaceholderDisplay
                     ? null
@@ -424,6 +555,8 @@ router.get('/', async (req, res) => {
                     ? (researchCanonical?.email_foia || researchCanonical?.email_main || null)
                     : (
                         override.agency_email ||
+                        notionAgencyOverride?.email_foia ||
+                        notionAgencyOverride?.email_main ||
                         canonicalOverride?.email_foia ||
                         canonicalOverride?.email_main ||
                         override.canonical_email_foia ||
@@ -434,6 +567,8 @@ router.get('/', async (req, res) => {
             const resolvedPortalUrl = [
                 forceCorrectedAgencyDisplay ? correctedAgencyDisplay.portalUrl : null,
                 (preferResearchDisplay || suppressPlaceholderDisplay) ? null : override.portal_url,
+                (preferResearchDisplay || suppressPlaceholderDisplay) ? null : notionAgencyOverride?.portal_url,
+                (preferResearchDisplay || suppressPlaceholderDisplay) ? null : notionAgencyOverride?.portal_url_alt,
                 preferResearchDisplay ? researchCanonical?.portal_url : canonicalOverride?.portal_url,
                 preferResearchDisplay ? researchCanonical?.portal_url_alt : canonicalOverride?.portal_url_alt,
                 (preferResearchDisplay || suppressPlaceholderDisplay) ? null : override.canonical_portal_url,
@@ -448,6 +583,7 @@ router.get('/', async (req, res) => {
                     : (preferResearchDisplay
                     ? researchCanonical?.portal_provider
                     : (
+                        notionAgencyOverride?.portal_provider ||
                         override.portal_provider ||
                         canonicalOverride?.portal_provider ||
                         override.canonical_portal_provider
@@ -462,7 +598,7 @@ router.get('/', async (req, res) => {
                     ? null
                     : preferResearchDisplay
                     ? (researchCanonical?.id || override.agency_id || row.agency_id || null)
-                    : (canonicalOverride?.id || override.agency_id || row.agency_id || null),
+                    : (notionAgencyOverride?.id || canonicalOverride?.id || override.agency_id || row.agency_id || null),
                 agency_name: resolvedAgencyName,
                 agency_email: preferResearchDisplay
                     ? (resolvedAgencyEmail || null)
@@ -472,7 +608,7 @@ router.get('/', async (req, res) => {
                         ? correctedAgencyDisplay.state
                         : preferResearchDisplay
                         ? (researchCanonical?.state || normalizedRowState)
-                        : (canonicalOverrideState || normalizedCanonicalState || normalizedRowState || null),
+                        : (notionAgencyOverride?.state || canonicalOverrideState || normalizedCanonicalState || normalizedRowState || null),
                     resolvedAgencyName
                 ),
                 portal_url: preferResearchDisplay
@@ -775,6 +911,11 @@ router.get('/:id/workspace', async (req, res) => {
                 stateHint: caseData.state,
             })
             : null;
+        const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+            currentAgencyName: canonicalAgency?.name || preferredCaseAgency?.agency_name || caseData.agency_name,
+            additionalDetails: caseData.additional_details,
+        });
+        const canForceCorrectedAgencyDisplay = !preferredCaseAgency || primaryCaseAgencyIsSynthetic;
         const useResearchSuggestedDisplay = shouldPreferResearchAgencyDisplay({
             researchSuggestedAgency,
             agencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
@@ -792,14 +933,15 @@ router.get('/:id/workspace', async (req, res) => {
             portalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
             addedSource: primaryCaseAgency?.added_source || (primaryCaseAgencyIsSynthetic ? 'case_row_backfill' : null),
         }) || (syntheticPlaceholderAgencyDisplay && !researchSuggestedAgency);
-        const forceCorrectedAgencyDisplay = shouldForceCorrectedAgencyDisplay({
+        const forceCorrectedAgencyDisplay = (canForceCorrectedAgencyDisplay && shouldForceCorrectedAgencyDisplay({
             currentAgencyName: canonicalAgency?.name || preferredCaseAgency?.agency_name || caseData.agency_name,
             caseAgencyName: caseData.agency_name,
             additionalDetails: caseData.additional_details,
             researchSuggestedAgency,
             currentAgencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
             currentPortalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
-        }) || shouldOverrideStaleExistingChannelDisplay({
+            metadataAgencyMismatch,
+        })) || shouldOverrideStaleExistingChannelDisplay({
             contactResearchNotes: caseData.contact_research_notes,
             currentAgencyName: canonicalAgency?.name || preferredCaseAgency?.agency_name || caseData.agency_name,
             researchSuggestedAgency,
@@ -809,9 +951,13 @@ router.get('/:id/workspace', async (req, res) => {
         const correctedAgencyDisplay = buildCorrectedAgencyDisplay({
             researchCanonical: researchCanonicalAgency,
             researchSuggestedAgency,
+            metadataAgencyMismatch,
             caseAgencyName: caseData.agency_name,
             caseState: caseData.state,
         });
+        const narrativeAgencyName = normalizeNotionReferenceId(preferredCaseAgency?.agency_name || caseData.agency_name)
+            ? extractAgencyNameFromAdditionalDetails(caseData.additional_details)
+            : null;
 
         // Resolve canonical agency id for deep-linking to /agencies/detail.
         // Never use case id as an agency id.
@@ -842,7 +988,7 @@ router.get('/:id/workspace', async (req, res) => {
                     ? correctedAgencyDisplay.name
                     : useResearchSuggestedDisplay
                     ? (researchCanonicalAgency?.name || researchSuggestedAgency?.name || preferredCaseAgency?.agency_name || null)
-                    : (preferredCaseAgency?.agency_name || null)
+                    : (preferredCaseAgency?.agency_name || narrativeAgencyName || null)
             );
         let resolvedAgencyEmail = normalizeAgencyEmailHint(
             suppressPlaceholderAgencyDisplay
@@ -884,6 +1030,36 @@ router.get('/:id/workspace', async (req, res) => {
                 )) ||
             detectPortalProviderByUrl(resolvedPortalUrl)?.name ||
             null;
+        const notionAgencyOverride = (!suppressPlaceholderAgencyDisplay && !useResearchSuggestedDisplay && !forceCorrectedAgencyDisplay)
+            ? await lookupAgencyByNotionReference(resolvedAgencyName || caseData.agency_name)
+            : null;
+        if (notionAgencyOverride) {
+            resolvedAgencyId = notionAgencyOverride.id || resolvedAgencyId;
+            resolvedAgencyName = notionAgencyOverride.name || resolvedAgencyName;
+            resolvedAgencyEmail = normalizeAgencyEmailHint(
+                notionAgencyOverride.email_foia ||
+                notionAgencyOverride.email_main ||
+                resolvedAgencyEmail
+            );
+            resolvedPortalUrl = normalizePortalUrl(
+                notionAgencyOverride.portal_url ||
+                notionAgencyOverride.portal_url_alt ||
+                resolvedPortalUrl
+            );
+            resolvedPortalProvider =
+                notionAgencyOverride.portal_provider ||
+                detectPortalProviderByUrl(resolvedPortalUrl)?.name ||
+                resolvedPortalProvider ||
+                null;
+        }
+        resolvedAgencyName = pickAgencyDisplayName(
+            resolvedAgencyName,
+            notionAgencyOverride?.name,
+            narrativeAgencyName,
+            canonicalAgency?.name,
+            preferredCaseAgency?.agency_name,
+            caseData.agency_name
+        );
         const hasVerifiedResearchAgencyMatch = Boolean(
             useResearchSuggestedDisplay &&
             (
@@ -1141,7 +1317,18 @@ router.get('/:id/workspace', async (req, res) => {
             ORDER BY created_at DESC
             LIMIT 1
         `, [requestId]);
-        const pendingProposal = pendingProposalResult.rows[0] || null;
+        const pendingProposal = pendingProposalResult.rows[0]
+            ? {
+                ...pendingProposalResult.rows[0],
+                gate_options: Array.isArray(pendingProposalResult.rows[0].gate_options)
+                    && pendingProposalResult.rows[0].gate_options.length > 0
+                    ? pendingProposalResult.rows[0].gate_options
+                    : deriveDefaultGateOptions(
+                        pendingProposalResult.rows[0].action_type,
+                        pendingProposalResult.rows[0].draft_body_text
+                    ),
+            }
+            : null;
         if (!nextActionProposal && pendingProposal) {
             nextActionProposal = {
                 id: String(pendingProposal.id),
@@ -1163,9 +1350,16 @@ router.get('/:id/workspace', async (req, res) => {
             };
         }
 
-        // Build portal_helper for SUBMIT_PORTAL proposals — one-stop copy-paste cheat sheet
+        // Build portal_helper for portal execution proposals and manual portal fallback handoffs.
         let portalHelper = null;
-        if (pendingProposal?.action_type === 'SUBMIT_PORTAL') {
+        const proposalDraftText = String(pendingProposal?.draft_body_text || '');
+        const proposalNeedsManualPortalHelper = pendingProposal?.action_type === 'SUBMIT_PORTAL'
+            || (
+                pendingProposal?.action_type === 'ESCALATE'
+                && /manual submit helper|portal submission manually|portal submission manual|open portal/i.test(proposalDraftText)
+                && Boolean(agencySummary?.portal_url || caseData.portal_url)
+            );
+        if (proposalNeedsManualPortalHelper) {
             const caseOwner = caseData.user_id ? await db.getUserById(caseData.user_id) : null;
             const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Requester';
             const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
@@ -1283,6 +1477,12 @@ router.get('/:id/workspace', async (req, res) => {
         }
 
         const requestDetail = toRequestDetail(caseData);
+        const resolvedRequestState = deriveDisplayState(
+            forceCorrectedAgencyDisplay
+                ? correctedAgencyDisplay.state
+                : caseData.state,
+            resolvedAgencyName || requestDetail.agency_name
+        );
         // Delivery fallback for UI: when case.agency_email is missing, surface
         // thread/inbound sender so destination displays correctly.
         if (!requestDetail.agency_email) {
@@ -1303,6 +1503,7 @@ router.get('/:id/workspace', async (req, res) => {
             requestDetail.agency_email = resolvedAgencyEmail || null;
             requestDetail.portal_url = resolvedPortalUrl || null;
             requestDetail.portal_provider = resolvedPortalProvider || null;
+            requestDetail.state = resolvedRequestState || requestDetail.state || null;
         } else {
             if (resolvedAgencyName) {
                 requestDetail.agency_name = resolvedAgencyName;
@@ -1316,9 +1517,17 @@ router.get('/:id/workspace', async (req, res) => {
             if (resolvedPortalProvider) {
                 requestDetail.portal_provider = resolvedPortalProvider;
             }
+            if (resolvedRequestState) {
+                requestDetail.state = resolvedRequestState;
+            }
         }
         if (isPlaceholderAgencyEmail(requestDetail.agency_email)) {
             requestDetail.agency_email = null;
+        }
+        if (!requestDetail.agency_email && isTestAgencyEmail(caseData.agency_email)) {
+            requestDetail.agency_email = normalizeAgencyEmailHint(caseData.agency_email);
+            requestDetail.portal_url = null;
+            requestDetail.portal_provider = null;
         }
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.

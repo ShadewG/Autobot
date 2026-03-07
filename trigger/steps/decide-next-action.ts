@@ -2816,9 +2816,40 @@ export async function decideNextAction(
     return deterministicResult;
   } catch (error: any) {
     logger.error("decide_next_action step error", { caseId, error: error.message });
-    return decision("ESCALATE", {
-      pauseReason: "SENSITIVE",
-      reasoning: [`Decision error: ${error.message}`, "Escalating to human review"],
-    });
+    try {
+      const deterministicResult = await deterministicRouting(
+        caseId,
+        classification,
+        extractedFeeAmount,
+        sentiment,
+        autopilotMode,
+        triggerType,
+        requiresResponse,
+        portalUrl,
+        denialSubtype,
+        inlineKeyPoints
+      );
+      return {
+        ...deterministicResult,
+        reasoning: [
+          `Decision error: ${error.message}`,
+          "Falling back to deterministic routing",
+          ...(deterministicResult.reasoning || []),
+        ],
+      };
+    } catch (fallbackError: any) {
+      logger.error("deterministic routing fallback failed", {
+        caseId,
+        error: fallbackError?.message || String(fallbackError),
+      });
+      return decision("ESCALATE", {
+        pauseReason: "SENSITIVE",
+        reasoning: [
+          `Decision error: ${error.message}`,
+          `Deterministic fallback failed: ${fallbackError?.message || String(fallbackError)}`,
+          "Escalating to human review",
+        ],
+      });
+    }
   }
 }
