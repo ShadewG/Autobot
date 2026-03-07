@@ -117,6 +117,7 @@ interface PendingProposal {
     content_type: string | null;
     size_bytes: number | null;
     download_url: string;
+    direction?: 'inbound' | 'outbound';
   }>;
   attachment_insights?: {
     total: number;
@@ -1941,22 +1942,14 @@ function MonitorPageContent() {
             </div>
           )}
 
-          {/* Inbound attachments + extracted insights */}
-          {selectedItem.data.attachments && selectedItem.data.attachments.length > 0 && (
-            <div className="border border-blue-800/40 p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <SectionLabel>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-2 w-2 rounded-full bg-blue-500" />
-                    Inbound Attachments
-                  </span>
-                </SectionLabel>
-                <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-700/50">
-                  {selectedItem.data.attachments.length} received
-                </Badge>
-              </div>
+          {/* Attachments split by direction */}
+          {selectedItem.data.attachments && selectedItem.data.attachments.length > 0 && (() => {
+            const inbound = selectedItem.data.attachments.filter((a) => a.direction !== 'outbound');
+            const prepared = selectedItem.data.attachments.filter((a) => a.direction === 'outbound');
+
+            const renderAttachmentList = (atts: typeof selectedItem.data.attachments) => (
               <div className="space-y-1.5">
-                {selectedItem.data.attachments.map((att) => (
+                {atts.map((att) => (
                   <a
                     key={att.id}
                     href={att.download_url}
@@ -1974,39 +1967,79 @@ function MonitorPageContent() {
                   </a>
                 ))}
               </div>
+            );
 
-              {selectedItem.data.attachment_insights && (
-                <div className="space-y-1.5 pt-1">
-                  {(selectedItem.data.attachment_insights.fee_amounts || []).length > 0 && (
-                    <div className="text-xs text-foreground/90 flex items-center gap-1.5">
-                      <DollarSign className="h-3 w-3 text-amber-400" />
-                      Fee mentions: {selectedItem.data.attachment_insights.fee_amounts.map((n) => `$${n.toFixed(2)}`).join(", ")}
+            return (
+              <>
+                {/* Prepared / outbound attachments (filled PDFs, etc.) */}
+                {prepared.length > 0 && (
+                  <div className="border border-green-800/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <SectionLabel>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-green-500" />
+                          Prepared Attachments
+                        </span>
+                      </SectionLabel>
+                      <Badge variant="outline" className="text-[10px] text-green-400 border-green-700/50">
+                        {prepared.length} to send
+                      </Badge>
                     </div>
-                  )}
-                  {(selectedItem.data.attachment_insights.deadline_mentions || []).length > 0 && (
-                    <div className="text-xs text-foreground/90 flex items-center gap-1.5">
-                      <CalendarDays className="h-3 w-3 text-blue-400" />
-                      Date mentions: {selectedItem.data.attachment_insights.deadline_mentions.slice(0, 3).join(" • ")}
+                    {renderAttachmentList(prepared)}
+                  </div>
+                )}
+
+                {/* Inbound attachments (from agency emails) */}
+                {inbound.length > 0 && (
+                  <div className="border border-blue-800/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <SectionLabel>
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="h-2 w-2 rounded-full bg-blue-500" />
+                          Inbound Attachments
+                        </span>
+                      </SectionLabel>
+                      <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-700/50">
+                        {inbound.length} received
+                      </Badge>
                     </div>
-                  )}
-                  {(selectedItem.data.attachment_insights.highlights || []).length > 0 && (
-                    <div className="bg-background border p-2 space-y-1">
-                      {selectedItem.data.attachment_insights.highlights.slice(0, 3).map((line, idx) => (
-                        <p key={idx} className="text-[11px] text-muted-foreground">
-                          {line}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  {(selectedItem.data.attachment_insights.filename_signals || []).length > 0 && (
-                    <div className="text-[11px] text-muted-foreground">
-                      Detected from filenames: {selectedItem.data.attachment_insights.filename_signals.join(", ").replaceAll("_", " ")}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+                    {renderAttachmentList(inbound)}
+
+                    {selectedItem.data.attachment_insights && (
+                      <div className="space-y-1.5 pt-1">
+                        {(selectedItem.data.attachment_insights.fee_amounts || []).length > 0 && (
+                          <div className="text-xs text-foreground/90 flex items-center gap-1.5">
+                            <DollarSign className="h-3 w-3 text-amber-400" />
+                            Fee mentions: {selectedItem.data.attachment_insights.fee_amounts.map((n) => `$${n.toFixed(2)}`).join(", ")}
+                          </div>
+                        )}
+                        {(selectedItem.data.attachment_insights.deadline_mentions || []).length > 0 && (
+                          <div className="text-xs text-foreground/90 flex items-center gap-1.5">
+                            <CalendarDays className="h-3 w-3 text-blue-400" />
+                            Date mentions: {selectedItem.data.attachment_insights.deadline_mentions.slice(0, 3).join(" • ")}
+                          </div>
+                        )}
+                        {(selectedItem.data.attachment_insights.highlights || []).length > 0 && (
+                          <div className="bg-background border p-2 space-y-1">
+                            {selectedItem.data.attachment_insights.highlights.slice(0, 3).map((line, idx) => (
+                              <p key={idx} className="text-[11px] text-muted-foreground">
+                                {line}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                        {(selectedItem.data.attachment_insights.filename_signals || []).length > 0 && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Detected from filenames: {selectedItem.data.attachment_insights.filename_signals.join(", ").replaceAll("_", " ")}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {/* Inline correspondence — expands below inbound */}
           {showCorrespondence && (

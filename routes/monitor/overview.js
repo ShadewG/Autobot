@@ -599,7 +599,8 @@ router.get('/live-overview', async (req, res) => {
                     storage_url: row.storage_url,
                     extracted_text: row.extracted_text,
                     created_at: row.created_at,
-                    download_url: `/api/monitor/attachments/${row.id}/download`
+                    download_url: `/api/monitor/attachments/${row.id}/download`,
+                    direction: row.message_id ? 'inbound' : 'outbound',
                 });
                 return acc;
             }, new Map());
@@ -640,7 +641,8 @@ router.get('/live-overview', async (req, res) => {
                     storage_url: row.storage_url,
                     extracted_text: row.extracted_text,
                     created_at: row.created_at,
-                    download_url: `/api/monitor/attachments/${row.id}/download`
+                    download_url: `/api/monitor/attachments/${row.id}/download`,
+                    direction: row.message_id ? 'inbound' : 'outbound',
                 });
                 return acc;
             }, new Map());
