@@ -4,6 +4,7 @@ const {
     db,
     processProposalDecision
 } = require('./_helpers');
+const { buildOriginalDraftInsertFields } = require('../../services/proposal-draft-history');
 
 /**
  * POST /api/monitor/proposals/:id/approve
@@ -99,12 +100,30 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
             return res.status(500).json({ success: false, error: 'Draft generation returned empty content' });
         }
 
+        const originalDraftFields = buildOriginalDraftInsertFields({
+            draftSubject: draft.subject || null,
+            draftBodyText: draft.body_text || null,
+        });
+
         // Update the proposal with the generated draft
         await db.query(`
             UPDATE proposals
-            SET draft_subject = $1, draft_body_text = $2, draft_body_html = $3, updated_at = NOW()
-            WHERE id = $4
-        `, [draft.subject || null, draft.body_text || null, draft.body_html || null, proposalId]);
+            SET draft_subject = $1,
+                draft_body_text = $2,
+                draft_body_html = $3,
+                original_draft_subject = COALESCE(original_draft_subject, $4),
+                original_draft_body_text = COALESCE(original_draft_body_text, $5),
+                human_edited = COALESCE(human_edited, false),
+                updated_at = NOW()
+            WHERE id = $6
+        `, [
+            draft.subject || null,
+            draft.body_text || null,
+            draft.body_html || null,
+            originalDraftFields.originalDraftSubject,
+            originalDraftFields.originalDraftBodyText,
+            proposalId
+        ]);
 
         res.json({
             success: true,

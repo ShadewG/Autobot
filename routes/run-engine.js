@@ -28,6 +28,7 @@ const aiService = require('../services/ai-service');
 const pdfFormService = require('../services/pdf-form-service');
 const proposalLifecycle = require('../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../services/proposal-feedback');
+const { buildApprovalDraftUpdates } = require('../services/proposal-draft-history');
 const { buildHumanDecision } = proposalLifecycle;
 
 async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
@@ -1468,10 +1469,10 @@ router.post('/proposals/:id/decision', async (req, res) => {
     // Apply any inline edits to the draft before executing
     const { draft_body_text, draft_subject } = req.body;
     if (action === 'APPROVE' && (draft_body_text !== undefined || draft_subject !== undefined)) {
-      const draftUpdates = {};
-      if (draft_body_text !== undefined) draftUpdates.draft_body_text = draft_body_text;
-      if (draft_subject !== undefined) draftUpdates.draft_subject = draft_subject;
-      if (draft_body_text !== undefined) draftUpdates.draft_body_html = null;
+      const draftUpdates = buildApprovalDraftUpdates(proposal, {
+        draft_body_text,
+        draft_subject,
+      });
       await db.updateProposal(proposalId, draftUpdates);
       proposal = await db.getProposalById(proposalId);
       logger.info('Applied inline draft edits before approval', { proposalId, fields: Object.keys(draftUpdates) });
@@ -1484,10 +1485,10 @@ router.post('/proposals/:id/decision', async (req, res) => {
         const chainProposals = await db.getChainProposals(proposal.chain_id);
         const followUp = chainProposals.find(p => p.chain_step > 0);
         if (followUp) {
-          const chainUpdates = {};
-          if (chain_draft_body_text !== undefined) chainUpdates.draft_body_text = chain_draft_body_text;
-          if (chain_draft_subject !== undefined) chainUpdates.draft_subject = chain_draft_subject;
-          if (chain_draft_body_text !== undefined) chainUpdates.draft_body_html = null;
+          const chainUpdates = buildApprovalDraftUpdates(followUp, {
+            draft_body_text: chain_draft_body_text,
+            draft_subject: chain_draft_subject,
+          });
           if (Object.keys(chainUpdates).length > 0) {
             await db.updateProposal(followUp.id, chainUpdates);
             logger.info('Applied chain follow-up draft edits', { proposalId: followUp.id, chainId: proposal.chain_id, fields: Object.keys(chainUpdates) });

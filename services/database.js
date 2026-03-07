@@ -6,6 +6,7 @@ const PORTAL_ACTIVITY_EVENTS = require('../utils/portal-activity-events');
 const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
 
 const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
 const HUMAN_REVIEW_CASE_STATUSES = [
@@ -1927,16 +1928,22 @@ class DatabaseService {
             }
         }
 
+        const originalDraftFields = buildOriginalDraftInsertFields({
+            draftSubject: proposalData.draftSubject || null,
+            draftBodyText: proposalData.draftBodyText || null,
+        });
+
         const query = `
             INSERT INTO proposals (
                 proposal_key, case_id, run_id, trigger_message_id, action_type,
                 draft_subject, draft_body_text, draft_body_html,
+                original_draft_subject, original_draft_body_text, human_edited,
                 reasoning, confidence, risk_flags, warnings,
                 can_auto_execute, requires_human, status,
                 langgraph_thread_id, adjustment_count, lessons_applied,
                 gate_options,
                 action_chain, chain_id, chain_step
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update when existing row is PENDING_APPROVAL, or system-DISMISSED
                 -- (auto-superseded, no human_decision). Human-dismissed proposals must
@@ -1973,6 +1980,9 @@ class DatabaseService {
                     THEN EXCLUDED.draft_body_html
                     ELSE proposals.draft_body_html
                 END,
+                original_draft_subject = COALESCE(proposals.original_draft_subject, EXCLUDED.original_draft_subject),
+                original_draft_body_text = COALESCE(proposals.original_draft_body_text, EXCLUDED.original_draft_body_text),
+                human_edited = COALESCE(proposals.human_edited, false),
                 reasoning = CASE
                     WHEN proposals.status = 'PENDING_APPROVAL'
                       OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
@@ -2080,6 +2090,9 @@ class DatabaseService {
             proposalData.draftSubject || null,
             proposalData.draftBodyText || null,
             proposalData.draftBodyHtml || null,
+            originalDraftFields.originalDraftSubject,
+            originalDraftFields.originalDraftBodyText,
+            originalDraftFields.humanEdited,
             reasoningJson,
             proposalData.confidence || 0.8,
             proposalData.riskFlags || [],
@@ -2231,7 +2244,10 @@ class DatabaseService {
             humanDecision: 'human_decision',
             humanDecidedAt: 'human_decided_at',
             humanDecidedBy: 'human_decided_by',
-            adjustmentCount: 'adjustment_count'
+            adjustmentCount: 'adjustment_count',
+            originalDraftSubject: 'original_draft_subject',
+            originalDraftBodyText: 'original_draft_body_text',
+            humanEdited: 'human_edited'
         };
 
         const entries = Object.entries(updates)

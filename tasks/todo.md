@@ -212,9 +212,9 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] Verify eval case auto-capture also fires from all three dismiss paths (same gap)
 
 #### Capture draft history before overwrite
-- [ ] Add `original_draft_body_text` and `original_draft_subject` columns to `proposals` table — populated once on creation, never overwritten
-- [ ] When inline human edits arrive at APPROVE time (`run-engine.js` lines 597-604), snapshot the current draft into `original_*` columns before overwriting
-- [ ] Add `human_edited: boolean` flag on proposals — set true when draft differs from original at approval time
+- [x] Add `original_draft_body_text` and `original_draft_subject` columns to `proposals` table — populated once on creation, never overwritten
+- [x] When inline human edits arrive at APPROVE time (`run-engine.js` lines 597-604), snapshot the current draft into `original_*` columns before overwriting
+- [x] Add `human_edited: boolean` flag on proposals — set true when draft differs from original at approval time
 
 #### Capture AI model metadata
 - [ ] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` columns to `response_analysis` table (for classify step)

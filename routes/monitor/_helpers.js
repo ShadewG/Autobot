@@ -10,6 +10,7 @@ const { transitionCaseRuntime } = require('../../services/case-runtime');
 const pdContactService = require('../../services/pd-contact-service');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/proposal-feedback');
+const { buildApprovalDraftUpdates } = require('../../services/proposal-draft-history');
 const { buildHumanDecision } = proposalLifecycle;
 
 // Initialize SendGrid
@@ -244,10 +245,10 @@ async function processProposalDecision(
     const trimmedInstruction = typeof instruction === 'string' ? instruction.trim() : '';
 
     if (action === 'APPROVE' && (draft_body_text !== undefined || draft_subject !== undefined)) {
-        const draftUpdates = {};
-        if (draft_body_text !== undefined) draftUpdates.draft_body_text = draft_body_text;
-        if (draft_subject !== undefined) draftUpdates.draft_subject = draft_subject;
-        if (draft_body_text !== undefined) draftUpdates.draft_body_html = null;
+        const draftUpdates = buildApprovalDraftUpdates(proposal, {
+            draft_body_text,
+            draft_subject,
+        });
         await db.updateProposal(proposalId, draftUpdates);
         proposal = await db.getProposalById(proposalId);
     }
