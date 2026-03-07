@@ -191,6 +191,22 @@ class DatabaseService {
 
             // Migrations (idempotent)
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS summary TEXT');
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bounced_at TIMESTAMP');
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS email_events (
+                    id SERIAL PRIMARY KEY,
+                    message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                    provider_message_id VARCHAR(255),
+                    event_type VARCHAR(50) NOT NULL,
+                    event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    raw_payload JSONB NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            `);
+            await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_message_id ON email_events(message_id)');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_provider_message_id ON email_events(provider_message_id)');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_type ON email_events(event_type)');
 
             // Feature 2: Fee History table
             await this.query(`
@@ -808,6 +824,51 @@ class DatabaseService {
 
     async getMessageById(id) {
         const result = await this.query('SELECT * FROM messages WHERE id = $1', [id]);
+        return result.rows[0];
+    }
+
+    async getMessageBySendgridMessageId(sendgridMessageId) {
+        const result = await this.query(
+            'SELECT * FROM messages WHERE sendgrid_message_id = $1 LIMIT 1',
+            [sendgridMessageId]
+        );
+        return result.rows[0] || null;
+    }
+
+    async updateMessageDeliveryStatus(messageId, updates = {}) {
+        const updateData = {};
+        if (updates.delivered_at !== undefined) updateData.delivered_at = updates.delivered_at;
+        if (updates.bounced_at !== undefined) updateData.bounced_at = updates.bounced_at;
+        if (Object.keys(updateData).length === 0) {
+            return this.getMessageById(messageId);
+        }
+
+        const setClause = Object.keys(updateData).map((key, index) => `${key} = $${index + 2}`).join(', ');
+        const values = [messageId, ...Object.values(updateData)];
+        const result = await this.query(
+            `UPDATE messages SET ${setClause} WHERE id = $1 RETURNING *`,
+            values
+        );
+        return result.rows[0] || null;
+    }
+
+    async createEmailEvent(eventData) {
+        const result = await this.query(`
+            INSERT INTO email_events (
+                message_id,
+                provider_message_id,
+                event_type,
+                event_timestamp,
+                raw_payload
+            ) VALUES ($1, $2, $3, $4, $5)
+            RETURNING *
+        `, [
+            eventData.message_id || null,
+            eventData.provider_message_id || null,
+            eventData.event_type,
+            eventData.event_timestamp || new Date(),
+            eventData.raw_payload || {},
+        ]);
         return result.rows[0];
     }
 

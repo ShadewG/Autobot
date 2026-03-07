@@ -228,10 +228,10 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] This gives us the full decision audit trail we're missing
 
 #### Capture email delivery events
-- [ ] Create `email_events` table: `message_id`, `event_type` (delivered/opened/bounced/dropped), `timestamp`, `raw_payload`
-- [ ] Store SendGrid webhook events (delivery, open, bounce, drop) as rows — currently these events are processed for case matching but the event data itself is discarded
-- [ ] Add `delivered_at`, `bounced_at` columns to `messages` table, updated from webhook events
-- [ ] This enables: "was the email actually delivered?" and "which agencies never open our emails?"
+- [x] Create `email_events` table: `message_id`, `event_type` (delivered/opened/bounced/dropped), `timestamp`, `raw_payload`
+- [x] Store SendGrid webhook events (delivery, open, bounce, drop) as rows — currently these events are processed for case matching but the event data itself is discarded
+- [x] Add `delivered_at`, `bounced_at` columns to `messages` table, updated from webhook events
+- [x] This enables: "was the email actually delivered?" and "which agencies never open our emails?"
 
 #### Preserve portal submission history
 - [ ] Create `portal_submissions` table: `case_id`, `run_id`, `skyvern_task_id`, `status`, `engine`, `account_email`, `screenshot_url`, `recording_url`, `extracted_data` (JSONB), `error_message`, `started_at`, `completed_at`

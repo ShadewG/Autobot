@@ -4,6 +4,7 @@ const multer = require('multer');
 const axios = require('axios');
 const sendgridService = require('../services/sendgrid-service');
 const db = require('../services/database');
+const { processSendgridEvent } = require('../services/email-event-service');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
 const { notify } = require('../services/event-bus');
 const { transitionCaseRuntime } = require('../services/case-runtime');
@@ -405,50 +406,12 @@ router.post('/events', express.json(), async (req, res) => {
 
         for (const event of events) {
             console.log(`Event: ${event.event}, Message ID: ${event.sg_message_id}`);
-
-            // Handle different event types
-            switch (event.event) {
-                case 'delivered':
-                    console.log(`Email delivered: ${event.sg_message_id}`);
-                    break;
-                case 'bounce':
-                case 'dropped': {
-                    console.error(`Email ${event.event}: ${event.sg_message_id}`, event.reason);
-                    try {
-                        const msgResult = await db.query(
-                            'SELECT id, case_id FROM messages WHERE sendgrid_message_id = $1 LIMIT 1',
-                            [event.sg_message_id]
-                        );
-                        const msg = msgResult.rows[0];
-
-                        await db.logActivity(
-                            event.event === 'bounce' ? 'email_bounced' : 'email_dropped',
-                            `Email delivery failed: ${event.reason || 'Unknown reason'}`,
-                            {
-                                case_id: msg?.case_id || null,
-                                message_id: msg?.id || null,
-                                sendgrid_message_id: event.sg_message_id,
-                                bounce_type: event.type,
-                                reason: event.reason,
-                                status_code: event.status
-                            }
-                        );
-
-                        if (msg?.case_id) {
-                            await transitionCaseRuntime(msg.case_id, 'CASE_ESCALATED', {
-                                substatus: `Email ${event.event}: ${event.reason || 'delivery failed'}`,
-                                pauseReason: 'EMAIL_FAILED',
-                            });
-                        }
-                    } catch (err) {
-                        console.error('Failed to process bounce/drop event:', err.message);
-                    }
-                    break;
-                }
-                case 'open':
-                    console.log(`Email opened: ${event.sg_message_id}`);
-                    break;
-            }
+            await processSendgridEvent({
+                db,
+                transitionCaseRuntime,
+                event,
+                logger: console
+            });
         }
 
         res.status(200).json({ success: true });

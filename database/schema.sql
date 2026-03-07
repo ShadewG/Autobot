@@ -75,9 +75,21 @@ CREATE TABLE IF NOT EXISTS messages (
     portal_notification_type VARCHAR(100),
     portal_notification_provider VARCHAR(100),
     sent_at TIMESTAMP,
+    delivered_at TIMESTAMP,
+    bounced_at TIMESTAMP,
     received_at TIMESTAMP,
     summary TEXT, -- One-sentence AI-generated summary
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS email_events (
+    id SERIAL PRIMARY KEY,
+    message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+    provider_message_id VARCHAR(255),
+    event_type VARCHAR(50) NOT NULL,
+    event_timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    raw_payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Attachments
