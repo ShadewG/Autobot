@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db, logger, triggerDispatch } = require('./_helpers');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
+const { captureDismissFeedback } = require('../../services/proposal-feedback');
 const { buildHumanDecision } = proposalLifecycle;
 
 async function completeProposalWaitpoint(proposal, data, log) {
@@ -357,6 +358,10 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
                 decidedBy: req.body?.decidedBy || 'human',
                 reason: reason || null,
             }),
+        });
+        await captureDismissFeedback(proposal, {
+            reason: reason || null,
+            decidedBy: req.body?.decidedBy || 'human',
         });
 
         // If this was the last active proposal, clear stale human-review flags.

@@ -208,8 +208,8 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 These are cheap fixes that preserve data we're currently throwing away. Every week we delay, we lose training signal from real cases.
 
 #### Fix `learnFromOutcome` coverage gap
-- [ ] Call `decisionMemory.learnFromOutcome()` from ALL dismiss paths — currently only fires from `monitor/_helpers.js`, missing from `run-engine.js` `/proposals/:id/decision` and `routes/requests/proposals.js` dismiss handler
-- [ ] Verify eval case auto-capture also fires from all three dismiss paths (same gap)
+- [x] Call `decisionMemory.learnFromOutcome()` from ALL dismiss paths — currently only fires from `monitor/_helpers.js`, missing from `run-engine.js` `/proposals/:id/decision` and `routes/requests/proposals.js` dismiss handler
+- [x] Verify eval case auto-capture also fires from all three dismiss paths (same gap)
 
 #### Capture draft history before overwrite
 - [ ] Add `original_draft_body_text` and `original_draft_subject` columns to `proposals` table — populated once on creation, never overwritten

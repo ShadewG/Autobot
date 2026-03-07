@@ -27,6 +27,7 @@ const { HUMAN_REVIEW_PROPOSAL_STATUSES, buildCaseTruth } = require('../lib/case-
 const aiService = require('../services/ai-service');
 const pdfFormService = require('../services/pdf-form-service');
 const proposalLifecycle = require('../services/proposal-lifecycle');
+const { autoCaptureEvalCase, captureDismissFeedback } = require('../services/proposal-feedback');
 const { buildHumanDecision } = proposalLifecycle;
 
 async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
@@ -1507,21 +1508,18 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
     // Auto-capture eval cases on human decisions (best-effort, non-blocking).
     if (action === 'DISMISS') {
-      // DISMISS: AI proposed wrong action — ground truth is "should not have acted this way"
-      db.query(
-        `INSERT INTO eval_cases (proposal_id, case_id, trigger_message_id, expected_action, notes)
-         VALUES ($1, $2, $3, 'DISMISSED', $4)
-         ON CONFLICT (proposal_id) DO NOTHING`,
-        [proposalId, proposal.case_id, proposal.trigger_message_id || null, reason || null]
-      ).catch(err => logger.warn('Auto eval-case insert failed (non-fatal)', { proposalId, error: err.message }));
+      await captureDismissFeedback(proposal, {
+        instruction: instruction || null,
+        reason: reason || null,
+        decidedBy: req.body.decidedBy || 'human',
+      });
     } else if (action === 'ADJUST') {
-      // ADJUST: human agreed on action type but wanted draft changes — expected_action = AI's action_type
-      db.query(
-        `INSERT INTO eval_cases (proposal_id, case_id, trigger_message_id, expected_action, notes)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (proposal_id) DO NOTHING`,
-        [proposalId, proposal.case_id, proposal.trigger_message_id || null, proposal.action_type, instruction || reason || null]
-      ).catch(err => logger.warn('Auto eval-case insert failed (non-fatal)', { proposalId, error: err.message }));
+      await autoCaptureEvalCase(proposal, {
+        action,
+        instruction: instruction || null,
+        reason: reason || null,
+        decidedBy: req.body.decidedBy || 'human',
+      });
     }
 
     if (action === 'RETRY_RESEARCH') {
