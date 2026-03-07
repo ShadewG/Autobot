@@ -28,6 +28,7 @@ import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
 import { LinkifiedText } from "@/components/linkified-text";
 import { AddCorrespondenceDialog } from "@/components/add-correspondence-dialog";
+import { AttachmentPicker, type Attachment } from "@/components/attachment-picker";
 import {
   Loader2,
   CheckCircle,
@@ -637,6 +638,7 @@ function MonitorPageContent() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [editedBody, setEditedBody] = useState<string>("");
   const [editedSubject, setEditedSubject] = useState<string>("");
+  const [outboundAttachments, setOutboundAttachments] = useState<Attachment[]>([]);
   const [queueFilter, setQueueFilter] = useState<"all" | "proposals" | "reviews">("all");
   const [caseNotFoundId, setCaseNotFoundId] = useState<number | null>(null);
   const [pendingAction, setPendingAction] = useState<{
@@ -952,6 +954,7 @@ function MonitorPageContent() {
       // Include any edits the user made to the draft
       if (editedBody && editedBody !== draftBody) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== draftSubject) body.draft_subject = editedSubject;
+      if (outboundAttachments.length > 0) body.attachments = outboundAttachments;
 
       const res = await fetch(
         `/api/monitor/proposals/${selectedItem.data.id}/decision`,
@@ -1368,6 +1371,7 @@ function MonitorPageContent() {
   useEffect(() => {
     setEditedBody(draftBody || "");
     setEditedSubject(draftSubject || "");
+    setOutboundAttachments([]);
     setReasoningExpanded(false);
   }, [draftBody, draftSubject]);
 
@@ -1939,11 +1943,16 @@ function MonitorPageContent() {
 
           {/* Inbound attachments + extracted insights */}
           {selectedItem.data.attachments && selectedItem.data.attachments.length > 0 && (
-            <div className="border p-3 space-y-2">
+            <div className="border border-blue-800/40 p-3 space-y-2">
               <div className="flex items-center justify-between">
-                <SectionLabel>Attachments</SectionLabel>
-                <Badge variant="outline" className="text-[10px]">
-                  {selectedItem.data.attachments.length} file(s)
+                <SectionLabel>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                    Inbound Attachments
+                  </span>
+                </SectionLabel>
+                <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-700/50">
+                  {selectedItem.data.attachments.length} received
                 </Badge>
               </div>
               <div className="space-y-1.5">
@@ -2054,6 +2063,18 @@ function MonitorPageContent() {
                 onChange={(e) => setEditedBody(e.target.value)}
                 placeholder={draftBody === null ? "(loading draft...)" : ""}
               />
+              {/* Outbound attachments */}
+              <div className="border border-green-800/40 rounded p-2 space-y-1.5">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-green-500" />
+                  Outbound Attachments
+                </p>
+                <AttachmentPicker
+                  attachments={outboundAttachments}
+                  onChange={setOutboundAttachments}
+                  disabled={isSubmitting}
+                />
+              </div>
             </div>
           )}
 
