@@ -90,6 +90,7 @@ import {
   ArrowRight,
   GripVertical,
   Search,
+  Paperclip,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
@@ -324,6 +325,7 @@ function DetailV2Content() {
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
   const [editedBody, setEditedBody] = useState<string>("");
   const [editedSubject, setEditedSubject] = useState<string>("");
+  const [editedRecipient, setEditedRecipient] = useState<string>("");
   const [proposalAttachments, setProposalAttachments] = useState<Array<{ filename: string; content: string; type: string }>>([]);
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
@@ -423,9 +425,12 @@ function DetailV2Content() {
     setNextAction(data?.next_action_proposal || null);
   }, [data?.next_action_proposal]);
 
+  const originalRecipient = data?.request?.agency_email || "";
+
   useEffect(() => {
     setEditedBody(data?.pending_proposal?.draft_body_text || "");
     setEditedSubject(data?.pending_proposal?.draft_subject || "");
+    setEditedRecipient(originalRecipient);
     setProposalAttachments([]);
     const chain = data?.pending_proposal?.action_chain;
     if (chain && chain.length > 1) {
@@ -435,7 +440,7 @@ function DetailV2Content() {
       setEditedChainSubject("");
       setEditedChainBody("");
     }
-  }, [data?.pending_proposal?.draft_body_text, data?.pending_proposal?.draft_subject, data?.pending_proposal?.action_chain]);
+  }, [data?.pending_proposal?.draft_body_text, data?.pending_proposal?.draft_subject, data?.pending_proposal?.action_chain, originalRecipient]);
 
   const lastInboundMessage = useMemo(() => {
     if (!data?.thread_messages) return null;
@@ -703,7 +708,7 @@ function DetailV2Content() {
     if (shouldOptimisticMessage) {
       setOptimisticMessages(prev => [...prev, {
         id: optimisticMessageId, direction: 'OUTBOUND' as const, channel: 'EMAIL' as const,
-        from_email: '', to_email: data.request.agency_email || '',
+        from_email: '', to_email: editedRecipient || data.request.agency_email || '',
         subject: editedSubject || data.pending_proposal!.draft_subject || '',
         body: editedBody || data.pending_proposal!.draft_body_text || '',
         sent_at: new Date().toISOString(), timestamp: new Date().toISOString(),
@@ -717,6 +722,7 @@ function DetailV2Content() {
       if (editedBody && editedBody !== (data.pending_proposal.draft_body_text || "")) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== (data.pending_proposal.draft_subject || "")) body.draft_subject = editedSubject;
       if (proposalAttachments.length > 0) body.attachments = proposalAttachments;
+      if (editedRecipient && editedRecipient !== originalRecipient) body.recipient_override = editedRecipient;
       if (actionType === "ESCALATE") {
         body.instruction = (typeof editedBody === "string" && editedBody.trim().length > 0)
           ? editedBody.trim()
@@ -1527,7 +1533,7 @@ function DetailV2Content() {
                       {typeof pending_proposal.confidence === "number" && (
                         <span className="text-[10px] text-muted-foreground">{Math.round(pending_proposal.confidence * 100)}%</span>
                       )}
-                      {pendingDelivery && (
+                      {pendingDelivery && !isEmailLikePendingAction && (
                         <span className="text-[10px] text-muted-foreground ml-auto truncate max-w-[200px]">
                           {pendingDelivery.method} → {pendingDelivery.target || "not set"}
                         </span>
@@ -1536,9 +1542,18 @@ function DetailV2Content() {
 
                     {/* Proposal content: email draft vs action card */}
                     {isEmailLikePendingAction ? (
-                      /* ── Email draft: editable subject + body ── */
+                      /* ── Email draft: editable To + subject + body ── */
                       (pending_proposal.draft_body_text || pending_proposal.draft_subject) ? (
                         <div className="space-y-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-muted-foreground font-medium shrink-0">To:</span>
+                            <input
+                              className="flex-1 bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
+                              value={editedRecipient}
+                              onChange={(e) => setEditedRecipient(e.target.value)}
+                              placeholder="recipient@agency.gov"
+                            />
+                          </div>
                           {(pending_proposal.draft_subject || editedSubject) && (
                             <input
                               className="w-full bg-background border border-border/50 rounded px-2 py-1 text-xs font-[inherit]"
@@ -1553,17 +1568,43 @@ function DetailV2Content() {
                             value={editedBody}
                             onChange={(e) => setEditedBody(e.target.value)}
                           />
-                          {(editedBody !== (pending_proposal.draft_body_text || "") || editedSubject !== (pending_proposal.draft_subject || "")) && (
+                          {(editedBody !== (pending_proposal.draft_body_text || "") || editedSubject !== (pending_proposal.draft_subject || "") || editedRecipient !== originalRecipient) && (
                             <button
                               className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
                               onClick={() => {
                                 setEditedBody(pending_proposal.draft_body_text || "");
                                 setEditedSubject(pending_proposal.draft_subject || "");
+                                setEditedRecipient(originalRecipient);
                               }}
                             >
                               <RotateCcw className="h-2.5 w-2.5" /> Reset to AI draft
                             </button>
                           )}
+                          {/* Prepared outbound attachments */}
+                          {(() => {
+                            const prepared = (request.attachments || []).filter((a: any) => a.direction === 'outbound');
+                            if (prepared.length === 0) return null;
+                            return (
+                              <div className="space-y-1">
+                                <p className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                                  Prepared Attachments
+                                </p>
+                                {prepared.map((att: any) => (
+                                  <a
+                                    key={att.id}
+                                    href={att.download_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 text-xs text-blue-400 hover:underline"
+                                  >
+                                    <Paperclip className="h-3 w-3 flex-shrink-0 text-green-500" />
+                                    <span className="truncate">{att.filename || `Attachment #${att.id}`}</span>
+                                  </a>
+                                ))}
+                              </div>
+                            );
+                          })()}
                           <AttachmentPicker
                             attachments={proposalAttachments}
                             onChange={setProposalAttachments}

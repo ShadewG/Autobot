@@ -435,7 +435,8 @@ export const processInbound = task({
           caseId, adjustedOutcome.proposalId, adjustedExecutionActionType, runId,
           adjustedOutcome.draft, null, adjustedOutcome.reasoning,
           undefined, undefined,
-          null // classification: fast-path skips classify; side effects ran in original run
+          null, // classification: fast-path skips classify; side effects ran in original run
+          { recipientOverride: humanDecision?.recipient_override }
         );
 
         // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
@@ -919,7 +920,8 @@ export const processInbound = task({
           caseId, adjustedOutcome.proposalId, adjustedExecutionActionType, runId,
           adjustedExecutionDraft, null, adjustedOutcome.reasoning,
           undefined, undefined,
-          classification.classification
+          classification.classification,
+          { recipientOverride: humanDecision?.recipient_override }
         );
         trace.setGateDecision({
           proposalId: adjustedOutcome.proposalId,
@@ -973,7 +975,7 @@ export const processInbound = task({
       executionDraft, null, decision.reasoning,
       executionDraft.researchContactResult, executionDraft.researchBrief,
       classification.classification,
-      { attachments: humanDecision?.attachments }
+      { attachments: humanDecision?.attachments, recipientOverride: humanDecision?.recipient_override }
     );
     trace.setGateDecision({
       proposalId: gate.proposalId,

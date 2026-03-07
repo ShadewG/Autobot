@@ -289,7 +289,7 @@ export const processInitialRequest = task({
               caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
               adjustedExecutionDraft, null, adjustmentReasoning,
               undefined, undefined, undefined,
-              { attachments: humanDecision?.attachments }
+              { attachments: humanDecision?.attachments, recipientOverride: humanDecision?.recipient_override }
             );
             trace.setGateDecision({
               proposalId: adjustedGate.proposalId,
@@ -635,7 +635,7 @@ export const processInitialRequest = task({
         executionDraft,
         null, draft.reasoning,
         undefined, undefined, undefined,
-        { attachments: humanDecision?.attachments }
+        { attachments: humanDecision?.attachments, recipientOverride: humanDecision?.recipient_override }
       );
       trace.setGateDecision({
         proposalId: draft.proposalId,

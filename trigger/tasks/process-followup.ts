@@ -316,7 +316,7 @@ export const processFollowup = task({
         caseId, gate.proposalId, executionActionType, runId,
         draft, null, decision.reasoning,
         undefined, undefined, undefined,
-        { attachments: humanDecision?.attachments }
+        { attachments: humanDecision?.attachments, recipientOverride: humanDecision?.recipient_override }
       );
       trace.setGateDecision({
         proposalId: gate.proposalId,

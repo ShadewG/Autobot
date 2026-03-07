@@ -639,6 +639,7 @@ function MonitorPageContent() {
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
   const [editedBody, setEditedBody] = useState<string>("");
   const [editedSubject, setEditedSubject] = useState<string>("");
+  const [editedRecipient, setEditedRecipient] = useState<string>("");
   const [outboundAttachments, setOutboundAttachments] = useState<Attachment[]>([]);
   const [queueFilter, setQueueFilter] = useState<"all" | "proposals" | "reviews">("all");
   const [caseNotFoundId, setCaseNotFoundId] = useState<number | null>(null);
@@ -956,6 +957,7 @@ function MonitorPageContent() {
       if (editedBody && editedBody !== draftBody) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== draftSubject) body.draft_subject = editedSubject;
       if (outboundAttachments.length > 0) body.attachments = outboundAttachments;
+      if (editedRecipient && editedRecipient !== originalRecipient) body.recipient_override = editedRecipient;
 
       const res = await fetch(
         `/api/monitor/proposals/${selectedItem.data.id}/decision`,
@@ -1368,13 +1370,18 @@ function MonitorPageContent() {
     return selectedItem.data.draft_subject || null;
   })();
 
+  const originalRecipient = selectedItem?.type === "proposal"
+    ? (selectedItem.data.effective_agency_email || selectedItem.data.agency_email || "")
+    : "";
+
   // Keep edited draft in sync when a new item is selected or draft loads
   useEffect(() => {
     setEditedBody(draftBody || "");
     setEditedSubject(draftSubject || "");
+    setEditedRecipient(originalRecipient);
     setOutboundAttachments([]);
     setReasoningExpanded(false);
-  }, [draftBody, draftSubject]);
+  }, [draftBody, draftSubject, originalRecipient]);
 
   const reasoning = (() => {
     if (selectedItem?.type !== "proposal") return [];
@@ -1687,19 +1694,16 @@ function MonitorPageContent() {
             )}
           </div>
 
-          {/* Delivery method — always show for actionable proposals */}
-          {selectedItem.data.action_type && (
+          {/* Delivery method — show for non-email actionable proposals (portal/close/escalate) */}
+          {selectedItem.data.action_type && !selectedItem.data.action_type.startsWith("SEND") && (
             <div className={cn(
               "border p-3",
               selectedItem.data.action_type === "SUBMIT_PORTAL"
                 ? "border-blue-700/50 bg-blue-950/20"
-                : selectedItem.data.action_type.startsWith("SEND")
-                ? "border-emerald-700/50 bg-emerald-950/20"
                 : "border-zinc-700/50 bg-zinc-950/20"
             )}>
               <SectionLabel>
                 {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Delivery: Portal" :
-                 selectedItem.data.action_type.startsWith("SEND") ? "Delivery: Email" :
                  selectedItem.data.action_type === "CLOSE_CASE" ? "Action: Close Case" :
                  selectedItem.data.action_type === "ESCALATE" ? "Human Action Needed" :
                  "Action"}
@@ -1717,23 +1721,6 @@ function MonitorPageContent() {
                     </a>
                   ) : (
                     <p className="text-xs text-muted-foreground">No portal URL on file</p>
-                  )}
-                </>
-              )}
-              {selectedItem.data.action_type.startsWith("SEND") && (
-                <>
-                  {(selectedItem.data.effective_agency_email || selectedItem.data.agency_email) ? (
-                    <p className="text-xs text-emerald-300">
-                      <Mail className="h-3 w-3 inline mr-1" />
-                      {selectedItem.data.effective_agency_email || selectedItem.data.agency_email}
-                    </p>
-                  ) : selectedItem.data.portal_url ? (
-                    <p className="text-xs text-cyan-300">
-                      <ExternalLink className="h-3 w-3 inline mr-1" />
-                      Sending via portal: {selectedItem.data.portal_url}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No delivery target on file</p>
                   )}
                 </>
               )}
@@ -2040,18 +2027,30 @@ function MonitorPageContent() {
                   {selectedItem.data.action_type === "SUBMIT_PORTAL" ? "Portal Submission Text" : "Draft Email"}
                   <span className="ml-2 text-[10px] text-muted-foreground font-normal normal-case">edit inline before approving</span>
                 </SectionLabel>
-                {(editedBody !== (draftBody || "") || editedSubject !== (draftSubject || "")) && (
+                {(editedBody !== (draftBody || "") || editedSubject !== (draftSubject || "") || editedRecipient !== originalRecipient) && (
                   <button
                     className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1"
                     onClick={() => {
                       setEditedBody(draftBody || "");
                       setEditedSubject(draftSubject || "");
+                      setEditedRecipient(originalRecipient);
                     }}
                   >
                     <RotateCcw className="h-3 w-3" /> Reset to AI Draft
                   </button>
                 )}
               </div>
+              {selectedItem.data.action_type?.startsWith("SEND") && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-muted-foreground font-medium shrink-0">To:</span>
+                  <input
+                    className="flex-1 bg-background border rounded px-2 py-1 text-xs font-[inherit]"
+                    value={editedRecipient}
+                    onChange={(e) => setEditedRecipient(e.target.value)}
+                    placeholder="recipient@agency.gov"
+                  />
+                </div>
+              )}
               {(draftSubject || editedSubject) && (
                 <input
                   className="w-full bg-background border rounded px-2 py-1 text-xs font-[inherit]"

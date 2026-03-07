@@ -181,7 +181,7 @@ export async function executeAction(
   researchContactResult?: any,
   researchBrief?: any,
   classification?: string | null,
-  options?: { chainId?: string; attachments?: Array<{ filename: string; content: string; type: string }> }
+  options?: { chainId?: string; attachments?: Array<{ filename: string; content: string; type: string }>; recipientOverride?: string }
 ): Promise<{ actionExecuted: boolean; executionResult: ExecutionResult | null }> {
   // AI Router v2: apply classification side effects at execution time
   if (isAIRouterV2Active(caseId) && classification) {
@@ -362,6 +362,14 @@ export async function executeAction(
         });
       }
     }
+  }
+
+  // Apply recipient override from human decision (user changed "To:" in dashboard)
+  if (options?.recipientOverride) {
+    logger.info("Applying recipient override from human decision", {
+      caseId, proposalId, original: targetEmail, override: options.recipientOverride,
+    });
+    targetEmail = normalizeEmail(options.recipientOverride) || targetEmail;
   }
 
   const hasPortal = hasAutomatablePortal(

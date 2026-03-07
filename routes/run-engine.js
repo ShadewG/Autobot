@@ -836,7 +836,8 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   const caseData = await db.getCaseById(caseId);
   const executionKey = proposal.execution_key || `direct-email:${proposalId}`;
 
-  if (!caseData?.agency_email) {
+  const effectiveTo = humanDecision?.recipient_override || caseData?.agency_email;
+  if (!effectiveTo) {
     throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
   }
 
@@ -857,7 +858,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
 
   const latestInbound = await db.getLatestInboundMessage(caseId);
   const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
-  const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
+  const targetTo = String(effectiveTo || '').trim().toLowerCase();
   const freshEmailActions = ['REFORMULATE_REQUEST', 'SEND_INITIAL_REQUEST'];
   const isFreshEmail = freshEmailActions.includes(proposal.action_type);
   const replyHeaders =
@@ -869,7 +870,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
       : null;
 
   const emailResult = await emailExecutor.sendEmail({
-    to: caseData.agency_email,
+    to: effectiveTo,
     subject: proposal.draft_subject,
     bodyText: proposal.draft_body_text,
     bodyHtml: proposal.draft_body_html || null,
@@ -1394,10 +1395,13 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
  */
 router.post('/proposals/:id/decision', async (req, res) => {
   const proposalId = parseInt(req.params.id);
-  const { action, instruction, reason, attachments: rawAttachments } = req.body || {};
+  const { action, instruction, reason, attachments: rawAttachments, recipient_override: rawRecipientOverride } = req.body || {};
   const validatedAttachments = Array.isArray(rawAttachments)
     ? rawAttachments.filter(a => a && typeof a.filename === 'string' && typeof a.content === 'string' && typeof a.type === 'string')
     : [];
+  const recipientOverride = (typeof rawRecipientOverride === 'string' && rawRecipientOverride.includes('@'))
+    ? rawRecipientOverride.trim()
+    : undefined;
 
   try {
     // Validate action
@@ -1513,6 +1517,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
       reason: reason || null,
       decidedBy: req.body.decidedBy || 'human',
       ...(validatedAttachments.length > 0 ? { attachments: validatedAttachments } : {}),
+      ...(recipientOverride ? { recipient_override: recipientOverride } : {}),
     });
 
     // Auto-capture eval cases on human decisions (best-effort, non-blocking).
@@ -1785,7 +1790,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
               },
-              body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null, attachments: validatedAttachments.length > 0 ? validatedAttachments : undefined } }),
+              body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null, attachments: validatedAttachments.length > 0 ? validatedAttachments : undefined, recipient_override: recipientOverride || undefined } }),
             }
           );
 
@@ -1849,7 +1854,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
             },
-            body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null, attachments: validatedAttachments.length > 0 ? validatedAttachments : undefined } }),
+            body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null, attachments: validatedAttachments.length > 0 ? validatedAttachments : undefined, recipient_override: recipientOverride || undefined } }),
           }
         );
 
