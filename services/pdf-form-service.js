@@ -192,7 +192,7 @@ async function _getRequesterInfo(caseData) {
         Boolean(caseData?.requester_zip);
     return {
         name: user?.signature_name || user?.name || caseData?.requester_name || process.env.REQUESTER_NAME || 'Requester',
-        email: caseData?.requester_email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
+        email: user?.email || caseData?.requester_email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com',
         phone: user?.signature_phone || caseData?.requester_phone || process.env.REQUESTER_PHONE || '209-800-7702',
         organization: user
             ? (user.signature_organization ?? '')

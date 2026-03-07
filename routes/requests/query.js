@@ -1362,7 +1362,7 @@ router.get('/:id/workspace', async (req, res) => {
         if (proposalNeedsManualPortalHelper) {
             const caseOwner = caseData.user_id ? await db.getUserById(caseData.user_id) : null;
             const ownerName = caseOwner?.name || process.env.REQUESTER_NAME || 'Requester';
-            const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || 'sam@foib-request.com';
+            const ownerEmail = caseOwner?.email || process.env.REQUESTER_EMAIL || process.env.REQUESTS_INBOX || 'requests@foib-request.com';
             const ownerPhone = caseOwner?.signature_phone || process.env.REQUESTER_PHONE || '209-800-7702';
             const ownerOrg = caseOwner
                 ? (caseOwner.signature_organization ?? '')
