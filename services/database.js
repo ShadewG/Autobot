@@ -3265,6 +3265,17 @@ class DatabaseService {
     }
 
     /**
+     * Get execution by ID
+     */
+    async getExecutionById(executionId) {
+        const result = await this.query(
+            'SELECT * FROM executions WHERE id = $1',
+            [executionId]
+        );
+        return result.rows[0];
+    }
+
+    /**
      * Update execution status and payload
      */
     async updateExecution(executionId, updates) {
@@ -3281,6 +3292,8 @@ class DatabaseService {
         }
 
         if (setClauses.length === 0) return null;
+
+        setClauses.push('updated_at = NOW()');
 
         values.push(executionId);
         const result = await this.query(`
@@ -3301,13 +3314,14 @@ class DatabaseService {
             SET status = 'SENT',
                 provider_payload = $2,
                 provider_message_id = $3,
-                completed_at = NOW()
+                completed_at = NOW(),
+                updated_at = NOW()
             WHERE execution_key = $1
             RETURNING *
         `, [
             executionKey,
             JSON.stringify(providerPayload),
-            providerPayload?.messageId || providerPayload?.message_id
+            providerPayload?.messageId || providerPayload?.message_id || providerPayload?.sendgridMessageId || null
         ]);
         return result.rows[0];
     }
@@ -3321,7 +3335,8 @@ class DatabaseService {
             SET status = 'FAILED',
                 error_message = $2,
                 retry_count = retry_count + 1,
-                completed_at = NOW()
+                completed_at = NOW(),
+                updated_at = NOW()
             WHERE execution_key = $1
             RETURNING *
         `, [executionKey, errorMessage]);

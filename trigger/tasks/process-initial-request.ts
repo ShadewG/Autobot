@@ -20,6 +20,7 @@ import { researchContext, emptyResearchContext } from "../steps/research-context
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
+const proposalLifecycle = require("../../services/proposal-lifecycle");
 
 const RESEARCH_INSTRUCTION_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
 
@@ -141,7 +142,14 @@ export const processInitialRequest = task({
       logger.info("Adjustment fast-path (initial request)", { caseId, originalActionType, instruction: reviewInstruction });
 
       if (originalProposalId) {
-        await db.updateProposal(originalProposalId, { status: "DISMISSED" });
+        await proposalLifecycle.applyHumanReviewDecision(originalProposalId, {
+          status: "DISMISSED",
+          humanDecision: {
+            action: "ADJUST",
+            instruction: reviewInstruction,
+            decidedAt: new Date().toISOString(),
+          },
+        });
       }
 
       try {
@@ -187,7 +195,7 @@ export const processInitialRequest = task({
           const result = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
           if (!result.ok) {
-            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+            await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, { status: "EXPIRED" });
             await completeRun(caseId, runId);
             return { status: "timed_out", proposalId: adjustedGate.proposalId };
           }
@@ -195,16 +203,19 @@ export const processInitialRequest = task({
           const humanDecision = result.output;
 
           if (humanDecision.action === "DISMISS") {
-            await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
+              status: "DISMISSED",
+              humanDecision,
+            });
             await reconcileCaseAfterDismiss(caseId);
             await completeRun(caseId, runId);
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }
 
           if (humanDecision.action === "ADJUST") {
-            await db.updateProposal(adjustedGate.proposalId, {
+            await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
               status: "DISMISSED",
-              human_decision: { action: "ADJUST", instruction: humanDecision.instruction, decidedAt: new Date().toISOString() },
+              humanDecision,
             });
             await completeRun(caseId, runId);
             return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
@@ -219,7 +230,10 @@ export const processInitialRequest = task({
           }
 
           // APPROVE: execute
-          await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
+            status: "APPROVED",
+            humanDecision,
+          });
           const adjustedProposalRow = await db.getProposalById(adjustedGate.proposalId);
           const adjustedExecutionActionType = (adjustedProposalRow?.action_type || originalActionType) as ActionType;
           const adjustedExecutionDraft = {
@@ -234,7 +248,9 @@ export const processInitialRequest = task({
           );
 
           if (execution.actionExecuted) {
-            await db.updateProposal(adjustedGate.proposalId, { status: "EXECUTED", executedAt: new Date() });
+            await proposalLifecycle.markProposalExecuted(adjustedGate.proposalId, {
+              executedAt: new Date(),
+            });
             await scheduleFollowups(caseId, execution.actionExecuted, execution.executionResult);
           }
 
@@ -327,7 +343,7 @@ export const processInitialRequest = task({
       const result = await waitForHumanDecision(tokenId, draft.proposalId);
 
       if (!result.ok) {
-        await db.updateProposal(draft.proposalId, { status: "EXPIRED" });
+        await proposalLifecycle.applyHumanReviewDecision(draft.proposalId, { status: "EXPIRED" });
         await db.upsertEscalation({
           caseId,
           reason: "Initial request proposal timed out after 30 days",
@@ -401,7 +417,10 @@ export const processInitialRequest = task({
       }
 
       if (humanDecision.action === "DISMISS") {
-        await db.updateProposal(draft.proposalId, { status: "DISMISSED" });
+        await proposalLifecycle.applyHumanReviewDecision(draft.proposalId, {
+          status: "DISMISSED",
+          humanDecision,
+        });
         await reconcileCaseAfterDismiss(caseId);
         await completeRun(caseId, runId);
         return { status: "dismissed", proposalId: draft.proposalId };
@@ -416,7 +435,10 @@ export const processInitialRequest = task({
 
       if (humanDecision.action === "ADJUST") {
         // Dismiss old proposal and re-draft with human instruction
-        await db.updateProposal(draft.proposalId, { status: "DISMISSED" });
+        await proposalLifecycle.applyHumanReviewDecision(draft.proposalId, {
+          status: "DISMISSED",
+          humanDecision,
+        });
         const instruction = humanDecision.instruction || "";
 
         let adjustResearch: ResearchContext = emptyResearchContext();
@@ -447,7 +469,7 @@ export const processInitialRequest = task({
           const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
           if (!adjustResult.ok) {
-            await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+            await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, { status: "EXPIRED" });
             await completeRun(caseId, runId);
             return { status: "timed_out", proposalId: adjustedGate.proposalId };
           }
@@ -455,16 +477,19 @@ export const processInitialRequest = task({
           const adjustDecision = adjustResult.output;
 
           if (adjustDecision.action === "DISMISS") {
-            await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+            await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
+              status: "DISMISSED",
+              humanDecision: adjustDecision,
+            });
             await reconcileCaseAfterDismiss(caseId);
             await completeRun(caseId, runId);
             return { status: "dismissed", proposalId: adjustedGate.proposalId };
           }
 
           if (adjustDecision.action === "ADJUST") {
-            await db.updateProposal(adjustedGate.proposalId, {
+            await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
               status: "DISMISSED",
-              human_decision: { action: "ADJUST", instruction: adjustDecision.instruction, decidedAt: new Date().toISOString() },
+              humanDecision: adjustDecision,
             });
             await completeRun(caseId, runId);
             return { status: "adjustment_requested_again", proposalId: adjustedGate.proposalId };
@@ -478,7 +503,10 @@ export const processInitialRequest = task({
           }
 
           // APPROVE: update draft variables for execution below
-          await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+          await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
+            status: "APPROVED",
+            humanDecision: adjustDecision,
+          });
           draft.proposalId = adjustedGate.proposalId;
           draft.subject = adjustedDraft.subject || draft.subject;
           draft.bodyText = adjustedDraft.bodyText || draft.bodyText;
@@ -488,7 +516,10 @@ export const processInitialRequest = task({
       }
 
       // APPROVE: update proposal status
-      await db.updateProposal(draft.proposalId, { status: "APPROVED" });
+      await proposalLifecycle.applyHumanReviewDecision(draft.proposalId, {
+        status: "APPROVED",
+        humanDecision,
+      });
     }
 
     // Step 4: Execute

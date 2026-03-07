@@ -19,6 +19,7 @@ import { researchContext, determineResearchLevel, emptyResearchContext } from ".
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
+const proposalLifecycle = require("../../services/proposal-lifecycle");
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -196,7 +197,7 @@ export const processFollowup = task({
       const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
 
       if (!result.ok) {
-        await db.updateProposal(gate.proposalId, { status: "EXPIRED" });
+        await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, { status: "EXPIRED" });
         await completeRun(caseId, runId);
         return { status: "timed_out", proposalId: gate.proposalId };
       }
@@ -230,11 +231,19 @@ export const processFollowup = task({
       }
 
       if (humanDecision.action !== "APPROVE") {
-        await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
+          status: "DISMISSED",
+          humanDecision,
+        });
         await reconcileCaseAfterDismiss(caseId);
         await completeRun(caseId, runId);
         return { status: "dismissed", proposalId: gate.proposalId };
       }
+
+      await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
+        status: "APPROVED",
+        humanDecision,
+      });
     }
 
     // Step 7: Execute

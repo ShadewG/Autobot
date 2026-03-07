@@ -75,16 +75,16 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path)
 - [x] Ensure every human review writes `human_decision`, `human_decided_at`, `human_decided_by`
 - [x] Ensure every executed proposal writes `executed_at`
-- [ ] Ensure every terminal execution writes `completed_at`
-- [ ] Audit all direct `updateProposal()` callers and route through the lifecycle helper
+- [x] Ensure every terminal execution writes `completed_at`
+- [x] Audit all direct `updateProposal()` callers and route through the lifecycle helper
 - [x] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
 
 #### Execution Completeness
-- [ ] Centralize execution terminal-state writes into one helper
-- [ ] Ensure every `SENT`, `FAILED`, `CANCELLED`, `PENDING_HUMAN` transition updates `updated_at`
-- [ ] Ensure email executions always write `provider_message_id` when available
-- [ ] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions
-- [ ] Verify the email worker always calls the final execution update path after success
+- [x] Centralize execution terminal-state writes into one helper
+- [x] Ensure every `SENT`, `FAILED`, `CANCELLED`, `PENDING_HUMAN` transition updates `updated_at`
+- [x] Ensure email executions always write `provider_message_id` when available
+- [x] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions
+- [x] Verify the email worker always calls the final execution update path after success
 
 #### Operator Workflow
 - [ ] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation

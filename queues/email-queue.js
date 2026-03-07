@@ -18,6 +18,7 @@ const { normalizePortalUrl, isSupportedPortalUrl } = require('../utils/portal-ut
 const { isValidEmail } = require('../utils/contact-utils');
 const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
 const triggerDispatch = require('../services/trigger-dispatch-service');
+const proposalLifecycle = require('../services/proposal-lifecycle');
 
 // Feature flag for Run Engine (Phase 3) - new auditability layer
 const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
@@ -263,6 +264,7 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                         const { emailExecutor } = require('../services/executor-adapter');
                         await emailExecutor.markSent(execKey || executionKey, result.messageId, {
                             statusCode: result.statusCode,
+                            messageId: result.messageId,
                             sendgridMessageId: result.sendgridMessageId,
                             sentAt: new Date().toISOString()
                         });
@@ -292,7 +294,11 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
 
         // Update proposal status if we have a proposalId
         if (job.data.proposalId) {
-            await db.markProposalExecuted(job.data.proposalId, job.id);
+            await proposalLifecycle.markProposalExecuted(job.data.proposalId, {
+                emailJobId: job.id,
+                executionKey: job.data.executionKey || job.data.execution_key || null,
+                executedAt: new Date(),
+            });
         }
 
         return result;

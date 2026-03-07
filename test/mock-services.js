@@ -990,6 +990,7 @@ function createMockExecutorAdapter() {
         provider: data.provider || null,
         provider_payload: data.providerPayload || null,
         error_message: data.errorMessage || null,
+        completed_at: data.completedAt || null,
         created_at: new Date().toISOString()
       };
       executionRecords.push(record);

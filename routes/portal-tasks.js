@@ -21,6 +21,7 @@ const {
 const db = require('../services/database');
 const logger = require('../services/logger');
 const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
+const proposalLifecycle = require('../services/proposal-lifecycle');
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -199,8 +200,7 @@ router.post('/:id/complete', async (req, res) => {
 
     // Update proposal status if linked
     if (task.proposal_id) {
-      await db.updateProposal(task.proposal_id, {
-        status: 'EXECUTED',
+      await proposalLifecycle.markProposalExecuted(task.proposal_id, {
         executedAt: new Date()
       });
     }
@@ -280,26 +280,12 @@ router.post('/:id/cancel', async (req, res) => {
       });
     }
 
-    const updated = await updatePortalTask(taskId, {
-      status: 'CANCELLED',
-      completionNotes: reason || 'Cancelled by user'
-    });
-
-    // Update execution record if exists
-    if (task.execution_id) {
-      await db.query(`
-        UPDATE executions
-        SET status = 'FAILED',
-            error_message = $2,
-            completed_at = NOW()
-        WHERE id = $1
-      `, [task.execution_id, `Cancelled: ${reason || 'No reason provided'}`]);
-    }
+    const updated = await portalExecutor.markTaskCancelled(taskId, reason);
 
     // Update proposal status if linked
     if (task.proposal_id) {
-      await db.updateProposal(task.proposal_id, {
-        status: 'CANCELLED'
+      await proposalLifecycle.applyHumanReviewDecision(task.proposal_id, {
+        status: 'CANCELLED',
       });
     }
 

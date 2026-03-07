@@ -58,6 +58,27 @@ describe('Proposal lifecycle helper', function () {
     assert.strictEqual(updates.executedAt, executedAt);
   });
 
+  it('preserves human review audit fields when executed without a fresh humanDecision', async function () {
+    const updateStub = sinon.stub(db, 'updateProposal').resolves({ id: 203 });
+    const executedAt = new Date('2026-03-07T11:06:00.000Z');
+
+    await proposalLifecycle.markProposalExecuted(203, {
+      emailJobId: 'job-203',
+      executionKey: 'queued-email:203',
+      executedAt,
+    });
+
+    assert.strictEqual(updateStub.calledOnce, true);
+    const [, updates] = updateStub.firstCall.args;
+    assert.strictEqual(updates.status, 'EXECUTED');
+    assert.strictEqual(updates.emailJobId, 'job-203');
+    assert.strictEqual(updates.executionKey, 'queued-email:203');
+    assert.strictEqual(updates.executedAt, executedAt);
+    assert.ok(!Object.prototype.hasOwnProperty.call(updates, 'humanDecision'));
+    assert.ok(!Object.prototype.hasOwnProperty.call(updates, 'humanDecidedAt'));
+    assert.ok(!Object.prototype.hasOwnProperty.call(updates, 'humanDecidedBy'));
+  });
+
   it('bulk dismisses active case proposals with audit metadata', async function () {
     const queryStub = sinon.stub(db, 'query').resolves({ rows: [{ id: 301 }] });
     const humanDecision = proposalLifecycle.buildHumanDecision('DISMISS', {

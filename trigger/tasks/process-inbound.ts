@@ -21,6 +21,7 @@ import { researchContext, determineResearchLevel, emptyResearchContext } from ".
 import db, { logger, attachmentProcessor, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { HumanDecision, InboundPayload, ResearchContext, ChainAction, ActionType } from "../lib/types";
+const proposalLifecycle = require("../../services/proposal-lifecycle");
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SUBMIT_PORTAL", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
@@ -271,14 +272,17 @@ export const processInbound = task({
         const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
         if (!adjustResult.ok) {
-          await db.updateProposal(adjustedGate.proposalId, { status: "EXPIRED" });
+          await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, { status: "EXPIRED" });
           return { status: "timed_out", proposalId: adjustedGate.proposalId };
         }
 
         const humanDecision = adjustResult.output;
 
         if (humanDecision.action === "DISMISS") {
-          await db.updateProposal(adjustedGate.proposalId, { status: "DISMISSED" });
+          await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
+            status: "DISMISSED",
+            humanDecision,
+          });
           await reconcileCaseAfterDismiss(caseId);
           return { status: "dismissed", proposalId: adjustedGate.proposalId };
         }
@@ -295,13 +299,9 @@ export const processInbound = task({
         }
 
         if (humanDecision.action === "ADJUST") {
-          await db.updateProposal(adjustedGate.proposalId, {
+          await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
             status: "DISMISSED",
-            human_decision: {
-              action: "ADJUST",
-              instruction: humanDecision.instruction,
-              decidedAt: new Date().toISOString(),
-            },
+            humanDecision,
           });
 
           const ADJUST_RESEARCH_RE = /\bresearch\b|\bfind\s+(the|a|correct|right)\b|\blook\s*up\b|\bredirect\b|\bchange\s+agency\b|\bdifferent\s+agency\b/i;
@@ -322,7 +322,10 @@ export const processInbound = task({
           continue;
         }
 
-        await db.updateProposal(adjustedGate.proposalId, { status: "APPROVED" });
+        await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
+          status: "APPROVED",
+          humanDecision,
+        });
         return {
           status: "approved",
           proposalId: adjustedGate.proposalId,
@@ -344,7 +347,14 @@ export const processInbound = task({
 
       // Dismiss the original proposal (it's already DECISION_RECEIVED, move to DISMISSED)
       if (originalProposalId) {
-        await db.updateProposal(originalProposalId, { status: "DISMISSED" });
+        await proposalLifecycle.applyHumanReviewDecision(originalProposalId, {
+          status: "DISMISSED",
+          humanDecision: {
+            action: "ADJUST",
+            instruction: reviewInstruction,
+            decidedAt: new Date().toISOString(),
+          },
+        });
       }
 
       try {
@@ -395,7 +405,9 @@ export const processInbound = task({
 
         // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
         if (execution.actionExecuted) {
-          await db.updateProposal(adjustedOutcome.proposalId, { status: "EXECUTED", executedAt: new Date() });
+          await proposalLifecycle.markProposalExecuted(adjustedOutcome.proposalId, {
+            executedAt: new Date(),
+          });
         }
 
         await markStep("commit_state", `Run #${runId}: committing adjusted decision state`);
@@ -671,7 +683,7 @@ export const processInbound = task({
           urgency: "high",
           suggestedAction: "Review stale proposal and decide",
         });
-        await db.updateProposal(gate.proposalId, { status: "EXPIRED" });
+        await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, { status: "EXPIRED" });
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           pauseReason: "TIMED_OUT",
         });
@@ -745,12 +757,17 @@ export const processInbound = task({
       }
 
       if (humanDecision.action === "DISMISS") {
-        await db.updateProposal(gate.proposalId, { status: "DISMISSED" });
+        await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
+          status: "DISMISSED",
+          humanDecision,
+        });
         // Also dismiss chain siblings if this was a chain primary
         if (gate.chainId) {
           const chainSiblings = await db.getChainProposals(gate.chainId);
           for (const sibling of chainSiblings.filter((p: any) => p.id !== gate.proposalId)) {
-            await db.updateProposal(sibling.id, { status: "DISMISSED" });
+            await proposalLifecycle.applyHumanReviewDecision(sibling.id, {
+              status: "DISMISSED",
+            });
           }
         }
         await reconcileCaseAfterDismiss(caseId);
@@ -768,13 +785,9 @@ export const processInbound = task({
 
       if (humanDecision.action === "ADJUST") {
         await markStep("adjust_draft", `Run #${runId}: applying human adjustment`, { proposal_id: gate.proposalId });
-        await db.updateProposal(gate.proposalId, {
+        await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
           status: "DISMISSED",
-          human_decision: {
-            action: "ADJUST",
-            instruction: humanDecision.instruction,
-            decidedAt: new Date().toISOString(),
-          },
+          humanDecision,
         });
 
         const adjustedOutcome = await runAdjustedDraftLoop({
@@ -909,7 +922,9 @@ export const processInbound = task({
 
         try {
           // Transition chain sibling from CHAIN_PENDING → APPROVED
-          await db.updateProposal(stepProposal.id, { status: "APPROVED" });
+          await proposalLifecycle.applyHumanReviewDecision(stepProposal.id, {
+            status: "APPROVED",
+          });
 
           const stepExecution = await executeAction(
             caseId, stepProposal.id, stepProposal.action_type, runId,

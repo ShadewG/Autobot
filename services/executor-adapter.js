@@ -43,8 +43,8 @@ async function createExecutionRecord(data) {
   const query = `
     INSERT INTO executions (
       case_id, proposal_id, run_id, execution_key,
-      action_type, status, provider, provider_payload, error_message
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      action_type, status, provider, provider_payload, error_message, completed_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (execution_key) DO UPDATE
       SET updated_at = NOW()
     RETURNING *
@@ -59,7 +59,8 @@ async function createExecutionRecord(data) {
     data.status || 'QUEUED',
     data.provider || null,
     data.providerPayload ? JSON.stringify(data.providerPayload) : null,
-    data.errorMessage || null
+    data.errorMessage || null,
+    data.completedAt || null,
   ];
 
   const result = await db.query(query, values);
@@ -110,6 +111,63 @@ async function updateExecutionRecord(executionKey, updates) {
   return result.rows[0];
 }
 
+function mergeProviderPayload(existingPayload, nextPayload) {
+  if (nextPayload === undefined) return existingPayload;
+  if (!existingPayload) return nextPayload;
+  if (!nextPayload) return nextPayload;
+  if (
+    typeof existingPayload === 'object' &&
+    !Array.isArray(existingPayload) &&
+    typeof nextPayload === 'object' &&
+    !Array.isArray(nextPayload)
+  ) {
+    return { ...existingPayload, ...nextPayload };
+  }
+  return nextPayload;
+}
+
+function buildProviderPayload(channel, transport, payload = {}) {
+  return Object.fromEntries(
+    Object.entries({
+      channel,
+      transport,
+      ...payload,
+    }).filter(([, value]) => value !== undefined)
+  );
+}
+
+function deriveProviderMessageId(providerMessageId, providerPayload) {
+  return providerMessageId
+    || providerPayload?.messageId
+    || providerPayload?.message_id
+    || providerPayload?.sendgridMessageId
+    || null;
+}
+
+async function transitionExecutionRecord({ executionKey = null, executionId = null, updates = {} }) {
+  const existing = executionId
+    ? await db.getExecutionById(executionId)
+    : await db.getExecutionByKey(executionKey);
+  if (!existing) return null;
+
+  const nextUpdates = {};
+  if (updates.status !== undefined) nextUpdates.status = updates.status;
+  if (updates.errorMessage !== undefined) nextUpdates.error_message = updates.errorMessage;
+  if (updates.completedAt !== undefined) nextUpdates.completed_at = updates.completedAt;
+  if (updates.providerPayload !== undefined) {
+    nextUpdates.provider_payload = mergeProviderPayload(existing.provider_payload, updates.providerPayload);
+  }
+  const resolvedProviderMessageId = deriveProviderMessageId(
+    updates.providerMessageId,
+    nextUpdates.provider_payload
+  );
+  if (resolvedProviderMessageId !== undefined && resolvedProviderMessageId !== null) {
+    nextUpdates.provider_message_id = resolvedProviderMessageId;
+  }
+
+  return db.updateExecution(existing.id, nextUpdates);
+}
+
 // ============================================================================
 // EMAIL EXECUTOR
 // ============================================================================
@@ -156,8 +214,9 @@ const emailExecutor = {
         executionKey,
         actionType,
         status: 'SKIPPED',
+        completedAt: new Date(),
         provider: 'email',
-        providerPayload: {
+        providerPayload: buildProviderPayload('email', 'dry_run', {
           dryRun: true,
           mode: 'DRY',
           wouldHaveSent: {
@@ -169,7 +228,7 @@ const emailExecutor = {
             attachmentCount: attachments.length,
             scheduledFor: delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : 'immediate'
           }
-        }
+        })
       });
 
       logger.info('[DRY_RUN] Email execution skipped', {
@@ -205,12 +264,12 @@ const emailExecutor = {
         actionType,
         status: 'QUEUED',
         provider: 'email',
-        providerPayload: {
+        providerPayload: buildProviderPayload('email', emailQueue ? 'queued' : 'direct', {
           to,
           subject,
           delayMs,
           attachmentCount: attachments.length,
-        }
+        })
       });
 
       // Lazy load email queue to avoid circular deps
@@ -239,14 +298,14 @@ const emailExecutor = {
 
         // Update execution with job info
         await updateExecutionRecord(executionKey, {
-          providerPayload: {
+          providerPayload: buildProviderPayload('email', 'queued', {
             to,
             subject,
             delayMs,
             jobId: job.id,
             attachmentCount: attachments.length,
             queuedAt: new Date().toISOString()
-          }
+          })
         });
 
         logger.info('Email queued for sending', {
@@ -282,18 +341,18 @@ const emailExecutor = {
         attachments,
       });
 
-      await updateExecutionRecord(executionKey, {
-        status: 'SENT',
-        providerMessageId: directResult.sendgridMessageId || directResult.messageId,
-        completedAt: new Date(),
-        providerPayload: {
-          to,
-          subject,
-          attachmentCount: attachments.length,
-          directSend: true,
-          messageId: directResult.messageId,
-          sendgridMessageId: directResult.sendgridMessageId,
-          sentAt: new Date().toISOString()
+      await transitionExecutionRecord({
+        executionKey,
+        updates: {
+          status: 'SENT',
+          providerMessageId: directResult.sendgridMessageId || directResult.messageId,
+          completedAt: new Date(),
+          providerPayload: buildProviderPayload('email', 'direct', {
+            directSend: true,
+            messageId: directResult.messageId,
+            sendgridMessageId: directResult.sendgridMessageId,
+            sentAt: new Date().toISOString()
+          })
         }
       });
 
@@ -317,10 +376,13 @@ const emailExecutor = {
       });
 
       // Update execution record with error
-      await updateExecutionRecord(executionKey, {
-        status: 'FAILED',
-        errorMessage: error.message,
-        completedAt: new Date()
+      await transitionExecutionRecord({
+        executionKey,
+        updates: {
+          status: 'FAILED',
+          errorMessage: error.message,
+          completedAt: new Date()
+        }
       });
 
       return {
@@ -337,11 +399,18 @@ const emailExecutor = {
    * Mark email as sent (called by email worker after actual send)
    */
   async markSent(executionKey, providerMessageId, providerResponse) {
-    return updateExecutionRecord(executionKey, {
-      status: 'SENT',
-      providerMessageId,
-      providerPayload: providerResponse,
-      completedAt: new Date()
+    return transitionExecutionRecord({
+      executionKey,
+      updates: {
+        status: 'SENT',
+        providerMessageId,
+        providerPayload: buildProviderPayload(
+          'email',
+          providerResponse?.transport || 'queued',
+          providerResponse
+        ),
+        completedAt: new Date()
+      }
     });
   },
 
@@ -349,10 +418,29 @@ const emailExecutor = {
    * Mark email as failed
    */
   async markFailed(executionKey, errorMessage) {
-    return updateExecutionRecord(executionKey, {
-      status: 'FAILED',
-      errorMessage,
-      completedAt: new Date()
+    return transitionExecutionRecord({
+      executionKey,
+      updates: {
+        status: 'FAILED',
+        errorMessage,
+        completedAt: new Date()
+      }
+    });
+  },
+
+  async markCancelled(executionId, reason, providerPayload = {}) {
+    return transitionExecutionRecord({
+      executionId,
+      updates: {
+        status: 'CANCELLED',
+        errorMessage: reason,
+        providerPayload: buildProviderPayload(
+          providerPayload?.channel || 'email',
+          providerPayload?.transport || 'queued',
+          providerPayload
+        ),
+        completedAt: new Date()
+      }
     });
   }
 };
@@ -409,7 +497,7 @@ const portalExecutor = {
       actionType,
       status: 'PENDING_HUMAN',
       provider: 'portal',
-      providerPayload: {
+      providerPayload: buildProviderPayload('portal', 'manual', {
         portalUrl: caseData.portal_url,
         requiresManualSubmission: true,
         taskDetails: {
@@ -418,7 +506,7 @@ const portalExecutor = {
           agencyName: caseData.agency_name,
           caseName: caseData.case_name
         }
-      }
+      })
     });
 
     // Create portal task record
@@ -467,17 +555,36 @@ const portalExecutor = {
 
     // Also update the execution record
     if (task?.execution_id) {
-      await db.query(`
-        UPDATE executions
-        SET status = 'SENT',
-            provider_payload = provider_payload || $2::jsonb,
-            completed_at = NOW()
-        WHERE id = $1
-      `, [task.execution_id, JSON.stringify({
-        completedManually: true,
-        completionNotes: result.notes,
-        confirmationNumber: result.confirmationNumber
-      })]);
+      await transitionExecutionRecord({
+        executionId: task.execution_id,
+        updates: {
+          status: 'SENT',
+          providerPayload: buildProviderPayload('portal', 'manual', {
+            completedManually: true,
+            completionNotes: result.notes,
+            confirmationNumber: result.confirmationNumber
+          }),
+          completedAt: new Date()
+        }
+      });
+    }
+
+    return task;
+  },
+
+  async markTaskCancelled(taskId, reason) {
+    const task = await updatePortalTask(taskId, {
+      status: 'CANCELLED',
+      completionNotes: reason || 'Cancelled by user'
+    });
+
+    if (task?.execution_id) {
+      await emailExecutor.markCancelled(task.execution_id, `Cancelled: ${reason || 'No reason provided'}`, {
+        channel: 'portal',
+        transport: 'manual',
+        cancelledManually: true,
+        cancellationReason: reason || 'No reason provided'
+      });
     }
 
     return task;
@@ -655,6 +762,7 @@ module.exports = {
   generateExecutionKey,
   createExecutionRecord,
   updateExecutionRecord,
+  transitionExecutionRecord,
 
   // Portal tasks
   createPortalTask,

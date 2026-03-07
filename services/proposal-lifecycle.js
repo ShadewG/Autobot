@@ -30,6 +30,9 @@ function buildHumanDecision(action, extras = {}) {
 }
 
 function buildDecisionAuditUpdates(humanDecision) {
+  if (humanDecision === undefined) {
+    return {};
+  }
   if (!humanDecision) {
     return {
       humanDecision: null,
