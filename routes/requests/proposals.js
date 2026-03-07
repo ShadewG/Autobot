@@ -1,14 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { db, logger, triggerDispatch } = require('./_helpers');
-
-function buildHumanDecision(action, extras = {}) {
-    return {
-        action,
-        decidedAt: new Date().toISOString(),
-        ...extras,
-    };
-}
+const proposalLifecycle = require('../../services/proposal-lifecycle');
+const { buildHumanDecision } = proposalLifecycle;
 
 async function completeProposalWaitpoint(proposal, data, log) {
     if (!proposal?.waitpoint_token) return null;
@@ -191,13 +185,11 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
         log.info(`Approving proposal ${proposalId}`);
 
         // Mark decision received (terminal-protected) before queueing resume
-        await db.updateProposal(proposalId, {
-            status: 'DECISION_RECEIVED',
+        await proposalLifecycle.markProposalDecisionReceived(proposalId, {
             humanDecision: buildHumanDecision('APPROVE', {
                 proposalId,
                 decidedBy: req.body?.decidedBy || 'human',
             }),
-            humanDecidedAt: new Date()
         });
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
@@ -276,7 +268,7 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
         log.info(`Adjusting proposal ${proposalId}`);
 
         // Update proposal with adjustment request
-        await db.updateProposal(proposalId, {
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
             status: 'ADJUSTMENT_REQUESTED',
             humanDecision: buildHumanDecision('ADJUST', {
                 proposalId,
@@ -284,8 +276,7 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
                 instruction: instruction || null,
                 adjustments: adjustments || null,
             }),
-            humanDecidedAt: new Date(),
-            adjustmentCount: (proposal.adjustment_count || 0) + 1
+            adjustmentCount: (proposal.adjustment_count || 0) + 1,
         });
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
@@ -359,14 +350,13 @@ router.post('/:id/proposals/:proposalId/dismiss', async (req, res) => {
         log.info(`Dismissing proposal ${proposalId}`);
 
         // Update proposal as dismissed
-        await db.updateProposal(proposalId, {
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
             status: 'DISMISSED',
             humanDecision: buildHumanDecision('DISMISS', {
                 proposalId,
                 decidedBy: req.body?.decidedBy || 'human',
                 reason: reason || null,
             }),
-            humanDecidedAt: new Date()
         });
 
         // If this was the last active proposal, clear stale human-review flags.
@@ -440,14 +430,13 @@ router.post('/:id/proposals/:proposalId/withdraw', async (req, res) => {
         log.info(`Withdrawing proposal ${proposalId}`);
 
         // Update proposal as withdrawn
-        await db.updateProposal(proposalId, {
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
             status: 'WITHDRAWN',
             humanDecision: buildHumanDecision('WITHDRAW', {
                 proposalId,
                 decidedBy: req.body?.decidedBy || 'human',
                 reason: reason || null,
             }),
-            humanDecidedAt: new Date()
         });
 
         // Mark case for manual handling (no auto-resume)

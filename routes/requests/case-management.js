@@ -3,6 +3,8 @@ const router = express.Router();
 const { db, logger, triggerDispatch, parseConstraints, generateOutcomeSummary } = require('./_helpers');
 const sendgridService = require('../../services/sendgrid-service');
 const { transitionCaseRuntime } = require('../../services/case-runtime');
+const proposalLifecycle = require('../../services/proposal-lifecycle');
+const { buildHumanDecision } = proposalLifecycle;
 
 /**
  * POST /api/requests/:id/research-exemption
@@ -506,11 +508,13 @@ router.post('/:id/resolve-review', async (req, res) => {
         } catch (_) {}
 
         // Dismiss all active proposals — human is taking a new direction
-        await db.query(
-            `UPDATE proposals SET status = 'DISMISSED', human_decision = $1
-             WHERE case_id = $2 AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')`,
-            [JSON.stringify(`Superseded by human review action: ${action}`), requestId]
-        );
+        await proposalLifecycle.dismissActiveCaseProposals(requestId, {
+            humanDecision: buildHumanDecision('DISMISS', {
+                decidedBy: 'human',
+                reason: `Superseded by human review action: ${action}`,
+                supersededByAction: action,
+            }),
+        });
 
         // Supersede any still-active runs for this case before creating a fresh
         // human_review_resolution run. Otherwise a waiting/gated run can leave

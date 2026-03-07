@@ -8,6 +8,7 @@ describe('Legacy proposal dismiss reconciliation', function () {
   function loadRunEngineRouter({ dbStub, transitionCaseRuntimeStub }) {
     const routePath = path.resolve(__dirname, '../routes/run-engine.js');
     const dbPath = path.resolve(__dirname, '../services/database.js');
+    const proposalLifecyclePath = path.resolve(__dirname, '../services/proposal-lifecycle.js');
     const triggerSdkPath = require.resolve('@trigger.dev/sdk');
     const triggerDispatchPath = path.resolve(__dirname, '../services/trigger-dispatch-service.js');
     const loggerPath = path.resolve(__dirname, '../services/logger.js');
@@ -18,6 +19,7 @@ describe('Legacy proposal dismiss reconciliation', function () {
     const originals = {
       route: require.cache[routePath],
       db: require.cache[dbPath],
+      proposalLifecycle: require.cache[proposalLifecyclePath],
       triggerSdk: require.cache[triggerSdkPath],
       triggerDispatch: require.cache[triggerDispatchPath],
       logger: require.cache[loggerPath],
@@ -27,6 +29,7 @@ describe('Legacy proposal dismiss reconciliation', function () {
     };
 
     require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: dbStub };
+    delete require.cache[proposalLifecyclePath];
     require.cache[triggerSdkPath] = {
       id: triggerSdkPath,
       filename: triggerSdkPath,
@@ -81,6 +84,8 @@ describe('Legacy proposal dismiss reconciliation', function () {
         else delete require.cache[routePath];
         if (originals.db) require.cache[dbPath] = originals.db;
         else delete require.cache[dbPath];
+        if (originals.proposalLifecycle) require.cache[proposalLifecyclePath] = originals.proposalLifecycle;
+        else delete require.cache[proposalLifecyclePath];
         if (originals.triggerSdk) require.cache[triggerSdkPath] = originals.triggerSdk;
         else delete require.cache[triggerSdkPath];
         if (originals.triggerDispatch) require.cache[triggerDispatchPath] = originals.triggerDispatch;
@@ -146,7 +151,7 @@ describe('Legacy proposal dismiss reconciliation', function () {
         951,
         sinon.match({
           status: 'DISMISSED',
-          human_decision: sinon.match.has('action', 'DISMISS'),
+          humanDecision: sinon.match.has('action', 'DISMISS'),
         })
       );
       sinon.assert.calledWithExactly(
@@ -238,7 +243,7 @@ describe('Legacy proposal dismiss reconciliation', function () {
         1004,
         sinon.match({
           status: 'DISMISSED',
-          human_decision: sinon.match.has('action', 'DISMISS'),
+          humanDecision: sinon.match.has('action', 'DISMISS'),
         })
       );
       sinon.assert.calledWithExactly(

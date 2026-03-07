@@ -26,6 +26,8 @@ const {
 const { HUMAN_REVIEW_PROPOSAL_STATUSES, buildCaseTruth } = require('../lib/case-truth');
 const aiService = require('../services/ai-service');
 const pdfFormService = require('../services/pdf-form-service');
+const proposalLifecycle = require('../services/proposal-lifecycle');
+const { buildHumanDecision } = proposalLifecycle;
 
 async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
   const maxAttempts = options.maxAttempts || 5;
@@ -180,9 +182,9 @@ async function createAdjustedInitialRequestProposalLocally(proposal, humanDecisi
     throw new Error(`Local adjustment generated an empty draft for case ${caseId}`);
   }
 
-  await db.updateProposal(proposal.id, {
+  await proposalLifecycle.applyHumanReviewDecision(proposal.id, {
     status: 'DISMISSED',
-    human_decision: humanDecision,
+    humanDecision,
   });
 
   const adjustedProposal = await db.upsertProposal({
@@ -279,9 +281,9 @@ Requirements:
     throw new Error(`Local clarification adjustment generated an empty draft for case ${caseId}`);
   }
 
-  await db.updateProposal(proposal.id, {
+  await proposalLifecycle.applyHumanReviewDecision(proposal.id, {
     status: 'DISMISSED',
-    human_decision: humanDecision,
+    humanDecision,
   });
 
   const adjustedProposal = await db.upsertProposal({
@@ -350,9 +352,9 @@ async function createAdjustedPdfEmailProposalLocally(proposal, humanDecision, ex
     );
   }
 
-  await db.updateProposal(proposal.id, {
+  await proposalLifecycle.applyHumanReviewDecision(proposal.id, {
     status: 'DISMISSED',
-    human_decision: humanDecision,
+    humanDecision,
   });
 
   const adjustedProposal = await db.upsertProposal({
@@ -534,9 +536,9 @@ Requirements:
     throw new Error(`Local generic email adjustment generated an empty draft for case ${caseId}`);
   }
 
-  await db.updateProposal(proposal.id, {
+  await proposalLifecycle.applyHumanReviewDecision(proposal.id, {
     status: 'DISMISSED',
-    human_decision: humanDecision,
+    humanDecision,
   });
 
   const adjustedProposal = await db.upsertProposal({
@@ -836,17 +838,11 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
     throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
   }
 
-  const claimed = await db.query(
-    `UPDATE proposals
-     SET status = 'DECISION_RECEIVED',
-         human_decision = $1,
-         updated_at = NOW()
-     WHERE id = $2
-       AND status IN ('PENDING_APPROVAL','BLOCKED','DECISION_RECEIVED')
-     RETURNING id`,
-    [JSON.stringify(humanDecision), proposalId]
-  );
-  if (claimed.rows.length === 0) {
+  const claimed = await proposalLifecycle.markProposalDecisionReceived(proposalId, {
+    humanDecision,
+    allowedCurrentStatuses: ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'],
+  });
+  if (!claimed) {
     throw new Error('Proposal was already actioned by another request');
   }
 
@@ -884,7 +880,10 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   });
 
   if (!emailResult || emailResult.success !== true) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
+    await proposalLifecycle.clearHumanReviewDecision(proposalId, {
+      status: 'PENDING_APPROVAL',
+      extraUpdates: { executionKey: null },
+    });
     await db.query(
       `UPDATE cases
        SET requires_human = true,
@@ -896,7 +895,12 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
     throw new Error(emailResult?.error || 'Email send failed');
   }
 
-  await db.updateProposal(proposalId, { status: 'EXECUTED' });
+  await proposalLifecycle.markProposalExecuted(proposalId, {
+    humanDecision,
+    executionKey,
+    emailJobId: emailResult?.providerMessageId || emailResult?.messageId || null,
+    allowedCurrentStatuses: ['DECISION_RECEIVED'],
+  });
   await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response', substatus: null });
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
     case_id: caseId,
@@ -911,11 +915,9 @@ async function executeApprovedPortalActionLocally(proposal, humanDecision) {
   const caseId = proposal.case_id;
   const proposalId = proposal.id;
 
-  await db.updateProposal(proposalId, {
-    status: 'EXECUTED',
+  await proposalLifecycle.markProposalExecuted(proposalId, {
     humanDecision,
     executionKey: `local-portal:${proposalId}:${Date.now()}`,
-    executedAt: new Date(),
   });
 
   await db.updateCase(caseId, {
@@ -938,17 +940,11 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     throw new Error(`Case ${caseId} has no agency_email — cannot send PDF email directly`);
   }
 
-  const claimed = await db.query(
-    `UPDATE proposals
-     SET status = 'DECISION_RECEIVED',
-         human_decision = $1,
-         updated_at = NOW()
-     WHERE id = $2
-       AND status IN ('PENDING_APPROVAL','BLOCKED','DECISION_RECEIVED')
-     RETURNING id`,
-    [JSON.stringify(humanDecision), proposalId]
-  );
-  if (claimed.rows.length === 0) {
+  const claimed = await proposalLifecycle.markProposalDecisionReceived(proposalId, {
+    humanDecision,
+    allowedCurrentStatuses: ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED'],
+  });
+  if (!claimed) {
     throw new Error('Proposal was already actioned by another request');
   }
 
@@ -962,11 +958,13 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
   // Reuse the prepared PDF if one already exists; otherwise this proposal is
   // stale and must be regenerated before approval.
   const fs = require('fs');
-  const sendgridService = require('../services/sendgrid-service');
   const pdfFormService = require('../services/pdf-form-service');
   const pdfAttachment = await pdfFormService.getLatestPreparedPdfAttachment(caseId);
   if (!pdfAttachment) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
+    await proposalLifecycle.clearHumanReviewDecision(proposalId, {
+      status: 'PENDING_APPROVAL',
+      extraUpdates: { executionKey: null },
+    });
     throw new Error('No prepared PDF attachment found for this proposal');
   }
 
@@ -982,7 +980,10 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     }
   }
   if (!pdfBuffer) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
+    await proposalLifecycle.clearHumanReviewDecision(proposalId, {
+      status: 'PENDING_APPROVAL',
+      extraUpdates: { executionKey: null },
+    });
     throw new Error('Prepared PDF file is unavailable for this proposal');
   }
 
@@ -997,24 +998,38 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
         }
       : {};
 
+  let emailResult;
   try {
-    await sendgridService.sendEmail({
+    emailResult = await emailExecutor.sendEmail({
       to: caseData.agency_email,
       subject: proposal.draft_subject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`,
-      text: proposal.draft_body_text,
-      html: proposal.draft_body_html || null,
+      bodyText: proposal.draft_body_text,
+      bodyHtml: proposal.draft_body_html || null,
+      headers: Object.keys(replyHeaders).length > 0
+        ? {
+            'In-Reply-To': replyHeaders.inReplyTo || null,
+            'References': replyHeaders.references || null,
+          }
+        : null,
       caseId,
-      messageType: 'send_pdf_email',
-      ...replyHeaders,
+      proposalId,
+      runId: null,
+      actionType: proposal.action_type,
+      delayMs: 0,
       attachments: [{
-        content: pdfBuffer.toString('base64'),
         filename: pdfAttachment.filename,
-        type: 'application/pdf',
-        disposition: 'attachment',
+        content: pdfBuffer,
+        contentType: 'application/pdf',
       }],
     });
+    if (!emailResult || emailResult.success !== true) {
+      throw new Error(emailResult?.error || 'PDF email send failed');
+    }
   } catch (error) {
-    await db.updateProposal(proposalId, { status: 'PENDING_APPROVAL', human_decision: null, execution_key: null });
+    await proposalLifecycle.clearHumanReviewDecision(proposalId, {
+      status: 'PENDING_APPROVAL',
+      extraUpdates: { executionKey: null },
+    });
     await db.query(
       `UPDATE cases
        SET requires_human = true,
@@ -1026,7 +1041,12 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     throw error;
   }
 
-  await db.updateProposal(proposalId, { status: 'EXECUTED' });
+  await proposalLifecycle.markProposalExecuted(proposalId, {
+    humanDecision,
+    executionKey,
+    emailJobId: emailResult?.providerMessageId || emailResult?.messageId || null,
+    allowedCurrentStatuses: ['DECISION_RECEIVED'],
+  });
   await transitionCaseRuntime(caseId, 'CASE_RECONCILED', { targetStatus: 'awaiting_response', substatus: null });
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly with PDF attachment`, {
     case_id: caseId,
@@ -1478,14 +1498,12 @@ router.post('/proposals/:id/decision', async (req, res) => {
     }
 
     // Build human decision object (full details for graph and DB)
-    const humanDecision = {
-      action,
+    const humanDecision = buildHumanDecision(action, {
       proposalId,
       instruction: instruction || null,
       reason: reason || null,
-      decidedAt: new Date().toISOString(),
-      decidedBy: req.body.decidedBy || 'human'
-    };
+      decidedBy: req.body.decidedBy || 'human',
+    });
 
     // Auto-capture eval cases on human decisions (best-effort, non-blocking).
     if (action === 'DISMISS') {
@@ -1507,18 +1525,16 @@ router.post('/proposals/:id/decision', async (req, res) => {
     }
 
     if (action === 'RETRY_RESEARCH') {
-      const retryDecision = {
-        action,
+      const retryDecision = buildHumanDecision(action, {
         proposalId,
         instruction: null,
         reason: reason || 'User requested research retry',
-        decidedAt: new Date().toISOString(),
-        decidedBy: req.body.decidedBy || 'human'
-      };
+        decidedBy: req.body.decidedBy || 'human',
+      });
 
-      await db.updateProposal(proposalId, {
-        human_decision: retryDecision,
-        status: 'DISMISSED'
+      await proposalLifecycle.applyHumanReviewDecision(proposalId, {
+        status: 'DISMISSED',
+        humanDecision: retryDecision,
       });
 
       await db.updateCase(caseId, {
@@ -1551,9 +1567,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
           reviewInstruction: 'Research failed previously. Retry agency research from scratch.',
         }, triggerOpts(caseId, 'retry-research', proposalId))).handle;
       } catch (triggerError) {
-        await db.updateProposal(proposalId, {
+        await proposalLifecycle.clearHumanReviewDecision(proposalId, {
           status: 'PENDING_APPROVAL',
-          human_decision: null
         });
         await db.logActivity('proposal_dispatch_failed', `Retry research for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
           case_id: caseId,
@@ -1580,9 +1595,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
     // === MANUAL_SUBMIT: user filled the portal form manually ===
     if (action === 'MANUAL_SUBMIT') {
-      await db.updateProposal(proposalId, {
-        human_decision: humanDecision,
-        status: 'EXECUTED'
+      await proposalLifecycle.markProposalExecuted(proposalId, {
+        humanDecision,
       });
       await transitionCaseRuntime(caseId, 'CASE_SENT', {
         sendDate: new Date().toISOString(),
@@ -1731,9 +1745,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
     if (canResumeWaitpoint) {
       if (action === 'DISMISS' || action === 'WITHDRAW') {
         const nextProposalStatus = action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED';
-        await db.updateProposal(proposalId, {
-          human_decision: humanDecision,
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
           status: nextProposalStatus,
+          humanDecision,
         });
 
         if (action === 'WITHDRAW') {
@@ -1807,9 +1821,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
 
       // Update DB first so the task sees DECISION_RECEIVED when it resumes
-      await db.updateProposal(proposalId, {
-        human_decision: humanDecision,
-        status: 'DECISION_RECEIVED'
+      await proposalLifecycle.markProposalDecisionReceived(proposalId, {
+        humanDecision,
       });
       await db.query(
         `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
@@ -1873,10 +1886,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
           });
         }
 
-        await db.updateProposal(proposalId, {
+        await proposalLifecycle.clearHumanReviewDecision(proposalId, {
           status: 'PENDING_APPROVAL',
-          human_decision: null,
-          human_decided_at: null,
         });
         await db.query(
           `UPDATE cases
@@ -1908,9 +1919,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
     // DISMISS/WITHDRAW: just update DB status
     if (action === 'DISMISS' || action === 'WITHDRAW') {
-      await db.updateProposal(proposalId, {
-        human_decision: humanDecision,
-        status: action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED'
+      await proposalLifecycle.applyHumanReviewDecision(proposalId, {
+        status: action === 'WITHDRAW' ? 'WITHDRAWN' : 'DISMISSED',
+        humanDecision,
       });
       logger.info(`Legacy proposal ${action.toLowerCase()}ed`, { proposalId, action });
 
@@ -1958,9 +1969,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
       langgraph_thread_id: `resume:${caseId}:proposal-${proposalId}`
     });
 
-    await db.updateProposal(proposalId, {
-      human_decision: humanDecision,
-      status: 'DECISION_RECEIVED'
+    await proposalLifecycle.markProposalDecisionReceived(proposalId, {
+      humanDecision,
     });
     await db.query(
       `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
@@ -2041,9 +2051,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
     } catch (triggerError) {
       // Keep proposal actionable if Trigger.dev dispatch fails.
-      await db.updateProposal(proposalId, {
+      await proposalLifecycle.clearHumanReviewDecision(proposalId, {
         status: 'PENDING_APPROVAL',
-        human_decision: null
       });
       await db.logActivity('proposal_dispatch_failed', `Decision for proposal #${proposalId} could not be dispatched to Trigger.dev: ${triggerError.message}`, {
         case_id: caseId,

@@ -72,12 +72,12 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time
 
 #### Proposal Lifecycle Hardening
-- [ ] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path)
-- [ ] Ensure every human review writes `human_decision`, `human_decided_at`, `human_decided_by`
-- [ ] Ensure every executed proposal writes `executed_at`
+- [x] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path)
+- [x] Ensure every human review writes `human_decision`, `human_decided_at`, `human_decided_by`
+- [x] Ensure every executed proposal writes `executed_at`
 - [ ] Ensure every terminal execution writes `completed_at`
 - [ ] Audit all direct `updateProposal()` callers and route through the lifecycle helper
-- [ ] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
+- [x] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
 
 #### Execution Completeness
 - [ ] Centralize execution terminal-state writes into one helper
@@ -181,6 +181,23 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [ ] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals
 - [ ] Review low-confidence and `other` classifications regularly and feed those examples into the prompt test set
 - [ ] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text
+
+#### Live Data Workflow Anomalies (from production DB, 2026-03-07)
+Production data review found 160 inbound messages, 107 response analyses, 56 inbound messages with no `response_analysis`, 57 inbound messages with no `case_id`, and 21 inbound rows with `last_error = "Branch condition returned unknown or null destination"`.
+- [ ] Audit inbound messages with `case_id IS NULL`; backfill matches where possible and prevent unmatched inbound from bypassing the active case workflow
+- [ ] Investigate `messages.last_error = "Branch condition returned unknown or null destination"` and add a route-safe fallback so inbound handling never dies on an unknown branch
+- [ ] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases
+- [ ] Add a reconciliation query for cases where the latest inbound intent conflicts with current case status or substatus
+- [ ] Create a repair queue for concrete dropped-action cases observed in production: `25268`, `25265`, `25167`, `25140`
+- [ ] Create a repair queue for concrete classifier/handling mismatch cases observed in production: `25211`, `25171`, `25175`
+- [ ] Monitor inbound messages with no `response_analysis`, especially non-portal rows with `processed_at IS NULL`
+- [ ] Add classifier consistency validation for impossible `requires_action` / `suggested_action` combinations before downstream routing uses them
+- [ ] Review `partial_delivery` and `delivery` examples that are actually fee letters, acknowledgment letters, or mixed responses and add them to prompt tests
+- [ ] Review portal-closure and duplicate-request messages that are currently being classified as denials or rebuttal candidates
+- [ ] Review wrong-agency outputs where the suggested action is `respond` instead of reroute or research
+- [ ] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed
+- [ ] Exclude manual notes, synthetic QA replies, and phone-call update messages from the normal inbound classifier pipeline
+- [ ] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately
 
 ---
 

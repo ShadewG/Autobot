@@ -141,7 +141,8 @@ const emailExecutor = {
     const {
       to, subject, bodyHtml, bodyText, headers,
       caseId, proposalId, runId, actionType,
-      delayMs = 0, threadId, originalMessageId
+      delayMs = 0, threadId, originalMessageId,
+      attachments = []
     } = params;
 
     const executionKey = generateExecutionKey(caseId, actionType, proposalId);
@@ -165,6 +166,7 @@ const emailExecutor = {
             bodyPreview: (bodyText || '').substring(0, 200),
             headers,
             delayMs,
+            attachmentCount: attachments.length,
             scheduledFor: delayMs > 0 ? new Date(Date.now() + delayMs).toISOString() : 'immediate'
           }
         }
@@ -203,7 +205,12 @@ const emailExecutor = {
         actionType,
         status: 'QUEUED',
         provider: 'email',
-        providerPayload: { to, subject, delayMs }
+        providerPayload: {
+          to,
+          subject,
+          delayMs,
+          attachmentCount: attachments.length,
+        }
       });
 
       // Lazy load email queue to avoid circular deps
@@ -223,7 +230,8 @@ const emailExecutor = {
           messageType: actionType?.toLowerCase().replace('send_', '').replace('approve_', '') || 'reply',
           originalMessageId,
           threadId,
-          headers
+          headers,
+          attachments
         }, {
           delay: delayMs,
           jobId: executionKey  // Idempotency via execution key
@@ -236,6 +244,7 @@ const emailExecutor = {
             subject,
             delayMs,
             jobId: job.id,
+            attachmentCount: attachments.length,
             queuedAt: new Date().toISOString()
           }
         });
@@ -270,13 +279,17 @@ const emailExecutor = {
         references: headers?.References || null,
         caseId,
         messageType: actionType?.toLowerCase().replace('send_', '').replace('approve_', '') || 'reply',
+        attachments,
       });
 
       await updateExecutionRecord(executionKey, {
         status: 'SENT',
+        providerMessageId: directResult.sendgridMessageId || directResult.messageId,
+        completedAt: new Date(),
         providerPayload: {
           to,
           subject,
+          attachmentCount: attachments.length,
           directSend: true,
           messageId: directResult.messageId,
           sendgridMessageId: directResult.sendgridMessageId,

@@ -8,6 +8,8 @@ const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = 
 const { eventBus, notify, emitDataUpdate } = require('../../services/event-bus');
 const { transitionCaseRuntime } = require('../../services/case-runtime');
 const pdContactService = require('../../services/pd-contact-service');
+const proposalLifecycle = require('../../services/proposal-lifecycle');
+const { buildHumanDecision } = proposalLifecycle;
 
 // Initialize SendGrid
 if (process.env.SENDGRID_API_KEY) {
@@ -281,31 +283,27 @@ async function processProposalDecision(
         proposal = await db.getProposalById(proposalId);
     }
 
-    const humanDecision = {
-        action,
+    const humanDecision = buildHumanDecision(action, {
         proposalId,
         instruction: trimmedInstruction || null,
         route_mode,
         reason,
-        decidedAt: new Date().toISOString(),
-        decidedBy: userId || decidedBy
-    };
+        decidedBy: userId || decidedBy,
+    });
 
     if (action === 'RETRY_RESEARCH') {
-        const humanDecisionForRetry = {
-            action,
+        const humanDecisionForRetry = buildHumanDecision(action, {
             proposalId,
             instruction: null,
             route_mode,
             reason: reason || 'User requested research retry',
-            decidedAt: new Date().toISOString(),
-            decidedBy: userId || decidedBy
-        };
+            decidedBy: userId || decidedBy,
+        });
 
         // Dismiss the current proposal
-        await db.updateProposal(proposalId, {
-            human_decision: humanDecisionForRetry,
-            status: 'DISMISSED'
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
+            status: 'DISMISSED',
+            humanDecision: humanDecisionForRetry,
         });
 
         // Clear old research notes but preserve audit trail
@@ -333,9 +331,8 @@ async function processProposalDecision(
             }, triggerOpts(caseId, 'retry-research', proposalId))).handle;
         } catch (triggerError) {
             // Roll back proposal to PENDING_APPROVAL if dispatch fails
-            await db.updateProposal(proposalId, {
+            await proposalLifecycle.clearHumanReviewDecision(proposalId, {
                 status: 'PENDING_APPROVAL',
-                human_decision: null
             });
             await db.logActivity('proposal_dispatch_failed', `Retry research for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
                 case_id: caseId,
@@ -363,9 +360,9 @@ async function processProposalDecision(
     }
 
     if (action === 'DISMISS') {
-        await db.updateProposal(proposalId, {
-            human_decision: humanDecision,
-            status: 'DISMISSED'
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
+            status: 'DISMISSED',
+            humanDecision,
         });
         await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
@@ -433,9 +430,9 @@ async function processProposalDecision(
             throw err;
         }
 
-        await db.updateProposal(proposalId, {
-            human_decision: humanDecision,
-            status: 'DISMISSED'
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
+            status: 'DISMISSED',
+            humanDecision,
         });
         await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
@@ -452,9 +449,8 @@ async function processProposalDecision(
             }, triggerOpts(caseId, 'escalate-guided', proposalId))).handle;
         } catch (triggerError) {
             // Keep it actionable if dispatch fails.
-            await db.updateProposal(proposalId, {
+            await proposalLifecycle.clearHumanReviewDecision(proposalId, {
                 status: 'PENDING_APPROVAL',
-                human_decision: null
             });
             await db.logActivity('proposal_dispatch_failed', `Guided reprocess for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
                 case_id: caseId,
@@ -536,11 +532,10 @@ async function processProposalDecision(
         });
 
         // Update proposal
-        await db.updateProposal(proposalId, {
-            human_decision: humanDecision,
-            status: 'EXECUTED',
+        await proposalLifecycle.markProposalExecuted(proposalId, {
+            humanDecision,
             executedAt: new Date(),
-            emailJobId: sendResult.messageId
+            emailJobId: sendResult.messageId,
         });
         await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
@@ -591,10 +586,9 @@ async function processProposalDecision(
             throw err;
         }
 
-        // Mark proposal as approved
-        await db.updateProposal(proposalId, {
-            human_decision: humanDecision,
+        await proposalLifecycle.applyHumanReviewDecision(proposalId, {
             status: 'APPROVED',
+            humanDecision,
         });
 
         // Trigger submit-portal task via Trigger.dev
@@ -635,7 +629,10 @@ async function processProposalDecision(
         });
 
         // Update proposal to PENDING_PORTAL
-        await db.updateProposal(proposalId, { status: 'PENDING_PORTAL', run_id: dispatchRun.id });
+        await proposalLifecycle.markProposalPendingPortal(proposalId, {
+            humanDecision,
+            runId: dispatchRun.id,
+        });
         await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
         notify('info', `Portal submission approved — Trigger.dev task started for case ${caseId}`, { case_id: caseId });
@@ -658,9 +655,8 @@ async function processProposalDecision(
                 reason: reason || null,
             });
 
-            await db.updateProposal(proposalId, {
-                human_decision: humanDecision,
-                status: 'DECISION_RECEIVED'
+            await proposalLifecycle.markProposalDecisionReceived(proposalId, {
+                humanDecision,
             });
             await db.query(
                 `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
@@ -686,9 +682,8 @@ async function processProposalDecision(
     // Legacy path: re-trigger through Trigger.dev (stale waitpoint or old proposals)
     // Don't create agent_run here — the Trigger.dev task creates its own run with proper lifecycle.
     // Creating one here leads to orphaned 'queued' runs if Trigger.dev fails to start.
-    await db.updateProposal(proposalId, {
-        human_decision: humanDecision,
-        status: 'DECISION_RECEIVED'
+    await proposalLifecycle.markProposalDecisionReceived(proposalId, {
+        humanDecision,
     });
     await db.query(
         `UPDATE cases SET requires_human = false, pause_reason = NULL, updated_at = NOW() WHERE id = $1`,
@@ -723,9 +718,8 @@ async function processProposalDecision(
         }
     } catch (triggerError) {
         // Never leave proposals stranded in DECISION_RECEIVED when dispatch fails.
-        await db.updateProposal(proposalId, {
+        await proposalLifecycle.clearHumanReviewDecision(proposalId, {
             status: 'PENDING_APPROVAL',
-            human_decision: null
         });
         await db.logActivity('proposal_dispatch_failed', `Decision for proposal #${proposalId} could not be dispatched to Trigger.dev: ${triggerError.message}`, {
             case_id: caseId,
