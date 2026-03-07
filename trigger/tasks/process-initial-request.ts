@@ -287,7 +287,9 @@ export const processInitialRequest = task({
             await markStep("execute_action", `Run #${runId}: executing adjusted initial action`, { action_type: adjustedExecutionActionType });
             const execution = await executeAction(
               caseId, adjustedGate.proposalId, adjustedExecutionActionType, runId,
-              adjustedExecutionDraft, null, adjustmentReasoning
+              adjustedExecutionDraft, null, adjustmentReasoning,
+              undefined, undefined, undefined,
+              { attachments: humanDecision?.attachments }
             );
             trace.setGateDecision({
               proposalId: adjustedGate.proposalId,
@@ -631,7 +633,9 @@ export const processInitialRequest = task({
       const execution = await executeAction(
         caseId, draft.proposalId, executionActionType, runId,
         executionDraft,
-        null, draft.reasoning
+        null, draft.reasoning,
+        undefined, undefined, undefined,
+        { attachments: humanDecision?.attachments }
       );
       trace.setGateDecision({
         proposalId: draft.proposalId,

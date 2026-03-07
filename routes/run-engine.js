@@ -879,6 +879,7 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
     runId: null,
     actionType: proposal.action_type,
     delayMs: 0,
+    attachments: Array.isArray(humanDecision?.attachments) ? humanDecision.attachments : [],
   });
 
   if (!emailResult || emailResult.success !== true) {
@@ -1018,11 +1019,14 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
       runId: null,
       actionType: proposal.action_type,
       delayMs: 0,
-      attachments: [{
-        filename: pdfAttachment.filename,
-        content: pdfBuffer,
-        contentType: 'application/pdf',
-      }],
+      attachments: [
+        {
+          filename: pdfAttachment.filename,
+          content: pdfBuffer,
+          contentType: 'application/pdf',
+        },
+        ...(Array.isArray(humanDecision?.attachments) ? humanDecision.attachments : []),
+      ],
     });
     if (!emailResult || emailResult.success !== true) {
       throw new Error(emailResult?.error || 'PDF email send failed');
@@ -1390,7 +1394,10 @@ router.post('/cases/:id/run-inbound', async (req, res) => {
  */
 router.post('/proposals/:id/decision', async (req, res) => {
   const proposalId = parseInt(req.params.id);
-  const { action, instruction, reason } = req.body || {};
+  const { action, instruction, reason, attachments: rawAttachments } = req.body || {};
+  const validatedAttachments = Array.isArray(rawAttachments)
+    ? rawAttachments.filter(a => a && typeof a.filename === 'string' && typeof a.content === 'string' && typeof a.type === 'string')
+    : [];
 
   try {
     // Validate action
@@ -1505,6 +1512,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
       instruction: instruction || null,
       reason: reason || null,
       decidedBy: req.body.decidedBy || 'human',
+      ...(validatedAttachments.length > 0 ? { attachments: validatedAttachments } : {}),
     });
 
     // Auto-capture eval cases on human decisions (best-effort, non-blocking).
@@ -1777,7 +1785,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
               },
-              body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null } }),
+              body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null, attachments: validatedAttachments.length > 0 ? validatedAttachments : undefined } }),
             }
           );
 
@@ -1841,7 +1849,7 @@ router.post('/proposals/:id/decision', async (req, res) => {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${process.env.TRIGGER_SECRET_KEY}`,
             },
-            body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null } }),
+            body: JSON.stringify({ data: { action, instruction: instruction || null, reason: reason || null, attachments: validatedAttachments.length > 0 ? validatedAttachments : undefined } }),
           }
         );
 

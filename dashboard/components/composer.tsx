@@ -5,9 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Sparkles, Send, Loader2 } from "lucide-react";
+import { AttachmentPicker, type Attachment } from "@/components/attachment-picker";
 
 interface ComposerProps {
-  onSend: (content: string) => Promise<void>;
+  onSend: (content: string, attachments?: Attachment[]) => Promise<void>;
   onGenerateDraft?: () => Promise<string>;
   disabled?: boolean;
   extraActions?: React.ReactNode;
@@ -15,6 +16,7 @@ interface ComposerProps {
 
 export function Composer({ onSend, onGenerateDraft, disabled, extraActions }: ComposerProps) {
   const [content, setContent] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -22,8 +24,9 @@ export function Composer({ onSend, onGenerateDraft, disabled, extraActions }: Co
     if (!content.trim()) return;
     setIsSending(true);
     try {
-      await onSend(content);
+      await onSend(content, attachments.length > 0 ? attachments : undefined);
       setContent("");
+      setAttachments([]);
     } finally {
       setIsSending(false);
     }
@@ -66,6 +69,11 @@ export function Composer({ onSend, onGenerateDraft, disabled, extraActions }: Co
         onChange={(e) => setContent(e.target.value)}
         disabled={disabled}
         rows={4}
+      />
+      <AttachmentPicker
+        attachments={attachments}
+        onChange={setAttachments}
+        disabled={disabled || isSending}
       />
       <div className="flex justify-end gap-2">
         {extraActions}

@@ -252,7 +252,7 @@ export const requestsAPI = {
   sendManual: (
     id: string,
     body: string,
-    options?: { subject?: string; to_email?: string }
+    options?: { subject?: string; to_email?: string; attachments?: Array<{ filename: string; content: string; type: string }> }
   ): Promise<{
     success: boolean;
     message: string;
@@ -267,6 +267,7 @@ export const requestsAPI = {
         body,
         subject: options?.subject,
         to_email: options?.to_email,
+        attachments: options?.attachments,
       }),
     });
   },
@@ -555,6 +556,7 @@ export const proposalsAPI = {
       action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW';
       instruction?: string;
       reason?: string;
+      attachments?: Array<{ filename: string; content: string; type: string }>;
     }
   ): Promise<{
     success: boolean;

@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/collapsible";
 import { fetchAPI, fetcher, proposalsAPI, type ProposalListItem, type ProposalsListResponse } from "@/lib/api";
 import { cn, formatReasoning, ACTION_TYPE_LABELS, humanizeRiskFlag } from "@/lib/utils";
+import { AttachmentPicker, type Attachment } from "@/components/attachment-picker";
 import {
   CheckCircle,
   XCircle,
@@ -94,7 +95,7 @@ function ProposalCard({
   isLookingUpContact,
 }: {
   proposal: ProposalListItem;
-  onDecision: (id: number, action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string) => Promise<void>;
+  onDecision: (id: number, action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW', instruction?: string, attachments?: Attachment[]) => Promise<void>;
   onLookupContact: (caseId: number) => Promise<void>;
   isProcessing: boolean;
   isLookingUpContact: boolean;
@@ -103,6 +104,7 @@ function ProposalCard({
   const [showAdjust, setShowAdjust] = useState(false);
   const [adjustInstruction, setAdjustInstruction] = useState("");
   const [showWithdraw, setShowWithdraw] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const labelConfig = ACTION_TYPE_LABELS[proposal.action_type] || {
     label: proposal.action_type.replace(/_/g, " "),
@@ -113,7 +115,7 @@ function ProposalCard({
     icon: ACTION_TYPE_ICONS[proposal.action_type] || <Send className="h-4 w-4" />,
   };
 
-  const handleApprove = () => onDecision(proposal.id, 'APPROVE');
+  const handleApprove = () => onDecision(proposal.id, 'APPROVE', undefined, attachments.length > 0 ? attachments : undefined);
   const handleDismiss = () => onDecision(proposal.id, 'DISMISS');
   const handleAdjust = () => {
     if (adjustInstruction.trim()) {
@@ -198,7 +200,7 @@ function ProposalCard({
               {expanded ? "Hide draft" : "Show draft preview"}
             </button>
           </CollapsibleTrigger>
-          <CollapsibleContent className="mt-2">
+          <CollapsibleContent className="mt-2 space-y-2">
             <div className="bg-muted/50 rounded-md p-3 space-y-2">
               {proposal.draft_subject && (
                 <p className="text-sm font-medium">
@@ -209,6 +211,11 @@ function ProposalCard({
                 {proposal.draft_body_text || "No draft content"}
               </pre>
             </div>
+            <AttachmentPicker
+              attachments={attachments}
+              onChange={setAttachments}
+              disabled={isProcessing}
+            />
           </CollapsibleContent>
         </Collapsible>
 
@@ -377,7 +384,8 @@ export default function QueuePage() {
   const handleDecision = async (
     proposalId: number,
     action: 'APPROVE' | 'ADJUST' | 'DISMISS' | 'WITHDRAW',
-    instruction?: string
+    instruction?: string,
+    attachments?: Attachment[]
   ) => {
     setProcessingId(proposalId);
 
@@ -385,6 +393,7 @@ export default function QueuePage() {
       await proposalsAPI.decide(proposalId, {
         action,
         instruction,
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
       });
 
       // Refresh the list

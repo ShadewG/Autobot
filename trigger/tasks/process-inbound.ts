@@ -972,7 +972,8 @@ export const processInbound = task({
       caseId, gate.proposalId, executionActionType, runId,
       executionDraft, null, decision.reasoning,
       executionDraft.researchContactResult, executionDraft.researchBrief,
-      classification.classification
+      classification.classification,
+      { attachments: humanDecision?.attachments }
     );
     trace.setGateDecision({
       proposalId: gate.proposalId,

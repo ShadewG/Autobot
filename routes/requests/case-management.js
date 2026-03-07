@@ -180,7 +180,7 @@ router.post('/:id/withdraw', async (req, res) => {
  */
 router.post('/:id/send-manual', async (req, res) => {
     const requestId = parseInt(req.params.id, 10);
-    const { body, subject, to_email } = req.body || {};
+    const { body, subject, to_email, attachments } = req.body || {};
     const log = logger.forCase(requestId);
 
     try {
@@ -231,6 +231,10 @@ router.post('/:id/send-manual', async (req, res) => {
             ? latestInbound.message_id
             : (currentThread?.thread_id || currentThread?.initial_message_id || null);
 
+        const validatedAttachments = Array.isArray(attachments)
+            ? attachments.filter(a => a && typeof a.filename === 'string' && typeof a.content === 'string' && typeof a.type === 'string')
+            : [];
+
         const sendResult = await sendgridService.sendEmail({
             to: targetEmail,
             subject: subjectLine,
@@ -240,7 +244,8 @@ router.post('/:id/send-manual', async (req, res) => {
             ...(threadIdentifier ? {
                 inReplyTo: threadIdentifier,
                 references: threadIdentifier
-            } : {})
+            } : {}),
+            ...(validatedAttachments.length > 0 ? { attachments: validatedAttachments } : {}),
         });
 
         if (replyingToInbound) {

@@ -92,6 +92,7 @@ import {
   Search,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
+import { AttachmentPicker } from "@/components/attachment-picker";
 import { SnoozeModal } from "@/components/snooze-modal";
 import { AutopilotSelector } from "@/components/autopilot-selector";
 import { SafetyHints } from "@/components/safety-hints";
@@ -323,6 +324,7 @@ function DetailV2Content() {
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
   const [editedBody, setEditedBody] = useState<string>("");
   const [editedSubject, setEditedSubject] = useState<string>("");
+  const [proposalAttachments, setProposalAttachments] = useState<Array<{ filename: string; content: string; type: string }>>([]);
   const [pendingAdjustModalOpen, setPendingAdjustModalOpen] = useState(false);
   const [isAdjustingPending, setIsAdjustingPending] = useState(false);
   const [manualSubmitOpen, setManualSubmitOpen] = useState(false);
@@ -424,6 +426,7 @@ function DetailV2Content() {
   useEffect(() => {
     setEditedBody(data?.pending_proposal?.draft_body_text || "");
     setEditedSubject(data?.pending_proposal?.draft_subject || "");
+    setProposalAttachments([]);
     const chain = data?.pending_proposal?.action_chain;
     if (chain && chain.length > 1) {
       setEditedChainSubject(chain[1].draftSubject || "");
@@ -713,6 +716,7 @@ function DetailV2Content() {
       const body: Record<string, unknown> = { action: "APPROVE" };
       if (editedBody && editedBody !== (data.pending_proposal.draft_body_text || "")) body.draft_body_text = editedBody;
       if (editedSubject && editedSubject !== (data.pending_proposal.draft_subject || "")) body.draft_subject = editedSubject;
+      if (proposalAttachments.length > 0) body.attachments = proposalAttachments;
       if (actionType === "ESCALATE") {
         body.instruction = (typeof editedBody === "string" && editedBody.trim().length > 0)
           ? editedBody.trim()
@@ -1000,10 +1004,12 @@ function DetailV2Content() {
     }
   };
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, attachments?: Array<{ filename: string; content: string; type: string }>) => {
     if (!id || !content.trim()) return;
     try {
-      const result = await requestsAPI.sendManual(id, content.trim());
+      const result = await requestsAPI.sendManual(id, content.trim(), {
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
+      });
       await mutate();
       toast.success(`Manual email sent to ${result.to_email}`);
     } catch (error: any) {
@@ -1558,6 +1564,11 @@ function DetailV2Content() {
                               <RotateCcw className="h-2.5 w-2.5" /> Reset to AI draft
                             </button>
                           )}
+                          <AttachmentPicker
+                            attachments={proposalAttachments}
+                            onChange={setProposalAttachments}
+                            disabled={isApproving}
+                          />
                           {/* Chain follow-up */}
                           {pending_proposal.action_chain && pending_proposal.action_chain.length > 1 && (
                             <div className="border-t border-dashed pt-2 mt-2 space-y-1.5">

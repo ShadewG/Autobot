@@ -34,6 +34,7 @@ import {
   ArrowRight,
   Scale,
 } from "lucide-react";
+import { AttachmentPicker, type Attachment } from "@/components/attachment-picker";
 
 interface ActionPreview {
   steps: Array<{
@@ -52,7 +53,7 @@ interface DraftApprovalPanelProps {
   action: NextAction | null;
   executionMode: "DRY" | "LIVE";
   isPortalAgency?: boolean;
-  onApprove: (editedContent?: { subject?: string; body?: string }) => void;
+  onApprove: (editedContent?: { subject?: string; body?: string; attachments?: Attachment[] }) => void;
   onDismiss: () => void;
   onEscalate?: () => void;
   isLoading?: boolean;
@@ -159,6 +160,7 @@ export function DraftApprovalPanel({
   const [isEditing, setIsEditing] = useState(false);
   const [editedSubject, setEditedSubject] = useState(action?.draft_subject || "");
   const [editedBody, setEditedBody] = useState(action?.draft_body || "");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const actionConfig = action?.action_type
     ? ACTION_TYPE_CONFIG[action.action_type] || { label: action.action_type, icon: <Mail className="h-4 w-4" />, color: "text-muted-foreground" }
@@ -182,13 +184,15 @@ export function DraftApprovalPanel({
   }
 
   const handleApprove = () => {
+    const atts = attachments.length > 0 ? attachments : undefined;
     if (isEditing) {
       onApprove({
         subject: editedSubject !== action.draft_subject ? editedSubject : undefined,
         body: editedBody !== action.draft_body ? editedBody : undefined,
+        attachments: atts,
       });
     } else {
-      onApprove();
+      onApprove(atts ? { attachments: atts } : undefined);
     }
   };
 
@@ -346,6 +350,13 @@ export function DraftApprovalPanel({
               </div>
             </div>
           )}
+
+          {/* Attachments */}
+          <AttachmentPicker
+            attachments={attachments}
+            onChange={setAttachments}
+            disabled={isLoading}
+          />
         </div>
 
         <Separator />

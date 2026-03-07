@@ -314,7 +314,9 @@ export const processFollowup = task({
       await markStep("execute_action", `Run #${runId}: executing follow-up action`, { action_type: executionActionType });
       const execution = await executeAction(
         caseId, gate.proposalId, executionActionType, runId,
-        draft, null, decision.reasoning
+        draft, null, decision.reasoning,
+        undefined, undefined, undefined,
+        { attachments: humanDecision?.attachments }
       );
       trace.setGateDecision({
         proposalId: gate.proposalId,

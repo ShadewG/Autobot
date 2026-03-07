@@ -181,7 +181,7 @@ export async function executeAction(
   researchContactResult?: any,
   researchBrief?: any,
   classification?: string | null,
-  options?: { chainId?: string }
+  options?: { chainId?: string; attachments?: Array<{ filename: string; content: string; type: string }> }
 ): Promise<{ actionExecuted: boolean; executionResult: ExecutionResult | null }> {
   // AI Router v2: apply classification side effects at execution time
   if (isAIRouterV2Active(caseId) && classification) {
@@ -559,11 +559,11 @@ export async function executeAction(
     case "DECLINE_FEE":
     case "REFORMULATE_REQUEST": {
       // Validate
-      // This execution path currently sends no attachments. Prevent accidental
-      // "Attached..." claims from drafts when nothing is actually attached.
+      const userAttachments = options?.attachments ?? [];
+      // If no attachments provided, strip any "Attached..." claims from draft text
       let bodyText = originalBodyText;
       let bodyHtml = originalBodyHtml;
-      if (textClaimsAttachment(bodyText) || textClaimsAttachment(bodyHtml)) {
+      if (userAttachments.length === 0 && (textClaimsAttachment(bodyText) || textClaimsAttachment(bodyHtml))) {
         bodyText = bodyText ? stripAttachmentClaimLines(bodyText) : bodyText;
         bodyHtml = null; // Force plain-text fallback derived from sanitized bodyText.
         logger.warn("Removed attachment claim from outbound draft with no attachments", {
@@ -607,6 +607,7 @@ export async function executeAction(
         delayMs,
         threadId: isFreshEmail ? undefined : thread?.id,
         originalMessageId: isFreshEmail ? undefined : latestInbound?.message_id,
+        attachments: userAttachments,
       });
 
       if (!emailResult || emailResult.success !== true) {
