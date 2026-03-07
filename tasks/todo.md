@@ -234,9 +234,9 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] This enables: "was the email actually delivered?" and "which agencies never open our emails?"
 
 #### Preserve portal submission history
-- [ ] Create `portal_submissions` table: `case_id`, `run_id`, `skyvern_task_id`, `status`, `engine`, `account_email`, `screenshot_url`, `recording_url`, `extracted_data` (JSONB), `error_message`, `started_at`, `completed_at`
-- [ ] Currently only the latest attempt is stored on `cases.last_portal_*` — previous attempts are overwritten
-- [ ] Write a row on every portal attempt, not just the successful one — failure patterns are training data
+- [x] Create `portal_submissions` table: `case_id`, `run_id`, `skyvern_task_id`, `status`, `engine`, `account_email`, `screenshot_url`, `recording_url`, `extracted_data` (JSONB), `error_message`, `started_at`, `completed_at`
+- [x] Currently only the latest attempt is stored on `cases.last_portal_*` — previous attempts are overwritten
+- [x] Write a row on every portal attempt, not just the successful one — failure patterns are training data
 
 ### P0 — Feedback capture
 

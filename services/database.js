@@ -1360,6 +1360,39 @@ class DatabaseService {
     }
 
     // =========================================================================
+    // Portal Submissions (history of every portal attempt)
+    // =========================================================================
+
+    async createPortalSubmission({ caseId, runId, skyvernTaskId, status, engine, accountEmail }) {
+        const result = await this.query(
+            `INSERT INTO portal_submissions (case_id, run_id, skyvern_task_id, status, engine, account_email, started_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             RETURNING *`,
+            [caseId, runId || null, skyvernTaskId || null, status, engine || null, accountEmail || null]
+        );
+        return result.rows[0];
+    }
+
+    async updatePortalSubmission(id, updates = {}) {
+        const entries = Object.entries(updates).filter(([, v]) => v !== undefined);
+        if (entries.length === 0) return null;
+        const setClause = entries.map(([key], i) => `${key} = $${i + 2}`).join(', ');
+        const result = await this.query(
+            `UPDATE portal_submissions SET ${setClause} WHERE id = $1 RETURNING *`,
+            [id, ...entries.map(([, v]) => v)]
+        );
+        return result.rows[0];
+    }
+
+    async getPortalSubmissions(caseId, { limit = 20 } = {}) {
+        const result = await this.query(
+            `SELECT * FROM portal_submissions WHERE case_id = $1 ORDER BY started_at DESC LIMIT $2`,
+            [caseId, limit]
+        );
+        return result.rows;
+    }
+
+    // =========================================================================
     // Users
     // =========================================================================
 

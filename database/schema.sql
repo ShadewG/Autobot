@@ -92,6 +92,22 @@ CREATE TABLE IF NOT EXISTS email_events (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS portal_submissions (
+    id SERIAL PRIMARY KEY,
+    case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+    run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+    skyvern_task_id VARCHAR(255),
+    status VARCHAR(100) NOT NULL,
+    engine VARCHAR(100),
+    account_email VARCHAR(255),
+    screenshot_url TEXT,
+    recording_url TEXT,
+    extracted_data JSONB,
+    error_message TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
 -- Attachments
 CREATE TABLE IF NOT EXISTS attachments (
     id SERIAL PRIMARY KEY,

@@ -88,6 +88,20 @@ export const submitPortal = task({
       await db.logActivity("portal_submission_failed", `Portal timed out for case ${caseId}`, {
         case_id: caseId, error: String(error).substring(0, 500),
       });
+
+      // Update portal submission history row (find the latest started one for this case)
+      try {
+        await db.query(
+          `UPDATE portal_submissions
+           SET status = 'timed_out', error_message = $2, completed_at = NOW()
+           WHERE id = (
+             SELECT id FROM portal_submissions
+             WHERE case_id = $1 AND status = 'started'
+             ORDER BY started_at DESC LIMIT 1
+           )`,
+          [caseId, errorText.substring(0, 500)]
+        );
+      } catch {}
     } catch {}
   },
 
@@ -544,6 +558,21 @@ export const submitPortal = task({
       });
     }
 
+    // ── Record portal submission attempt ──
+    let submissionRow: any = null;
+    try {
+      submissionRow = await db.createPortalSubmission({
+        caseId,
+        runId: agentRunId || null,
+        skyvernTaskId: null, // filled after Skyvern returns
+        status: "started",
+        engine: provider || caseData.portal_provider || null,
+        accountEmail: portalAccount?.email || caseData.last_portal_account_email || null,
+      });
+    } catch (subErr: any) {
+      logger.warn("Failed to create portal_submissions row", { caseId, error: subErr?.message });
+    }
+
     // ── Call Skyvern ──
     const skyvern = getSkyvern();
     try {
@@ -681,6 +710,20 @@ export const submitPortal = task({
         },
       });
 
+      // Update portal submission history row
+      if (submissionRow?.id) {
+        try {
+          await db.updatePortalSubmission(submissionRow.id, {
+            status: "completed",
+            skyvern_task_id: result.taskId || result.runId || null,
+            screenshot_url: result.screenshot_url || null,
+            recording_url: result.recording_url || taskUrl,
+            extracted_data: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
+            completed_at: new Date(),
+          });
+        } catch {}
+      }
+
       // Portal-specific fields not part of the runtime (portal_url, portal_provider)
       await db.updateCasePortalStatus(caseId, {
         portal_url: targetUrl,
@@ -730,6 +773,17 @@ export const submitPortal = task({
     } catch (error: any) {
       trace.markOutcome("failed", { error: error.message });
       logger.error("Portal submission failed", { caseId, error: error.message });
+
+      // Update portal submission history row
+      if (submissionRow?.id) {
+        try {
+          await db.updatePortalSubmission(submissionRow.id, {
+            status: "failed",
+            error_message: error.message?.substring(0, 500) || null,
+            completed_at: new Date(),
+          });
+        } catch {}
+      }
 
       await db.logActivity("portal_submission_failed", `Portal submission failed: ${error.message}`, {
         case_id: caseId,
