@@ -9,6 +9,7 @@
  */
 
 import { task, logger } from "@trigger.dev/sdk";
+const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 
 // Lazy-load heavy services (same pattern as lib/db.ts)
 function lazy<T>(loader: () => T): () => T {
@@ -100,6 +101,27 @@ export const submitPortal = task({
   }) => {
     const { caseId, portalUrl, provider, instructions, portalTaskId, agentRunId } = payload;
     const db = getDb();
+    const trace = await createDecisionTraceTracker(db, {
+      taskType: "submit-portal",
+      runId: agentRunId || null,
+      caseId,
+      triggerType: "SUBMIT_PORTAL",
+      classification: {
+        classification: "SUBMIT_PORTAL",
+        source: "PORTAL_TASK",
+      },
+      routerOutput: {
+        actionType: "SUBMIT_PORTAL",
+        portalUrl,
+        provider: provider || null,
+      },
+      context: {
+        portalTaskId: portalTaskId || null,
+      },
+    });
+    const recordNode = (step: string, payload: Record<string, any> = {}) => {
+      trace?.recordNode(step, payload);
+    };
 
     const ensurePortalSubmissionMessage = async (
       latestCase: any,
@@ -216,20 +238,22 @@ export const submitPortal = task({
     };
 
     logger.info("submit-portal started", { caseId, portalUrl, portalTaskId, agentRunId });
+    recordNode("start", { portalUrl, provider: provider || null, portalTaskId: portalTaskId || null });
 
     const linkedProposalId = portalTaskId
       ? Number((await db.query("SELECT proposal_id FROM portal_tasks WHERE id = $1 LIMIT 1", [portalTaskId])).rows[0]?.proposal_id || 0) || undefined
       : undefined;
 
-    // Mark agent_run as running
-    if (agentRunId) {
-      try {
-        await db.query(
-          `UPDATE agent_runs SET status = 'running' WHERE id = $1 AND status IN ('created', 'queued')`,
-          [agentRunId]
-        );
-      } catch {}
-    }
+    try {
+      // Mark agent_run as running
+      if (agentRunId) {
+        try {
+          await db.query(
+            `UPDATE agent_runs SET status = 'running' WHERE id = $1 AND status IN ('created', 'queued')`,
+            [agentRunId]
+          );
+        } catch {}
+      }
 
     // ── Circuit breaker: check recent failures for this case ──
     const recentFailures = await db.query(
@@ -241,6 +265,8 @@ export const submitPortal = task({
     );
     const failCount = parseInt(recentFailures.rows[0]?.cnt || "0", 10);
     if (failCount >= MAX_RECENT_FAILURES) {
+      trace.setGateDecision({ reason: "circuit_breaker", recentFailures: failCount });
+      trace.markOutcome("skipped", { reason: "circuit_breaker", recentFailures: failCount });
       logger.warn("Circuit breaker: too many recent portal failures", {
         caseId, failCount, threshold: MAX_RECENT_FAILURES,
       });
@@ -268,6 +294,8 @@ export const submitPortal = task({
     const todayRuns = parseInt(portalRunCounts.rows[0]?.today || "0", 10);
     const totalRuns = parseInt(portalRunCounts.rows[0]?.total || "0", 10);
     if (todayRuns >= MAX_PORTAL_RUNS_PER_DAY || totalRuns >= MAX_PORTAL_RUNS_TOTAL) {
+      trace.setGateDecision({ reason: "hard_rate_limit", todayRuns, totalRuns });
+      trace.markOutcome("skipped", { reason: "hard_rate_limit", todayRuns, totalRuns });
       logger.error("HARD LIMIT: portal submission blocked — too many runs for this case", {
         caseId, todayRuns, totalRuns,
         dailyLimit: MAX_PORTAL_RUNS_PER_DAY, totalLimit: MAX_PORTAL_RUNS_TOTAL,
@@ -294,6 +322,7 @@ export const submitPortal = task({
     // ── Idempotency: skip if case already past submission stage ──
     const skipStatuses = ["sent", "awaiting_response", "responded", "completed", "needs_phone_call"];
     if (skipStatuses.includes(caseData.status)) {
+      trace.markOutcome("skipped", { reason: caseData.status });
       logger.info("Portal submission skipped — case already advanced", { caseId, status: caseData.status });
       await cancelPortalTask(`Case already advanced (${caseData.status})`);
       await closeAgentRun("completed");
@@ -308,6 +337,8 @@ export const submitPortal = task({
       providerLabel.includes("paper-only") ||
       providerLabel.includes("paper only");
     if (paperOnlyProvider) {
+      trace.setGateDecision({ reason: "provider_paper_only", provider: provider || caseData.portal_provider || null });
+      trace.markOutcome("skipped", { reason: "provider_paper_only" });
       logger.warn("Portal submission skipped — provider marked as paper-only", {
         caseId,
         provider: provider || caseData.portal_provider || null,
@@ -331,6 +362,7 @@ export const submitPortal = task({
     if (portalTaskId) {
       const taskCheck = await db.query("SELECT status FROM portal_tasks WHERE id = $1", [portalTaskId]);
       if (taskCheck.rows[0]?.status === "CANCELLED") {
+        trace.markOutcome("skipped", { reason: "task_cancelled" });
         logger.warn("Portal task was cancelled", { caseId, portalTaskId });
         await closeAgentRun("completed");
         return { success: false, skipped: true, reason: "task_cancelled" };
@@ -348,6 +380,7 @@ export const submitPortal = task({
       [caseId]
     );
     if (recentSuccess.rows.length > 0) {
+      trace.markOutcome("skipped", { reason: "recent_success" });
       logger.warn("Portal submission skipped — successful submission within last hour", { caseId });
       await cancelPortalTask("Recent successful portal submission detected");
       await closeAgentRun("completed");
@@ -424,6 +457,8 @@ export const submitPortal = task({
 
     const targetUrl = portalUrl || caseData.portal_url || primaryPortalUrl || discoveredPortalUrl;
     if (!targetUrl) {
+      trace.setGateDecision({ reason: "invalid_portal_url" });
+      trace.markOutcome("failed", { reason: "invalid_portal_url" });
       logger.warn("Portal submission skipped — missing portal URL", { caseId });
       await getCaseRuntime().transitionCaseRuntime(caseId, "PORTAL_ABORTED", {
         substatus: "No portal URL available for submission",
@@ -442,6 +477,12 @@ export const submitPortal = task({
     if (portalAccount) {
       const blockedStatuses = new Set(["locked", "inactive"]);
       if (blockedStatuses.has(portalAccount.account_status)) {
+        trace.setGateDecision({
+          reason: `portal_account_${portalAccount.account_status}`,
+          accountStatus: portalAccount.account_status,
+          accountEmail: portalAccount.email || null,
+        });
+        trace.markOutcome("failed", { reason: `portal_account_${portalAccount.account_status}` });
         logger.warn("Portal submission skipped — account not active", {
           caseId, targetUrl,
           accountId: portalAccount.id,
@@ -483,6 +524,12 @@ export const submitPortal = task({
       // Retry/manual portal tasks are human-initiated and should not require an additional proposal approval gate.
       bypassApprovalGate = actionType === "SUBMIT_VIA_PORTAL";
     }
+    trace.setRouterOutput({
+      actionType: "SUBMIT_PORTAL",
+      portalUrl: targetUrl,
+      provider: provider || caseData.portal_provider || null,
+      bypassApprovalGate,
+    });
 
     // ── Mark case as portal in progress ──
     if (caseData.status !== "sent") {
@@ -540,6 +587,11 @@ export const submitPortal = task({
 
         // Approval gate: proposal created, waiting for human — not a failure
         if (result?.needsApproval) {
+          trace.setGateDecision({
+            needsApproval: true,
+            reason: result.reason || null,
+          });
+          trace.markOutcome("blocked", { reason: result.reason || "needs_approval" });
           logger.info("Portal submission blocked — needs approval", { caseId, reason: result.reason });
           // Status already set to needs_human_review by the service; ensure portal_task is updated
           if (portalTaskId) {
@@ -553,6 +605,11 @@ export const submitPortal = task({
         }
         // PDF fallback / not-real-portal handled inside Skyvern service
         if (result?.status === "pdf_form_pending" || result?.status === "not_real_portal") {
+          trace.setGateDecision({
+            alternativePath: result.status,
+            reason: result.reason || null,
+          });
+          trace.markOutcome("failed", { reason: result.status });
           logger.info("Portal handled via alternative path", { caseId, status: result.status });
           // Mark provider as non-automatable so future "retry_portal" actions
           // fall back to email/research instead of looping portal attempts.
@@ -583,6 +640,7 @@ export const submitPortal = task({
 
       // ── Dedup skip: Skyvern service detected this was already submitted ──
       if (result.skipped) {
+        trace.markOutcome("skipped", { reason: result.reason || "dedup_skip" });
         logger.info("Portal submission was a dedup skip", { caseId, reason: result.reason });
         // Reset status from portal_in_progress if it was set
         if (caseData.status === "portal_in_progress") {
@@ -648,11 +706,29 @@ export const submitPortal = task({
         engine: engineUsed,
       });
 
+      trace.setGateDecision({
+        portalResult: summarizeExecutionResult({
+          success: result.success,
+          status: result.status || "submitted",
+          reason: result.reason || null,
+          portalTaskId: result.taskId || result.runId || null,
+          details: {
+            confirmationNumber: result.confirmationNumber || null,
+            engine: engineUsed,
+            taskUrl,
+          },
+        }),
+      });
+      trace.markOutcome("completed", {
+        success: true,
+        portalTaskId: result.taskId || result.runId || null,
+      });
       logger.info("Portal submission succeeded", { caseId, engine: engineUsed, taskUrl });
       await closeAgentRun("completed");
       return result;
 
     } catch (error: any) {
+      trace.markOutcome("failed", { error: error.message });
       logger.error("Portal submission failed", { caseId, error: error.message });
 
       await db.logActivity("portal_submission_failed", `Portal submission failed: ${error.message}`, {
@@ -676,6 +752,12 @@ export const submitPortal = task({
 
       // Don't re-throw — we've handled the failure. Retrying Skyvern is expensive.
       return { success: false, error: error.message };
+    }
+    } catch (error: any) {
+      trace?.markFailed(error, { taskType: "submit-portal" });
+      throw error;
+    } finally {
+      await trace?.complete();
     }
   },
 });

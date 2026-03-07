@@ -223,9 +223,9 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] This is critical for cost tracking and debugging model regressions
 
 #### Wire up `decision_traces` (table exists, never written to)
-- [ ] `decision_traces` table has columns for `classification`, `router_output`, `node_trace`, `gate_decision` — the DB helpers `createDecisionTrace` / `completeDecisionTrace` exist but are never called
-- [ ] Call `createDecisionTrace` at Trigger.dev task start, `completeDecisionTrace` at end, for all task types (inbound, initial, followup, portal)
-- [ ] This gives us the full decision audit trail we're missing
+- [x] `decision_traces` table has columns for `classification`, `router_output`, `node_trace`, `gate_decision` — the DB helpers `createDecisionTrace` / `completeDecisionTrace` exist but are never called
+- [x] Call `createDecisionTrace` at Trigger.dev task start, `completeDecisionTrace` at end, for all task types (inbound, initial, followup, portal)
+- [x] This gives us the full decision audit trail we're missing
 
 #### Capture email delivery events
 - [ ] Create `email_events` table: `message_id`, `event_type` (delivered/opened/bounced/dropped), `timestamp`, `raw_payload`

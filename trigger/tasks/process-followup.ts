@@ -20,6 +20,7 @@ import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, FollowupPayload, HumanDecision, ResearchContext } from "../lib/types";
 const proposalLifecycle = require("../../services/proposal-lifecycle");
+const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 
 async function waitForHumanDecision(
   idempotencyKey: string,
@@ -114,8 +115,10 @@ export const processFollowup = task({
       });
       runId = agentRun.id;
     }
+    let trace: any = null;
     const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
       try {
+        trace?.recordNode(step, { detail, ...extra });
         await db.updateAgentRunNodeProgress(runId, step);
         await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
           case_id: caseId,
@@ -128,154 +131,223 @@ export const processFollowup = task({
         // non-fatal
       }
     };
+    trace = await createDecisionTraceTracker(db, {
+      taskType: "process-followup",
+      runId,
+      caseId,
+      triggerType: "SCHEDULED_FOLLOWUP",
+      classification: {
+        classification: "NO_RESPONSE",
+        source: "SCHEDULED_FOLLOWUP",
+      },
+      context: {
+        followupScheduleId,
+      },
+    });
 
-    logger.info("process-followup started", { runId, caseId, followupScheduleId });
-    await markStep("start", `Run #${runId}: started scheduled follow-up`);
+    try {
+      logger.info("process-followup started", { runId, caseId, followupScheduleId });
+      await markStep("start", `Run #${runId}: started scheduled follow-up`);
 
-    // Step 1: Load context
-    await markStep("load_context", `Run #${runId}: loading follow-up context`);
-    const context = await loadContext(caseId, null);
+      // Step 1: Load context
+      await markStep("load_context", `Run #${runId}: loading follow-up context`);
+      const context = await loadContext(caseId, null);
 
-    // Step 2: Decide (classification = NO_RESPONSE for scheduled followups)
-    await markStep("decide_next_action", `Run #${runId}: deciding follow-up action`);
-    const decision = await decideNextAction(
-      caseId, "NO_RESPONSE", context.constraints,
-      null, "neutral", context.autopilotMode,
-      "SCHEDULED_FOLLOWUP", false, null, null, null, null
-    );
-
-    if (decision.isComplete || decision.actionType === "NONE") {
-      await commitState(
-        caseId, runId, decision.actionType, decision.reasoning,
-        1.0, "SCHEDULED_FOLLOWUP", false, null
+      // Step 2: Decide (classification = NO_RESPONSE for scheduled followups)
+      await markStep("decide_next_action", `Run #${runId}: deciding follow-up action`);
+      const decision = await decideNextAction(
+        caseId, "NO_RESPONSE", context.constraints,
+        null, "neutral", context.autopilotMode,
+        "SCHEDULED_FOLLOWUP", false, null, null, null, null
       );
-      await completeRun(caseId, runId);
-      return { status: "completed", action: "none" };
-    }
+      trace.setRouterOutput({
+        actionType: decision.actionType,
+        isComplete: decision.isComplete,
+        canAutoExecute: decision.canAutoExecute,
+        requiresHuman: decision.requiresHuman,
+        pauseReason: decision.pauseReason,
+        researchLevel: decision.researchLevel || null,
+        reasoning: decision.reasoning,
+      });
 
-    // Step 2b: Research context (lightweight for followups)
-    let research: ResearchContext = emptyResearchContext();
-    const followupResearchLevel = determineResearchLevel(
-      decision.actionType, "NO_RESPONSE", null,
-      decision.researchLevel, !!(context.caseData.contact_research_notes)
-    );
-    if (followupResearchLevel !== "none") {
-      await markStep("research_context", `Run #${runId}: running follow-up research`, { level: followupResearchLevel });
-      research = await researchContext(caseId, decision.actionType, "NO_RESPONSE", null, followupResearchLevel);
-    }
-
-    // Step 3: Draft follow-up
-    await markStep("draft_response", `Run #${runId}: drafting follow-up`, { action_type: decision.actionType });
-    const draft = await draftResponse(
-      caseId, decision.actionType, context.constraints, context.scopeItems,
-      null, decision.adjustmentInstruction, null,
-      research
-    );
-
-    // Step 4: Safety check
-    await markStep("safety_check", `Run #${runId}: safety checking follow-up draft`);
-    const safety = await safetyCheck(
-      draft.bodyText, draft.subject, decision.actionType,
-      context.constraints, context.scopeItems,
-      null, null
-    );
-
-    // Step 5: Gate
-    await markStep("gate", `Run #${runId}: creating proposal/gate for follow-up`);
-    const gate = await createProposalAndGate(
-      caseId, runId, decision.actionType,
-      null, draft, safety,
-      decision.canAutoExecute, decision.requiresHuman,
-      decision.pauseReason, decision.reasoning,
-      1.0, 0, null, draft.lessonsApplied
-    );
-
-    // Step 6: Wait if needed
-    if (gate.shouldWait && gate.waitpointTokenId) {
-      await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
-      await waitRun(caseId, runId);
-      const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
-
-      if (!result.ok) {
-        await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, { status: "EXPIRED" });
-        await completeRun(caseId, runId);
-        return { status: "timed_out", proposalId: gate.proposalId };
-      }
-
-      // Validate proposal is still actionable.
-      // If proposal was DISMISSED externally (e.g. resolve-review), exit cleanly.
-      const currentProposal = await db.getProposalById(gate.proposalId);
-      if (currentProposal?.status === "DISMISSED") {
-        logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: gate.proposalId });
-        await completeRun(caseId, runId);
-        return { status: "dismissed_externally", proposalId: gate.proposalId };
-      }
-      if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
-        throw new Error(
-          `Proposal ${gate.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
+      if (decision.isComplete || decision.actionType === "NONE") {
+        trace.markOutcome("completed", { action: "none", actionType: decision.actionType });
+        await commitState(
+          caseId, runId, decision.actionType, decision.reasoning,
+          1.0, "SCHEDULED_FOLLOWUP", false, null
         );
-      }
-
-      const humanDecision = result.output;
-      if (!humanDecision || !humanDecision.action) {
-        logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
-        throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);
-      }
-
-      if (humanDecision.action === "WITHDRAW") {
-        await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: gate.proposalId });
-        await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
-        await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
         await completeRun(caseId, runId);
-        return { status: "withdrawn", proposalId: gate.proposalId };
+        return { status: "completed", action: "none" };
       }
 
-      if (humanDecision.action !== "APPROVE") {
+      // Step 2b: Research context (lightweight for followups)
+      let research: ResearchContext = emptyResearchContext();
+      const followupResearchLevel = determineResearchLevel(
+        decision.actionType, "NO_RESPONSE", null,
+        decision.researchLevel, !!(context.caseData.contact_research_notes)
+      );
+      if (followupResearchLevel !== "none") {
+        await markStep("research_context", `Run #${runId}: running follow-up research`, { level: followupResearchLevel });
+        research = await researchContext(caseId, decision.actionType, "NO_RESPONSE", null, followupResearchLevel);
+      }
+
+      // Step 3: Draft follow-up
+      await markStep("draft_response", `Run #${runId}: drafting follow-up`, { action_type: decision.actionType });
+      const draft = await draftResponse(
+        caseId, decision.actionType, context.constraints, context.scopeItems,
+        null, decision.adjustmentInstruction, null,
+        research
+      );
+
+      // Step 4: Safety check
+      await markStep("safety_check", `Run #${runId}: safety checking follow-up draft`);
+      const safety = await safetyCheck(
+        draft.bodyText, draft.subject, decision.actionType,
+        context.constraints, context.scopeItems,
+        null, null
+      );
+
+      // Step 5: Gate
+      await markStep("gate", `Run #${runId}: creating proposal/gate for follow-up`);
+      const gate = await createProposalAndGate(
+        caseId, runId, decision.actionType,
+        null, draft, safety,
+        decision.canAutoExecute, decision.requiresHuman,
+        decision.pauseReason, decision.reasoning,
+        1.0, 0, null, draft.lessonsApplied
+      );
+      trace.setGateDecision({
+        proposalId: gate.proposalId,
+        actionType: decision.actionType,
+        shouldWait: gate.shouldWait,
+        hasWaitpointToken: !!gate.waitpointTokenId,
+        pauseReason: decision.pauseReason,
+      });
+
+      // Step 6: Wait if needed
+      if (gate.shouldWait && gate.waitpointTokenId) {
+        await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
+        await waitRun(caseId, runId);
+        const result = await waitForHumanDecision(gate.waitpointTokenId, gate.proposalId);
+
+        if (!result.ok) {
+          trace.setGateDecision({
+            proposalId: gate.proposalId,
+            humanDecision: { action: "EXPIRED" },
+          });
+          trace.markOutcome("timed_out", { proposalId: gate.proposalId });
+          await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, { status: "EXPIRED" });
+          await completeRun(caseId, runId);
+          return { status: "timed_out", proposalId: gate.proposalId };
+        }
+
+        // Validate proposal is still actionable.
+        // If proposal was DISMISSED externally (e.g. resolve-review), exit cleanly.
+        const currentProposal = await db.getProposalById(gate.proposalId);
+        if (currentProposal?.status === "DISMISSED") {
+          trace.setGateDecision({
+            proposalId: gate.proposalId,
+            humanDecision: { action: "DISMISSED_EXTERNALLY" },
+          });
+          trace.markOutcome("dismissed_externally", { proposalId: gate.proposalId });
+          logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: gate.proposalId });
+          await completeRun(caseId, runId);
+          return { status: "dismissed_externally", proposalId: gate.proposalId };
+        }
+        if (!["PENDING_APPROVAL", "DECISION_RECEIVED"].includes(currentProposal?.status)) {
+          throw new Error(
+            `Proposal ${gate.proposalId} is ${currentProposal?.status}, expected PENDING_APPROVAL or DECISION_RECEIVED`
+          );
+        }
+
+        const humanDecision = result.output;
+        if (!humanDecision || !humanDecision.action) {
+          logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
+          throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);
+        }
+
+        trace.setGateDecision({
+          proposalId: gate.proposalId,
+          humanDecision: {
+            action: humanDecision.action,
+            instruction: humanDecision.instruction || null,
+          },
+        });
+
+        if (humanDecision.action === "WITHDRAW") {
+          trace.markOutcome("withdrawn", { proposalId: gate.proposalId });
+          await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: gate.proposalId });
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
+          await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
+          await completeRun(caseId, runId);
+          return { status: "withdrawn", proposalId: gate.proposalId };
+        }
+
+        if (humanDecision.action !== "APPROVE") {
+          trace.markOutcome("dismissed", { proposalId: gate.proposalId });
+          await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
+            status: "DISMISSED",
+            humanDecision,
+          });
+          await reconcileCaseAfterDismiss(caseId);
+          await completeRun(caseId, runId);
+          return { status: "dismissed", proposalId: gate.proposalId };
+        }
+
         await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
-          status: "DISMISSED",
+          status: "APPROVED",
           humanDecision,
         });
-        await reconcileCaseAfterDismiss(caseId);
-        await completeRun(caseId, runId);
-        return { status: "dismissed", proposalId: gate.proposalId };
       }
 
-      await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
-        status: "APPROVED",
-        humanDecision,
-      });
-    }
-
-    // Step 7: Execute
-    const currentProposal = await db.getProposalById(gate.proposalId);
-    const executionActionType = (currentProposal?.action_type || decision.actionType) as ActionType;
-    if (executionActionType !== decision.actionType) {
-      logger.warn("Follow-up execution action diverged from decision; using proposal action", {
-        caseId,
+      // Step 7: Execute
+      const currentProposal = await db.getProposalById(gate.proposalId);
+      const executionActionType = (currentProposal?.action_type || decision.actionType) as ActionType;
+      if (executionActionType !== decision.actionType) {
+        logger.warn("Follow-up execution action diverged from decision; using proposal action", {
+          caseId,
+          proposalId: gate.proposalId,
+          decisionAction: decision.actionType,
+          proposalAction: executionActionType,
+        });
+      }
+      await markStep("execute_action", `Run #${runId}: executing follow-up action`, { action_type: executionActionType });
+      const execution = await executeAction(
+        caseId, gate.proposalId, executionActionType, runId,
+        draft, null, decision.reasoning
+      );
+      trace.setGateDecision({
         proposalId: gate.proposalId,
-        decisionAction: decision.actionType,
-        proposalAction: executionActionType,
+        execution: {
+          actionExecuted: execution.actionExecuted,
+          result: summarizeExecutionResult(execution.executionResult),
+        },
       });
+
+      // Step 8: Commit
+      await markStep("commit_state", `Run #${runId}: committing follow-up state`);
+      await commitState(
+        caseId, runId, executionActionType, decision.reasoning,
+        1.0, "SCHEDULED_FOLLOWUP", execution.actionExecuted, execution.executionResult
+      );
+
+      trace.markOutcome("completed", {
+        proposalId: gate.proposalId,
+        actionType: executionActionType,
+        executed: execution.actionExecuted,
+      });
+      await completeRun(caseId, runId);
+      return {
+        status: "completed",
+        proposalId: gate.proposalId,
+        actionType: executionActionType,
+        executed: execution.actionExecuted,
+      };
+    } catch (error: any) {
+      trace?.markFailed(error, { taskType: "process-followup" });
+      throw error;
+    } finally {
+      await trace?.complete();
     }
-    await markStep("execute_action", `Run #${runId}: executing follow-up action`, { action_type: executionActionType });
-    const execution = await executeAction(
-      caseId, gate.proposalId, executionActionType, runId,
-      draft, null, decision.reasoning
-    );
-
-    // Step 8: Commit
-    await markStep("commit_state", `Run #${runId}: committing follow-up state`);
-    await commitState(
-      caseId, runId, executionActionType, decision.reasoning,
-      1.0, "SCHEDULED_FOLLOWUP", execution.actionExecuted, execution.executionResult
-    );
-
-    await completeRun(caseId, runId);
-    return {
-      status: "completed",
-      proposalId: gate.proposalId,
-      actionType: executionActionType,
-      executed: execution.actionExecuted,
-    };
   },
 });

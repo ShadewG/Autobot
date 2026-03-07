@@ -22,6 +22,7 @@ import db, { logger, attachmentProcessor, caseRuntime, completeRun, waitRun } fr
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { HumanDecision, InboundPayload, ResearchContext, ChainAction, ActionType } from "../lib/types";
 const proposalLifecycle = require("../../services/proposal-lifecycle");
+const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SUBMIT_PORTAL", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
@@ -138,8 +139,10 @@ export const processInbound = task({
       });
       runId = agentRun.id;
     }
+    let trace: any = null;
     const markStep = async (step: string, detail?: string, extra: Record<string, any> = {}) => {
       try {
+        trace?.recordNode(step, { detail, ...extra });
         await db.updateAgentRunNodeProgress(runId, step);
         await db.logActivity("agent_run_step", detail || `Run #${runId}: ${step}`, {
           case_id: caseId,
@@ -152,8 +155,22 @@ export const processInbound = task({
         // non-fatal: live step telemetry should not break the run
       }
     };
+    trace = await createDecisionTraceTracker(db, {
+      taskType: "process-inbound",
+      runId,
+      caseId,
+      messageId,
+      triggerType: triggerType || "INBOUND_MESSAGE",
+      context: {
+        autopilotMode,
+        reviewAction: reviewAction || null,
+        originalActionType: originalActionType || null,
+        originalProposalId: originalProposalId || null,
+      },
+    });
 
-    const runAdjustedDraftLoop = async ({
+    try {
+      const runAdjustedDraftLoop = async ({
       actionType,
       constraints,
       scopeItems,
@@ -185,7 +202,7 @@ export const processInbound = task({
       jurisdictionLevel: any;
       state: string | null | undefined;
       startingAdjustmentCount?: number;
-    }): Promise<
+      }): Promise<
       | { status: "timed_out" | "dismissed" | "withdrawn"; proposalId: number }
       | {
           status: "approved";
@@ -194,7 +211,7 @@ export const processInbound = task({
           reasoning: string[];
           actionType: ActionType;
         }
-    > => {
+      > => {
       let instruction = baseInstruction || null;
       let researchForLoop = baseResearch;
       let adjustmentCount = startingAdjustmentCount;
@@ -253,6 +270,13 @@ export const processInbound = task({
           null,
           adjustedDraft.lessonsApplied
         );
+        trace.setGateDecision({
+          proposalId: adjustedGate.proposalId,
+          actionType,
+          shouldWait: adjustedGate.shouldWait,
+          hasWaitpointToken: !!adjustedGate.waitpointTokenId,
+          adjustmentCount,
+        });
 
         if (!adjustedGate.shouldWait || !adjustedGate.waitpointTokenId) {
           return {
@@ -272,11 +296,22 @@ export const processInbound = task({
         const adjustResult = await waitForHumanDecision(adjustedGate.waitpointTokenId, adjustedGate.proposalId);
 
         if (!adjustResult.ok) {
+          trace.setGateDecision({
+            proposalId: adjustedGate.proposalId,
+            humanDecision: { action: "EXPIRED" },
+          });
           await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, { status: "EXPIRED" });
           return { status: "timed_out", proposalId: adjustedGate.proposalId };
         }
 
         const humanDecision = adjustResult.output;
+        trace.setGateDecision({
+          proposalId: adjustedGate.proposalId,
+          humanDecision: {
+            action: humanDecision.action,
+            instruction: humanDecision.instruction || null,
+          },
+        });
 
         if (humanDecision.action === "DISMISS") {
           await proposalLifecycle.applyHumanReviewDecision(adjustedGate.proposalId, {
@@ -334,7 +369,7 @@ export const processInbound = task({
           actionType,
         };
       }
-    };
+      };
 
     logger.info("process-inbound started", { runId, caseId, messageId, autopilotMode, triggerType });
     await markStep("start", `Run #${runId}: started process-inbound`, { trigger_type: triggerType || "INBOUND_MESSAGE" });
@@ -501,6 +536,19 @@ export const processInbound = task({
         classification.requiresResponse = true;
       }
     }
+    trace.setClassification({
+      rawClassification: classification.classification,
+      effectiveClassification,
+      confidence: classification.confidence,
+      sentiment: classification.sentiment,
+      requiresResponse: classification.requiresResponse,
+      denialSubtype: classification.denialSubtype || null,
+      portalUrl: classification.portalUrl || null,
+      suggestedAction: classification.suggestedAction || null,
+      reasonNoResponse: classification.reasonNoResponse || null,
+      extractedFeeAmount: classification.extractedFeeAmount ?? null,
+      jurisdictionLevel: classification.jurisdiction_level || null,
+    });
 
     // Step 3: Update constraints (uses effective classification, not raw)
     await markStep("update_constraints", `Run #${runId}: updating constraints/scope from classification`);
@@ -522,6 +570,17 @@ export const processInbound = task({
       reviewAction || undefined, reviewInstruction || undefined, undefined,
       classification.jurisdiction_level
     );
+    trace.setRouterOutput({
+      actionType: decision.actionType,
+      followUpAction: decision.followUpAction || null,
+      isComplete: decision.isComplete,
+      canAutoExecute: decision.canAutoExecute,
+      requiresHuman: decision.requiresHuman,
+      pauseReason: decision.pauseReason,
+      researchLevel: decision.researchLevel || null,
+      reasoning: decision.reasoning,
+      triggerType: effectiveTriggerType,
+    });
 
     // If no action needed, commit and return — but detect decision spin
     if (decision.isComplete || decision.actionType === "NONE") {
@@ -550,12 +609,18 @@ export const processInbound = task({
             `${noneDecisions} consecutive NONE decisions in 24h — escalated to human review`,
             { case_id: caseId }
           );
+          trace.markOutcome("escalated", {
+            actionType: decision.actionType,
+            reason: "decision_spin_detected",
+            noneDecisions,
+          });
           await completeRun(caseId, runId);
           return { status: "escalated", action: "none", reasoning: [...decision.reasoning, "Decision spin detected — escalated to human review"] };
         }
       }
 
       await markStep("commit_state", `Run #${runId}: no-action path, committing state`);
+      trace.markOutcome("completed", { action: "none", actionType: decision.actionType });
       await commitState(
         caseId, runId, decision.actionType, decision.reasoning,
         classification.confidence, "INBOUND_MESSAGE", false, null
@@ -664,6 +729,15 @@ export const processInbound = task({
       draft.lessonsApplied, decision.gateOptions,
       chainActions
     );
+    trace.setGateDecision({
+      proposalId: gate.proposalId,
+      actionType: decision.actionType,
+      shouldWait: gate.shouldWait,
+      hasWaitpointToken: !!gate.waitpointTokenId,
+      pauseReason: decision.pauseReason,
+      chainId: gate.chainId || null,
+      gateOptions: decision.gateOptions || null,
+    });
 
     // Step 8: If human gate, wait for approval
     if (gate.shouldWait && gate.waitpointTokenId) {
@@ -677,6 +751,11 @@ export const processInbound = task({
 
       // Timeout: auto-escalate
       if (!result.ok) {
+        trace.setGateDecision({
+          proposalId: gate.proposalId,
+          humanDecision: { action: "EXPIRED" },
+        });
+        trace.markOutcome("timed_out", { proposalId: gate.proposalId });
         await db.upsertEscalation({
           caseId,
           reason: "Proposal timed out after 30 days without human action",
@@ -696,6 +775,13 @@ export const processInbound = task({
         logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
         throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);
       }
+      trace.setGateDecision({
+        proposalId: gate.proposalId,
+        humanDecision: {
+          action: humanDecision.action,
+          instruction: humanDecision.instruction || null,
+        },
+      });
       logger.info("Human decision received", { caseId, action: humanDecision.action });
 
       // Compare-and-swap: validate proposal is still actionable.
@@ -723,10 +809,12 @@ export const processInbound = task({
           missingReason,
           resetEventId: recentReset.rows[0]?.id || null,
         });
+        trace.markOutcome(missingReason, { proposalId: gate.proposalId });
         await completeRun(caseId, runId);
         return { status: missingReason, proposalId: gate.proposalId };
       }
       if (currentProposal.status === "DISMISSED") {
+        trace.markOutcome("dismissed_externally", { proposalId: gate.proposalId });
         logger.info("Proposal was dismissed externally, exiting cleanly", { caseId, proposalId: gate.proposalId });
         await completeRun(caseId, runId);
         return { status: "dismissed_externally", proposalId: gate.proposalId };
@@ -744,6 +832,9 @@ export const processInbound = task({
           proposalId: gate.proposalId,
           proposalStatus: currentProposal.status,
         });
+        trace.markOutcome(`proposal_not_actionable_${String(currentProposal.status || "").toLowerCase()}`, {
+          proposalId: gate.proposalId,
+        });
         await completeRun(caseId, runId);
         return {
           status: `proposal_not_actionable_${String(currentProposal.status || "").toLowerCase()}`,
@@ -757,6 +848,7 @@ export const processInbound = task({
       }
 
       if (humanDecision.action === "DISMISS") {
+        trace.markOutcome("dismissed", { proposalId: gate.proposalId });
         await proposalLifecycle.applyHumanReviewDecision(gate.proposalId, {
           status: "DISMISSED",
           humanDecision,
@@ -776,6 +868,7 @@ export const processInbound = task({
       }
 
       if (humanDecision.action === "WITHDRAW") {
+        trace.markOutcome("withdrawn", { proposalId: gate.proposalId });
         await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_WITHDRAWN", { proposalId: gate.proposalId });
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_CANCELLED", { substatus: "withdrawn_by_user" });
         await db.updateCase(caseId, { outcome_type: "withdrawn", outcome_recorded: true });
@@ -809,6 +902,7 @@ export const processInbound = task({
         });
 
         if (adjustedOutcome.status !== "approved") {
+          trace.markOutcome(adjustedOutcome.status, { proposalId: adjustedOutcome.proposalId });
           await completeRun(caseId, runId);
           return adjustedOutcome;
         }
@@ -827,6 +921,13 @@ export const processInbound = task({
           undefined, undefined,
           classification.classification
         );
+        trace.setGateDecision({
+          proposalId: adjustedOutcome.proposalId,
+          execution: {
+            actionExecuted: adjustedExecution.actionExecuted,
+            result: summarizeExecutionResult(adjustedExecution.executionResult),
+          },
+        });
         await markStep("commit_state", `Run #${runId}: committing adjusted approved action state`);
         await commitState(
           caseId, runId, adjustedExecutionActionType, adjustedOutcome.reasoning,
@@ -838,6 +939,11 @@ export const processInbound = task({
         } catch (err: any) {
           logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
         }
+        trace.markOutcome("completed", {
+          proposalId: adjustedOutcome.proposalId,
+          actionType: adjustedExecutionActionType,
+          executed: adjustedExecution.actionExecuted,
+        });
         return { status: "completed", proposalId: adjustedOutcome.proposalId };
       }
       // APPROVE falls through to execute
@@ -868,6 +974,13 @@ export const processInbound = task({
       executionDraft.researchContactResult, executionDraft.researchBrief,
       classification.classification
     );
+    trace.setGateDecision({
+      proposalId: gate.proposalId,
+      execution: {
+        actionExecuted: execution.actionExecuted,
+        result: summarizeExecutionResult(execution.executionResult),
+      },
+    });
 
     // Step 9b: Execute chain follow-ups sequentially
     // NOTE: chainDrafts (a Map) may be empty after a Trigger.dev checkpoint restore.
@@ -980,6 +1093,12 @@ export const processInbound = task({
     } catch (err: any) {
       logger.warn("completeRun failed (non-fatal)", { caseId, runId, error: err.message });
     }
+    trace.markOutcome("completed", {
+      proposalId: gate.proposalId,
+      actionType: executionActionType,
+      executed: execution.actionExecuted,
+      chainId: gate.chainId || null,
+    });
     return {
       status: "completed",
       proposalId: gate.proposalId,
@@ -987,5 +1106,11 @@ export const processInbound = task({
       executed: execution.actionExecuted,
       chainId: gate.chainId || undefined,
     };
+    } catch (error: any) {
+      trace?.markFailed(error, { taskType: "process-inbound" });
+      throw error;
+    } finally {
+      await trace?.complete();
+    }
   },
 });
