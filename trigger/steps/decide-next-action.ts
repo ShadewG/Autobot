@@ -21,6 +21,8 @@ import type {
 } from "../lib/types";
 // @ts-ignore
 const { detectCaseMetadataAgencyMismatch } = require("../../utils/request-normalization");
+// @ts-ignore
+const { buildModelMetadata } = require("../../utils/ai-model-metadata");
 
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || "100");
 const FEE_NEGOTIATE_THRESHOLD = parseFloat(process.env.FEE_NEGOTIATE_THRESHOLD || "500");
@@ -753,13 +755,15 @@ async function makeAIDecisionV2(params: {
         ? `\n\nPREVIOUS ATTEMPT FAILED: ${lastError}\nFix the issue and try again. You MUST choose from the ALLOWED ACTIONS list.`
         : "";
 
-      const { object } = await generateObject({
+      const startedAt = Date.now();
+      const { object, usage, response } = await generateObject({
         model: decisionModel,
         schema: decisionSchema,
         prompt: prompt + repairHint,
         providerOptions: decisionOptions,
         experimental_telemetry: telemetry,
       });
+      const modelMetadata = buildModelMetadata({ response, usage, startedAt });
 
       // Validate structure
       const validation = validateStructureV2(object, allowedActions, extractedFeeAmount, autopilotMode);
@@ -837,6 +841,7 @@ async function makeAIDecisionV2(params: {
         researchLevel: (object as any).researchLevel || "none",
         overrideMessageId: (object as any).overrideMessageId || undefined,
         followUpAction: validatedFollowUp,
+        modelMetadata,
       });
     } catch (error: any) {
       lastError = error.message;
@@ -978,6 +983,7 @@ function decision(
     adjustmentInstruction: null,
     isComplete: false,
     researchLevel: "none",
+    modelMetadata: null,
     ...overrides,
   };
 }
@@ -1520,13 +1526,15 @@ async function aiDecision(params: {
       latestAnalysis,
     });
 
-    const { object } = await generateObject({
+    const startedAt = Date.now();
+    const { object, usage, response } = await generateObject({
       model: decisionModel,
       schema: decisionSchema,
       prompt,
       providerOptions: decisionOptions,
       experimental_telemetry: telemetry,
     });
+    const modelMetadata = buildModelMetadata({ response, usage, startedAt });
 
     const validation = await validateDecision(object, {
       caseId: params.caseId,
@@ -1606,6 +1614,7 @@ async function aiDecision(params: {
       isComplete: object.action === "NONE",
       researchLevel: (object as any).researchLevel || "none",
       followUpAction: validatedFollowUp,
+      modelMetadata,
     });
   } catch (error: any) {
     logger.warn("AI decision failed; using deterministic fallback", {

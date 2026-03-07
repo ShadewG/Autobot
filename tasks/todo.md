@@ -217,10 +217,10 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] Add `human_edited: boolean` flag on proposals — set true when draft differs from original at approval time
 
 #### Capture AI model metadata
-- [ ] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` columns to `response_analysis` table (for classify step)
-- [ ] Add same columns to `proposals` table (for decide + draft steps)
-- [ ] Capture these from Vercel AI SDK `generateObject()` response — it returns `usage` and `response.modelId`, we just never store them
-- [ ] This is critical for cost tracking and debugging model regressions
+- [x] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` columns to `response_analysis` table (for classify step)
+- [x] Add same columns to `proposals` table (for decide + draft steps)
+- [x] Capture these from Vercel AI SDK `generateObject()` response — it returns `usage` and `response.modelId`, we just never store them
+- [x] This is critical for cost tracking and debugging model regressions
 
 #### Wire up `decision_traces` (table exists, never written to)
 - [ ] `decision_traces` table has columns for `classification`, `router_output`, `node_trace`, `gate_decision` — the DB helpers `createDecisionTrace` / `completeDecisionTrace` exist but are never called

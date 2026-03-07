@@ -12,6 +12,8 @@ import { classifyModel, classifyOptions, telemetry } from "../lib/ai";
 import { classificationSchema, type ClassificationOutput } from "../lib/schemas";
 import db, { aiService, logger } from "../lib/db";
 import type { ClassificationResult, CaseContext, Classification } from "../lib/types";
+// @ts-ignore
+const { buildModelMetadata } = require("../../utils/ai-model-metadata");
 
 export const CLASSIFICATION_MAP: Record<string, Classification> = {
   fee_request: "FEE_QUOTE",
@@ -422,8 +424,10 @@ export async function classifyInbound(
 
   // === Vercel AI SDK: generateObject with Zod schema ===
   let aiResult: ClassificationOutput;
+  let modelMetadata: any = null;
   try {
-    const { object } = await generateObject({
+    const startedAt = Date.now();
+    const { object, usage, response } = await generateObject({
       model: classifyModel,
       schema: classificationSchema,
       prompt: buildClassificationPrompt(message, context.caseData, threadMessages, messageAttachments, enrichment),
@@ -431,6 +435,7 @@ export async function classifyInbound(
       experimental_telemetry: telemetry,
     });
     aiResult = object;
+    modelMetadata = buildModelMetadata({ response, usage, startedAt });
   } catch (aiError: any) {
     // Fallback to existing aiService if Vercel AI SDK fails
     logger.warn("Vercel AI SDK classification failed, falling back to aiService", {
@@ -503,6 +508,10 @@ export async function classifyInbound(
     suggestedAction: aiResult.suggested_action,
     portalUrl: aiResult.portal_url,
     fullAnalysisJson: aiResult,
+    modelId: modelMetadata?.modelId || null,
+    promptTokens: modelMetadata?.promptTokens ?? null,
+    completionTokens: modelMetadata?.completionTokens ?? null,
+    latencyMs: modelMetadata?.latencyMs ?? null,
   });
 
   // Log fee event
@@ -559,6 +568,7 @@ export async function classifyInbound(
     decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
     referralContact: (aiResult as any).referral_contact || null,
     keyPoints: aiResult.key_points || [],
+    modelMetadata,
   };
 }
 
@@ -573,8 +583,10 @@ export async function classifyMessageContent(
   attachments: any[] = []
 ): Promise<ClassificationResult> {
   let aiResult: ClassificationOutput;
+  let modelMetadata: any = null;
   try {
-    const { object } = await generateObject({
+    const startedAt = Date.now();
+    const { object, usage, response } = await generateObject({
       model: classifyModel,
       schema: classificationSchema,
       prompt: buildClassificationPrompt(message, caseData, priorMessages, attachments),
@@ -582,6 +594,7 @@ export async function classifyMessageContent(
       experimental_telemetry: telemetry,
     });
     aiResult = object;
+    modelMetadata = buildModelMetadata({ response, usage, startedAt });
   } catch (aiError: any) {
     logger.warn("classifyMessageContent: Vercel AI SDK failed, falling back to aiService", {
       error: aiError.message,
@@ -636,5 +649,6 @@ export async function classifyMessageContent(
     decision_evidence_quotes: (aiResult as any).decision_evidence_quotes || [],
     referralContact: (aiResult as any).referral_contact || null,
     keyPoints: aiResult.key_points || [],
+    modelMetadata,
   };
 }

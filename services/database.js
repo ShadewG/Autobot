@@ -835,8 +835,9 @@ class DatabaseService {
             INSERT INTO response_analysis (
                 message_id, case_id, intent, confidence_score, sentiment,
                 key_points, extracted_deadline, extracted_fee_amount,
-                requires_action, suggested_action, full_analysis_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                requires_action, suggested_action, full_analysis_json,
+                model_id, prompt_tokens, completion_tokens, latency_ms
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
             ON CONFLICT (message_id) DO UPDATE SET
                 intent = COALESCE(EXCLUDED.intent, response_analysis.intent),
                 confidence_score = COALESCE(EXCLUDED.confidence_score, response_analysis.confidence_score),
@@ -847,6 +848,10 @@ class DatabaseService {
                 requires_action = COALESCE(EXCLUDED.requires_action, response_analysis.requires_action),
                 suggested_action = COALESCE(EXCLUDED.suggested_action, response_analysis.suggested_action),
                 full_analysis_json = COALESCE(EXCLUDED.full_analysis_json, response_analysis.full_analysis_json),
+                model_id = COALESCE(EXCLUDED.model_id, response_analysis.model_id),
+                prompt_tokens = COALESCE(EXCLUDED.prompt_tokens, response_analysis.prompt_tokens),
+                completion_tokens = COALESCE(EXCLUDED.completion_tokens, response_analysis.completion_tokens),
+                latency_ms = COALESCE(EXCLUDED.latency_ms, response_analysis.latency_ms),
                 updated_at = NOW()
             RETURNING *
         `;
@@ -861,7 +866,11 @@ class DatabaseService {
             analysisData.extracted_fee_amount,
             analysisData.requires_action,
             analysisData.suggested_action,
-            analysisData.full_analysis_json
+            analysisData.full_analysis_json,
+            analysisData.model_id || null,
+            analysisData.prompt_tokens ?? null,
+            analysisData.completion_tokens ?? null,
+            analysisData.latency_ms ?? null
         ];
         const result = await this.query(query, values);
         return result.rows[0];
@@ -1938,12 +1947,14 @@ class DatabaseService {
                 proposal_key, case_id, run_id, trigger_message_id, action_type,
                 draft_subject, draft_body_text, draft_body_html,
                 original_draft_subject, original_draft_body_text, human_edited,
+                decision_model_id, decision_prompt_tokens, decision_completion_tokens, decision_latency_ms,
+                draft_model_id, draft_prompt_tokens, draft_completion_tokens, draft_latency_ms,
                 reasoning, confidence, risk_flags, warnings,
                 can_auto_execute, requires_human, status,
                 langgraph_thread_id, adjustment_count, lessons_applied,
                 gate_options,
                 action_chain, chain_id, chain_step
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update when existing row is PENDING_APPROVAL, or system-DISMISSED
                 -- (auto-superseded, no human_decision). Human-dismissed proposals must
@@ -1983,6 +1994,54 @@ class DatabaseService {
                 original_draft_subject = COALESCE(proposals.original_draft_subject, EXCLUDED.original_draft_subject),
                 original_draft_body_text = COALESCE(proposals.original_draft_body_text, EXCLUDED.original_draft_body_text),
                 human_edited = COALESCE(proposals.human_edited, false),
+                decision_model_id = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.decision_model_id, proposals.decision_model_id)
+                    ELSE proposals.decision_model_id
+                END,
+                decision_prompt_tokens = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.decision_prompt_tokens, proposals.decision_prompt_tokens)
+                    ELSE proposals.decision_prompt_tokens
+                END,
+                decision_completion_tokens = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.decision_completion_tokens, proposals.decision_completion_tokens)
+                    ELSE proposals.decision_completion_tokens
+                END,
+                decision_latency_ms = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.decision_latency_ms, proposals.decision_latency_ms)
+                    ELSE proposals.decision_latency_ms
+                END,
+                draft_model_id = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.draft_model_id, proposals.draft_model_id)
+                    ELSE proposals.draft_model_id
+                END,
+                draft_prompt_tokens = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.draft_prompt_tokens, proposals.draft_prompt_tokens)
+                    ELSE proposals.draft_prompt_tokens
+                END,
+                draft_completion_tokens = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.draft_completion_tokens, proposals.draft_completion_tokens)
+                    ELSE proposals.draft_completion_tokens
+                END,
+                draft_latency_ms = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.draft_latency_ms, proposals.draft_latency_ms)
+                    ELSE proposals.draft_latency_ms
+                END,
                 reasoning = CASE
                     WHEN proposals.status = 'PENDING_APPROVAL'
                       OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
@@ -2093,6 +2152,14 @@ class DatabaseService {
             originalDraftFields.originalDraftSubject,
             originalDraftFields.originalDraftBodyText,
             originalDraftFields.humanEdited,
+            proposalData.decisionModelId || null,
+            proposalData.decisionPromptTokens ?? null,
+            proposalData.decisionCompletionTokens ?? null,
+            proposalData.decisionLatencyMs ?? null,
+            proposalData.draftModelId || null,
+            proposalData.draftPromptTokens ?? null,
+            proposalData.draftCompletionTokens ?? null,
+            proposalData.draftLatencyMs ?? null,
             reasoningJson,
             proposalData.confidence || 0.8,
             proposalData.riskFlags || [],
@@ -2247,7 +2314,19 @@ class DatabaseService {
             adjustmentCount: 'adjustment_count',
             originalDraftSubject: 'original_draft_subject',
             originalDraftBodyText: 'original_draft_body_text',
-            humanEdited: 'human_edited'
+            humanEdited: 'human_edited',
+            decisionModelId: 'decision_model_id',
+            decisionPromptTokens: 'decision_prompt_tokens',
+            decisionCompletionTokens: 'decision_completion_tokens',
+            decisionLatencyMs: 'decision_latency_ms',
+            draftModelId: 'draft_model_id',
+            draftPromptTokens: 'draft_prompt_tokens',
+            draftCompletionTokens: 'draft_completion_tokens',
+            draftLatencyMs: 'draft_latency_ms',
+            modelId: 'model_id',
+            promptTokens: 'prompt_tokens',
+            completionTokens: 'completion_tokens',
+            latencyMs: 'latency_ms'
         };
 
         const entries = Object.entries(updates)
@@ -3227,7 +3306,11 @@ class DatabaseService {
             extracted_fee_amount: analysisData.extractedFeeAmount,
             requires_action: analysisData.requiresAction,
             suggested_action: analysisData.suggestedAction,
-            full_analysis_json: analysisData.fullAnalysisJson
+            full_analysis_json: analysisData.fullAnalysisJson,
+            model_id: analysisData.modelId || null,
+            prompt_tokens: analysisData.promptTokens ?? null,
+            completion_tokens: analysisData.completionTokens ?? null,
+            latency_ms: analysisData.latencyMs ?? null
         });
     }
 

@@ -113,15 +113,23 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
                 draft_body_html = $3,
                 original_draft_subject = COALESCE(original_draft_subject, $4),
                 original_draft_body_text = COALESCE(original_draft_body_text, $5),
+                draft_model_id = COALESCE($6, draft_model_id),
+                draft_prompt_tokens = COALESCE($7, draft_prompt_tokens),
+                draft_completion_tokens = COALESCE($8, draft_completion_tokens),
+                draft_latency_ms = COALESCE($9, draft_latency_ms),
                 human_edited = COALESCE(human_edited, false),
                 updated_at = NOW()
-            WHERE id = $6
+            WHERE id = $10
         `, [
             draft.subject || null,
             draft.body_text || null,
             draft.body_html || null,
             originalDraftFields.originalDraftSubject,
             originalDraftFields.originalDraftBodyText,
+            draft.modelMetadata?.modelId || null,
+            draft.modelMetadata?.promptTokens ?? null,
+            draft.modelMetadata?.completionTokens ?? null,
+            draft.modelMetadata?.latencyMs ?? null,
             proposalId
         ]);
 

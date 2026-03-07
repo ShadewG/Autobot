@@ -263,6 +263,7 @@ export async function draftResponse(
         attachment_id: pdfReply.attachmentId || null,
         source_attachment_id: pdfReply.sourceAttachmentId || null,
         source_filename: pdfReply.sourceFilename || null,
+        modelMetadata: null,
       };
       break;
     }
@@ -532,6 +533,7 @@ export async function draftResponse(
         subject: `Public Records Request - ${enrichedCaseData.subject_name || 'Records Request'}`,
         body_text: foiaText,
         body_html: null,
+        modelMetadata: foiaResult?.modelMetadata || null,
       };
       break;
     }
@@ -582,5 +584,6 @@ export async function draftResponse(
     bodyText: draft.body_text,
     bodyHtml: draft.body_html,
     lessonsApplied,
+    modelMetadata: draft.modelMetadata || null,
   };
 }

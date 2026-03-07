@@ -118,6 +118,10 @@ export async function draftInitialRequest(
     draftSubject: subject,
     draftBodyText: bodyText,
     draftBodyHtml: bodyHtml,
+    draftModelId: draftResult?.modelMetadata?.modelId || null,
+    draftPromptTokens: draftResult?.modelMetadata?.promptTokens ?? null,
+    draftCompletionTokens: draftResult?.modelMetadata?.completionTokens ?? null,
+    draftLatencyMs: draftResult?.modelMetadata?.latencyMs ?? null,
     reasoning,
     canAutoExecute,
     requiresHuman,
@@ -135,5 +139,6 @@ export async function draftInitialRequest(
     canAutoExecute: !!proposal.can_auto_execute,
     requiresHuman: !!proposal.requires_human,
     reasoning,
+    modelMetadata: draftResult?.modelMetadata || null,
   };
 }

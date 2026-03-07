@@ -5,6 +5,7 @@ const documentaryFOIAPrompts = require('../prompts/documentary-foia-prompts');
 const responseHandlingPrompts = require('../prompts/response-handling-prompts');
 const denialResponsePrompts = require('../prompts/denial-response-prompts');
 const adaptiveLearning = require('./adaptive-learning-service');
+const { buildModelMetadata } = require('../utils/ai-model-metadata');
 
 class AIService {
     constructor() {
@@ -22,25 +23,49 @@ class AIService {
      * Call OpenAI Responses API with Anthropic fallback.
      * Returns the output text string.
      */
-    async callAI(input, { effort = 'medium', maxTokens = 4000 } = {}) {
+    async callAI(input, { effort = 'medium', maxTokens = 4000, includeMetadata = false } = {}) {
         try {
             if (!this.openai) throw new Error('OPENAI_API_KEY not configured');
+            const startedAt = Date.now();
             const response = await this.openai.responses.create({
                 model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 reasoning: { effort },
                 text: { verbosity: 'medium' },
                 input,
             });
-            return response.output_text?.trim() || '';
+            const text = response.output_text?.trim() || '';
+            if (!includeMetadata) {
+                return text;
+            }
+            return {
+                text,
+                modelMetadata: buildModelMetadata({
+                    response,
+                    usage: response.usage,
+                    startedAt,
+                }),
+            };
         } catch (openaiError) {
             console.error('OpenAI failed, falling back to Anthropic:', openaiError.message);
             if (!this.anthropic) throw openaiError;
+            const startedAt = Date.now();
             const response = await this.anthropic.messages.create({
                 model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-6',
                 max_tokens: maxTokens,
                 messages: [{ role: 'user', content: input }],
             });
-            return response.content[0].text?.trim() || '';
+            const text = response.content[0].text?.trim() || '';
+            if (!includeMetadata) {
+                return text;
+            }
+            return {
+                text,
+                modelMetadata: buildModelMetadata({
+                    response,
+                    usage: response.usage,
+                    startedAt,
+                }),
+            };
         }
     }
 
@@ -275,6 +300,7 @@ class AIService {
 
             // Try GPT-5 first (latest and most capable for FOIA generation)
             try {
+                const startedAt = Date.now();
                 const response = await this.openai.chat.completions.create({
                     model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                     messages: [
@@ -336,7 +362,12 @@ class AIService {
                 return {
                     success: true,
                     request_text: requestText,
-                    model: modelUsed
+                    model: modelUsed,
+                    modelMetadata: buildModelMetadata({
+                        response,
+                        usage: response.usage,
+                        startedAt,
+                    }),
                 };
             } catch (openaiError) {
                 console.error('OpenAI failed, trying Claude:', openaiError.message);
@@ -359,6 +390,7 @@ class AIService {
         const userPrompt = this.buildFOIAUserPrompt(caseData, null, userSignature);
 
         const modelUsed = process.env.CLAUDE_MODEL || 'claude-3-7-sonnet-20250219';
+        const startedAt = Date.now();
         const response = await this.anthropic.messages.create({
             model: modelUsed,
             max_tokens: 2000,
@@ -388,7 +420,12 @@ class AIService {
         return {
             success: true,
             request_text: requestText,
-            model: modelUsed
+            model: modelUsed,
+            modelMetadata: buildModelMetadata({
+                response,
+                usage: response.usage,
+                startedAt,
+            }),
         };
     }
 
@@ -1046,10 +1083,11 @@ ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researche
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 Return ONLY the email body text, no subject line.`;
 
-            const rebuttalText = await this.callAI(
+            const rebuttalResult = await this.callAI(
                 `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`,
-                { effort: 'medium' }
+                { effort: 'medium', includeMetadata: true }
             );
+            const rebuttalText = rebuttalResult.text;
             const normalizedRebuttalText = this.normalizeGeneratedDraftSignature(rebuttalText, userSignature, { includeEmail: false, includeAddress: false });
 
             console.log(`✅ Generated ${denialSubtype} rebuttal (${normalizedRebuttalText.length} chars) with GPT-5`);
@@ -1065,7 +1103,8 @@ Return ONLY the email body text, no subject line.`;
                 should_auto_reply: true,
                 confidence: 0.85, // High confidence for strategic rebuttals
                 denial_subtype: denialSubtype,
-                is_denial_rebuttal: true
+                is_denial_rebuttal: true,
+                modelMetadata: rebuttalResult.modelMetadata,
             };
         } catch (error) {
             console.error('Error generating denial rebuttal:', error);
@@ -1219,10 +1258,11 @@ ${followUpCount > 0 ? '6. Note this is a follow-up and we\'re still awaiting res
 ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text.`;
 
-            const bodyText = await this.callAI(
+            const followupResult = await this.callAI(
                 `${responseHandlingPrompts.followUpSystemPrompt}\n\n${prompt}`,
-                { effort: 'medium' }
+                { effort: 'medium', includeMetadata: true }
             );
+            const bodyText = followupResult.text;
             const userSignature = await this.getUserSignatureForCase(caseData);
             const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
 
@@ -1230,7 +1270,8 @@ Return ONLY the email body text.`;
             return {
                 subject: `Follow-up: Public Records Request - ${caseData.subject_name || 'Request'}`,
                 body_text: normalizedBodyText,
-                body_html: null
+                body_html: null,
+                modelMetadata: followupResult.modelMetadata,
             };
         } catch (error) {
             console.error('Error generating follow-up:', error);
@@ -1333,10 +1374,11 @@ Email requirements:
 Return ONLY the email body, no greetings beyond what belongs in the email.`;
 
         try {
-            const bodyText = await this.callAI(
+            const feeResult = await this.callAI(
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
-                { effort: 'medium' }
+                { effort: 'medium', includeMetadata: true }
             );
+            const bodyText = feeResult.text;
             const userSignature = await this.getUserSignatureForCase(caseData);
             const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
 
@@ -1347,7 +1389,8 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
                 body_html: null,
                 // Metadata
                 model: 'gpt-5.2-2025-12-11',
-                recommended_action: recommendedAction
+                recommended_action: recommendedAction,
+                modelMetadata: feeResult.modelMetadata,
             };
         } catch (error) {
             console.error('Error generating fee response:', error);
@@ -1925,10 +1968,11 @@ Generate a professional, helpful response that:
 Return ONLY the email body text, no subject line or greetings beyond what belongs in the email.`;
 
         try {
-            const bodyText = await this.callAI(
+            const clarificationResult = await this.callAI(
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
-                { effort: 'medium' }
+                { effort: 'medium', includeMetadata: true }
             );
+            const bodyText = clarificationResult.text;
             let normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
             normalizedBodyText = this.sanitizeClarificationDraft(normalizedBodyText, userSignature);
             const subject = `RE: ${message.subject || caseData.case_name || 'Public Records Request'}`;
@@ -1937,7 +1981,8 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
                 subject: subject,
                 body_text: normalizedBodyText,
                 body_html: `<p>${normalizedBodyText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>`,
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11'
+                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+                modelMetadata: clarificationResult.modelMetadata,
             };
         } catch (error) {
             console.error('Error generating clarification response:', error);
@@ -1988,10 +2033,11 @@ ${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${a
 
 Generate a formal appeal letter under 300 words. Return ONLY the letter body, no subject line.`;
 
-            const bodyText = await this.callAI(
+            const appealResult = await this.callAI(
                 `${denialResponsePrompts.denialRebuttalSystemPrompt}\n\n${prompt}`,
-                { effort: 'medium' }
+                { effort: 'medium', includeMetadata: true }
             );
+            const bodyText = appealResult.text;
             const userSignature = await this.getUserSignatureForCase(caseData);
             const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
 
@@ -2000,7 +2046,8 @@ Generate a formal appeal letter under 300 words. Return ONLY the letter body, no
                 body_text: normalizedBodyText,
                 body_html: null,
                 is_appeal: true,
-                denial_subtype: denialSubtype
+                denial_subtype: denialSubtype,
+                modelMetadata: appealResult.modelMetadata,
             };
         } catch (error) {
             console.error('Error generating appeal letter:', error);
@@ -2264,6 +2311,7 @@ Return JSON:
 Return ONLY valid JSON.`;
 
         try {
+            const startedAt = Date.now();
             const response = await this.openai.responses.create({
                 model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'medium' },
@@ -2279,6 +2327,11 @@ Return ONLY valid JSON.`;
                 if (result.body_text) {
                     result.body_text = this.normalizeGeneratedDraftSignature(result.body_text, userSignature, { includeEmail: true, includeAddress: false });
                 }
+                result.modelMetadata = buildModelMetadata({
+                    response,
+                    usage: response.usage,
+                    startedAt,
+                });
                 return result;
             }
             throw new Error('Failed to parse reformulated request JSON');

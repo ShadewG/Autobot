@@ -148,6 +148,14 @@ export interface ClassificationResult {
   decision_evidence_quotes?: string[];
   referralContact?: ReferralContact | null;
   keyPoints?: string[];
+  modelMetadata?: AIModelMetadata | null;
+}
+
+export interface AIModelMetadata {
+  modelId: string | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  latencyMs: number | null;
 }
 
 export interface DecisionResult {
@@ -164,6 +172,7 @@ export interface DecisionResult {
   researchLevel?: ResearchLevel;
   // Optional follow-up action to execute after the primary (action chains)
   followUpAction?: ActionType;
+  modelMetadata?: AIModelMetadata | null;
 }
 
 export interface ChainAction {
@@ -178,6 +187,7 @@ export interface DraftResult {
   bodyText: string | null;
   bodyHtml: string | null;
   lessonsApplied: any[];
+  modelMetadata?: AIModelMetadata | null;
   researchContactResult?: any;
   researchBrief?: any;
   [key: string]: any;
