@@ -148,32 +148,21 @@ describe('Waitpoint approval fallback rollback', function () {
     const proposalLifecycleStub = createProposalLifecycleStub();
     const emailSendStub = sinon.stub().resolves({ success: false, error: 'smtp down' });
     const transitionCaseRuntimeStub = sinon.stub().resolves();
+    const proposalData = {
+      id: 1101,
+      case_id: 3301,
+      waitpoint_token: 'waitpoint_email',
+      action_type: 'SEND_INITIAL_REQUEST',
+      draft_subject: 'Draft subject',
+      draft_body_text: 'Draft body',
+      draft_body_html: '<p>Draft body</p>',
+      execution_key: null,
+      autopilot_mode: 'SUPERVISED',
+    };
     const dbStub = {
       getProposalById: sinon.stub()
-        .onFirstCall().resolves({
-          id: 1101,
-          case_id: 3301,
-          status: 'PENDING_APPROVAL',
-          waitpoint_token: 'waitpoint_email',
-          action_type: 'SEND_INITIAL_REQUEST',
-          draft_subject: 'Draft subject',
-          draft_body_text: 'Draft body',
-          draft_body_html: '<p>Draft body</p>',
-          execution_key: null,
-          autopilot_mode: 'SUPERVISED',
-        })
-        .onSecondCall().resolves({
-          id: 1101,
-          case_id: 3301,
-          status: 'DECISION_RECEIVED',
-          waitpoint_token: 'waitpoint_email',
-          action_type: 'SEND_INITIAL_REQUEST',
-          draft_subject: 'Draft subject',
-          draft_body_text: 'Draft body',
-          draft_body_html: '<p>Draft body</p>',
-          execution_key: null,
-          autopilot_mode: 'SUPERVISED',
-        }),
+        .onFirstCall().resolves({ ...proposalData, status: 'PENDING_APPROVAL' })
+        .callsFake(async () => ({ ...proposalData, status: 'DECISION_RECEIVED' })),
       getActiveRunForCase: sinon.stub().resolves({
         id: 4401,
         status: 'waiting',
@@ -186,6 +175,12 @@ describe('Waitpoint approval fallback rollback', function () {
       }),
       claimProposalExecution: sinon.stub().resolves(true),
       getLatestInboundMessage: sinon.stub().resolves(null),
+      getLatestResponseAnalysis: sinon.stub().resolves(null),
+      getThreadByCaseId: sinon.stub().resolves(null),
+      getThreadByCaseAgencyId: sinon.stub().resolves(null),
+      getMessagesByThreadId: sinon.stub().resolves([]),
+      getCaseAgencyById: sinon.stub().resolves(null),
+      updateProposal: sinon.stub().resolves(),
       query: sinon.stub().resolves({ rows: [] }),
       logActivity: sinon.stub().resolves(),
     };
@@ -237,32 +232,21 @@ describe('Waitpoint approval fallback rollback', function () {
     const proposalLifecycleStub = createProposalLifecycleStub();
     const emailSendStub = sinon.stub().resolves({ success: false, error: 'pdf send failed' });
     const transitionCaseRuntimeStub = sinon.stub().resolves();
+    const pdfProposalData = {
+      id: 1202,
+      case_id: 3302,
+      waitpoint_token: 'waitpoint_pdf',
+      action_type: 'SEND_PDF_EMAIL',
+      draft_subject: 'PDF draft subject',
+      draft_body_text: 'PDF draft body',
+      draft_body_html: '<p>PDF draft body</p>',
+      execution_key: null,
+      autopilot_mode: 'SUPERVISED',
+    };
     const dbStub = {
       getProposalById: sinon.stub()
-        .onFirstCall().resolves({
-          id: 1202,
-          case_id: 3302,
-          status: 'PENDING_APPROVAL',
-          waitpoint_token: 'waitpoint_pdf',
-          action_type: 'SEND_PDF_EMAIL',
-          draft_subject: 'PDF draft subject',
-          draft_body_text: 'PDF draft body',
-          draft_body_html: '<p>PDF draft body</p>',
-          execution_key: null,
-          autopilot_mode: 'SUPERVISED',
-        })
-        .onSecondCall().resolves({
-          id: 1202,
-          case_id: 3302,
-          status: 'DECISION_RECEIVED',
-          waitpoint_token: 'waitpoint_pdf',
-          action_type: 'SEND_PDF_EMAIL',
-          draft_subject: 'PDF draft subject',
-          draft_body_text: 'PDF draft body',
-          draft_body_html: '<p>PDF draft body</p>',
-          execution_key: null,
-          autopilot_mode: 'SUPERVISED',
-        }),
+        .onFirstCall().resolves({ ...pdfProposalData, status: 'PENDING_APPROVAL' })
+        .callsFake(async () => ({ ...pdfProposalData, status: 'DECISION_RECEIVED' })),
       getActiveRunForCase: sinon.stub().resolves({
         id: 4402,
         status: 'waiting',
@@ -275,7 +259,13 @@ describe('Waitpoint approval fallback rollback', function () {
       }),
       claimProposalExecution: sinon.stub().resolves(true),
       getLatestInboundMessage: sinon.stub().resolves(null),
+      getLatestResponseAnalysis: sinon.stub().resolves(null),
       getAttachmentById: sinon.stub().resolves({ file_data: Buffer.from('pdf-binary') }),
+      getThreadByCaseId: sinon.stub().resolves(null),
+      getThreadByCaseAgencyId: sinon.stub().resolves(null),
+      getMessagesByThreadId: sinon.stub().resolves([]),
+      getCaseAgencyById: sinon.stub().resolves(null),
+      updateProposal: sinon.stub().resolves(),
       query: sinon.stub().resolves({ rows: [] }),
       logActivity: sinon.stub().resolves(),
     };

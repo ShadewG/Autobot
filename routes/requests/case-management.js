@@ -428,9 +428,13 @@ router.post('/:id/resolve-review', async (req, res) => {
             // When marking as sent, dismiss only submission-related proposals (keep rebuttals, fee negotiations)
             // When closing, dismiss ALL pending proposals
             if (action === 'mark_sent') {
-                try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`, ['SUBMIT_PORTAL', 'SEND_FOLLOWUP', 'SEND_INITIAL_REQUEST']); } catch (_) {}
+                try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`, ['SUBMIT_PORTAL', 'SEND_FOLLOWUP', 'SEND_INITIAL_REQUEST']); } catch (err) {
+                    log.warn(`Failed to dismiss proposals on mark_sent: ${err.message}`);
+                }
             } else if (action === 'close') {
-                try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`); } catch (_) {}
+                try { await db.dismissPendingProposals(requestId, `Review resolved: ${action}`); } catch (err) {
+                    log.warn(`Failed to dismiss proposals on close: ${err.message}`);
+                }
             }
 
             await db.logActivity('human_decision', `Review resolved: ${action}${instruction ? ` — ${instruction}` : ''}`, {
@@ -578,10 +582,14 @@ router.post('/:id/resolve-review', async (req, res) => {
                             action: 'DISMISS',
                             reason: `Superseded by human review action: ${action}`,
                         });
-                    } catch (_) {} // Token may already be expired/completed
+                    } catch (tokenErr) {
+                        log.warn(`Failed to complete waitpoint token for proposal ${p.id}: ${tokenErr.message}`);
+                    }
                 }
             }
-        } catch (_) {}
+        } catch (tokenQueryErr) {
+            log.warn(`Failed to query/complete waitpoint tokens: ${tokenQueryErr.message}`);
+        }
 
         // Dismiss all active proposals — human is taking a new direction
         await proposalLifecycle.dismissActiveCaseProposals(requestId, {

@@ -286,13 +286,13 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
                             action: 'DISMISS',
                             reason: `Case reset to latest inbound #${latestInbound.id}`,
                         });
-                    } catch (_) {
-                        // token already completed/expired
+                    } catch (tokenErr) {
+                        log.warn(`Failed to complete waitpoint token for proposal ${row.id}: ${tokenErr.message}`);
                     }
                 }
             }
-        } catch (_) {
-            // non-fatal
+        } catch (tokenQueryErr) {
+            log.warn(`Failed to query/complete waitpoint tokens during reset: ${tokenQueryErr.message}`);
         }
 
         // All reset mutations must be atomic on a single connection.

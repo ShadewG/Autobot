@@ -48,7 +48,7 @@ describe('resolve-review active-run recovery', function () {
         return { rows: [{ id: 975, waitpoint_token: 'waitpoint_old' }] };
       }
 
-      if (sql.includes("UPDATE proposals SET status = 'DISMISSED'")) {
+      if (sql.includes("UPDATE proposals") && sql.includes("'DISMISSED'") && sql.includes("human_decision")) {
         return { rows: [] };
       }
 
