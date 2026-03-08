@@ -512,6 +512,136 @@ function EventLedgerSection({ caseId }: { caseId: string }) {
   );
 }
 
+// ── Portal Submissions Section ────────────────────────────────────────────
+
+interface PortalSubmission {
+  id: number;
+  case_id: number;
+  run_id: number | null;
+  skyvern_task_id: string | null;
+  status: string;
+  engine: string | null;
+  account_email: string | null;
+  screenshot_url: string | null;
+  recording_url: string | null;
+  extracted_data: Record<string, unknown> | null;
+  error_message: string | null;
+  started_at: string;
+  completed_at: string | null;
+}
+
+function portalStatusBadge(status: string) {
+  const s = status.toLowerCase();
+  if (s === "completed" || s === "success" || s === "succeeded")
+    return <Badge className="bg-green-500/15 text-green-400 border-green-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  if (s === "failed" || s === "error")
+    return <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  if (s === "pending" || s === "queued" || s === "created")
+    return <Badge className="bg-yellow-500/15 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  if (s === "in_progress" || s === "running" || s === "processing")
+    return <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  return <Badge variant="outline" className="text-[10px] px-1 py-0">{status}</Badge>;
+}
+
+function truncateJson(data: Record<string, unknown> | null, maxLen = 60): string {
+  if (!data) return "\u2014";
+  const str = JSON.stringify(data);
+  return str.length > maxLen ? str.slice(0, maxLen) + "\u2026" : str;
+}
+
+function PortalSubmissionsSection({ caseId }: { caseId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [submissions, setSubmissions] = useState<PortalSubmission[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleToggle = async () => {
+    const willOpen = !isOpen;
+    setIsOpen(willOpen);
+    if (willOpen && !hasLoaded) {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetcher<{ success: boolean; count: number; submissions: PortalSubmission[] }>(
+          `/requests/${caseId}/portal-submissions`
+        );
+        setSubmissions(data.submissions || []);
+        setHasLoaded(true);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load portal submissions");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  return (
+    <details open={isOpen || undefined} className="border-b border-border/50 group" onToggle={(e) => {
+      const open = (e.target as HTMLDetailsElement).open;
+      if (open && !isOpen) handleToggle();
+      else if (!open && isOpen) setIsOpen(false);
+    }}>
+      <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
+        Portal Submissions
+        {hasLoaded && <span className="ml-auto text-muted-foreground">{submissions.length}</span>}
+      </summary>
+      <div className="px-3 pb-2">
+        {isLoading && (
+          <div className="flex items-center gap-2 py-3 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading submissions...
+          </div>
+        )}
+        {error && (
+          <div className="text-[10px] text-red-400 py-2">{error}</div>
+        )}
+        {hasLoaded && submissions.length === 0 && !isLoading && (
+          <div className="text-[10px] text-muted-foreground py-2">No portal submissions recorded</div>
+        )}
+        {hasLoaded && submissions.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="text-[10px] h-6 px-1">Status</TableHead>
+                <TableHead className="text-[10px] h-6 px-1">Engine</TableHead>
+                <TableHead className="text-[10px] h-6 px-1">Result</TableHead>
+                <TableHead className="text-[10px] h-6 px-1 text-right">When</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {submissions.map((sub) => (
+                <TableRow key={sub.id} className="hover:bg-muted/30">
+                  <TableCell className="text-[10px] px-1 py-1">
+                    {portalStatusBadge(sub.status)}
+                  </TableCell>
+                  <TableCell className="text-[10px] px-1 py-1 text-muted-foreground">
+                    {sub.engine || "\u2014"}
+                  </TableCell>
+                  <TableCell className="text-[10px] px-1 py-1 max-w-[160px]">
+                    {sub.error_message ? (
+                      <span className="text-red-400 truncate block" title={sub.error_message}>
+                        {sub.error_message.length > 60 ? sub.error_message.slice(0, 60) + "\u2026" : sub.error_message}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground truncate block" title={truncateJson(sub.extracted_data, 200)}>
+                        {truncateJson(sub.extracted_data)}
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-[10px] px-1 py-1 text-muted-foreground text-right whitespace-nowrap">
+                    {formatRelativeTime(sub.started_at)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
+    </details>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 function DetailV2Content() {
@@ -2578,6 +2708,7 @@ function DetailV2Content() {
                 </CollapsibleSection>
               )}
               <EventLedgerSection caseId={id!} />
+              <PortalSubmissionsSection caseId={id!} />
               {hasPortalHistory && (
                 <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
                   <PortalLiveView caseId={id!} portalTaskUrl={request.last_portal_task_url} isLive={false} />
@@ -2746,6 +2877,9 @@ function DetailV2Content() {
 
               {/* EVENT LEDGER */}
               <EventLedgerSection caseId={id!} />
+
+              {/* PORTAL SUBMISSIONS */}
+              <PortalSubmissionsSection caseId={id!} />
 
               {/* Portal history */}
               {hasPortalHistory && (
