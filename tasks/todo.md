@@ -173,7 +173,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 #### Prompt & Classifier Alignment
 - [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract
 - [ ] Remove or rewrite the PDF bias in `classify-inbound` so attachments do not implicitly force `records_ready` / `delivery`
-- [ ] Add explicit prompt handling for portal/system traffic: submission confirmations, document release notices, password/unlock emails, portal closures, and similar non-agency-human messages
+- [x] Add explicit prompt handling for portal/system traffic: submission confirmations, document release notices, password/unlock emails, portal closures, and similar non-agency-human messages — added portal account management auto-classification (password reset, welcome, unlock, activate) in classify-inbound.ts, plus detectPortalSystemEmail() in portal-utils.js for webhook-level filtering
 - [ ] Decide whether `question` and `more_info_needed` should remain distinct; collapse them if downstream logic does not truly need both
 - [ ] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same
 - [ ] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting
@@ -193,17 +193,17 @@ AI sometimes wants to research before responding (when it should just respond) o
 #### Live Data Workflow Anomalies (from production DB, 2026-03-07)
 Production data review found 160 inbound messages, 107 response analyses, 56 inbound messages with no `response_analysis`, 57 inbound messages with no `case_id`, and 21 inbound rows with `last_error = "Branch condition returned unknown or null destination"`.
 - [ ] Audit inbound messages with `case_id IS NULL`; backfill matches where possible and prevent unmatched inbound from bypassing the active case workflow
-- [ ] Investigate `messages.last_error = "Branch condition returned unknown or null destination"` and add a route-safe fallback so inbound handling never dies on an unknown branch
+- [x] Investigate `messages.last_error = "Branch condition returned unknown or null destination"` and add a route-safe fallback so inbound handling never dies on an unknown branch — legacy LangGraph error (Feb 18-20 only), cleared 21 stale errors; error string no longer exists in current codebase
 - [x] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases — added to quality-report-service.js + /api/eval/reconciliation endpoint
 - [x] Add a reconciliation query for cases where the latest inbound intent conflicts with current case status or substatus — covered by reconciliation report
 - [ ] Create a repair queue for concrete dropped-action cases observed in production: `25268`, `25265`, `25167`, `25140`
 - [ ] Create a repair queue for concrete classifier/handling mismatch cases observed in production: `25211`, `25171`, `25175`
-- [ ] Monitor inbound messages with no `response_analysis`, especially non-portal rows with `processed_at IS NULL`
-- [ ] Add classifier consistency validation for impossible `requires_action` / `suggested_action` combinations before downstream routing uses them
+- [x] Monitor inbound messages with no `response_analysis`, especially non-portal rows with `processed_at IS NULL` — added `unanalyzed_inbound` section to reconciliation report (messages with case_id but no response_analysis and not processed)
+- [x] Add classifier consistency validation for impossible `requires_action` / `suggested_action` combinations before downstream routing uses them — added guard in classify-inbound.ts: if `requiresResponse=true` but `suggestedAction` is null, defaults to `"respond"` with a warning log
 - [ ] Review `partial_delivery` and `delivery` examples that are actually fee letters, acknowledgment letters, or mixed responses and add them to prompt tests
 - [ ] Review portal-closure and duplicate-request messages that are currently being classified as denials or rebuttal candidates
 - [ ] Review wrong-agency outputs where the suggested action is `respond` instead of reroute or research
-- [ ] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed
+- [x] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed — added `detectPortalSystemEmail()` in portal-utils.js, wired into webhooks.js to skip analysis queue for portal system emails; backfilled 3 existing orphans
 - [ ] Exclude manual notes, synthetic QA replies, and phone-call update messages from the normal inbound classifier pipeline
 - [ ] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately
 
@@ -325,7 +325,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
-- [ ] Block deploy if accuracy drops below 90% `(IN PROGRESS - Codex)`
+- [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow
 - [x] Track eval results over time in `/eval` dashboard
 
 ### P2 — Optimization
@@ -439,6 +439,6 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 ### Production → Scale
 - [x] Auto-captured eval cases from ADJUST/DISMISS flowing
 - [x] Weekly quality report generating automatically
-- [ ] Regression eval suite blocking deploys
+- [x] Regression eval suite blocking deploys
 - [ ] Agency validation catching bad imports before first send
 - [ ] Per-agency intelligence informing AI decisions

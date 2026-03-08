@@ -97,6 +97,48 @@ function detectPortalProviderByUrl(url) {
     return detectPortalProviderByHostname(hostname);
 }
 
+/**
+ * Detect if an inbound email is a portal system message that should NOT go
+ * through the AI classifier pipeline. Returns { type, provider } or null.
+ *
+ * Covers: password resets, welcome/onboarding, email confirmations,
+ * account unlock, duplicate closure notices, and portal-closed notices.
+ */
+function detectPortalSystemEmail(fromEmail, subject) {
+    if (!fromEmail || !subject) return null;
+    const domain = (fromEmail.split('@')[1] || '').toLowerCase();
+    const subjectLower = subject.toLowerCase();
+
+    // Check if sender is a known portal domain
+    let provider = null;
+    for (const [emailDomain, config] of Object.entries(PORTAL_EMAIL_DOMAINS)) {
+        if (domain === emailDomain || domain.endsWith('.' + emailDomain)) {
+            provider = config.provider;
+            break;
+        }
+    }
+    if (!provider) return null;
+
+    // Match subject patterns for system emails
+    const systemPatterns = [
+        { pattern: /password\s*reset|reset\s*(your\s*)?password/i, type: 'password_reset' },
+        { pattern: /welcome\s*to\s*(the|your)?/i, type: 'welcome' },
+        { pattern: /confirm\s*(your\s*)?email|email\s*confirm/i, type: 'email_confirmation' },
+        { pattern: /unlock\s*(your\s*)?account|account\s*unlock/i, type: 'account_unlock' },
+        { pattern: /verify\s*(your\s*)?email|email\s*verif/i, type: 'email_verification' },
+        { pattern: /account\s*(has\s*been\s*)?created/i, type: 'account_created' },
+        { pattern: /activate\s*(your\s*)?account/i, type: 'account_activation' },
+    ];
+
+    for (const { pattern, type } of systemPatterns) {
+        if (pattern.test(subjectLower)) {
+            return { type, provider };
+        }
+    }
+
+    return null;
+}
+
 function isSupportedPortalUrl(url) {
     if (!url) return false;
 
@@ -125,5 +167,6 @@ module.exports = {
     normalizePortalUrl,
     detectPortalProviderByUrl,
     detectPortalProviderByHostname,
+    detectPortalSystemEmail,
     isSupportedPortalUrl
 };

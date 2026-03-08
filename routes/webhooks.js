@@ -8,6 +8,7 @@ const { processSendgridEvent } = require('../services/email-event-service');
 const { analysisQueue, portalQueue } = require('../queues/email-queue');
 const { notify } = require('../services/event-bus');
 const { transitionCaseRuntime } = require('../services/case-runtime');
+const { detectPortalSystemEmail } = require('../utils/portal-utils');
 
 /**
  * Detect verification code emails and forward to Skyvern TOTP API
@@ -205,8 +206,16 @@ router.post('/inbound', upload.any(), async (req, res) => {
             const isTestMode = inboundData.subject?.includes('[TEST]') ||
                               inboundData.headers?.['X-Test-Mode'] === 'true';
 
+            // Detect portal system emails (password resets, welcome, email confirmations)
+            // that don't need AI classification
+            const fromEmail = sendgridService.extractEmail(inboundData.from || inboundData.sender || '');
+            const portalSystem = detectPortalSystemEmail(fromEmail, inboundData.subject);
+
             if (alreadyProcessed) {
                 console.log(`Duplicate inbound detected for case ${result.case_id}; skipping analysis queue.`);
+            } else if (portalSystem) {
+                console.log(`Portal system email (${portalSystem.type}/${portalSystem.provider}) for case ${result.case_id} — skipping analysis queue`);
+                await db.markMessageProcessed(result.message_id, null, null);
             } else {
                 // Queue for AI analysis (with null guard and deterministic job ID)
                 if (!analysisQueue) {
@@ -306,16 +315,27 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
                 const savedMsgId = unmatchedMsg.rows[0]?.id;
 
+                // Check if this is a portal system email (password reset, welcome, etc.)
+                // These don't need matching or analysis — just log and mark processed
+                const unmatchedFromEmail = sendgridService.extractEmail(fromRaw);
+                const portalSystemInfo = detectPortalSystemEmail(unmatchedFromEmail, subjectRaw);
+                if (portalSystemInfo) {
+                    console.log(`Portal system email (${portalSystemInfo.type}/${portalSystemInfo.provider}) — no case match needed`);
+                    await db.markMessageProcessed(savedMsgId, null, null);
+                    await db.logActivity('webhook_portal_system', `Portal system email (${portalSystemInfo.type}) from ${fromRaw}`, {
+                        message_id: savedMsgId, from: fromRaw, subject: subjectRaw,
+                        portal_system_type: portalSystemInfo.type, provider: portalSystemInfo.provider
+                    });
+                } else {
                 // Retry: try portal signal matching on the saved message
                 // processInboundEmail uses thread headers which aren't available here,
                 // but portal signals (subdomain, request number, agency name) may still match
                 try {
-                    const fromEmail = sendgridService.extractEmail(fromRaw);
-                    const portalInfo = sendgridService.detectPortalProviderFromEmail(fromEmail);
+                    const portalInfo = sendgridService.detectPortalProviderFromEmail(unmatchedFromEmail);
 
                     if (portalInfo) {
                         const signals = sendgridService.extractPortalMatchingSignals(
-                            portalInfo.provider, fromRaw, fromEmail, subjectRaw, textRaw
+                            portalInfo.provider, fromRaw, unmatchedFromEmail, subjectRaw, textRaw
                         );
                         const matchedCase = await sendgridService.matchCaseByPortalSignals(signals);
 
@@ -374,6 +394,7 @@ router.post('/inbound', upload.any(), async (req, res) => {
                         message_id: savedMsgId, from: fromRaw, to: toRaw, subject: subjectRaw
                     });
                 }
+                } // end non-portal-system
 
                 console.log(`Saved unmatched email with ID: ${savedMsgId}`);
             } catch (saveErr) {

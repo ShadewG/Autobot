@@ -355,9 +355,49 @@ export async function classifyInbound(
   const fromAddr = (message.from_email || message.sender_email || "").toLowerCase();
   const subjectLower = (message.subject || "").toLowerCase();
   const bodySnippet = ((message.body_text || message.body_html || "").substring(0, 500)).toLowerCase();
-  const portalSystems = ["justfoia", "nextrequest", "govqa", "jotform", "smartsheet"];
+  const portalSystems = ["justfoia", "nextrequest", "govqa", "civicplus", "jotform", "smartsheet"];
   const isPortalSystem = portalSystems.some((p: string) => fromAddr.includes(p) || subjectLower.includes(p));
   const isNoReply = /no.?reply|do.?not.?reply/.test(fromAddr);
+
+  // Detect portal account management emails (password reset, welcome, unlock)
+  const isAccountManagement =
+    subjectLower.includes("password reset") || subjectLower.includes("reset your password") ||
+    subjectLower.includes("unlock your account") || subjectLower.includes("account unlock") ||
+    subjectLower.includes("activate your account") || subjectLower.includes("account created") ||
+    (subjectLower.includes("welcome to") && isPortalSystem);
+
+  if (isPortalSystem && isAccountManagement) {
+    logger.info("Auto-classified as portal account management email", {
+      caseId: context.caseId,
+      from: fromAddr,
+      subject: message.subject,
+    });
+    await db.saveResponseAnalysis({
+      messageId,
+      caseId: context.caseId,
+      intent: "none",
+      confidenceScore: 0.99,
+      sentiment: "neutral",
+      keyPoints: ["Automated portal account management email - no action needed"],
+      requiresAction: false,
+      suggestedAction: null,
+      fullAnalysisJson: { auto_classified: true, reason: "portal_account_management_email" },
+    });
+    return {
+      classification: "NO_RESPONSE",
+      confidence: 0.99,
+      sentiment: "neutral",
+      extractedFeeAmount: null,
+      extractedDeadline: null,
+      denialSubtype: null,
+      requiresResponse: false,
+      portalUrl: null,
+      suggestedAction: null,
+      reasonNoResponse: "Automated portal account management email",
+      unansweredAgencyQuestion: null,
+    };
+  }
+
   const isConfirmation =
     subjectLower.includes("verify") || subjectLower.includes("confirm your") ||
     subjectLower.includes("submission confirmation") || subjectLower.includes("request confirmation") ||
@@ -548,6 +588,15 @@ export async function classifyInbound(
     else if (sa.includes("wait") || sa.includes("monitor")) suggestedAction = "wait";
     else if (sa.includes("respond") || sa.includes("reply")) suggestedAction = "respond";
     else suggestedAction = "respond";
+  }
+
+  // Consistency validation: if requiresResponse is true, suggestedAction must be set
+  if (requiresResponse && !suggestedAction) {
+    logger.warn("requires_response=true but suggested_action is null — defaulting to 'respond'", {
+      caseId: context.caseId,
+      classification,
+    });
+    suggestedAction = "respond";
   }
 
   return {

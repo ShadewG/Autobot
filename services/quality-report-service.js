@@ -297,7 +297,7 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
 }
 
 async function buildReconciliationReport() {
-  const [droppedActions, branchErrors, orphanedInbound, staleProposals] = await Promise.all([
+  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound] = await Promise.all([
     db.query(`
       WITH latest_analysis AS (
         SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
@@ -334,6 +334,17 @@ async function buildReconciliationReport() {
       WHERE status = 'PENDING_APPROVAL'
         AND created_at < NOW() - INTERVAL '48 hours'
     `),
+    db.query(`
+      SELECT m.id as message_id, m.case_id, m.from_email, m.subject, m.created_at
+      FROM messages m
+      LEFT JOIN response_analysis ra ON ra.message_id = m.id
+      WHERE m.direction = 'inbound'
+        AND m.case_id IS NOT NULL
+        AND m.processed_at IS NULL
+        AND ra.id IS NULL
+      ORDER BY m.created_at DESC
+      LIMIT 20
+    `),
   ]);
 
   return {
@@ -361,6 +372,16 @@ async function buildReconciliationReport() {
     },
     orphaned_inbound: Number(orphanedInbound.rows[0]?.count) || 0,
     stale_proposals: Number(staleProposals.rows[0]?.count) || 0,
+    unanalyzed_inbound: {
+      count: unanalyzedInbound.rows.length,
+      messages: unanalyzedInbound.rows.map(r => ({
+        message_id: r.message_id,
+        case_id: r.case_id,
+        from_email: r.from_email,
+        subject: (r.subject || '').substring(0, 80),
+        created_at: r.created_at,
+      })),
+    },
   };
 }
 
