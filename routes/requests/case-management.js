@@ -858,4 +858,104 @@ router.post('/create', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/requests/:id/export
+ * Export full case package: correspondence, timeline, proposals
+ */
+router.get('/:id/export', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const [messagesResult, proposalsResult, activityResult, portalResult] = await Promise.all([
+            db.query(
+                `SELECT id, direction, subject, body_text, from_email, to_email,
+                        sent_at, received_at, message_type
+                 FROM messages WHERE case_id = $1
+                 ORDER BY COALESCE(sent_at, received_at) ASC`, [caseId]
+            ),
+            db.query(
+                `SELECT id, action_type, status, draft_subject, draft_body_text,
+                        reasoning, human_decision, human_decided_at, created_at, executed_at
+                 FROM proposals WHERE case_id = $1
+                 ORDER BY created_at ASC`, [caseId]
+            ),
+            db.query(
+                `SELECT event_type, description, metadata, created_at
+                 FROM activity_log WHERE case_id = $1
+                 ORDER BY created_at ASC`, [caseId]
+            ),
+            db.query(
+                `SELECT id, portal_url, status, confirmation_number, created_at, completed_at
+                 FROM portal_tasks WHERE case_id = $1
+                 ORDER BY created_at ASC`, [caseId]
+            ),
+        ]);
+
+        const pkg = {
+            exported_at: new Date().toISOString(),
+            case: {
+                id: caseData.id,
+                case_name: caseData.case_name,
+                subject_name: caseData.subject_name,
+                agency_name: caseData.agency_name,
+                agency_email: caseData.agency_email,
+                state: caseData.state,
+                status: caseData.status,
+                created_at: caseData.created_at,
+                completed_at: caseData.completed_at,
+            },
+            correspondence: messagesResult.rows.map(m => ({
+                direction: m.direction,
+                subject: m.subject,
+                body: m.body_text,
+                from: m.from_email,
+                to: m.to_email,
+                date: m.direction === 'outbound' ? m.sent_at : m.received_at,
+                type: m.message_type,
+            })),
+            proposals: proposalsResult.rows.map(p => ({
+                action: p.action_type,
+                status: p.status,
+                subject: p.draft_subject,
+                body: p.draft_body_text,
+                reasoning: p.reasoning,
+                decision: p.human_decision,
+                decided_at: p.human_decided_at,
+                created_at: p.created_at,
+                executed_at: p.executed_at,
+            })),
+            portal_submissions: portalResult.rows.map(pt => ({
+                portal_url: pt.portal_url,
+                status: pt.status,
+                confirmation: pt.confirmation_number,
+                started: pt.created_at,
+                completed: pt.completed_at,
+            })),
+            timeline: activityResult.rows.map(a => ({
+                event: a.event_type,
+                description: a.description,
+                metadata: a.metadata,
+                at: a.created_at,
+            })),
+        };
+
+        const format = req.query.format;
+        if (format === 'download') {
+            const filename = `case-${caseId}-${caseData.case_name?.replace(/[^a-zA-Z0-9]/g, '-') || 'export'}.json`;
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Type', 'application/json');
+            return res.send(JSON.stringify(pkg, null, 2));
+        }
+
+        res.json({ success: true, ...pkg });
+    } catch (error) {
+        logger.error('Error exporting case:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

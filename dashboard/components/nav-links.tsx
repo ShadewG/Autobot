@@ -29,6 +29,7 @@ export function NavLinks() {
     { href: "/runs", label: "RUNS" },
     { href: "/agencies", label: "AGENCIES" },
     { href: "/eval", label: "EVALS" },
+    { href: "/analytics", label: "ANALYTICS" },
     { href: "/simulate", label: "SIM" },
     { href: "/settings", label: "SETTINGS" },
     ...(isAdmin ? [{ href: "/admin", label: "ADMIN" }] : []),

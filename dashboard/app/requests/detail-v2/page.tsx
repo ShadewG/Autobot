@@ -94,6 +94,7 @@ import {
   Tag,
   X,
   Plus,
+  Download,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
@@ -1572,6 +1573,12 @@ function DetailV2Content() {
                 window.open(`https://github.com/ShadewG/Autobot/issues/new?title=${title}&body=${body}&labels=bug,operator-report`, '_blank');
               }}>
                 <AlertTriangle className="h-3.5 w-3.5 mr-1.5" />Report Issue
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => {
+                const url = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/requests/${id}/export?format=download`;
+                window.open(url, '_blank');
+              }}>
+                <Download className="h-3.5 w-3.5 mr-1.5" />Export Package
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setWithdrawDialogOpen(true)}><Ban className="h-3.5 w-3.5 mr-1.5" />Withdraw</DropdownMenuItem>

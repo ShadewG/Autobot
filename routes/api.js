@@ -702,6 +702,81 @@ router.get('/dashboard/kpi', async (req, res) => {
 });
 
 /**
+ * Case Outcomes — records received rate, avg time, denial rate by state
+ */
+router.get('/dashboard/outcomes', async (req, res) => {
+    try {
+        const [overall, byState, denialReasons, statusBreakdown] = await Promise.all([
+            // Overall outcome metrics
+            db.query(`
+                SELECT
+                    COUNT(*) as total_cases,
+                    COUNT(*) FILTER (WHERE status = 'completed') as completed,
+                    COUNT(*) FILTER (WHERE status IN ('sent', 'responded', 'completed')) as active,
+                    COUNT(*) FILTER (WHERE status = 'sent') as awaiting_response,
+                    ROUND(COUNT(*) FILTER (WHERE status = 'completed')::numeric * 100 /
+                        NULLIF(COUNT(*), 0), 1) as completion_rate,
+                    ROUND(AVG(EXTRACT(EPOCH FROM (last_response_date - send_date)) / 86400)
+                        FILTER (WHERE last_response_date IS NOT NULL AND send_date IS NOT NULL)::numeric, 1)
+                        as avg_response_days,
+                    ROUND(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400)
+                        FILTER (WHERE completed_at IS NOT NULL)::numeric, 1)
+                        as avg_case_duration_days
+                FROM cases
+            `),
+            // Outcomes by state
+            db.query(`
+                SELECT
+                    COALESCE(c.state, 'Unknown') as state,
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE c.status = 'completed') as completed,
+                    COUNT(*) FILTER (WHERE c.status = 'sent') as awaiting,
+                    ROUND(AVG(EXTRACT(EPOCH FROM (c.last_response_date - c.send_date)) / 86400)
+                        FILTER (WHERE c.last_response_date IS NOT NULL AND c.send_date IS NOT NULL)::numeric, 1)
+                        as avg_response_days,
+                    (SELECT COUNT(*) FROM response_analysis ra
+                        JOIN messages m ON ra.message_id = m.id
+                        WHERE m.case_id = ANY(ARRAY_AGG(c.id)) AND ra.intent = 'denial') as denials
+                FROM cases c
+                WHERE c.state IS NOT NULL AND c.state != ''
+                GROUP BY c.state
+                HAVING COUNT(*) >= 2
+                ORDER BY total DESC
+                LIMIT 20
+            `),
+            // Denial reason breakdown
+            db.query(`
+                SELECT
+                    COALESCE(full_analysis_json->>'denial_subtype', 'unspecified') as reason,
+                    COUNT(*) as count
+                FROM response_analysis
+                WHERE intent = 'denial'
+                GROUP BY full_analysis_json->>'denial_subtype'
+                ORDER BY count DESC
+            `),
+            // Status funnel
+            db.query(`
+                SELECT status, COUNT(*) as count
+                FROM cases
+                GROUP BY status
+                ORDER BY count DESC
+            `)
+        ]);
+
+        res.json({
+            success: true,
+            overall: overall.rows[0],
+            byState: byState.rows,
+            denialReasons: denialReasons.rows,
+            statusBreakdown: statusBreakdown.rows,
+        });
+    } catch (error) {
+        console.error('Error getting case outcomes:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * KPI Dashboard - Get latest bot messages
  */
 router.get('/dashboard/messages', async (req, res) => {

@@ -393,10 +393,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Per-team queue isolation
 
 #### Analytics & Reporting
-- [ ] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type
+- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type
 - [ ] Cost tracking: AI + email + portal cost per case, cost per successful case
 - [ ] Compliance report: correct statute, correct deadlines, correct custodian — per state
-- [ ] Export case package for journalists: correspondence, records, timeline — one click
+- [x] Export case package for journalists: correspondence, records, timeline — one click
 
 #### Fee Payment Automation
 - [ ] Skyvern navigates payment portal (with human approval for amount)
