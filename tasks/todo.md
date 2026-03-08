@@ -117,6 +117,14 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load
 - [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate)
 - [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day
+- [x] Add Error Events dashboard page — filterable table with KPI cards, source/operation filters, expandable stack traces, auto-refresh
+- [x] Add AI Decision Lessons dashboard page — CRUD, AI parse button, active toggle, text search, source/status filters
+- [x] Add Reconciliation Report dashboard page — system diagnostic cards with green/red status, 9 expandable sections, case ID links
+- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator
+- [x] Add Proposal History section to case detail — expandable cards showing all proposals (not just pending), human_decided_by audit, original vs edited draft comparison, lazy-load
+- [x] Add Decision Traces section to case detail — AI classification/routing/gate decision visualization with node trace flow, confidence coloring, run links, lazy-load from audit-stream
+- [x] Add decision_traces to audit-stream endpoint — backend now includes decision traces in unified event feed alongside ledger, activity, portal, email, and error events
+- [x] Expose human_decided_by, original_draft_*, human_edited on proposal API responses — workspace query and proposals endpoint now return audit/diff fields
 
 ### P1 — Important for confidence
 

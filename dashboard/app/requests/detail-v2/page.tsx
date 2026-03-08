@@ -903,6 +903,335 @@ function ProviderPayloadsSection({ caseId }: { caseId: string }) {
   );
 }
 
+// ── Proposal History Section ─────────────────────────────────────────────────
+
+interface ProposalHistoryItem {
+  id: number;
+  action_type: string;
+  status: string;
+  draft_subject: string | null;
+  draft_preview: string | null;
+  reasoning: string[] | null;
+  confidence: number | null;
+  human_decision: Record<string, unknown> | null;
+  human_decided_by: string | null;
+  human_decided_at: string | null;
+  human_edited: boolean;
+  original_draft_subject: string | null;
+  original_draft_body_text: string | null;
+  executed_at: string | null;
+  created_at: string;
+}
+
+function proposalStatusBadge(status: string) {
+  const s = status.toUpperCase();
+  if (s === "EXECUTED") return <Badge className="bg-green-500/15 text-green-400 border-green-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  if (s === "DISMISSED" || s === "WITHDRAWN") return <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  if (s.includes("PENDING") || s === "BLOCKED") return <Badge className="bg-yellow-500/15 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0">{status}</Badge>;
+  return <Badge variant="outline" className="text-[10px] px-1 py-0">{status}</Badge>;
+}
+
+function ProposalHistorySection({ caseId }: { caseId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [proposals, setProposals] = useState<ProposalHistoryItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  const handleToggle = async () => {
+    const willOpen = !isOpen;
+    setIsOpen(willOpen);
+    if (willOpen && !hasLoaded) {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetcher<{ success: boolean; count: number; proposals: ProposalHistoryItem[] }>(
+          `/requests/${caseId}/proposals?all=true&limit=50`
+        );
+        setProposals(data.proposals || []);
+        setHasLoaded(true);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load proposals");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  return (
+    <details open={isOpen || undefined} className="border-b border-border/50 group" onToggle={(e) => {
+      const open = (e.target as HTMLDetailsElement).open;
+      if (open && !isOpen) handleToggle();
+      else if (!open && isOpen) setIsOpen(false);
+    }}>
+      <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
+        Proposal History
+        {hasLoaded && <span className="ml-auto text-muted-foreground">{proposals.length}</span>}
+      </summary>
+      <div className="px-3 pb-2">
+        {isLoading && (
+          <div className="flex items-center gap-2 py-3 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading proposals...
+          </div>
+        )}
+        {error && <div className="text-[10px] text-red-400 py-2">{error}</div>}
+        {hasLoaded && proposals.length === 0 && !isLoading && (
+          <div className="text-[10px] text-muted-foreground py-2">No proposals recorded</div>
+        )}
+        {hasLoaded && proposals.length > 0 && (
+          <div className="space-y-1.5">
+            {proposals.map((p) => (
+              <div key={p.id} className="border border-border/50 rounded-md text-[10px]">
+                <button
+                  className="w-full px-2 py-1.5 flex items-center gap-2 hover:bg-muted/30 transition-colors text-left"
+                  onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                >
+                  <ChevronRight className={cn("h-2.5 w-2.5 shrink-0 transition-transform", expandedId === p.id && "rotate-90")} />
+                  <Badge variant="outline" className={cn("text-[10px] px-1 py-0 shrink-0", ACTION_TYPE_LABELS[p.action_type]?.color || "")}>
+                    {ACTION_TYPE_LABELS[p.action_type]?.label || p.action_type.replace(/_/g, " ")}
+                  </Badge>
+                  {proposalStatusBadge(p.status)}
+                  {p.human_edited && (
+                    <Badge className="bg-purple-500/15 text-purple-400 border-purple-500/30 text-[10px] px-1 py-0">Edited</Badge>
+                  )}
+                  {p.draft_subject && (
+                    <span className="text-muted-foreground truncate min-w-0">{p.draft_subject}</span>
+                  )}
+                  <span className="ml-auto text-muted-foreground shrink-0">{formatRelativeTime(p.created_at)}</span>
+                </button>
+                {expandedId === p.id && (
+                  <div className="px-2 pb-2 space-y-1.5 border-t border-border/30">
+                    {/* Decision audit */}
+                    {p.human_decided_by && (
+                      <div className="flex items-center gap-2 pt-1.5">
+                        <UserCheck className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-muted-foreground">Decided by</span>
+                        <span className="text-foreground font-medium">{p.human_decided_by}</span>
+                        {p.human_decided_at && (
+                          <span className="text-muted-foreground">{formatRelativeTime(p.human_decided_at)}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Human decision details */}
+                    {p.human_decision && (
+                      <div className="text-muted-foreground">
+                        Decision: {typeof p.human_decision === "object"
+                          ? (p.human_decision as any).action || JSON.stringify(p.human_decision)
+                          : String(p.human_decision)}
+                      </div>
+                    )}
+
+                    {/* Reasoning */}
+                    {Array.isArray(p.reasoning) && p.reasoning.length > 0 && (
+                      <div>
+                        <div className="text-muted-foreground font-medium mb-0.5">Reasoning:</div>
+                        <ul className="space-y-0.5 text-muted-foreground">
+                          {p.reasoning.slice(0, 3).map((r, i) => (
+                            <li key={i} className="flex gap-1"><span className="text-blue-400 shrink-0">-</span><span>{r}</span></li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Original vs edited draft comparison */}
+                    {p.human_edited && p.original_draft_body_text && (
+                      <details className="mt-1">
+                        <summary className="text-muted-foreground cursor-pointer hover:text-foreground">Original AI Draft (before edit)</summary>
+                        <div className="mt-1 p-2 bg-muted/20 rounded border border-border/30 space-y-1">
+                          {p.original_draft_subject && (
+                            <div><span className="text-muted-foreground">Subject:</span> {p.original_draft_subject}</div>
+                          )}
+                          <div className="whitespace-pre-wrap text-muted-foreground max-h-[200px] overflow-y-auto">
+                            {p.original_draft_body_text}
+                          </div>
+                        </div>
+                      </details>
+                    )}
+
+                    {/* Current draft preview */}
+                    {p.draft_preview && (
+                      <div className="text-muted-foreground whitespace-pre-wrap max-h-[100px] overflow-y-auto">
+                        {p.draft_preview}
+                      </div>
+                    )}
+
+                    {/* Timestamps */}
+                    <div className="flex gap-4 text-muted-foreground pt-1">
+                      <span>Created: {formatDate(p.created_at)}</span>
+                      {p.executed_at && <span>Executed: {formatDate(p.executed_at)}</span>}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// ── Decision Traces Section ──────────────────────────────────────────────────
+
+interface DecisionTrace {
+  id: number;
+  run_id: number | null;
+  classification: {
+    intent?: string;
+    confidence?: number;
+    sentiment?: string;
+    fee_amount?: number | null;
+    key_points?: string[];
+  } | null;
+  router_output: {
+    action_type?: string;
+    can_auto_execute?: boolean;
+    requires_human?: boolean;
+    pause_reason?: string | null;
+  } | null;
+  node_trace: string[] | null;
+  gate_decision: {
+    gated?: boolean;
+    pause_reason?: string | null;
+  } | null;
+  duration_ms: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+function DecisionTracesSection({ caseId }: { caseId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [traces, setTraces] = useState<DecisionTrace[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleToggle = async () => {
+    const willOpen = !isOpen;
+    setIsOpen(willOpen);
+    if (willOpen && !hasLoaded) {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetcher<{ success: boolean; count: number; events: Array<{ source: string; payload: DecisionTrace }> }>(
+          `/requests/${caseId}/audit-stream?source=decision_traces&limit=20`
+        );
+        setTraces((data.events || []).map(e => e.payload));
+        setHasLoaded(true);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load decision traces");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  return (
+    <details open={isOpen || undefined} className="border-b border-border/50 group" onToggle={(e) => {
+      const open = (e.target as HTMLDetailsElement).open;
+      if (open && !isOpen) handleToggle();
+      else if (!open && isOpen) setIsOpen(false);
+    }}>
+      <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
+        Decision Traces
+        {hasLoaded && <span className="ml-auto text-muted-foreground">{traces.length}</span>}
+      </summary>
+      <div className="px-3 pb-2">
+        {isLoading && (
+          <div className="flex items-center gap-2 py-3 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading traces...
+          </div>
+        )}
+        {error && <div className="text-[10px] text-red-400 py-2">{error}</div>}
+        {hasLoaded && traces.length === 0 && !isLoading && (
+          <div className="text-[10px] text-muted-foreground py-2">No decision traces recorded</div>
+        )}
+        {hasLoaded && traces.length > 0 && (
+          <div className="space-y-2">
+            {traces.map((trace) => (
+              <div key={trace.id} className="border border-border/50 rounded-md p-2 space-y-1.5 text-[10px]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {trace.classification?.intent && (
+                      <Badge variant="outline" className="text-[10px] px-1 py-0">
+                        {trace.classification.intent}
+                      </Badge>
+                    )}
+                    {trace.classification?.confidence != null && (
+                      <span className={cn(
+                        "font-mono",
+                        trace.classification.confidence >= 0.8 ? "text-green-400" :
+                        trace.classification.confidence >= 0.5 ? "text-yellow-400" : "text-red-400"
+                      )}>
+                        {Math.round(trace.classification.confidence * 100)}%
+                      </span>
+                    )}
+                    {trace.router_output?.action_type && (
+                      <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-[10px] px-1 py-0">
+                        {trace.router_output.action_type}
+                      </Badge>
+                    )}
+                    {trace.router_output?.can_auto_execute && (
+                      <Badge className="bg-green-500/15 text-green-400 border-green-500/30 text-[10px] px-1 py-0">AUTO</Badge>
+                    )}
+                    {trace.gate_decision?.gated && (
+                      <Badge className="bg-yellow-500/15 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0">GATED</Badge>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-muted-foreground shrink-0">
+                    {trace.duration_ms != null && <span>{trace.duration_ms}ms</span>}
+                    <span>{formatRelativeTime(trace.created_at)}</span>
+                  </div>
+                </div>
+
+                {/* Node trace flow */}
+                {trace.node_trace && trace.node_trace.length > 0 && (
+                  <div className="flex items-center gap-1 flex-wrap text-muted-foreground">
+                    {trace.node_trace.map((node, i) => (
+                      <span key={i} className="flex items-center gap-1">
+                        <span className="font-mono text-foreground/80">{node}</span>
+                        {i < trace.node_trace!.length - 1 && <ArrowRight className="h-2.5 w-2.5" />}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Key points / classification details */}
+                {trace.classification?.key_points && trace.classification.key_points.length > 0 && (
+                  <div className="text-muted-foreground">
+                    {trace.classification.key_points.slice(0, 3).join(" | ")}
+                  </div>
+                )}
+
+                {/* Pause reason */}
+                {(trace.router_output?.pause_reason || trace.gate_decision?.pause_reason) && (
+                  <div className="text-yellow-400/80">
+                    Pause: {trace.router_output?.pause_reason || trace.gate_decision?.pause_reason}
+                  </div>
+                )}
+
+                {/* Run link */}
+                {trace.run_id && (
+                  <div className="text-muted-foreground">
+                    Run: <Link href={`/runs?run=${trace.run_id}`} className="text-blue-400 hover:underline font-mono">
+                      #{trace.run_id}
+                    </Link>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 function DetailV2Content() {
@@ -2968,6 +3297,8 @@ function DetailV2Content() {
                   <Timeline events={timeline_events.slice(0, 20)} compact />
                 </CollapsibleSection>
               )}
+              <ProposalHistorySection caseId={id!} />
+              <DecisionTracesSection caseId={id!} />
               <EventLedgerSection caseId={id!} />
               <PortalSubmissionsSection caseId={id!} />
               <ProviderPayloadsSection caseId={id!} />
@@ -3136,6 +3467,9 @@ function DetailV2Content() {
                   <Timeline events={timeline_events.slice(0, 20)} compact />
                 </CollapsibleSection>
               )}
+
+              {/* DECISION TRACES */}
+              <DecisionTracesSection caseId={id!} />
 
               {/* EVENT LEDGER */}
               <EventLedgerSection caseId={id!} />

@@ -88,6 +88,62 @@ async function learnFromPortalFailure(caseData: any, provider: string | null, er
   } catch {}
 }
 
+export async function recordPortalSubmissionStart(
+  db: any,
+  {
+    caseId,
+    runId = null,
+    skyvernTaskId = null,
+    status = "started",
+    engine = null,
+    accountEmail = null,
+  }: {
+    caseId: number;
+    runId?: number | null;
+    skyvernTaskId?: string | null;
+    status?: string;
+    engine?: string | null;
+    accountEmail?: string | null;
+  }
+) {
+  return db.createPortalSubmission({
+    caseId,
+    runId,
+    skyvernTaskId,
+    status,
+    engine,
+    accountEmail,
+  });
+}
+
+export async function finalizePortalSubmissionSuccess(
+  db: any,
+  submissionRowId: number,
+  result: any,
+  taskUrl: string | null = null
+) {
+  return db.updatePortalSubmission(submissionRowId, {
+    status: "completed",
+    skyvern_task_id: result?.taskId || result?.runId || null,
+    screenshot_url: result?.screenshot_url || null,
+    recording_url: result?.recording_url || taskUrl,
+    extracted_data: result?.extracted_data ? JSON.stringify(result.extracted_data) : null,
+    completed_at: new Date(),
+  });
+}
+
+export async function finalizePortalSubmissionFailure(
+  db: any,
+  submissionRowId: number,
+  error: any
+) {
+  return db.updatePortalSubmission(submissionRowId, {
+    status: "failed",
+    error_message: String(error?.message || error || "").substring(0, 500) || null,
+    completed_at: new Date(),
+  });
+}
+
 export const submitPortal = task({
   id: "submit-portal",
   maxDuration: 1200, // 20 minutes — cancel if Skyvern takes too long
@@ -634,7 +690,7 @@ export const submitPortal = task({
     // ── Record portal submission attempt ──
     let submissionRow: any = null;
     try {
-      submissionRow = await db.createPortalSubmission({
+      submissionRow = await recordPortalSubmissionStart(db, {
         caseId,
         runId: agentRunId || null,
         skyvernTaskId: null, // filled after Skyvern returns
@@ -787,14 +843,7 @@ export const submitPortal = task({
       // Update portal submission history row
       if (submissionRow?.id) {
         try {
-          await db.updatePortalSubmission(submissionRow.id, {
-            status: "completed",
-            skyvern_task_id: result.taskId || result.runId || null,
-            screenshot_url: result.screenshot_url || null,
-            recording_url: result.recording_url || taskUrl,
-            extracted_data: result.extracted_data ? JSON.stringify(result.extracted_data) : null,
-            completed_at: new Date(),
-          });
+          await finalizePortalSubmissionSuccess(db, submissionRow.id, result, taskUrl);
         } catch {}
       }
 
@@ -871,11 +920,7 @@ export const submitPortal = task({
       // Update portal submission history row
       if (submissionRow?.id) {
         try {
-          await db.updatePortalSubmission(submissionRow.id, {
-            status: "failed",
-            error_message: error.message?.substring(0, 500) || null,
-            completed_at: new Date(),
-          });
+          await finalizePortalSubmissionFailure(db, submissionRow.id, error);
         } catch {}
       }
 

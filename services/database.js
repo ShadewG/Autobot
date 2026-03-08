@@ -814,7 +814,7 @@ class DatabaseService {
     // Email Threads
     async createEmailThread(threadData) {
         const normalizedThreadId = threadData.thread_id || threadData.initial_message_id || `<case-${threadData.case_id}-${Date.now()}@autobot.local>`;
-        const query = `
+        const upsertQuery = `
             INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status, case_agency_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (case_id, thread_id) DO UPDATE SET
@@ -833,8 +833,32 @@ class DatabaseService {
             threadData.status || 'active',
             threadData.case_agency_id || null
         ];
-        const result = await this.query(query, values);
-        return result.rows[0];
+        try {
+            const result = await this.query(upsertQuery, values);
+            return result.rows[0];
+        } catch (error) {
+            const missingConflictConstraint = error?.code === '42P10'
+                || /no unique or exclusion constraint matching the ON CONFLICT specification/i.test(String(error?.message || ''));
+            if (!missingConflictConstraint) {
+                throw error;
+            }
+
+            const existing = await this.query(
+                `SELECT * FROM email_threads WHERE case_id = $1 AND thread_id = $2 ORDER BY id DESC LIMIT 1`,
+                [threadData.case_id, normalizedThreadId]
+            );
+            if (existing.rows[0]) {
+                return existing.rows[0];
+            }
+
+            const insertResult = await this.query(
+                `INSERT INTO email_threads (case_id, thread_id, subject, agency_email, initial_message_id, status, case_agency_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 RETURNING *`,
+                values
+            );
+            return insertResult.rows[0];
+        }
     }
 
     async getThreadById(id) {

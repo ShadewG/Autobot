@@ -1176,7 +1176,9 @@ router.get('/:id/export', async (req, res) => {
             ),
             db.query(
                 `SELECT id, action_type, status, draft_subject, draft_body_text,
-                        reasoning, human_decision, human_decided_at, created_at, executed_at
+                        reasoning, human_decision, human_decided_by, human_decided_at,
+                        original_draft_subject, original_draft_body_text, human_edited,
+                        created_at, executed_at
                  FROM proposals WHERE case_id = $1
                  ORDER BY created_at ASC`, [caseId]
             ),
@@ -1608,7 +1610,7 @@ router.get('/:id/audit-stream', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Case not found' });
         }
 
-        const [ledgerResult, activityResult, portalSubmissions, emailEvents, errorEventsResult] = await Promise.all([
+        const [ledgerResult, activityResult, portalSubmissions, emailEvents, errorEventsResult, decisionTraces] = await Promise.all([
             db.query(
                 `SELECT id, event, transition_key, context, mutations_applied, projection, created_at
                  FROM case_event_ledger
@@ -1635,6 +1637,7 @@ router.get('/:id/audit-stream', async (req, res) => {
                  LIMIT $2`,
                 [caseId, limit]
             ),
+            db.getDecisionTracesByCaseId(caseId, limit),
         ]);
 
         const allEntries = [
@@ -1667,6 +1670,22 @@ router.get('/:id/audit-stream', async (req, res) => {
                 timestamp: row.created_at,
                 sort_key: row.id,
                 payload: row,
+            })),
+            ...decisionTraces.map((row) => ({
+                source: 'decision_traces',
+                timestamp: row.created_at,
+                sort_key: row.id,
+                payload: {
+                    id: row.id,
+                    run_id: row.run_id,
+                    classification: row.classification,
+                    router_output: row.router_output,
+                    node_trace: row.node_trace,
+                    gate_decision: row.gate_decision,
+                    duration_ms: row.duration_ms,
+                    started_at: row.started_at,
+                    completed_at: row.completed_at,
+                },
             })),
         ]
             .filter((row) => row.timestamp)

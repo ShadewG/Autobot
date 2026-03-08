@@ -91,6 +91,23 @@ function getTriggerRunId(run) {
   return run.trigger_run_id || metadata.triggerRunId || metadata.trigger_run_id || null;
 }
 
+function getProposalDecisionErrorCode(error) {
+  const message = String(error?.message || '').toLowerCase();
+  if (error?.code === '23505' || String(error?.constraint || '').includes('one_active_per_case')) {
+    return 'ACTIVE_RUN_EXISTS';
+  }
+  if (message.includes('waitpoint')) {
+    return 'WAITPOINT_COMPLETION_FAILED';
+  }
+  if (message.includes('trigger') || message.includes('dispatch')) {
+    return 'TRIGGER_DISPATCH_FAILED';
+  }
+  if (message.includes('portal url')) {
+    return 'PORTAL_URL_MISSING';
+  }
+  return 'PROPOSAL_DECISION_FAILED';
+}
+
 async function ensureCaseThread(caseId, subject, agencyEmail = null) {
   let thread = await db.getThreadByCaseId(caseId);
   if (thread) return thread;
@@ -1941,14 +1958,15 @@ router.post('/proposals/:id/decision', async (req, res) => {
       }
 
       if (waitpointError) {
-        const refreshedProposal = await db.getProposalById(proposalId);
+        const refreshedProposal = await db.getProposalById(proposalId).catch(() => null);
+        const fallbackProposal = refreshedProposal || proposal;
         const canFallbackToDirectEmail =
           action === 'APPROVE' &&
-          refreshedProposal?.draft_body_text &&
-          refreshedProposal?.draft_subject;
+          fallbackProposal?.draft_body_text &&
+          fallbackProposal?.draft_subject;
         const canFallbackToDirectPdfEmail =
           action === 'APPROVE' &&
-          refreshedProposal?.action_type === 'SEND_PDF_EMAIL';
+          fallbackProposal?.action_type === 'SEND_PDF_EMAIL';
 
         if (canFallbackToDirectPdfEmail || canFallbackToDirectEmail) {
           logger.warn('Waitpoint completion failed; falling back to direct execution', {
@@ -1957,9 +1975,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
             error: waitpointError.message,
           });
           if (canFallbackToDirectPdfEmail) {
-            await executeApprovedProposalPdfEmailDirectly(refreshedProposal, humanDecision);
+            await executeApprovedProposalPdfEmailDirectly(fallbackProposal, humanDecision);
           } else {
-            await executeApprovedProposalEmailDirectly(refreshedProposal, humanDecision);
+            await executeApprovedProposalEmailDirectly(fallbackProposal, humanDecision);
           }
           return res.json({
             success: true,
@@ -2181,12 +2199,17 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
   } catch (error) {
     if (error.code === '23505' && String(error.constraint || '').includes('one_active_per_case')) {
-      return res.status(409).json({ success: false, error: 'Case already has an active agent run (constraint)' });
+      return res.status(409).json({
+        success: false,
+        error: 'Case already has an active agent run (constraint)',
+        error_code: 'ACTIVE_RUN_EXISTS',
+      });
     }
     logger.error('Error processing proposal decision', { proposalId, error: error.message });
     res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
+      error_code: getProposalDecisionErrorCode(error),
     });
   }
 });
@@ -3751,5 +3774,7 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
     });
   }
 });
+
+router.getProposalDecisionErrorCode = getProposalDecisionErrorCode;
 
 module.exports = router;

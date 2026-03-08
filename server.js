@@ -186,7 +186,7 @@ async function runMigrations() {
             try {
                 await db.query(sql);
                 await db.query(
-                    'INSERT INTO schema_migrations (filename) VALUES ($1)',
+                    'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING',
                     [filename]
                 );
                 console.log(`  ✓ ${filename} applied successfully`);

@@ -43,11 +43,13 @@ async function completeProposalWaitpoint(proposal, data, log) {
 
 /**
  * GET /api/requests/:id/proposals
- * Get all proposals for a case
+ * Get proposals for a case. Pass ?all=true to include historical (non-pending) proposals.
  */
 router.get('/:id/proposals', async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
+        const includeAll = req.query.all === 'true';
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
 
         // Verify case exists
         const caseData = await db.getCaseById(requestId);
@@ -58,8 +60,16 @@ router.get('/:id/proposals', async (req, res) => {
             });
         }
 
-        // Get proposals from new proposals table
-        const proposals = await db.getPendingProposalsByCaseId(requestId);
+        let proposals;
+        if (includeAll) {
+            const result = await db.query(
+                `SELECT * FROM proposals WHERE case_id = $1 ORDER BY created_at DESC LIMIT $2`,
+                [requestId, limit]
+            );
+            proposals = result.rows;
+        } else {
+            proposals = await db.getPendingProposalsByCaseId(requestId);
+        }
 
         const transformedProposals = proposals.map(p => ({
             id: p.id,
@@ -75,6 +85,13 @@ router.get('/:id/proposals', async (req, res) => {
             can_auto_execute: p.can_auto_execute,
             requires_human: p.requires_human,
             adjustment_count: p.adjustment_count || 0,
+            human_decision: p.human_decision || null,
+            human_decided_by: p.human_decided_by || null,
+            human_decided_at: p.human_decided_at || null,
+            human_edited: p.human_edited || false,
+            original_draft_subject: p.original_draft_subject || null,
+            original_draft_body_text: p.original_draft_body_text || null,
+            executed_at: p.executed_at || null,
             created_at: p.created_at
         }));
 
@@ -131,7 +148,11 @@ router.get('/:id/proposals/:proposalId', async (req, res) => {
                 requires_human: proposal.requires_human,
                 adjustment_count: proposal.adjustment_count || 0,
                 human_decision: proposal.human_decision,
+                human_decided_by: proposal.human_decided_by || null,
                 human_decided_at: proposal.human_decided_at,
+                original_draft_subject: proposal.original_draft_subject || null,
+                original_draft_body_text: proposal.original_draft_body_text || null,
+                human_edited: proposal.human_edited || false,
                 executed_at: proposal.executed_at,
                 email_job_id: proposal.email_job_id,
                 created_at: proposal.created_at,

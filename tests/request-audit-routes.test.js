@@ -262,15 +262,34 @@ describe('Request audit/debug routes', function () {
         };
       }
 
-      assert.match(sql, /FROM error_events/);
+      if (callCount === 3) {
+        assert.match(sql, /FROM error_events/);
+        return {
+          rows: [
+            {
+              id: 3,
+              source_service: 'notion_service',
+              operation: 'sync_status',
+              error_message: 'Notion unavailable',
+              created_at: '2026-03-08T10:04:30.000Z',
+            },
+          ],
+        };
+      }
+
+      assert.match(sql, /FROM decision_traces/);
       return {
         rows: [
           {
-            id: 3,
-            source_service: 'notion_service',
-            operation: 'sync_status',
-            error_message: 'Notion unavailable',
-            created_at: '2026-03-08T10:04:30.000Z',
+            id: 4,
+            created_at: '2026-03-08T10:04:15.000Z',
+            classification: { classification: 'SEND_INITIAL_REQUEST' },
+            router_output: { actionType: 'SEND_INITIAL_REQUEST' },
+            node_trace: [],
+            gate_decision: null,
+            duration_ms: 1200,
+            started_at: '2026-03-08T10:04:10.000Z',
+            completed_at: '2026-03-08T10:04:15.000Z',
           },
         ],
       };
@@ -283,10 +302,10 @@ describe('Request audit/debug routes', function () {
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
-    assert.strictEqual(response.body.count, 5);
+    assert.strictEqual(response.body.count, 6);
     assert.deepStrictEqual(
       response.body.entries.map((entry) => entry.source),
-      ['email_events', 'error_events', 'portal_submissions', 'activity_log', 'case_event_ledger']
+      ['email_events', 'error_events', 'decision_traces', 'portal_submissions', 'activity_log', 'case_event_ledger']
     );
     assert.strictEqual(response.body.summary.by_source.error_events, 1);
   });
@@ -301,7 +320,8 @@ describe('Request audit/debug routes', function () {
       callCount += 1;
       if (callCount === 1) return { rows: [{ id: 1, created_at: '2026-03-08T10:00:00.000Z' }] };
       if (callCount === 2) return { rows: [{ id: 2, created_at: '2026-03-08T10:03:00.000Z' }] };
-      return { rows: [{ id: 3, created_at: '2026-03-08T10:04:30.000Z' }] };
+      if (callCount === 3) return { rows: [{ id: 3, created_at: '2026-03-08T10:04:30.000Z' }] };
+      return { rows: [{ id: 4, created_at: '2026-03-08T10:04:15.000Z' }] };
     };
 
     const app = express();
