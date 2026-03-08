@@ -132,7 +132,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
 
 #### Dashboard API Hygiene
-- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - app page routes appear to be affected too: /gated/ → /gated then 500, /requests/ → /requests 404, /eval/ → /eval 500, /analytics/ → /analytics 404, /requests/new → 500)`
+- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - app page routes appear to be affected too: direct loads for /gated, /requests, /runs, /agencies, /eval, /analytics, and /simulate are broken on localhost:3000; /settings and /admin still return 200)`
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -221,7 +221,8 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 
 ---
 
-- [ ] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 (`/gated/` loops into `/gated` then 500, `/requests/` → `/requests` 404, `/eval/` → `/eval` 500, `/analytics/` → `/analytics` 404, `/requests/new` 500)
+- [ ] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 (confirmed broken on direct load: `/gated`, `/requests`, `/runs`, `/agencies`, `/eval`, `/analytics`, `/simulate`; `/settings` and `/admin` still return `200`)
+- [ ] Stabilize the local dashboard test stack before more UI verification: `localhost:3000` currently serves a mixed shell (`/login` shows `FOIA RESEARCHER`, `/settings` and `/admin` render `Sentencing Tracker`) while direct `/api/*` requests return uvicorn `404`; `localhost:3001` still serves stale Next pages that return `500`
 
 ## Phase 2: Feedback & Continuous Improvement
 
@@ -416,15 +417,15 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 ## Validation Queries (run periodically)
 
-- [ ] Proposals with `human_decision` but no `human_decided_at`
-- [ ] `EXECUTED` proposals with no `executed_at`
-- [ ] Terminal executions with no `completed_at`
-- [ ] New writes to `auto_reply_queue` (should be zero)
-- [ ] Mismatches between `constraints` and `constraints_jsonb`
-- [ ] Mismatches between `scope_items` and `scope_items_jsonb`
-- [ ] Proposals missing `case_agency_id` when derivable
-- [ ] Cases with agency email but no matching directory entry
-- [ ] Cases with bounced emails still in "awaiting_response"
+- [x] Proposals with `human_decision` but no `human_decided_at` — 356 found, backfilled from `updated_at`
+- [x] `EXECUTED` proposals with no `executed_at` — 63 found, backfilled from `human_decided_at` / `updated_at`
+- [x] Terminal executions with no `completed_at` — 0 found (clean)
+- [x] New writes to `auto_reply_queue` (should be zero) — 0 in last 7 days (clean)
+- [x] Mismatches between `constraints` and `constraints_jsonb` — constraints_jsonb is sole source of truth (77 cases have data)
+- [x] Mismatches between `scope_items` and `scope_items_jsonb` — scope_items_jsonb is sole source of truth (105 cases have data)
+- [x] Proposals missing `case_agency_id` when derivable — 18 found, backfilled from primary case_agency
+- [ ] Cases with agency email but no matching directory entry — N/A (`agency_directory` table doesn't exist; uses `agencies` table)
+- [x] Cases with bounced emails still in "awaiting_response" — 0 found (clean)
 
 ---
 
