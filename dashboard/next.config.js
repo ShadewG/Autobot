@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const isDev = process.env.NODE_ENV !== 'production';
-const apiTarget = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api';
+const apiTarget =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.API_URL ||
+  'http://localhost:3004/api';
 // Strip trailing /api for the rewrite destination base
 const apiOrigin = apiTarget.replace(/\/api\/?$/, '');
 

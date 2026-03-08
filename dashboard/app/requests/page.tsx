@@ -278,6 +278,11 @@ export default function RequestsPage() {
               <Plus className="h-4 w-4 mr-1" /> New Case
             </Button>
           </Link>
+          <Link href="/requests/batch">
+            <Button variant="outline" size="sm">
+              <Plus className="h-4 w-4 mr-1" /> Batch
+            </Button>
+          </Link>
           <NotionImport onImported={() => mutate()} />
         </div>
       </div>

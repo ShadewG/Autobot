@@ -53,6 +53,7 @@ async function applyClassificationSideEffects(
       });
       await db.logActivity('constraint_detected', 'Constraint detected: WRONG_AGENCY', {
         case_id: caseId, constraint: 'WRONG_AGENCY', source: 'classification',
+        actor_type: 'system', source_service: 'trigger.dev',
       });
     }
 
@@ -1550,6 +1551,7 @@ export async function executeAction(
           await db.updateCase(caseId, { constraints_jsonb: JSON.stringify(nextConstraints) });
           await db.logActivity('constraint_removed', 'Constraint removed: WRONG_AGENCY (rerouted to correct agency)', {
             case_id: caseId, constraint: 'WRONG_AGENCY', source: 'reroute',
+            actor_type: 'system', source_service: 'trigger.dev',
           });
           logger.info("Cleared WRONG_AGENCY constraint after successful reroute proposal", {
             caseId,
@@ -1569,7 +1571,8 @@ export async function executeAction(
         pauseReason: "RESEARCH_HANDOFF",
       });
       await db.logActivity("research_followup_proposed", `Research complete - proposed ${followupActionType} to ${suggestedAgency.name}`, {
-        caseId, proposalId, newAgency: suggestedAgency.name, actionType: followupActionType,
+        case_id: caseId, proposalId, newAgency: suggestedAgency.name, actionType: followupActionType,
+        actor_type: 'system', source_service: 'trigger.dev',
       });
 
       executionResult = {
@@ -1612,7 +1615,8 @@ export async function executeAction(
 
   // Log activity
   await db.logActivity("agent_action_executed", `Executed ${resolvedActionType}`, {
-    caseId, proposalId, executionKey, mode: EXECUTION_MODE, result: executionResult,
+    case_id: caseId, proposalId, executionKey, mode: EXECUTION_MODE, result: executionResult,
+    actor_type: 'system', source_service: 'trigger.dev',
   });
 
   // Dismiss other pending proposals (except RESEARCH_AGENCY which creates follow-ups)

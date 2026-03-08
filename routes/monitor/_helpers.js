@@ -307,7 +307,10 @@ async function processProposalDecision(
             await db.logActivity('proposal_dispatch_failed', `Retry research for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
                 case_id: caseId,
                 proposal_id: proposalId,
-                error: triggerError.message
+                error: triggerError.message,
+                actor_type: 'human',
+                actor_id: userId || undefined,
+                source_service: 'dashboard',
             });
             throw triggerError;
         }
@@ -316,7 +319,9 @@ async function processProposalDecision(
             case_id: caseId,
             proposal_id: proposalId,
             trigger_run_id: handle.id,
-            user_id: userId || undefined
+            actor_type: 'human',
+            actor_id: userId || undefined,
+            source_service: 'dashboard',
         });
         notify('info', `Research retry started for case ${caseId}`, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
@@ -336,7 +341,7 @@ async function processProposalDecision(
         });
         await captureDismissFeedback(proposal, { instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
-        await db.logActivity('proposal_dismissed', `Proposal #${proposalId} (${proposal.action_type}) dismissed${reason ? ': ' + reason : ''}`, { case_id: caseId, user_id: userId || undefined });
+        await db.logActivity('proposal_dismissed', `Proposal #${proposalId} (${proposal.action_type}) dismissed${reason ? ': ' + reason : ''}`, { case_id: caseId, actor_type: 'human', actor_id: userId || undefined, source_service: 'dashboard' });
         notify('info', `Proposal dismissed for case ${caseId}`, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action: 'DISMISS' });
 
@@ -412,7 +417,10 @@ async function processProposalDecision(
             await db.logActivity('proposal_dispatch_failed', `Guided reprocess for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
                 case_id: caseId,
                 proposal_id: proposalId,
-                error: triggerError.message
+                error: triggerError.message,
+                actor_type: 'human',
+                actor_id: userId || undefined,
+                source_service: 'dashboard',
             });
             throw triggerError;
         }
@@ -421,7 +429,10 @@ async function processProposalDecision(
             case_id: caseId,
             proposal_id: proposalId,
             instruction: trimmedInstruction,
-            trigger_run_id: handle.id
+            trigger_run_id: handle.id,
+            actor_type: 'human',
+            actor_id: userId || undefined,
+            source_service: 'dashboard',
         });
         notify('info', `Guided reprocess started for case ${caseId}`, { case_id: caseId });
         emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
@@ -506,7 +517,10 @@ async function processProposalDecision(
             case_id: caseId,
             to: targetEmail,
             attachment_id: pdfAttachment.id,
-            sendgrid_message_id: sendResult.messageId
+            sendgrid_message_id: sendResult.messageId,
+            actor_type: 'human',
+            actor_id: userId || undefined,
+            source_service: 'dashboard',
         });
 
         try {
@@ -621,7 +635,7 @@ async function processProposalDecision(
             );
             await autoCaptureEvalCase(proposal, { action, instruction: trimmedInstruction, reason, decidedBy: userId || decidedBy });
 
-            await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, user_id: userId || undefined });
+            await db.logActivity(action === 'APPROVE' ? 'proposal_approved' : 'proposal_adjusted', `Proposal #${proposalId} (${proposal.action_type}) ${action.toLowerCase()}${instruction ? ' — ' + instruction : ''}`, { case_id: caseId, actor_type: 'human', actor_id: userId || undefined, source_service: 'dashboard' });
             notify('info', `Proposal ${action.toLowerCase()} — Trigger.dev task resuming for case ${caseId}`, { case_id: caseId });
             emitDataUpdate('proposal_update', { case_id: caseId, proposal_id: proposalId, action });
             return {
@@ -682,7 +696,10 @@ async function processProposalDecision(
             case_id: caseId,
             proposal_id: proposalId,
             action,
-            error: triggerError.message
+            error: triggerError.message,
+            actor_type: 'human',
+            actor_id: userId || undefined,
+            source_service: 'dashboard',
         });
         throw triggerError;
     }

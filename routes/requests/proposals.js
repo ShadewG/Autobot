@@ -465,7 +465,9 @@ router.post('/:id/proposals/:proposalId/withdraw', async (req, res) => {
         await db.logActivity('proposal_withdrawn', `Proposal withdrawn: ${reason || 'No reason given'}`, {
             case_id: requestId,
             proposal_id: proposalId,
-            reason: reason
+            reason: reason,
+            actor_type: 'human',
+            source_service: 'dashboard',
         });
 
         if (proposal.waitpoint_token) {

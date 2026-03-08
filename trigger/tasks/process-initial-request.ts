@@ -57,6 +57,8 @@ export const processInitialRequest = task({
       });
       await db.logActivity("agent_run_failed", `Process-initial-request failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
         case_id: caseId,
+        actor_type: "system",
+        source_service: "trigger.dev",
       });
     } catch {}
   },
@@ -128,6 +130,8 @@ export const processInitialRequest = task({
           run_id: runId,
           step,
           category: "AGENT",
+          actor_type: "system",
+          source_service: "trigger.dev",
           ...extra,
         });
       } catch {

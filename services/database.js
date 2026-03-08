@@ -1159,8 +1159,8 @@ class DatabaseService {
     // Activity Log
     async logActivity(eventType, description, metadata = {}) {
         const query = `
-            INSERT INTO activity_log (event_type, case_id, message_id, description, metadata, user_id)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO activity_log (event_type, case_id, message_id, description, metadata, user_id, actor_type, actor_id, source_service)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING *
         `;
         const values = [
@@ -1169,7 +1169,10 @@ class DatabaseService {
             metadata.message_id || null,
             description,
             metadata,
-            metadata.user_id || null
+            metadata.user_id || null,
+            metadata.actor_type || null,
+            metadata.actor_id || metadata.user_id || null,
+            metadata.source_service || null,
         ];
         const result = await this.query(query, values);
         const row = result.rows[0];

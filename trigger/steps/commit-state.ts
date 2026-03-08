@@ -110,10 +110,12 @@ export async function commitState(
     // Log timeline event
     await withTimeout(
       db.logActivity("agent_decision", `Agent decided: ${actionType || "NONE"}`, {
-        caseId,
+        case_id: caseId,
         reasoning,
         executed: actionExecuted,
         result: executionResult,
+        actor_type: "system",
+        source_service: "trigger.dev",
       }),
       COMMIT_STEP_TIMEOUT_MS,
       "logActivity(agent_decision)"

@@ -378,6 +378,8 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
                 dismissed_proposals: txResult.dismissed,
                 failed_runs: txResult.failed,
                 analyses_pruned: txResult.analysesPruned,
+                actor_type: 'human',
+                source_service: 'dashboard',
                 decisions_pruned: txResult.decisionsPruned,
             }
         );
@@ -698,7 +700,9 @@ router.post('/:id/agent-runs/:runId/replay', async (req, res) => {
                 original_run_id: runId,
                 replay_run_id: replayRun.id,
                 mode: 'dry_run',
-                overrides_applied: Object.keys(overrides).filter(k => overrides[k] !== null).length > 0
+                overrides_applied: Object.keys(overrides).filter(k => overrides[k] !== null).length > 0,
+                actor_type: 'human',
+                source_service: 'dashboard',
             });
 
             res.json({

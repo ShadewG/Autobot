@@ -936,7 +936,9 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   await db.logActivity('proposal_executed', `Proposal ${proposalId} approved and sent directly`, {
     case_id: caseId,
     proposal_id: proposalId,
-    action_type: proposal.action_type
+    action_type: proposal.action_type,
+    actor_type: 'human',
+    source_service: 'dashboard',
   });
 
   logger.info('Proposal executed via direct email send fallback', { caseId, proposalId });
@@ -1101,6 +1103,8 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     proposal_id: proposalId,
     action_type: proposal.action_type,
     attachment_id: pdfAttachment.id,
+    actor_type: 'human',
+    source_service: 'dashboard',
   });
 
   logger.info('Proposal executed via direct PDF email send fallback', { caseId, proposalId, attachmentId: pdfAttachment.id });
@@ -1631,7 +1635,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
         await db.logActivity('proposal_dispatch_failed', `Retry research for proposal #${proposalId} failed to dispatch: ${triggerError.message}`, {
           case_id: caseId,
           proposal_id: proposalId,
-          error: triggerError.message
+          error: triggerError.message,
+          actor_type: 'human',
+          source_service: 'dashboard',
         });
         throw triggerError;
       }
@@ -1640,6 +1646,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
         case_id: caseId,
         proposal_id: proposalId,
         trigger_run_id: handle.id,
+        actor_type: 'human',
+        source_service: 'dashboard',
       });
 
       return res.json({
@@ -1663,6 +1671,8 @@ router.post('/proposals/:id/decision', async (req, res) => {
       await db.logActivity('proposal_manual_submit', `Proposal ${proposalId} manually submitted via portal`, {
         case_id: caseId,
         proposal_id: proposalId,
+        actor_type: 'human',
+        source_service: 'dashboard',
       });
 
       // Complete the waiting Trigger.dev run if one exists
@@ -2116,7 +2126,9 @@ router.post('/proposals/:id/decision', async (req, res) => {
         case_id: caseId,
         proposal_id: proposalId,
         action,
-        error: triggerError.message
+        error: triggerError.message,
+        actor_type: 'human',
+        source_service: 'dashboard',
       });
       await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${triggerError.message}` });
       throw triggerError;
@@ -3254,7 +3266,9 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
       case_id: caseId,
       message_id: message.id,
       source: source,
-      from_email: from_email
+      from_email: from_email,
+      actor_type: 'human',
+      source_service: 'dashboard',
     });
 
     // === TRIGGER RUN (atomic) ===
@@ -3483,7 +3497,8 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
     }
 
     await db.logActivity('correspondence_logged', `Logged ${direction} ${typeLabel}`, {
-      case_id: caseId, message_id: message.id, correspondence_type, direction, contact_name: contact_name || null
+      case_id: caseId, message_id: message.id, correspondence_type, direction, contact_name: contact_name || null,
+      actor_type: 'human', source_service: 'dashboard',
     });
 
     // === TRIGGER AI RUN ===

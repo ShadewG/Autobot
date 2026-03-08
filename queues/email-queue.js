@@ -195,7 +195,9 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 }
 
                 await db.logActivity('email_sent', `Sent initial FOIA request for case ${caseId}`, {
-                    case_id: caseId
+                    case_id: caseId,
+                    actor_type: 'system',
+                    source_service: 'email-queue',
                 });
                 break;
 
@@ -209,7 +211,9 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 );
 
                 await db.logActivity('followup_sent', `Sent follow-up for case ${caseId}`, {
-                    case_id: caseId
+                    case_id: caseId,
+                    actor_type: 'system',
+                    source_service: 'email-queue',
                 });
                 break;
 
@@ -223,7 +227,9 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 );
 
                 await db.logActivity('auto_reply_sent', `Sent auto-reply for case ${caseId}`, {
-                    case_id: caseId
+                    case_id: caseId,
+                    actor_type: 'system',
+                    source_service: 'email-queue',
                 });
 
                 // Notify Discord
@@ -290,7 +296,9 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
 
                 await db.logActivity('email_sent', `Sent ${jobType} for case ${caseId}`, {
                     case_id: caseId,
-                    execution_key: execKey || executionKey
+                    execution_key: execKey || executionKey,
+                    actor_type: 'system',
+                    source_service: 'email-queue',
                 });
                 break;
             }

@@ -123,7 +123,9 @@ router.post('/inbound', upload.any(), async (req, res) => {
             to: req.body.to || req.body.recipient,
             subject: req.body.subject,
             ip: req.ip,
-            user_agent: req.headers['user-agent']
+            user_agent: req.headers['user-agent'],
+            actor_type: 'system',
+            source_service: 'sendgrid-webhook',
         }).catch(e => console.error('Failed to log webhook hit:', e));
         console.log('Content-Type:', req.headers['content-type']);
         console.log('Body keys:', Object.keys(req.body));

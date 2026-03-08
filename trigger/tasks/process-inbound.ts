@@ -72,6 +72,8 @@ export const processInbound = task({
       });
       await db.logActivity("agent_run_failed", `Process-inbound failed for case ${caseId}: ${String(error).substring(0, 300)}`, {
         case_id: caseId,
+        actor_type: "system",
+        source_service: "trigger.dev",
       });
     } catch {}
   },
@@ -149,6 +151,8 @@ export const processInbound = task({
           run_id: runId,
           step,
           category: "AGENT",
+          actor_type: "system",
+          source_service: "trigger.dev",
           ...extra,
         });
       } catch {

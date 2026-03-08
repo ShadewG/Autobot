@@ -236,6 +236,7 @@ Return constraint tags and scope item updates only when supported by the message
         if (!oldConstraints.has(c)) {
           await db.logActivity('constraint_detected', `Constraint detected: ${c}`, {
             case_id: caseId, constraint: c, source: 'ai_analysis',
+            actor_type: 'system', source_service: 'trigger.dev',
           });
         }
       }
@@ -243,6 +244,7 @@ Return constraint tags and scope item updates only when supported by the message
         if (!newConstraints.has(c)) {
           await db.logActivity('constraint_removed', `Constraint removed: ${c}`, {
             case_id: caseId, constraint: c, source: 'ai_analysis',
+            actor_type: 'system', source_service: 'trigger.dev',
           });
         }
       }

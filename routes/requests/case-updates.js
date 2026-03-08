@@ -137,7 +137,9 @@ router.patch('/:id/scope-items/:itemIndex', async (req, res) => {
             item_index: itemIndex,
             item_name: scopeItems[itemIndex].name,
             new_status: status,
-            reason: reason
+            reason: reason,
+            actor_type: 'human',
+            source_service: 'dashboard',
         });
 
         res.json({

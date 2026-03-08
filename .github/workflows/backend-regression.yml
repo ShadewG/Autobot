@@ -7,6 +7,34 @@ on:
   pull_request:
 
 jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install dashboard dependencies
+        run: cd dashboard && npm ci
+
+      - name: Type-check Trigger.dev tasks
+        run: npm run typecheck
+
+      - name: Type-check dashboard
+        run: npm run typecheck:dashboard
+
+      - name: Build dashboard
+        run: npm run dashboard:build
+
   regression:
     runs-on: ubuntu-latest
     timeout-minutes: 20

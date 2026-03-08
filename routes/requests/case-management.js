@@ -91,7 +91,9 @@ Be specific to ${caseData.state} law where possible.`;
         await db.logActivity('exemption_researched', `Researched exemption claim: "${constraint.description}"`, {
             case_id: requestId,
             constraint_index: constraint_index,
-            state: caseData.state
+            state: caseData.state,
+            actor_type: 'human',
+            source_service: 'dashboard',
         });
 
         res.json({
@@ -140,7 +142,9 @@ router.post('/:id/withdraw', async (req, res) => {
         await db.logActivity('request_withdrawn', `Request withdrawn: ${reason || 'No reason given'}`, {
             case_id: requestId,
             reason: reason || null,
-            previous_status: caseData.status
+            previous_status: caseData.status,
+            actor_type: 'human',
+            source_service: 'dashboard',
         });
 
         // Dismiss any pending proposals
@@ -273,7 +277,9 @@ router.post('/:id/send-manual', async (req, res) => {
                 to_email: targetEmail,
                 subject: subjectLine,
                 sendgrid_message_id: sendResult.sendgridMessageId || null,
-                message_type: replyingToInbound ? 'manual_reply' : 'manual_outbound'
+                message_type: replyingToInbound ? 'manual_reply' : 'manual_outbound',
+                actor_type: 'human',
+                source_service: 'dashboard',
             }
         );
 
@@ -374,7 +380,10 @@ router.post('/:id/resolve-review', async (req, res) => {
                 case_id: requestId,
                 review_action: action,
                 instruction: instruction || null,
-                previous_status: caseData.status
+                previous_status: caseData.status,
+                actor_type: 'human',
+                actor_id: req.user?.id || req.user?.email || null,
+                source_service: 'dashboard',
             });
 
             // On close: generate AI outcome summary asynchronously
@@ -555,7 +564,10 @@ router.post('/:id/resolve-review', async (req, res) => {
             case_id: requestId,
             review_action: action,
             instruction: instruction || null,
-            previous_status: caseData.status
+            previous_status: caseData.status,
+            actor_type: 'human',
+            actor_id: req.user?.id || req.user?.email || null,
+            source_service: 'dashboard',
         });
 
         // Trigger Trigger.dev task for re-processing — pass review action + instruction
@@ -675,7 +687,9 @@ router.post('/:id/constraints/remove', async (req, res) => {
             case_id: caseId,
             constraint: removedLabel,
             reason: reason || null,
-            user_id: userId,
+            actor_type: 'human',
+            actor_id: userId,
+            source_service: 'dashboard',
         });
 
         res.json({ success: true, removed, constraints: current });
@@ -719,7 +733,9 @@ router.post('/:id/constraints/add', async (req, res) => {
             constraint: type,
             description,
             source: source || 'Manual override',
-            user_id: userId,
+            actor_type: 'human',
+            actor_id: userId,
+            source_service: 'dashboard',
         });
 
         res.json({ success: true, constraint, constraints: current });
@@ -745,7 +761,9 @@ router.post('/:id/sync-notion', async (req, res) => {
 
         await db.logActivity('notion_manual_sync', `Manual Notion sync for case #${caseId}`, {
             case_id: caseId,
-            user_id: req.body?.userId || 'dashboard',
+            actor_type: 'human',
+            actor_id: req.body?.userId || null,
+            source_service: 'dashboard',
         });
 
         res.json({ success: true, message: 'Notion sync triggered' });
@@ -781,7 +799,9 @@ router.put('/:id/tags', async (req, res) => {
         await db.logActivity('tags_updated', `Tags updated to: ${cleaned.join(', ') || '(none)'}`, {
             case_id: caseId,
             tags: cleaned,
-            user_id: req.body?.userId || 'dashboard',
+            actor_type: 'human',
+            actor_id: req.body?.userId || null,
+            source_service: 'dashboard',
         });
 
         res.json({ success: true, tags: updated.tags });
@@ -817,7 +837,9 @@ router.put('/:id/priority', async (req, res) => {
         await db.logActivity('priority_updated', `Priority set to ${labels[level]}`, {
             case_id: caseId,
             priority: level,
-            user_id: req.body?.userId || 'dashboard',
+            actor_type: 'human',
+            actor_id: req.body?.userId || null,
+            source_service: 'dashboard',
         });
 
         res.json({ success: true, priority: result.rows[0].priority });
@@ -889,12 +911,181 @@ router.post('/create', async (req, res) => {
         const userId = req.signedCookies?.autobot_uid || 'dashboard';
         await db.logActivity('case_created_manual', `Case "${case_name}" created from dashboard`, {
             case_id: newCase.id,
-            user_id: userId,
+            actor_type: 'human',
+            actor_id: userId,
+            source_service: 'dashboard',
         });
 
         res.status(201).json({ success: true, case_id: newCase.id, case_name: newCase.case_name });
     } catch (error) {
         logger.error('Error creating case:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/requests/batch
+ * Create N independent cases from a shared template + list of agencies.
+ * Each case gets its own proposal queue and thread.
+ */
+router.post('/batch', async (req, res) => {
+    try {
+        const { template = {}, agencies = [] } = req.body || {};
+        const {
+            case_name, subject_name, incident_date, incident_location,
+            additional_details, requested_records,
+        } = template;
+
+        if (!case_name?.trim()) return res.status(400).json({ success: false, error: 'template.case_name is required' });
+        if (!subject_name?.trim()) return res.status(400).json({ success: false, error: 'template.subject_name is required' });
+        if (!agencies.length) return res.status(400).json({ success: false, error: 'At least one agency is required' });
+        if (agencies.length > 50) return res.status(400).json({ success: false, error: 'Maximum 50 agencies per batch' });
+
+        const { normalizeStateCode, parseStateFromAgencyName } = require('../../utils/state-utils');
+
+        let parsedDate = null;
+        if (incident_date) {
+            const d = new Date(incident_date);
+            if (!isNaN(d.getTime())) parsedDate = d.toISOString().split('T')[0];
+        }
+
+        const recordsArray = Array.isArray(requested_records)
+            ? requested_records.filter(Boolean)
+            : requested_records ? [requested_records] : null;
+
+        const batchId = `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const userId = req.signedCookies?.autobot_uid || 'dashboard';
+        const results = [];
+        const errors = [];
+
+        for (let i = 0; i < agencies.length; i++) {
+            const agency = agencies[i];
+            if (!agency.name?.trim()) {
+                errors.push({ index: i, agency_name: agency.name, error: 'Agency name is required' });
+                continue;
+            }
+            if (!agency.email?.trim() && !agency.portal_url?.trim()) {
+                errors.push({ index: i, agency_name: agency.name, error: 'Agency email or portal URL required' });
+                continue;
+            }
+
+            try {
+                const state = normalizeStateCode(agency.state) || parseStateFromAgencyName(agency.name) || null;
+                const syntheticId = `${batchId}-${i}`;
+
+                const newCase = await db.createCase({
+                    notion_page_id: syntheticId,
+                    case_name: case_name.trim(),
+                    subject_name: subject_name.trim(),
+                    agency_name: agency.name.trim(),
+                    agency_email: agency.email?.trim() || null,
+                    state,
+                    incident_date: parsedDate,
+                    incident_location: incident_location?.trim() || null,
+                    requested_records: recordsArray,
+                    additional_details: additional_details?.trim() || null,
+                    status: 'ready_to_send',
+                    portal_url: agency.portal_url?.trim() || null,
+                    portal_provider: agency.portal_provider?.trim() || null,
+                    tags: ['batch', `batch:${batchId}`],
+                });
+
+                await db.addCaseAgency(newCase.id, {
+                    agency_name: agency.name.trim(),
+                    agency_email: agency.email?.trim() || null,
+                    portal_url: agency.portal_url?.trim() || null,
+                    portal_provider: agency.portal_provider?.trim() || null,
+                    is_primary: true,
+                    added_source: 'batch',
+                    status: 'pending',
+                });
+
+                results.push({
+                    case_id: newCase.id,
+                    agency_name: agency.name.trim(),
+                    state,
+                    status: 'ready_to_send',
+                });
+            } catch (err) {
+                errors.push({ index: i, agency_name: agency.name, error: err.message });
+            }
+        }
+
+        if (results.length > 0) {
+            await db.logActivity('batch_created', `Batch "${case_name}" with ${results.length} cases`, {
+                batch_id: batchId,
+                total_agencies: agencies.length,
+                cases_created: results.length,
+                errors: errors.length,
+                actor_type: 'human',
+                actor_id: userId,
+                source_service: 'dashboard',
+            });
+        }
+
+        res.status(201).json({
+            success: true,
+            batch_id: batchId,
+            cases_created: results.length,
+            errors_count: errors.length,
+            cases: results,
+            errors: errors.length > 0 ? errors : undefined,
+        });
+    } catch (error) {
+        logger.error('Error creating batch:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/batch/:batchId/status
+ * Aggregated status for all cases in a batch.
+ */
+router.get('/batch/:batchId/status', async (req, res) => {
+    try {
+        const { batchId } = req.params;
+        const tag = `batch:${batchId}`;
+
+        const result = await db.query(`
+            SELECT
+                id, case_name, agency_name, state, status, send_date,
+                last_response_date, portal_url
+            FROM cases
+            WHERE tags @> $1::jsonb
+            ORDER BY id ASC
+        `, [JSON.stringify([tag])]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Batch not found' });
+        }
+
+        const cases = result.rows;
+        const summary = {
+            total: cases.length,
+            ready_to_send: cases.filter(c => c.status === 'ready_to_send').length,
+            pending: cases.filter(c => ['needs_human_review', 'needs_human_fee_approval'].includes(c.status)).length,
+            sent: cases.filter(c => c.status === 'sent').length,
+            responded: cases.filter(c => ['completed', 'partially_fulfilled'].includes(c.status)).length,
+            denied: cases.filter(c => c.status === 'denied').length,
+            in_progress: cases.filter(c => !['ready_to_send', 'completed', 'denied', 'cancelled'].includes(c.status)).length,
+        };
+
+        res.json({
+            success: true,
+            batch_id: batchId,
+            summary,
+            cases: cases.map(c => ({
+                case_id: c.id,
+                agency_name: c.agency_name,
+                state: c.state,
+                status: c.status,
+                send_date: c.send_date,
+                last_response_date: c.last_response_date,
+                has_portal: !!c.portal_url,
+            })),
+        });
+    } catch (error) {
+        logger.error('Error fetching batch status:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

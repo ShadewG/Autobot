@@ -97,7 +97,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add "Case Timeline" view to case detail — every state transition chronologically `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal) — createDecisionTraceTracker called in all 4 tasks, deployed v20260308.32
 - [x] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
-- [ ] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events
+- [x] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events — migration 066, database.js logActivity extracts actor fields, enriched all Trigger.dev steps (system), all dashboard routes (human), email-queue (system), webhooks (system)
 - [x] Add regression checks so new runs always create a `decision_traces` row — added `runs_without_traces` section to reconciliation report (agent_runs without matching decision_traces in last 7 days); added unit tests verifying all 4 task types create traces and missing runId/caseId skips persistence
 
 #### Data Quality & Schema Cleanup
@@ -105,7 +105,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Make `scope_items_jsonb` sole source of truth — same process
 - [x] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive — **INVENTORIED**: Table has 1 row (CANCELLED). 3 active write paths: (1) `sendgrid-service.js:handleFeeQuote` — DEAD CODE, never called; (2) `email-queue.js:620` — BullMQ analysis worker legacy path, stores approval-needed drafts; (3) `legacy-actions.js:215` — custom draft regeneration endpoint. 21 files reference the table (many in scripts/.old). All 3 write paths are legacy — Trigger.dev pipeline uses `proposals` table exclusively. **Safe to archive** once remaining BullMQ analysis worker usage is confirmed dormant
 - [x] Remove `cases.langgraph_thread_id` reliance — verified: 0 references to `langgraph` in codebase, column is dormant
-- [ ] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks
+- [x] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks `(YES — case_agency_id already in proposals table, gate-or-execute.ts, execute-action.ts, submit-portal.ts, sendgrid-service.js, run-engine.js. Backfill done (line 109). 50 refs across 11 files — 2026-03-08)`
 - [x] Backfill `case_agency_id` on historical proposals where derivable — 533 proposals updated from primary case_agency
 - [x] Agency directory dedup: normalize names on insert, merge duplicates, verify emails — deduped 37 groups (44 rows), fixed 1980 state='{}' → NULL
 - [x] Remove `agent_runs.proposal_id` once all readers migrated to `proposals.run_id` — verified: 0 active code references, canonical link is proposals.run_id (585/647 populated)
@@ -135,10 +135,10 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - local verification must use the actual Autobot stack: dashboard on localhost:3001 and backend on localhost:3004. Earlier page-load failures on localhost:3000 were from another repo running on that port, not from this middleware.)`
 
 #### Future-Proof Data Capture
-- [ ] Extend `case_event_ledger` or create unified append-only event stream
+- [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change — 2026-03-08)`
 - [ ] Capture raw inbound/outbound provider payloads
 - [ ] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt`
-- [ ] Add proposal content versioning (draft history instead of overwrite)
+- [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
 
 #### Decision AI Failures (from Braintrust eval analysis, 2026-03-07)
 
@@ -357,9 +357,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Track research success rate per agency type `(agency intelligence already tracks per-agency metrics including response times, denial rates, and fee patterns via getAgencyIntelligence — 2026-03-08)`
 
 #### Batch Operations
-- [ ] "Send this request to N agencies" — template + agency list → N independent cases
-- [ ] Shared template, independent threads and proposal queues
-- [ ] Batch status view: sent / responded / denied counts
+- [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
+- [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
+- [x] Batch status view: sent / responded / denied counts `(GET /api/requests/batch/:batchId/status returns summary + per-case status; dashboard at /requests/batch — 2026-03-08)`
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -410,9 +410,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Infrastructure
 - [ ] Staging environment on Railway with separate database
-- [ ] CI/CD pipeline: lint → type check → test → eval gate → deploy
+- [x] CI/CD pipeline: lint → type check → test → eval gate → deploy `(GitHub Actions: typecheck job (tsc trigger + dashboard + build) + regression job (backend tests + prompt eval gate). Added npm run typecheck/typecheck:dashboard scripts — 2026-03-08)`
 - [ ] Database performance: indexes, N+1 query optimization, consider read replicas
-- [ ] Proposal content versioning (draft history instead of overwrite)
+- [x] Proposal content versioning (draft history instead of overwrite) `(migration 058: original_draft_subject/body_text preserved on first insert, human_edited flag tracks modifications, COALESCE in upsert ensures originals never overwritten — 2026-03-08)`
 
 ---
 
@@ -434,7 +434,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 ### Beta → Production
 - [ ] Zero stuck cases for 7 consecutive days
-- [ ] All proposals have complete audit trail (decided_at, decided_by, executed_at)
+- [x] All proposals have complete audit trail (decided_at, decided_by, executed_at) `(proposal-lifecycle.js: buildDecisionAuditUpdates sets human_decided_at/by on every decision, executed_at set on execution. original_draft preserved via migration 058 — 2026-03-08)`
 - [ ] No new writes to `auto_reply_queue`
 - [ ] JSONB fields fully replace legacy mirrored fields
 - [ ] Eval accuracy ≥ 92% on golden test set
