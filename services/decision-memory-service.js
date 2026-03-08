@@ -14,6 +14,9 @@ const db = require('./database');
 const logger = require('./logger');
 
 class DecisionMemoryService {
+    constructor() {
+        this._lastDecaySweepAt = 0;
+    }
 
     /**
      * Get lessons relevant to a case context.
@@ -21,6 +24,8 @@ class DecisionMemoryService {
      */
     async getRelevantLessons(caseData, { messages = [], priorProposals = [], limit = 10 } = {}) {
         try {
+            await this.maybeDeactivateStaleLessons();
+
             // Build context keywords from the case
             const keywords = this._extractKeywords(caseData, messages, priorProposals);
 
@@ -54,6 +59,41 @@ class DecisionMemoryService {
         } catch (error) {
             logger.error('Error fetching decision lessons:', error.message);
             return [];
+        }
+    }
+
+    async maybeDeactivateStaleLessons({ maxAgeDays = 90, minIntervalMs = 60 * 60 * 1000 } = {}) {
+        const now = Date.now();
+        if (this._lastDecaySweepAt && now - this._lastDecaySweepAt < minIntervalMs) {
+            return 0;
+        }
+        this._lastDecaySweepAt = now;
+        return this.deactivateStaleLessons({ maxAgeDays });
+    }
+
+    async deactivateStaleLessons({ maxAgeDays = 90 } = {}) {
+        try {
+            const result = await db.query(
+                `UPDATE ai_decision_lessons
+                 SET active = false,
+                     updated_at = NOW()
+                 WHERE active = true
+                   AND source = 'auto'
+                   AND COALESCE(times_applied, 0) = 0
+                   AND COALESCE(updated_at, created_at) < NOW() - ($1::int * INTERVAL '1 day')
+                 RETURNING id`,
+                [maxAgeDays]
+            );
+            if (result.rows.length > 0) {
+                logger.info('Deactivated stale unused decision lessons', {
+                    count: result.rows.length,
+                    maxAgeDays,
+                });
+            }
+            return result.rows.length;
+        } catch (error) {
+            logger.error('Error deactivating stale decision lessons:', error.message);
+            return 0;
         }
     }
 
