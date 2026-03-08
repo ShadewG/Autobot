@@ -11,8 +11,19 @@ const PATTERNS = [
   'wrong_agency_referral',
 ];
 
+const REVIEW_CANDIDATE_REASONS = [
+  'other_intent',
+  'low_confidence',
+  'requires_action_without_suggestion',
+];
+
 function normalizeText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function collectMessageText(record = {}) {
@@ -102,6 +113,50 @@ function buildExample(record, pattern) {
   };
 }
 
+function classifyReviewCandidate(record = {}, { confidenceThreshold = 0.6 } = {}) {
+  const analysis = record.analysis || record.full_analysis_json || {};
+  const intent = String(record.intent || analysis.intent || '').trim().toLowerCase();
+  const confidenceScore = normalizeNumber(
+    record.confidence_score ?? analysis.confidence_score
+  );
+  const suggestedAction = normalizeText(record.suggested_action || analysis.suggested_action || '');
+  const requiresAction = record.requires_action ?? analysis.requires_action ?? null;
+
+  const reviewReasons = [];
+
+  if (intent === 'other' || intent === 'unclassified') {
+    reviewReasons.push('other_intent');
+  }
+
+  if (confidenceScore !== null && confidenceScore < confidenceThreshold) {
+    reviewReasons.push('low_confidence');
+  }
+
+  if (requiresAction === true && !suggestedAction) {
+    reviewReasons.push('requires_action_without_suggestion');
+  }
+
+  return reviewReasons;
+}
+
+function buildReviewCandidate(record, options = {}) {
+  const reviewReasons = classifyReviewCandidate(record, options);
+  if (!reviewReasons.length) return null;
+
+  const promptPatternHint = classifyPromptPattern(record);
+  const example = buildExample(record, promptPatternHint);
+
+  return {
+    ...example,
+    prompt_pattern_hint: promptPatternHint,
+    confidence_score: normalizeNumber(
+      record.confidence_score ?? record.analysis?.confidence_score
+    ),
+    review_reasons: reviewReasons,
+    attachment_count: Array.isArray(record.attachments) ? record.attachments.length : 0,
+  };
+}
+
 async function fetchCandidateMessages({ limit = 500, sinceDays = 365 } = {}) {
   const result = await db.query(
     `SELECT
@@ -118,6 +173,7 @@ async function fetchCandidateMessages({ limit = 500, sinceDays = 365 } = {}) {
         c.agency_name,
         c.state,
         ra.intent,
+        ra.confidence_score,
         ra.full_analysis_json->>'denial_subtype' AS denial_subtype,
         ra.requires_action,
         ra.suggested_action,
@@ -151,6 +207,58 @@ async function fetchCandidateMessages({ limit = 500, sinceDays = 365 } = {}) {
   }));
 }
 
+async function buildReviewCandidateDataset({
+  limit = 500,
+  sinceDays = 30,
+  perReason = 25,
+  confidenceThreshold = 0.6,
+} = {}) {
+  const rows = await fetchCandidateMessages({ limit, sinceDays });
+  const candidates = [];
+  const counts = Object.fromEntries(REVIEW_CANDIDATE_REASONS.map((reason) => [reason, 0]));
+
+  for (const row of rows) {
+    const candidate = buildReviewCandidate(row, { confidenceThreshold });
+    if (!candidate) continue;
+
+    for (const reason of candidate.review_reasons) {
+      counts[reason] += 1;
+    }
+
+    candidates.push(candidate);
+  }
+
+  const limited = [];
+  const perReasonCounts = Object.fromEntries(REVIEW_CANDIDATE_REASONS.map((reason) => [reason, 0]));
+  for (const candidate of candidates) {
+    const wouldOverflow = candidate.review_reasons.every((reason) => perReasonCounts[reason] >= perReason);
+    if (wouldOverflow) continue;
+
+    limited.push(candidate);
+    for (const reason of candidate.review_reasons) {
+      if (perReasonCounts[reason] < perReason) {
+        perReasonCounts[reason] += 1;
+      }
+    }
+  }
+
+  return {
+    generated_at: new Date().toISOString(),
+    source: {
+      since_days: sinceDays,
+      scanned_messages: rows.length,
+      per_reason_limit: perReason,
+      confidence_threshold: confidenceThreshold,
+    },
+    counts: {
+      ...counts,
+      candidates: candidates.length,
+      returned_candidates: limited.length,
+    },
+    candidates: limited,
+  };
+}
+
 async function buildPromptPatternDataset({ limit = 500, sinceDays = 365, perPattern = 12 } = {}) {
   const rows = await fetchCandidateMessages({ limit, sinceDays });
   const buckets = new Map(PATTERNS.map((pattern) => [pattern, []]));
@@ -182,7 +290,11 @@ async function buildPromptPatternDataset({ limit = 500, sinceDays = 365, perPatt
 
 module.exports = {
   PATTERNS,
+  REVIEW_CANDIDATE_REASONS,
   buildPromptPatternDataset,
+  buildReviewCandidateDataset,
+  buildReviewCandidate,
+  classifyReviewCandidate,
   classifyPromptPattern,
   collectMessageText,
 };

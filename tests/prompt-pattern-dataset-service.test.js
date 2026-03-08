@@ -91,4 +91,50 @@ describe('Prompt pattern dataset service', function () {
     assert.strictEqual(dataset.patterns.portal_confirmation[0].message_id, 1);
     assert.strictEqual(dataset.patterns.fee_letter[0].attachment_summary[0].filename, 'fee.pdf');
   });
+
+  it('builds review-candidate datasets for low-confidence and other classifications', async function () {
+    sinon.stub(db, 'query').resolves({
+      rows: [
+        {
+          id: 3,
+          case_id: 33,
+          subject: 'Unclear response',
+          from_email: 'records@agency.gov',
+          body_text: 'We received your request and something else happened.',
+          body_html: null,
+          portal_notification: false,
+          portal_notification_type: null,
+          portal_notification_provider: null,
+          received_at: '2026-03-08T00:00:00.000Z',
+          agency_name: 'Agency Three',
+          state: 'GA',
+          intent: 'other',
+          confidence_score: 0.42,
+          denial_subtype: null,
+          requires_action: true,
+          suggested_action: null,
+          full_analysis_json: { intent: 'other', confidence_score: 0.42 },
+          attachments: [{ filename: 'scan.pdf', content_type: 'application/pdf', extracted_text: 'Scanned letter text.' }],
+        },
+      ],
+    });
+
+    const dataset = await promptPatternDatasetService.buildReviewCandidateDataset({
+      sinceDays: 30,
+      perReason: 5,
+      confidenceThreshold: 0.6,
+    });
+
+    assert.strictEqual(dataset.source.scanned_messages, 1);
+    assert.strictEqual(dataset.counts.candidates, 1);
+    assert.strictEqual(dataset.counts.other_intent, 1);
+    assert.strictEqual(dataset.counts.low_confidence, 1);
+    assert.strictEqual(dataset.counts.requires_action_without_suggestion, 1);
+    assert.deepStrictEqual(dataset.candidates[0].review_reasons.sort(), [
+      'low_confidence',
+      'other_intent',
+      'requires_action_without_suggestion',
+    ]);
+    assert.strictEqual(dataset.candidates[0].attachment_count, 1);
+  });
 });

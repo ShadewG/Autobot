@@ -13,6 +13,7 @@ const db = require('../services/database');
 const draftQualityEvalService = require('../services/draft-quality-eval-service');
 const qualityReportService = require('../services/quality-report-service');
 const errorTrackingService = require('../services/error-tracking-service');
+const promptPatternDatasetService = require('../services/prompt-pattern-dataset-service');
 const { tasks } = require('@trigger.dev/sdk');
 
 const AUTO_CAPTURE_NOTES_PREFIX = 'Auto-captured from monitor decision:%';
@@ -102,6 +103,11 @@ function normalizeFeedbackBreakdown(rows, labelKey) {
 function parseId(val) {
     const id = parseInt(val, 10);
     return Number.isFinite(id) ? id : null;
+}
+
+function parseDecimal(value, fallback) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function normalizeEvaluationType(value) {
@@ -586,6 +592,35 @@ router.get('/classification-confusion', async (req, res) => {
             },
         });
         console.error('Error building classification confusion matrix:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/eval/review-candidates
+ * Surface recent low-confidence / "other" classifier outputs for prompt set curation.
+ */
+router.get('/review-candidates', async (req, res) => {
+    try {
+        const dataset = await promptPatternDatasetService.buildReviewCandidateDataset({
+            sinceDays: parseId(req.query.sinceDays) || 30,
+            limit: parseId(req.query.limit) || 500,
+            perReason: parseId(req.query.perReason) || 25,
+            confidenceThreshold: parseDecimal(req.query.confidenceThreshold, 0.6),
+        });
+        res.json({ success: true, dataset });
+    } catch (error) {
+        await errorTrackingService.captureException(error, {
+            sourceService: 'eval_api',
+            operation: 'review_candidates',
+            metadata: {
+                sinceDays: req.query.sinceDays || null,
+                limit: req.query.limit || null,
+                perReason: req.query.perReason || null,
+                confidenceThreshold: req.query.confidenceThreshold || null,
+            },
+        });
+        console.error('Error building review candidate dataset:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

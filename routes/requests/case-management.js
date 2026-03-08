@@ -1138,7 +1138,7 @@ router.get('/:id/export', async (req, res) => {
                 state: caseData.state,
                 status: caseData.status,
                 created_at: caseData.created_at,
-                completed_at: caseData.completed_at,
+                completed_at: caseData.closed_at,
             },
             correspondence: messagesResult.rows.map(m => ({
                 direction: m.direction,
@@ -1186,6 +1186,32 @@ router.get('/:id/export', async (req, res) => {
         res.json({ success: true, ...pkg });
     } catch (error) {
         logger.error('Error exporting case:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/:id/portal-submissions
+ * Return portal submission attempt history for a case.
+ */
+router.get('/:id/portal-submissions', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const submissions = await db.getPortalSubmissions(caseId, { limit });
+        res.json({
+            success: true,
+            case_id: caseId,
+            count: submissions.length,
+            submissions,
+        });
+    } catch (error) {
+        logger.error('Error fetching portal submissions:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

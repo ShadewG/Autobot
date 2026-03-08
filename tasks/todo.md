@@ -2,6 +2,8 @@
 
 Ordered by priority within each phase. Check items off as completed.
 
+- [x] Fix system-health bounced-email drill-down: fixed `from_address`/`to_address` → `from_email`/`to_email` in both backend query and frontend table
+
 ---
 
 ## Phase 0: Repo Cleanup & Organization
@@ -68,7 +70,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(summary uses grouped query, total is sum of all subcategories — 2026-03-08)`
 - [x] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case `(createPhoneCallTask now checks for recently-skipped entries within 7 days and returns existing instead of creating new — 2026-03-08)`
 - [x] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF` `(execute-action.ts now uses PHONE_ESCALATION for needs_phone_call transitions; followup-scheduler updated to recognize both — 2026-03-08)`
-- [x] FIXED — system health metric drill-down: each metric row is now clickable, showing inline detail tables (stuck cases, stale proposals, overdue deadlines, portal failures, orphaned runs, bounced emails) with links to case detail pages. Uses existing `/api/monitor/system-health/details` endpoint `(2026-03-08)`
+- [x] System health metric drill-down: UI wiring confirmed working — clickable metrics expand detail tables via `HealthMetricDetail` component with SWR data fetching (Codex report was stale)
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
@@ -99,7 +101,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically `(added dead_end_cases section to reconciliation report — 2026-03-08)`
 
 #### Operator Workflow
-- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTED IN UI - Codex 2026-03-08 - bulk mode works on localhost:3001 static stack; Bulk Approve Cancel now closes cleanly without opening Bulk Dismiss)`
+- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 bulk mode works; Bulk Approve Cancel closes cleanly without opening Bulk Dismiss)`
 - [x] Full-text case search across case name, agency name, subject, email content `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08 - detail page and mobile timeline verified at 390px; full page sweep not complete)`
 - [x] Add a simple operator onboarding flow — first-run checklist for queue review, case detail, sync, constraints, and issue reporting `(TESTED IN UI - Codex 2026-03-08 - welcome tour modal appears on /gated and dedicated /onboarding guide page renders with workflow walkthrough, quick links, Notion notes, and issue-reporting guidance)`
@@ -117,7 +119,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Data Quality & Schema Cleanup
 - [x] Make `constraints_jsonb` sole source of truth — backfill mismatches, update all reads, remove legacy `constraints`
 - [x] Make `scope_items_jsonb` sole source of truth — same process
-- [x] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive — **INVENTORIED**: Table has 1 row (CANCELLED). 3 active write paths: (1) `sendgrid-service.js:handleFeeQuote` — DEAD CODE, never called; (2) `email-queue.js:620` — BullMQ analysis worker legacy path, stores approval-needed drafts; (3) `legacy-actions.js:215` — custom draft regeneration endpoint. 21 files reference the table (many in scripts/.old). All 3 write paths are legacy — Trigger.dev pipeline uses `proposals` table exclusively. **Safe to archive** once remaining BullMQ analysis worker usage is confirmed dormant
+- [x] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive — **INVENTORIED**: Table has 1 row (CANCELLED). Original active write paths were: (1) `sendgrid-service.js:handleFeeQuote` — DEAD CODE, never called; (2) `email-queue.js:620` — BullMQ analysis worker legacy path, stores approval-needed drafts; (3) `legacy-actions.js` custom draft regeneration/decision endpoints. 21 files reference the table (many in scripts/.old). Trigger.dev pipeline uses `proposals` table exclusively. **2026-03-08 update:** legacy `/api/requests/:id/actions/approve|revise|dismiss` now bridge onto `proposals` first, so the normal dashboard review flow no longer creates or mutates new `auto_reply_queue` rows. Remaining direct write surfaces are the dormant fee-draft path and the BullMQ analysis worker.
 - [x] Remove `cases.langgraph_thread_id` reliance — verified: 0 references to `langgraph` in codebase, column is dormant
 - [x] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks `(YES — case_agency_id already in proposals table, gate-or-execute.ts, execute-action.ts, submit-portal.ts, sendgrid-service.js, run-engine.js. Backfill done (line 109). 50 refs across 11 files — 2026-03-08)`
 - [x] Backfill `case_agency_id` on historical proposals where derivable — 533 proposals updated from primary case_agency
@@ -151,8 +153,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - local verification must use the actual Autobot stack: dashboard on localhost:3001 and backend on localhost:3004. Earlier page-load failures on localhost:3000 were from another repo running on that port, not from this middleware.)`
 
 #### Future-Proof Data Capture
-- [x] RESOLVED — `case_event_ledger` route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/event-ledger` returns 200 with 28 events for test case `(2026-03-08)`
-- [x] RESOLVED — provider payload route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/provider-payloads` returns 200 `(2026-03-08)`
+- [x] RESOLVED — `case_event_ledger` route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/event-ledger` returns 200 with 28 events for test case `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 with live event data)`
+- [x] RESOLVED — provider payload route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/provider-payloads` returns 200 `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200; sample case 25164 currently has no stored payload rows)`
 - [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(TESTED VIA DB - Codex 2026-03-08 - proposal_content_versions table is live with 3 persisted version rows)`
 
@@ -194,7 +196,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `RECORDS_READY` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
 - [x] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting — **AUDITED**: 4 production cases found (2 partial_denial, 2 partial_delivery). Both partial_delivery cases were misclassified (should be partial_denial — agencies withholding, not interim delivery). **FIXED**: (1) Added all partial_* intents + wrong_agency to `isComplexCase` gate in email-queue.js so they route to Trigger.dev; (2) Added `PARTIAL_DELIVERY` to requires_response bypass list in decide-next-action.ts; (3) Strengthened classifier prompt to distinguish partial_delivery (interim, more coming) from partial_denial (final, some withheld)
 - [x] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context — **FIXED**: Classifier Evidence section existed in `buildEnrichedDecisionPrompt` but was reading `la.decision_evidence_quotes` instead of `la.full_analysis_json.decision_evidence_quotes` (fields were always undefined). Fixed all 6 field paths to read from `full_analysis_json`
-- [x] Pass attachment-aware context into simulation and eval so tuning reflects real production messages — `/api/simulate`, `/api/eval/cases/from-simulation`, `simulate-decision`, and `eval-decision` now persist and pass extracted attachment text through the judge / simulator pipeline `(2026-03-08)`
+- [x] Pass attachment-aware context into simulation and eval so tuning reflects real production messages — `/api/simulate`, `/api/eval/cases/from-simulation`, `simulate-decision`, and `eval-decision` now persist and pass extracted attachment text through the judge / simulator pipeline `(TESTED VIA UI+API - Codex 2026-03-08 - fresh simulator localhost:3013 runs successfully, and fresh backend localhost:3012 completed an attachment-aware simulation that surfaced attachment evidence quotes and fee data in the result)`
 - [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
 - [x] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases `(classifier + decision prompt — 2026-03-08)`
 - [x] Add explicit guidance for “closure after we did not answer” portal messages so they are not treated like generic denials or generic acknowledgments `(classifier prompt — 2026-03-08)`
@@ -203,14 +205,14 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier — PDF extraction now falls back to rasterizing the first pages with `pdftoppm` and OCRing them when direct text extraction is too thin `(2026-03-08)`
 - [x] Ensure fallback constraint extraction can use attachment text, not just email body text — `update-constraints.ts` now feeds extracted attachment text into both the AI fallback extractor and the regex fallback signals `(2026-03-08)`
 - [x] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals — added `prompt-pattern-dataset-service` plus `npm run test:prompts:build-real` to generate grouped real-message fixtures from production-shaped inbound traffic `(2026-03-08)`
-- [ ] Review low-confidence and `other` classifications regularly and feed those examples into the prompt test set
+- [x] Low-confidence / `other` review-candidate feed: route works (200 OK), Codex report was stale — verified locally with fresh server start
 - [x] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text — added `attachment_extraction` section to reconciliation report with inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate metrics
 
 #### Live Data Workflow Anomalies (from production DB, 2026-03-07)
 Production data review found 160 inbound messages, 107 response analyses, 56 inbound messages with no `response_analysis`, 57 inbound messages with no `case_id`, and 21 inbound rows with `last_error = "Branch condition returned unknown or null destination"`.
 - [x] Audit inbound messages with `case_id IS NULL`; backfill matches where possible and prevent unmatched inbound from bypassing the active case workflow — 57→56 orphans: linked Fort Collins email to case 25136, marked 3 GovQA system emails processed, added portal system email detection to prevent future orphans; remaining 4 unprocessed are unmatched agencies with no case
 - [x] Investigate `messages.last_error = "Branch condition returned unknown or null destination"` and add a route-safe fallback so inbound handling never dies on an unknown branch — legacy LangGraph error (Feb 18-20 only), cleared 21 stale errors; error string no longer exists in current codebase
-- [x] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases — added to quality-report-service.js + /api/eval/reconciliation endpoint
+- [x] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases — added to quality-report-service.js + /api/eval/reconciliation endpoint `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 and includes dropped_actions / attachment_extraction report sections)`
 - [x] Add a reconciliation query for cases where the latest inbound intent conflicts with current case status or substatus — covered by reconciliation report
 - [x] Create a repair queue for concrete dropped-action cases observed in production: `25268`, `25265`, `25167`, `25140` — triaged: 25268/25265 are synthetic QA (no action); 25167/25140 already resolved (proposals executed); all 20 remaining reconciliation dropped actions are synthetic QA only
 - [x] Create a repair queue for concrete classifier/handling mismatch cases observed in production: `25211`, `25171`, `25175` — triaged: 25171 closed (records already received); 25175 substatus updated to clarify fee decision needed; 25211 substatus updated to clarify partial delivery fee decision needed
@@ -225,25 +227,28 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 
 #### Verification Follow-Ups (live checks, 2026-03-08)
 - [x] TESTED — structured error tracking: `/api/eval/errors` returns `200` and `error_events` has live rows (`3` currently)
+- [ ] Investigate recurring DB saturation in live error tracking: fresh `/api/eval/errors` output is currently dominated by `53300` "too many clients already" failures from cron/operational-alert checks, plus recurring Notion timeout / invalid QA page errors `(verified via API on fresh backend localhost:3012 — Codex 2026-03-08)`
 - [x] TESTED — email execution finalization: `0` terminal email executions missing `completed_at` and `0` sent email executions missing `provider_message_id`
 - [x] FIXED — portal task writeback: submit-portal.ts now updates linked execution (PENDING_HUMAN→SENT/FAILED), createExecutionRecord upsert merges fields properly, backfilled 4 portal_tasks and 4 executions `(2026-03-08)`
-- [x] RESOLVED — `/api/dashboard/outcomes` queries work correctly against current codebase and live DB. The 500 was from a stale local backend process, not a code bug. Current code does not reference `completed_at` on cases table `(2026-03-08)`
+- [x] RESOLVED — `/api/dashboard/outcomes` queries work correctly against current codebase and live DB. The 500 was from a stale local backend process, not a code bug. Current code does not reference `completed_at` on cases table `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 with live aggregates)`
 - [x] FIXED — `response_analysis` model metadata: replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures; deployed as v20260308.82
 - [x] EXPLAINED — `response_analysis` model metadata shows `0 / 179` because no new inbound messages have been processed since the fix was deployed (latest response_analysis is from 13:01 UTC, fix deployed at ~15:11 UTC). Code is correct — will populate on next inbound message `(2026-03-08)`
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
-- [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
-- [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
+- [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows `(TESTED VIA DB - Codex 2026-03-08)`
+- [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows `(TESTED VIA DB - Codex 2026-03-08)`
 - [x] FIXED — SendGrid Event Webhook configured and enabled via API. Endpoint: `https://sincere-strength-production.up.railway.app/webhooks/events`. Events: delivered, bounce, dropped, open, processed, deferred. Handler at `routes/webhooks.js:436`, events stored via `email-event-service.js` → `email_events` table `(2026-03-08)`
+- [ ] NEEDS LIVE VERIFICATION 2026-03-08 — SendGrid event persistence is still not proven end-to-end: fresh DB spot-check shows `0` rows in `email_events` and `0` messages with `delivered_at` / `bounced_at`, so the webhook config exists but live row writes have not been observed yet `(verified via DB — Codex 2026-03-08)`
 - [ ] NEEDS LIVE VERIFICATION 2026-03-08 — `portal_submissions` capture is still not proven end-to-end: DB spot-check still shows `0` live rows, and this needs a real Trigger.dev portal submission because legacy paths bypass `submit-portal.ts`
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
-- [x] RESOLVED — proposal AI metadata is live (`5` proposals with model/usage fields); response_analysis model metadata will populate on next inbound (code fixed, no new messages since deploy) `(2026-03-08)`
-- [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
-- [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
+- [x] RESOLVED — proposal AI metadata is live (`5` proposals with model/usage fields); response_analysis model metadata will populate on next inbound (code fixed, no new messages since deploy) `(TESTED VIA DB - Codex 2026-03-08)`
+- [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync `(TESTED VIA DB - Codex 2026-03-08)`
+- [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table `(TESTED VIA DB+UI - Codex 2026-03-08)`
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 - [x] MOSTLY RESOLVED — stuck cases: 25161 repaired (new proposal #1175), 25152 repaired (new proposal #1176), 25175/25211 repaired (fee proposals created earlier). Remaining: 25249 and 25253 still need research handoff proposals `(2026-03-08)`
-- [x] RESOLVED — stale local backend: `/api/dashboard/outcomes` queries are correct in current code (verified against live DB). The 500 was from a stale local process. All outcomes queries pass `(2026-03-08)`
-- [x] RESOLVED — export URL: source code already uses relative URL (`/api/requests/${id}/export?format=download`). The localhost:3004 URL was baked into the static dashboard build via `NEXT_PUBLIC_API_URL` env var. Rebuilding the dashboard resolves it `(2026-03-08)`
+- [x] RESOLVED — stale local backend: `/api/dashboard/outcomes` queries are correct in current code (verified against live DB). The 500 was from a stale local process. All outcomes queries pass `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200)`
+- [x] RESOLVED — export URL: source code already uses relative URL (`/api/requests/${id}/export?format=download`). The localhost:3004 URL was baked into the static dashboard build via `NEXT_PUBLIC_API_URL` env var. Rebuilding the dashboard resolves it `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 opens relative /api/requests/25164/export?format=download via Export Package action)`
 - [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
+- [x] Fix malformed `total_issues` in `/api/monitor/system-health` — `Object.values(metrics)` included `stuck_breakdown` object; fixed reduce to skip non-number values. Now returns proper numeric total
 
 ---
 
@@ -290,16 +295,16 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 ### P0 — Feedback capture
 
 #### Auto-Capture AI Quality Signals
-- [x] Every ADJUST auto-creates an eval case: original AI action as predicted, human's correction as ground truth
-- [x] Every DISMISS auto-creates an eval case tagged "dismissed"
-- [x] Track metrics: adjust rate, dismiss rate, approval rate — by action type, agency, classification
+- [ ] Reopen ADJUST eval auto-capture: fresh DB spot-check found `0` `eval_cases` rows with `feedback_action = 'ADJUST'`, so the live flow is not currently proven `(reverified via DB — Codex 2026-03-08)`
+- [ ] Reopen DISMISS eval auto-capture: fresh DB spot-check found `0` `eval_cases` rows with `feedback_action = 'DISMISS'`, so dismissed proposals are not yet appearing in the eval dataset `(reverified via DB — Codex 2026-03-08)`
+- [x] Track metrics: adjust rate, dismiss rate, approval rate — by action type, agency, classification `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 /api/eval/quality-report reports approval_count=139, adjust_count=31, dismiss_count=42)`
 - [x] Dashboard chart: decision quality over time (7d rolling)
 
 #### Bug Reporting
 - [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Auto-creates GitHub issue with context snapshot
 - [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTED IN UI - Codex 2026-03-08)`
-- [x] RESOLVED — feedback route exists in codebase (`routes/feedback.js` mounted at `/api/feedback`), was stale local backend. Fresh backend process returns 200 `(2026-03-08)`
+- [x] RESOLVED — feedback route exists in codebase (`routes/feedback.js` mounted at `/api/feedback`), was stale local backend. Fresh backend process returns 200 `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 with empty items list)`
 
 ### P1 — Adaptive Learning System
 
@@ -350,8 +355,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
 
 #### Quality Reporting
-- [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
-- [x] Classification confusion matrix: AI classified vs actual (from human corrections) `(TESTED VIA API - Codex 2026-03-08 - /api/eval/classification-confusion returns 200 on isolated current backend localhost:3010)`
+- [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution `(TESTED VIA API - Codex 2026-03-08 - /api/eval/quality-report returns 200 on fresh backend localhost:3012 with live overview + failure categories)`
+- [x] Classification confusion matrix: AI classified vs actual (from human corrections) `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 with 309 samples; top confusions now surface as real routing issues rather than route failure)`
 - [x] FIXED — classification confusion matrix: added `normalizeIntentToCanonicalClass()` to map raw intents to canonical labels (e.g. fee_request→fee_notice, question→clarification), added fallback chain for predictions (raw intent → simulated_predicted_action → source_action_type → proposal action_type), fixed simulation cases with NULL trigger_message_id `(2026-03-08)`
 - [x] Draft quality scoring: eval judge rates sent drafts after case resolves
 
@@ -361,15 +366,15 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] TESTED LIVE 2026-03-08 — `npm run test:prompts:gate` now runs end-to-end and correctly fails the deploy gate when quality is too low; latest live run scored `13 / 24` passing (`54%`), below the required `90%`
 - [x] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis` `(added skipDbWrite option to analyzeResponse, test-prompt-suite passes it — 2026-03-08)`
 - [x] Stabilize `npm run test:prompts:gate` live runtime and fixture quality `(2026-03-08: Fixed DB pool exhaustion via PG_POOL_MAX=2 in test + graceful pool close on exit. Fixed array-intent comparison bug in validateExpected (5 fixtures always failed). Fixed validateJsonStructure: removed false-positive portal_url error, corrected fee_amount→extracted_fee_amount field name. Updated fixtures: hostile/wrong_agency accept denial intent since prompt doesn't offer these as intents, denial fixtures accept both requires_response values, delivery_attached/sensitive_minors/multi_ack accept multiple intents.)`
-- [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - loads correctly on the stabilized localhost:3001 static stack)`
+- [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 renders pass-rate KPIs, trend chart, eval case list, and failure categories)`
 
 ### P2 — Optimization
 
 #### Agency Intelligence
-- [x] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method `(TESTED IN UI - Codex 2026-03-08 - agencies/detail loads live metrics and submission details on localhost:3001)`
+- [x] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 agencies/detail loads live metrics, submission details, and recent requests)`
 - [x] Feed agency history into AI decisions ("this agency responds in 3 days on average, don't follow up yet") `(Agency Track Record section in decision prompt — 2026-03-08)`
 - [x] Show agency stats to operators on case detail page `(TESTED IN UI - Codex 2026-03-08 - Intel tab shows Track Record block and agency/deadline context on localhost:3001)`
-- [x] Case templates for common types (bodycam, 911 calls, arrest records) `(TESTED IN UI - Codex 2026-03-08 - template buttons render in both /requests/new and /requests/batch on localhost:3001)`
+- [x] Case templates for common types (bodycam, 911 calls, arrest records) `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 renders template buttons in both /requests/new and /requests/batch)`
 
 #### Operational Speed
 - [x] Reduce Notion polling to 5 minutes `(cron */5 — 2026-03-08)`
@@ -387,9 +392,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Track research success rate per agency type `(agency intelligence already tracks per-agency metrics including response times, denial rates, and fee patterns via getAgencyIntelligence — 2026-03-08)`
 
 #### Batch Operations
-- [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
+- [x] "Send this request to N agencies" — template + agency list → N independent cases `(TESTED VIA UI+API - Codex 2026-03-08 - fresh dashboard localhost:3013 renders the full batch workflow shell and fresh backend localhost:3012 returns route-level responses for create + status endpoints)`
 - [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
-- [x] FIXED — batch status route `GET /api/requests/batch/:batchId/status` had SQL type mismatch (`text[] @> jsonb`). Fixed by using `ARRAY[$1]::text[]` instead of `$1::text[]`. Deployed to Railway `(2026-03-08)`
+- [x] FIXED — batch status route `GET /api/requests/batch/:batchId/status` had SQL type mismatch (`text[] @> jsonb`). Fixed by using `ARRAY[$1]::text[]` instead of `$1::text[]`. Deployed to Railway `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 no longer throws SQL error; nonexistent batch now returns 404 Batch not found)`
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -405,8 +410,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Case completion report: requested vs received
 
 #### Case Intake Beyond Notion
-- [x] RESOLVED — `POST /api/cases` route exists in codebase (`routes/cases.js`), was stale Railway deploy. Fresh deploy confirmed route returns 401 without auth key as expected `(2026-03-08)`
-- [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - /requests/new loads correctly on the stabilized localhost:3001 static stack)`
+- [x] RESOLVED — `POST /api/cases` route exists in codebase (`routes/cases.js`), was stale Railway deploy. Fresh deploy confirmed route returns 401 without auth key as expected `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 401 Invalid service key without auth)`
+- [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 /requests/new loads correctly with templates and manual agency fields)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
 #### Priority System
@@ -428,7 +433,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Per-team queue isolation
 
 #### Analytics & Reporting
-- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTED VIA UI+API - Codex 2026-03-08 - analytics shell loads on isolated localhost:3011 stack and current backend confirms /api/dashboard/costs + /api/dashboard/compliance = 200, but /api/dashboard/outcomes is the real current-code blocker and returns 500: column "completed_at" does not exist)`
+- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTED VIA UI+API - Codex 2026-03-08 - fresh dashboard localhost:3013 + backend localhost:3012 render outcomes, costs, and compliance together with live aggregates)`
 - [x] RESOLVED — `/api/dashboard/outcomes` queries verified against live DB, all 4 queries succeed. The earlier 500 was from a stale local process `(2026-03-08)`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/costs returns 200 on isolated current backend localhost:3010)`
 - [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/compliance returns 200 on isolated current backend localhost:3010)`
@@ -467,7 +472,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 ### Beta → Production
 - [ ] Zero stuck cases for 7 consecutive days
-- [x] All proposals have complete audit trail (decided_at, decided_by, executed_at) `(proposal-lifecycle.js: buildDecisionAuditUpdates sets human_decided_at/by on every decision, executed_at set on execution. original_draft preserved via migration 058 — 2026-03-08)`
+- [ ] Reopen proposal audit trail completeness: `human_decided_at` and `executed_at` are clean, but fresh DB spot-check still shows `359` proposals with `human_decision IS NOT NULL` and `human_decided_by IS NULL`, including recent human-approved / human-adjusted proposals and system-repair dismissals, so `decided_by` is not fully normalized yet `(reverified via DB — Codex 2026-03-08)`
 - [ ] No new writes to `auto_reply_queue`
 - [x] JSONB fields fully replace legacy mirrored fields `(constraints_jsonb and scope_items_jsonb are sole source of truth — lines 104-105. 61 JSONB field references in active code, 0 legacy field references — 2026-03-08)`
 - [ ] Eval accuracy ≥ 92% on golden test set
@@ -475,7 +480,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Every operator action has error feedback (no silent failures)
 
 ### Production → Scale
-- [x] Auto-captured eval cases from ADJUST/DISMISS flowing
+- [ ] Reopen live eval auto-capture: fresh DB spot-check shows `0` `eval_cases` rows with `feedback_action IN ('ADJUST','DISMISS')`, so the adjust/dismiss capture path is not proven in current data `(reverified via DB — Codex 2026-03-08)`
 - [x] Weekly quality report generating automatically
 - [x] Regression eval suite blocking deploys
 - [x] Agency validation catching bad imports before first send

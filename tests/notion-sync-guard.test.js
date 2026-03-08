@@ -21,6 +21,20 @@ describe('Notion sync guards', function () {
     assert.strictEqual(propertyStub.called, false);
   });
 
+  it('tracks fetchCasesWithStatus failures with status context', async function () {
+    sinon.stub(notionService, 'resolvePropertyName').rejects(Object.assign(new Error('rate limited'), { status: 429 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await assert.rejects(
+      () => notionService.fetchCasesWithStatus('Ready To Send'),
+      /rate limited/
+    );
+
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'fetch_cases_with_status');
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.status, 'Ready To Send');
+  });
+
   it('skips synthetic case ids during status sync', async function () {
     sinon.stub(db, 'getCaseById').resolves({
       id: 1,
@@ -64,6 +78,20 @@ describe('Notion sync guards', function () {
 
     assert.deepStrictEqual(memories, []);
     assert.strictEqual(commentStub.called, false);
+  });
+
+  it('tracks fetchPageById failures with page context', async function () {
+    sinon.stub(notionService.notion.pages, 'retrieve').rejects(Object.assign(new Error('notion unavailable'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await assert.rejects(
+      () => notionService.fetchPageById('12345678-1234-1234-1234-123456789012'),
+      /notion unavailable/
+    );
+
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'fetch_page_by_id');
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678-1234-1234-1234-123456789012');
   });
 
   it('tracks AI summary sync failures with case context', async function () {
@@ -116,5 +144,19 @@ describe('Notion sync guards', function () {
     );
 
     assert.strictEqual(retrieveStub.called, false);
+  });
+
+  it('tracks single-page import failures with page context', async function () {
+    sinon.stub(notionService.notion.pages, 'retrieve').rejects(Object.assign(new Error('page fetch failed'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await assert.rejects(
+      () => notionService.processSinglePage('12345678123412341234123456789012'),
+      /page fetch failed/
+    );
+
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'process_single_page');
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678123412341234123456789012');
   });
 });

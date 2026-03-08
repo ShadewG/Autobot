@@ -11,12 +11,14 @@ describe('Request audit/debug routes', function () {
   let originalQuery;
   let originalGetProposalById;
   let originalGetProposalContentVersions;
+  let originalGetPortalSubmissions;
 
   beforeEach(function () {
     originalGetCaseById = db.getCaseById;
     originalQuery = db.query;
     originalGetProposalById = db.getProposalById;
     originalGetProposalContentVersions = db.getProposalContentVersions;
+    originalGetPortalSubmissions = db.getPortalSubmissions;
   });
 
   afterEach(function () {
@@ -24,6 +26,7 @@ describe('Request audit/debug routes', function () {
     db.query = originalQuery;
     db.getProposalById = originalGetProposalById;
     db.getProposalContentVersions = originalGetProposalContentVersions;
+    db.getPortalSubmissions = originalGetPortalSubmissions;
   });
 
   it('returns event ledger rows for a case', async function () {
@@ -99,6 +102,33 @@ describe('Request audit/debug routes', function () {
     assert.strictEqual(response.body.executions.length, 1);
     assert.strictEqual(response.body.messages[0].provider_payload.provider, 'sendgrid');
     assert.strictEqual(response.body.executions[0].provider_payload.jobId, 'job_123');
+  });
+
+  it('returns portal submission history for a case', async function () {
+    db.getCaseById = async () => ({ id: 25169, case_name: 'QA Case' });
+    db.getPortalSubmissions = async (caseId, options) => {
+      assert.strictEqual(caseId, 25169);
+      assert.strictEqual(options.limit, 10);
+      return [
+        {
+          id: 44,
+          case_id: 25169,
+          portal_url: 'https://portal.example.gov/request/123',
+          status: 'failed',
+          confirmation_number: null,
+        },
+      ];
+    };
+
+    const app = express();
+    app.use('/api/requests', caseManagementRouter);
+
+    const response = await supertest(app).get('/api/requests/25169/portal-submissions?limit=10');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.count, 1);
+    assert.strictEqual(response.body.submissions[0].status, 'failed');
   });
 
   it('returns proposal content versions for a case proposal', async function () {

@@ -391,6 +391,15 @@ class NotionService {
 
             return cases;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'fetch_cases_with_status',
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    status,
+                    databaseId: this.databaseId,
+                },
+            });
             console.error('Error fetching cases from Notion:', error);
             throw error;
         }
@@ -428,6 +437,14 @@ class NotionService {
             enrichedCase.state = this.normalizeStateCode(enrichedCase.state);
             return enrichedCase;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'fetch_page_by_id',
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    pageId,
+                },
+            });
             console.error(`Error fetching Notion page ${pageId}:`, error);
             throw error;
         }
@@ -2669,6 +2686,14 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             return newCase;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'process_single_page',
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    pageId,
+                },
+            });
             console.error('[import] Error processing Notion page:', error);
             throw error;
         }

@@ -104,7 +104,7 @@ router.get('/system-health', async (req, res) => {
             portal_failures: portalFailures.rows[0]?.count || 0,
         };
 
-        const issues = Object.values(metrics).reduce((sum, v) => sum + v, 0);
+        const issues = Object.values(metrics).reduce((sum, v) => sum + (typeof v === 'number' ? v : 0), 0);
 
         res.json({
             success: true,
@@ -183,7 +183,7 @@ router.get('/system-health/details', async (req, res) => {
               AND ar.started_at < NOW() - INTERVAL '2 hours'
             ORDER BY ar.started_at ASC LIMIT 100`,
         bounced_emails: `
-            SELECT m.id as message_id, m.case_id, m.direction, m.from_address, m.to_address,
+            SELECT m.id as message_id, m.case_id, m.direction, m.from_email, m.to_email,
                    m.bounced_at,
                    c.agency_name, c.state
             FROM messages m

@@ -2,6 +2,104 @@ const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
 const { db, actionValidator, logger } = require('./_helpers');
+const { processProposalDecision } = require('../monitor/_helpers');
+
+function normalizeProposalReasoning(reasoning, fallback = []) {
+    if (Array.isArray(reasoning)) return reasoning;
+    if (reasoning == null) return fallback;
+    return [reasoning];
+}
+
+function formatLegacyNextActionFromProposal(proposal, instruction = null) {
+    const reasoning = normalizeProposalReasoning(proposal.reasoning, ['AI-generated response to agency message']);
+    const warnings = Array.isArray(proposal.warnings) ? proposal.warnings : [];
+    const constraintsApplied = Array.isArray(proposal.constraints_applied) ? proposal.constraints_applied : [];
+
+    return {
+        id: String(proposal.id),
+        action_type: proposal.action_type || 'SEND_EMAIL',
+        proposal: proposal.proposal_short || `Send ${proposal.action_type || 'auto'} reply`,
+        proposal_short: proposal.proposal_short || null,
+        reasoning: instruction
+            ? [...reasoning, `Revised using instruction: ${instruction}`]
+            : reasoning,
+        confidence: proposal.confidence != null ? Number(proposal.confidence) : 0.8,
+        risk_flags: proposal.requires_human ? ['Requires Approval'] : [],
+        warnings,
+        can_auto_execute: !proposal.requires_human,
+        blocked_reason: proposal.blocked_reason || (proposal.requires_human ? 'Requires human approval' : null),
+        draft_content: proposal.draft_body_text || proposal.draft_body_html || null,
+        draft_preview: proposal.draft_body_text
+            ? proposal.draft_body_text.substring(0, 200)
+            : (proposal.draft_body_html ? proposal.draft_body_html.substring(0, 200) : null),
+        constraints_applied: constraintsApplied,
+    };
+}
+
+async function findPendingProposalForLegacyRoute(requestId, actionId) {
+    const proposals = await db.getPendingProposalsByCaseId(requestId);
+    if (!proposals.length) return null;
+    if (actionId) {
+        return proposals.find((proposal) => proposal.id === parseInt(actionId, 10)) || null;
+    }
+    return proposals[0];
+}
+
+async function reviseProposalDraftWithInstruction(proposal, caseData, message, instruction) {
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const revisionPrompt = `You are helping revise a FOIA request response.
+
+Original subject:
+${proposal.draft_subject || message?.subject || '(none)'}
+
+Original draft:
+${proposal.draft_body_text || proposal.draft_body_html || ''}
+
+User instruction for revision:
+${instruction}
+
+Context:
+- Agency: ${caseData.agency_name}
+- State: ${caseData.state}
+- Original message subject: ${message?.subject || 'N/A'}
+
+Please provide the revised response body text only. Do not include explanations or markdown fences.`;
+
+    const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+        messages: [
+            {
+                role: 'system',
+                content: 'You are a professional FOIA request assistant helping revise correspondence with government agencies.'
+            },
+            {
+                role: 'user',
+                content: revisionPrompt
+            }
+        ],
+        max_tokens: 1000
+    });
+
+    const revisedContent = completion.choices[0]?.message?.content?.trim();
+    if (!revisedContent) {
+        throw new Error('AI returned an empty revised draft');
+    }
+
+    const updatedProposal = await db.updateProposal(proposal.id, {
+        draftBodyText: revisedContent,
+        draftBodyHtml: null,
+        adjustmentCount: (proposal.adjustment_count || 0) + 1,
+        __versionActor: 'legacy-actions',
+        __versionMetadata: {
+            route: 'actions/revise',
+            instruction,
+        },
+    });
+
+    return updatedProposal;
+}
 
 /**
  * POST /api/requests/:id/actions/approve
@@ -13,6 +111,20 @@ router.post('/:id/actions/approve', async (req, res) => {
     const log = logger.forCase(requestId);
 
     try {
+        const activeProposal = await findPendingProposalForLegacyRoute(requestId, action_id);
+        if (activeProposal) {
+            const result = await processProposalDecision(activeProposal.id, 'APPROVE', {
+                route_mode: 'legacy_actions',
+                decidedBy: req.body?.decidedBy || 'legacy-actions',
+            });
+            return res.json({
+                success: true,
+                message: result.message || 'Action approved and queued for sending',
+                proposal_id: activeProposal.id,
+                trigger_run_id: result.trigger_run_id || result.triggerRunId || null,
+            });
+        }
+
         // Find the pending reply
         const replyResult = await db.query(
             `SELECT * FROM auto_reply_queue
@@ -141,6 +253,32 @@ router.post('/:id/actions/revise', async (req, res) => {
             });
         }
 
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({
+                success: false,
+                error: 'Request not found'
+            });
+        }
+
+        const activeProposal = await findPendingProposalForLegacyRoute(requestId, action_id);
+        if (activeProposal) {
+            const message = activeProposal.trigger_message_id
+                ? await db.getMessageById(activeProposal.trigger_message_id)
+                : null;
+            const updatedProposal = await reviseProposalDraftWithInstruction(
+                activeProposal,
+                caseData,
+                message,
+                instruction
+            );
+
+            return res.json({
+                success: true,
+                next_action_proposal: formatLegacyNextActionFromProposal(updatedProposal, instruction)
+            });
+        }
+
         // Find the pending reply to revise
         const replyResult = await db.query(
             `SELECT * FROM auto_reply_queue
@@ -150,14 +288,6 @@ router.post('/:id/actions/revise', async (req, res) => {
              LIMIT 1`,
             action_id ? [requestId, parseInt(action_id)] : [requestId]
         );
-
-        const caseData = await db.getCaseById(requestId);
-        if (!caseData) {
-            return res.status(404).json({
-                success: false,
-                error: 'Request not found'
-            });
-        }
 
         let reply = replyResult.rows[0];
         let message = reply ? await db.getMessageById(reply.message_id) : null;
@@ -318,6 +448,19 @@ router.post('/:id/actions/dismiss', async (req, res) => {
     try {
         const requestId = parseInt(req.params.id);
         const { action_id } = req.body;
+
+        const activeProposal = await findPendingProposalForLegacyRoute(requestId, action_id);
+        if (activeProposal) {
+            const result = await processProposalDecision(activeProposal.id, 'DISMISS', {
+                route_mode: 'legacy_actions',
+                decidedBy: req.body?.decidedBy || 'legacy-actions',
+            });
+            return res.json({
+                success: true,
+                message: result.message || 'Action dismissed',
+                proposal_id: activeProposal.id,
+            });
+        }
 
         const replyResult = await db.query(
             `SELECT * FROM auto_reply_queue

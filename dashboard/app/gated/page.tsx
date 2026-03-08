@@ -822,8 +822,8 @@ function HealthMetricDetail({ metric, onClose }: { metric: HealthMetricKey; onCl
               ) : "-"}
             </td>
             <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name || "-"}</td>
-            <td className="py-1.5 text-muted-foreground truncate max-w-[140px]">{item.from_address}</td>
-            <td className="py-1.5 text-muted-foreground truncate max-w-[140px]">{item.to_address}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[140px]">{item.from_email}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[140px]">{item.to_email}</td>
             <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.bounced_at)}</td>
           </tr>
         ))}
