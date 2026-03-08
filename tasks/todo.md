@@ -21,9 +21,9 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Prefer moving low-risk one-off files first and compatibility-heavy files last
 
 #### Root Directory Cleanup
-- [ ] Move loose root `test-*`, `check-*`, `fix-*`, `reset-*`, `regen-*`, `resend-*`, and similar one-off scripts into `scripts/` or `.old/root-scripts` `(IN PROGRESS - large unreferenced batch moved; referenced portal helpers remain)`
-- [ ] Move root JSON dumps, screenshots, `.command` wrappers, and ad hoc reports into `.old/test-artifacts` unless they are still part of an active workflow `(IN PROGRESS - reports and generated screenshot/log batches moved; referenced portal wrappers remain)`
-- [ ] Keep the root focused on runtime entrypoints, config, package files, and primary docs only `(IN PROGRESS - root greatly reduced; portal helper files and referenced artifacts still remain)`
+- [x] Move loose root `test-*`, `check-*`, `fix-*`, `reset-*`, `regen-*`, `resend-*`, and similar one-off scripts into `scripts/` or `.old/root-scripts` — all portal test scripts moved to .old/test-artifacts/ and scripts/; run-migration.js moved to scripts/
+- [x] Move root JSON dumps, screenshots, `.command` wrappers, and ad hoc reports into `.old/test-artifacts` unless they are still part of an active workflow — legacy portal test files and research test archived
+- [x] Keep the root focused on runtime entrypoints, config, package files, and primary docs only — root now has only: server.js, run-pending-portals.js, test-setup.js + config files
 
 ### P1 — Reduce redundancy safely
 
@@ -47,8 +47,8 @@ Ordered by priority within each phase. Check items off as completed.
 ### P2 — Execute cleanup in phases
 
 #### Safe rollout order
-- [ ] Phase A: inventory and classify files without moving anything
-- [ ] Phase B: move obvious one-off root scripts and artifacts into `.old/` `(IN PROGRESS - docs/reports, screenshots, and two root-script batches moved; referenced portal helpers remain)`
+- [x] Phase A: inventory and classify files without moving anything — completed in repo-inventory.md and guide.md
+- [x] Phase B: move obvious one-off root scripts and artifacts into `.old/` — all portal test files, research tests, and migration scripts moved; root now has only server.js, run-pending-portals.js, test-setup.js + config
 - [ ] Phase C: consolidate active tests and document canonical test commands
 - [ ] Phase D: retire compatibility routes/services only after import checks, route checks, and smoke tests pass
 - [ ] Phase E: update `guide.md` after each cleanup batch so the map stays accurate
