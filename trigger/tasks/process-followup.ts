@@ -198,6 +198,10 @@ export const processFollowup = task({
         null, decision.adjustmentInstruction, null,
         research
       );
+      const proposalLessonsApplied = [
+        ...(Array.isArray(decision.lessonsApplied) ? decision.lessonsApplied : []),
+        ...(Array.isArray(draft.lessonsApplied) ? draft.lessonsApplied : []),
+      ];
 
       // Step 4: Safety check
       await markStep("safety_check", `Run #${runId}: safety checking follow-up draft`);
@@ -214,7 +218,7 @@ export const processFollowup = task({
         null, draft, safety,
         decision.canAutoExecute, decision.requiresHuman,
         decision.pauseReason, decision.reasoning,
-        1.0, 0, null, draft.lessonsApplied
+        1.0, 0, null, proposalLessonsApplied
       );
       trace.setGateDecision({
         proposalId: gate.proposalId,

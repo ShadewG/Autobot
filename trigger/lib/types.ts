@@ -167,6 +167,7 @@ export interface DecisionResult {
   adjustmentInstruction: string | null;
   isComplete: boolean;
   gateOptions?: string[];
+  lessonsApplied?: any[];
   // For clarification override: redirect to a different inbound message
   overrideMessageId?: number;
   researchLevel?: ResearchLevel;

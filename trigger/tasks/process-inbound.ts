@@ -719,6 +719,11 @@ export const processInbound = task({
       logger.info("Action chain built", { caseId, actions: chainActions.map(a => a.actionType) });
     }
 
+    const proposalLessonsApplied = [
+      ...(Array.isArray(decision.lessonsApplied) ? decision.lessonsApplied : []),
+      ...(Array.isArray(draft.lessonsApplied) ? draft.lessonsApplied : []),
+    ];
+
     // Step 7: Create proposal + determine gate
     await markStep("gate", `Run #${runId}: creating proposal and evaluating gate`, { action_type: decision.actionType });
     const gate = await createProposalAndGate(
@@ -727,7 +732,7 @@ export const processInbound = task({
       decision.canAutoExecute, decision.requiresHuman,
       decision.pauseReason, decision.reasoning,
       classification.confidence, 0, null,
-      draft.lessonsApplied, decision.gateOptions,
+      proposalLessonsApplied, decision.gateOptions,
       chainActions
     );
     trace.setGateDecision({

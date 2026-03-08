@@ -8,7 +8,7 @@
 import { generateObject } from "ai";
 import { decisionModel, decisionOptions, telemetry } from "../lib/ai";
 import { decisionSchema, type DecisionOutput } from "../lib/schemas";
-import db, { logger, caseRuntime } from "../lib/db";
+import db, { logger, caseRuntime, decisionMemory } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
 import { hasAutomatablePortal } from "../lib/portal-utils";
@@ -357,6 +357,43 @@ interface PreComputedContext {
   researchAttemptCount: number;
 }
 
+export async function getDecisionLessons(
+  caseId: number,
+  caseData: any,
+  threadMessages: any[],
+  priorProposals: any[],
+): Promise<{ lessonsContext: string; lessonsApplied: any[] }> {
+  try {
+    const lessons = await decisionMemory.getRelevantLessons(caseData, {
+      messages: threadMessages,
+      priorProposals,
+      limit: 8,
+    });
+    if (!Array.isArray(lessons) || lessons.length === 0) {
+      return { lessonsContext: "", lessonsApplied: [] };
+    }
+    return {
+      lessonsContext: decisionMemory.formatLessonsForPrompt(lessons),
+      lessonsApplied: lessons.map((lesson: any) => ({
+        id: lesson.id,
+        category: lesson.category,
+        trigger: lesson.trigger_pattern,
+        lesson: lesson.lesson,
+        score: lesson.relevance_score,
+        priority: lesson.priority,
+        source: lesson.source,
+        phase: "decision",
+      })),
+    };
+  } catch (error: any) {
+    logger.warn("Failed to fetch decision lessons for routing", {
+      caseId,
+      error: error.message,
+    });
+    return { lessonsContext: "", lessonsApplied: [] };
+  }
+}
+
 async function preComputeDecisionContext(
   caseId: number,
   classification: Classification,
@@ -465,6 +502,7 @@ function buildEnrichedDecisionPrompt(params: {
   preComputed: PreComputedContext;
   customInstruction?: string | null;
   inlineKeyPoints?: string[];
+  lessonsContext?: string;
 }): string {
   const {
     caseData, classification, classificationConfidence, constraints, scopeItems,
@@ -596,7 +634,7 @@ function buildEnrichedDecisionPrompt(params: {
     : "";
 
   return `You are the decision engine for a FOIA (public records) automation system.
-${humanDirectivesSection}${customSection}
+${humanDirectivesSection}${customSection}${params.lessonsContext || ""}
 ${preComputedSection}
 
 ## Case Context
@@ -725,6 +763,13 @@ async function makeAIDecisionV2(params: {
       ? preComputed.caseData.scope_items
       : [];
 
+  const { lessonsContext, lessonsApplied } = await getDecisionLessons(
+    caseId,
+    preComputed.caseData,
+    preComputed.threadMessages,
+    preComputed.dismissedProposals,
+  );
+
   const prompt = buildEnrichedDecisionPrompt({
     caseData: preComputed.caseData,
     classification,
@@ -745,6 +790,7 @@ async function makeAIDecisionV2(params: {
     preComputed,
     customInstruction,
     inlineKeyPoints: params.inlineKeyPoints,
+    lessonsContext,
   });
 
   // 3-attempt self-repair loop
@@ -842,6 +888,7 @@ async function makeAIDecisionV2(params: {
         overrideMessageId: (object as any).overrideMessageId || undefined,
         followUpAction: validatedFollowUp,
         modelMetadata,
+        lessonsApplied,
       });
     } catch (error: any) {
       lastError = error.message;
@@ -983,6 +1030,7 @@ function decision(
     adjustmentInstruction: null,
     isComplete: false,
     researchLevel: "none",
+    lessonsApplied: [],
     modelMetadata: null,
     ...overrides,
   };
@@ -1117,6 +1165,7 @@ function buildDecisionPrompt(params: {
   humanDirectives?: any[];
   phoneNotes?: any[];
   latestAnalysis?: any;
+  lessonsContext?: string;
 }): string {
   const {
     caseData,
@@ -1198,7 +1247,7 @@ function buildDecisionPrompt(params: {
     : "";
 
   return `You are the decision engine for a FOIA (public records) automation system. Choose the single best next action.
-${humanDirectivesSection}
+${humanDirectivesSection}${params.lessonsContext || ""}
 ## Case Context
 - Agency: ${caseData?.agency_name || "Unknown"}
 - Agency email: ${caseData?.agency_email || "Unknown"}
@@ -1508,6 +1557,13 @@ async function aiDecision(params: {
         ? caseData.scope_items
         : [];
 
+    const { lessonsContext, lessonsApplied } = await getDecisionLessons(
+      params.caseId,
+      caseData,
+      Array.isArray(threadMessages) ? threadMessages : [],
+      dismissedProposals,
+    );
+
     const prompt = buildDecisionPrompt({
       caseData,
       classification: params.classification,
@@ -1524,6 +1580,7 @@ async function aiDecision(params: {
       humanDirectives,
       phoneNotes,
       latestAnalysis,
+      lessonsContext,
     });
 
     const startedAt = Date.now();
@@ -1615,6 +1672,7 @@ async function aiDecision(params: {
       researchLevel: (object as any).researchLevel || "none",
       followUpAction: validatedFollowUp,
       modelMetadata,
+      lessonsApplied,
     });
   } catch (error: any) {
     logger.warn("AI decision failed; using deterministic fallback", {
