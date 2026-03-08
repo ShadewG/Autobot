@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import useSWR from "swr";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { fetcher } from "@/lib/api";
 import { useUserFilter } from "./user-filter";
 import { useAuth } from "./auth-provider";
 
@@ -23,10 +24,20 @@ export function NavLinks() {
     (liveData?.summary?.pending_approvals_total || 0) +
     (liveData?.summary?.human_review_total || 0);
 
+  const inboxCount = liveData?.summary?.pending_approvals_total || 0;
+
+  const { data: portalData } = useSWR<{
+    success: boolean;
+    count: number;
+  }>("/portal-tasks", fetcher, { refreshInterval: 30000 });
+  const portalCount = portalData?.count || 0;
+
   const links = [
     { href: "/gated", label: "QUEUE", count: queueCount },
+    { href: "/inbox", label: "INBOX", count: inboxCount },
     { href: "/requests", label: "CASES" },
     { href: "/runs", label: "RUNS" },
+    { href: "/portal-tasks", label: "PORTALS", count: portalCount },
     { href: "/agencies", label: "AGENCIES" },
     { href: "/eval", label: "EVALS" },
     { href: "/analytics", label: "ANALYTICS" },
