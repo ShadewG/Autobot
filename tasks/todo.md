@@ -114,7 +114,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Portal Data Quality
 - [x] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — added `completedBy` and `confirmationNumber` passthrough in case-reducer PORTAL_COMPLETED handler + submit-portal.ts context; backfilled 13 completed_by and 3 confirmation_number values from cases table
 - [x] Sync portal task completion back to `executions` and `proposals` — case-reducer already updates proposals to EXECUTED on PORTAL_COMPLETED; backfilled 29 orphan portal_tasks with proposal_id from SUBMIT_PORTAL proposals
-- [ ] Improve `portal_request_number` capture from submissions and inbound notifications
+- [x] Improve `portal_request_number` capture from submissions and inbound notifications — **AUDITED**: 3 capture paths exist: (1) Skyvern extraction in portal-agent-service-skyvern.js, (2) inbound email matching in sendgrid-service.js (primary source, captured 9 of 10 request numbers), (3) case-reducer PORTAL_COMPLETED sets from confirmationNumber. 16 portal-completed cases lack request_number because Skyvern didn't extract one and no inbound notification contained it. Backfilled case 25164 (MR-2026-6) from inbound subject. Remaining gaps are portal submissions where confirmation wasn't extractable
 - [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers
 
 #### Notion Sync
@@ -180,10 +180,10 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [ ] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context
 - [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages
 - [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
-- [ ] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases
-- [ ] Add explicit guidance for “closure after we did not answer” portal messages so they are not treated like generic denials or generic acknowledgments
-- [ ] Add explicit guidance for request-form and mailing-address workflows so they classify as clarification/process blockers rather than delivery
-- [ ] Add explicit guidance that attached letters may be acknowledgments, denials, fee notices, formal responses, or actual records, and must be classified from content rather than file presence
+- [x] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases `(classifier + decision prompt — 2026-03-08)`
+- [x] Add explicit guidance for “closure after we did not answer” portal messages so they are not treated like generic denials or generic acknowledgments `(classifier prompt — 2026-03-08)`
+- [x] Add explicit guidance for request-form and mailing-address workflows so they classify as clarification/process blockers rather than delivery `(classifier prompt — 2026-03-08)`
+- [x] Add explicit guidance that attached letters may be acknowledgments, denials, fee notices, formal responses, or actual records, and must be classified from content rather than file presence `(classifier prompt — 2026-03-08)`
 - [ ] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier
 - [ ] Ensure fallback constraint extraction can use attachment text, not just email body text
 - [ ] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals
@@ -399,7 +399,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Analytics & Reporting
 - [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(UI BUG FOUND 2026-03-08 - /analytics direct load 404s and requests missing Next chunks)`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(API + analytics page — 2026-03-08)`
-- [ ] Compliance report: correct statute, correct deadlines, correct custodian — per state
+- [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(API + analytics page — 2026-03-08)`
 - [x] Export case package for journalists: correspondence, records, timeline — one click
 
 #### Fee Payment Automation
