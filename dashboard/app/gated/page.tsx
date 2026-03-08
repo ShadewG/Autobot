@@ -701,6 +701,21 @@ function MonitorPageContent() {
     refreshInterval: 12000,
   });
 
+  // System health
+  const { data: healthData } = useSWR<{
+    success: boolean;
+    status: string;
+    total_issues: number;
+    metrics: {
+      stuck_cases: number;
+      orphaned_runs: number;
+      stale_proposals: number;
+      overdue_deadlines: number;
+      bounced_emails: number;
+      portal_failures: number;
+    };
+  }>("/api/monitor/system-health", { refreshInterval: 60000 });
+
   // Build the full queue (unfiltered by type) — filter out acted-on items via removedIds
   const allQueueItems = useMemo<QueueItem[]>(() => {
     if (!overview) return [];
@@ -1572,6 +1587,61 @@ function MonitorPageContent() {
           color="text-muted-foreground"
         />
       </div>
+
+      {/* ── System Health ──────────────────── */}
+      {healthData?.metrics && (
+        <Collapsible className="mb-4">
+          <CollapsibleTrigger className="w-full">
+            <div className={cn(
+              "flex items-center justify-between px-3 py-2 border text-xs",
+              healthData.total_issues > 0 ? "border-red-800 bg-red-950/30" : "border-green-800 bg-green-950/30"
+            )}>
+              <div className="flex items-center gap-2">
+                {healthData.total_issues > 0 ? (
+                  <AlertTriangle className="h-3.5 w-3.5 text-red-400" />
+                ) : (
+                  <CheckCircle className="h-3.5 w-3.5 text-green-400" />
+                )}
+                <span className={healthData.total_issues > 0 ? "text-red-400" : "text-green-400"}>
+                  {healthData.total_issues > 0
+                    ? `${healthData.total_issues} system issue${healthData.total_issues > 1 ? "s" : ""}`
+                    : "System healthy"}
+                </span>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border border border-t-0">
+              {[
+                { label: "Stuck cases", value: healthData.metrics.stuck_cases, href: "/requests?status=needs_human_review" },
+                { label: "Orphaned runs", value: healthData.metrics.orphaned_runs, href: "/runs" },
+                { label: "Stale proposals", value: healthData.metrics.stale_proposals },
+                { label: "Overdue deadlines", value: healthData.metrics.overdue_deadlines },
+                { label: "Bounced emails (24h)", value: healthData.metrics.bounced_emails },
+                { label: "Portal failures (24h)", value: healthData.metrics.portal_failures },
+              ].map((m) => (
+                <div
+                  key={m.label}
+                  className={cn(
+                    "bg-card px-3 py-2",
+                    m.value > 0 && "cursor-pointer hover:bg-muted/50",
+                  )}
+                  onClick={m.value > 0 && m.href ? () => window.location.href = m.href : undefined}
+                >
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
+                  <div className={cn(
+                    "text-lg font-bold tabular-nums",
+                    m.value > 0 ? "text-red-400" : "text-green-400"
+                  )}>
+                    {m.value}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {/* ── Tab Bar ─────────────────────────── */}
       <div className="flex items-center gap-0 border-b mb-4">

@@ -11,5 +11,6 @@ router.use('/', require('./monitor/agent'));
 router.use('/', require('./monitor/portal'));
 router.use('/', require('./monitor/lessons'));
 router.use('/', require('./monitor/events'));
+router.use('/', require('./monitor/system-health'));
 
 module.exports = router;
