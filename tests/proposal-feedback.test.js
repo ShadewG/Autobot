@@ -111,6 +111,66 @@ describe('Proposal feedback helpers', function () {
     });
   });
 
+  it('learns reusable patterns from approvals without human edits', async function () {
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'getProposalById').resolves({
+      id: 931,
+      case_id: 932,
+      action_type: 'SEND_CLARIFICATION',
+      human_edited: false,
+    });
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 932,
+      agency_name: 'Synthetic Police Department',
+    });
+    sinon.stub(db, 'getLatestResponseAnalysis').resolves({
+      classification: 'CLARIFICATION_REQUEST',
+    });
+    const learnStub = sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
+
+    await proposalFeedback.autoCaptureEvalCase({
+      id: 931,
+      case_id: 932,
+      trigger_message_id: 933,
+      action_type: 'SEND_CLARIFICATION',
+    }, {
+      action: 'APPROVE',
+      decidedBy: 'qa-user',
+    });
+
+    sinon.assert.calledOnce(learnStub);
+    sinon.assert.calledWithMatch(learnStub, {
+      category: 'general',
+      triggerPattern: 'approved SEND_CLARIFICATION for police agency / CLARIFICATION_REQUEST',
+      lesson: 'When the classification is CLARIFICATION_REQUEST for a police agency, SEND_CLARIFICATION has been approved without edits. Prefer this action when the surrounding facts match.',
+      sourceCaseId: 932,
+      priority: 6,
+    });
+  });
+
+  it('skips approval learning when the approved draft was human-edited', async function () {
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'getProposalById').resolves({
+      id: 941,
+      case_id: 942,
+      action_type: 'SEND_INITIAL_REQUEST',
+      human_edited: true,
+    });
+    const learnStub = sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
+
+    await proposalFeedback.autoCaptureEvalCase({
+      id: 941,
+      case_id: 942,
+      trigger_message_id: 943,
+      action_type: 'SEND_INITIAL_REQUEST',
+    }, {
+      action: 'APPROVE',
+      decidedBy: 'qa-user',
+    });
+
+    sinon.assert.notCalled(learnStub);
+  });
+
   it('learns from dismiss outcomes without throwing when the DB case exists', async function () {
     sinon.stub(db, 'query').resolves({ rows: [] });
     sinon.stub(db, 'getCaseById').resolves({

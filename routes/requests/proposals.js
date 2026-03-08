@@ -192,6 +192,10 @@ router.post('/:id/proposals/:proposalId/approve', async (req, res) => {
                 decidedBy: req.body?.decidedBy || 'human',
             }),
         });
+        await autoCaptureEvalCase(proposal, {
+            action: 'APPROVE',
+            decidedBy: req.body?.decidedBy || 'human',
+        });
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal
         if (proposal.waitpoint_token) {

@@ -85,4 +85,56 @@ describe('Request proposals adjust feedback capture', function () {
       decidedBy: 'human',
     });
   });
+
+  it('captures an eval case when approving via the request proposals route', async function () {
+    const autoCaptureStub = sinon.stub().resolves();
+    feedbackModule.autoCaptureEvalCase = autoCaptureStub;
+    feedbackModule.captureDismissFeedback = sinon.stub().resolves();
+
+    lifecycleModule.markProposalDecisionReceived = sinon.stub().resolves();
+    lifecycleModule.buildHumanDecision = sinon.stub().returns({ action: 'APPROVE' });
+
+    helpersModule.db = {
+      getCaseById: sinon.stub().resolves({ id: 444 }),
+      getProposalById: sinon.stub().resolves({
+        id: 556,
+        case_id: 444,
+        status: 'PENDING_APPROVAL',
+        action_type: 'SEND_INITIAL_REQUEST',
+        waitpoint_token: null,
+        run_id: 0,
+        message_id: 778,
+      }),
+    };
+    helpersModule.logger = {
+      forCase: () => ({
+        info() {},
+        error() {},
+      }),
+    };
+    helpersModule.triggerDispatch = {
+      triggerTask: sinon.stub().resolves({ handle: { id: 'run_test_approve' } }),
+    };
+
+    const proposalsRouter = require('../routes/requests/proposals');
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/requests', proposalsRouter);
+
+    const response = await supertest(app)
+      .post('/api/requests/444/proposals/556/approve')
+      .send({});
+
+    assert.strictEqual(response.status, 200);
+    sinon.assert.calledOnce(autoCaptureStub);
+    sinon.assert.calledWithMatch(autoCaptureStub, {
+      id: 556,
+      case_id: 444,
+      action_type: 'SEND_INITIAL_REQUEST',
+    }, {
+      action: 'APPROVE',
+      decidedBy: 'human',
+    });
+  });
 });

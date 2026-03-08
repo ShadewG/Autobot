@@ -1527,6 +1527,11 @@ router.post('/proposals/:id/decision', async (req, res) => {
         reason: reason || null,
         decidedBy: req.body.decidedBy || 'human',
       });
+    } else if (action === 'APPROVE') {
+      await autoCaptureEvalCase(proposal, {
+        action,
+        decidedBy: req.body.decidedBy || 'human',
+      });
     } else if (action === 'ADJUST') {
       await autoCaptureEvalCase(proposal, {
         action,

@@ -58,6 +58,29 @@ function deriveAdjustLesson(proposal, caseData, instruction, reason = null) {
   return `When handling ${proposal?.action_type || "this action"} for ${agencyName}, follow this human adjustment: ${normalized}${suffix}`;
 }
 
+function inferAgencyType(agencyName) {
+  const text = String(agencyName || "").toLowerCase();
+  if (!text) return "unknown agency";
+  if (text.includes("sheriff")) return "sheriff agency";
+  if (text.includes("police")) return "police agency";
+  if (text.includes("state patrol") || text.includes("trooper") || text.includes("dci")) return "state law enforcement agency";
+  if (text.includes("district attorney") || text.includes("prosecutor")) return "prosecutor office";
+  if (text.includes("attorney general")) return "attorney general office";
+  if (text.includes("county")) return "county agency";
+  if (text.includes("city")) return "city agency";
+  return "records agency";
+}
+
+function deriveApprovalCategory(proposal, classification = null, caseData = null) {
+  const corpus = `${proposal?.action_type || ""} ${classification || ""} ${caseData?.requested_records || ""}`.toLowerCase();
+  if (/\bfee|accept_fee|decline_fee|negotiate_fee|waiver/.test(corpus)) return "fee";
+  if (/\bsubmit_portal|portal/.test(corpus)) return "portal";
+  if (/\bsend_followup|followup/.test(corpus)) return "followup";
+  if (/\bsend_rebuttal|send_appeal|denial/.test(corpus)) return "denial";
+  if (/\bbody.?cam|bwc|video/.test(corpus)) return "bwc";
+  return "general";
+}
+
 async function autoCaptureEvalCase(
   proposal,
   {
@@ -117,6 +140,9 @@ async function autoCaptureEvalCase(
     if (action === "ADJUST" && instruction) {
       await learnFromAdjust(proposal, { instruction, reason });
     }
+    if (action === "APPROVE") {
+      await learnFromApprove(proposal, { decidedBy });
+    }
   } catch (err) {
     console.warn(`Auto eval-case capture failed for proposal ${proposal?.id}: ${err.message}`);
   }
@@ -162,6 +188,31 @@ async function learnFromAdjust(proposal, { instruction = null, reason = null } =
   }
 }
 
+async function learnFromApprove(proposal, { decidedBy = null } = {}) {
+  try {
+    if (!proposal?.id || !proposal?.action_type || !proposal?.case_id) return;
+
+    const decisionMemory = require('./decision-memory-service');
+    const latestProposal = await db.getProposalById(proposal.id);
+    if (latestProposal?.human_edited) return;
+
+    const caseData = await db.getCaseById(proposal.case_id);
+    const latestAnalysis = await db.getLatestResponseAnalysis(proposal.case_id).catch(() => null);
+    const classification = latestAnalysis?.classification || "UNKNOWN";
+    const agencyType = inferAgencyType(caseData?.agency_name);
+
+    await decisionMemory.learnFromOutcome({
+      category: deriveApprovalCategory(proposal, classification, caseData),
+      triggerPattern: `approved ${proposal.action_type} for ${agencyType} / ${classification}`,
+      lesson: `When the classification is ${classification} for a ${agencyType}, ${proposal.action_type} has been approved without edits. Prefer this action when the surrounding facts match.`,
+      sourceCaseId: proposal.case_id,
+      priority: 6,
+    });
+  } catch (_) {
+    // Non-blocking
+  }
+}
+
 async function captureDismissFeedback(proposal, { instruction = null, reason = null, decidedBy = null } = {}) {
   await autoCaptureEvalCase(proposal, {
     action: 'DISMISS',
@@ -174,12 +225,15 @@ async function captureDismissFeedback(proposal, { instruction = null, reason = n
 
 module.exports = {
   autoCaptureEvalCase,
+  learnFromApprove,
   learnFromAdjust,
   learnFromDismiss,
   captureDismissFeedback,
+  deriveApprovalCategory,
   normalizeExpectedAction,
   buildNotes,
   deriveAdjustCategory,
   deriveAdjustLesson,
+  inferAgencyType,
   normalizeInstructionText,
 };
