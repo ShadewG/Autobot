@@ -94,13 +94,13 @@ export async function draftResponse(
     if (caseData.days_overdue > 0) briefParts.push(`- Days overdue: ${caseData.days_overdue}`);
 
     // Constraints
-    const constraints = caseData.constraints_jsonb || caseData.constraints || [];
+    const constraints = caseData.constraints_jsonb || [];
     if (Array.isArray(constraints) && constraints.length > 0) {
       briefParts.push(`- Constraints: ${constraints.join(", ")}`);
     }
 
     // Scope items
-    const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
+    const scopeItems = caseData.scope_items_jsonb || [];
     if (Array.isArray(scopeItems) && scopeItems.length > 0) {
       briefParts.push(`- Scope items: ${scopeItems.map((s: any) => `${s.name || s.description || JSON.stringify(s)} [${s.status || "REQUESTED"}]`).join("; ")}`);
     }

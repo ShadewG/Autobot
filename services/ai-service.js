@@ -639,7 +639,7 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
 
             // Build requested records list for scope analysis
             // Prefer scope_items_jsonb (structured) over requested_records (legacy)
-            const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
+            const scopeItems = caseData.scope_items_jsonb || [];
             const requestedRecords = Array.isArray(scopeItems) && scopeItems.length > 0
                 ? scopeItems.map(item => item.name || item.description || item.item || JSON.stringify(item))
                 : (Array.isArray(caseData.requested_records)
@@ -882,7 +882,7 @@ Return ONLY the email body text, no subject line or metadata.`;
 
             // Guardrail: if intent requires response but model says "no response needed", fallback
             if (responseIntents.includes(normalizedIntent) && /no response needed|no reply needed/i.test(replyText || '')) {
-                const scopeItems = caseData.scope_items_jsonb || caseData.scope_items || [];
+                const scopeItems = caseData.scope_items_jsonb || [];
                 const requestedRecords = Array.isArray(scopeItems) && scopeItems.length > 0
                     ? scopeItems.map(item => item.name || item.description || item.item || JSON.stringify(item))
                     : (Array.isArray(caseData.requested_records)

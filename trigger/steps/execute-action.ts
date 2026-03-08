@@ -46,7 +46,7 @@ async function applyClassificationSideEffects(
     await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
 
     const caseData = await db.getCaseById(caseId);
-    const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+    const currentConstraints = caseData?.constraints_jsonb || [];
     if (!currentConstraints.includes("WRONG_AGENCY")) {
       await db.updateCase(caseId, {
         constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),

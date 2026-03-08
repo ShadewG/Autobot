@@ -101,10 +101,9 @@ export async function updateConstraints(
 
   const caseData = await db.getCaseById(caseId);
   const constraints = [
-    ...(caseData.constraints_jsonb || caseData.constraints || currentConstraints),
+    ...(caseData.constraints_jsonb || currentConstraints),
   ];
-  const scopeItems =
-    caseData.scope_items_jsonb || caseData.scope_items || currentScopeItems;
+  const scopeItems = caseData.scope_items_jsonb || currentScopeItems;
 
   let extractedConstraints: string[] = Array.isArray(parsed.constraints_to_add)
     ? parsed.constraints_to_add

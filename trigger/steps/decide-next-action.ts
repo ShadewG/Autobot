@@ -1895,7 +1895,7 @@ async function deterministicRouting(
       case "wrong_agency": {
         // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
-        const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+        const currentConstraints = caseData?.constraints_jsonb || [];
         if (!currentConstraints.includes("WRONG_AGENCY")) {
           await db.updateCase(caseId, {
             constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
@@ -2077,7 +2077,7 @@ async function deterministicRouting(
   if (classification === "WRONG_AGENCY") {
     await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
     const caseData = await db.getCaseById(caseId);
-    const currentConstraints = caseData?.constraints_jsonb || caseData?.constraints || [];
+    const currentConstraints = caseData?.constraints_jsonb || [];
     if (!currentConstraints.includes("WRONG_AGENCY")) {
       await db.updateCase(caseId, {
         constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),

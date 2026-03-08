@@ -216,6 +216,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [ ] Finish live schema rollout for proposal AI metadata — `response_analysis` has model metadata columns, but `proposals` is still missing `model_id`, `prompt_tokens`, `completion_tokens`, and `latency_ms`
 - [ ] Verify AI model metadata is actually being written on new analyses — live `response_analysis` currently has `0` rows with `model_id`
 - [ ] Verify `last_notion_synced_at` is actually populated after case syncs — live schema has the column, but current non-null row count is `0`
+- [ ] Verify import validation warnings reach the dashboard on real cases — live schema currently has no persisted `agency_warnings` column, so warning storage may still be missing or transient
 
 ---
 
@@ -325,7 +326,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
 - [ ] Block deploy if accuracy drops below 90% `(IN PROGRESS - Codex)`
-- [ ] Track eval results over time in `/eval` dashboard
+- [x] Track eval results over time in `/eval` dashboard
 
 ### P2 — Optimization
 

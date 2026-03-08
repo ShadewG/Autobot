@@ -34,11 +34,9 @@ export async function loadContext(
     db.getLatestPendingProposal(caseId),
   ]);
 
-  // Extract constraints and scope from case data (JSONB columns with fallbacks)
-  const constraints: string[] =
-    caseData.constraints_jsonb || caseData.constraints || [];
-  let scopeItems: ScopeItem[] =
-    caseData.scope_items_jsonb || caseData.scope_items || [];
+  // Extract constraints and scope from case data (JSONB columns)
+  const constraints: string[] = caseData.constraints_jsonb || [];
+  let scopeItems: ScopeItem[] = caseData.scope_items_jsonb || [];
 
   // Auto-generate scopeItems from requested_records if missing
   if ((!scopeItems || scopeItems.length === 0) && caseData.requested_records) {

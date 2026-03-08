@@ -150,7 +150,7 @@ export function buildClassificationPrompt(
     : caseData.requested_records || "Various records";
 
   // Build enriched context sections
-  const constraints = enrichment?.constraints || caseData?.constraints_jsonb || caseData?.constraints || [];
+  const constraints = enrichment?.constraints || caseData?.constraints_jsonb || [];
   const constraintsSection = constraints.length > 0
     ? `- **Known Constraints**: ${constraints.join(", ")}`
     : "";
