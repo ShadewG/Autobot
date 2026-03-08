@@ -51,7 +51,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Phase B: move obvious one-off root scripts and artifacts into `.old/` — all portal test files, research tests, and migration scripts moved; root now has only server.js, run-pending-portals.js, test-setup.js + config
 - [x] Phase C: consolidate active tests and document canonical test commands `(All 50+ test suites under tests/. Root cleared in Phase B. Canonical commands documented in package.json: test, test:regression:backend, test:chaos, test:golden, test:prompts:gate, test:prod-ready. CI runs regression+eval gate. Guides: AGENT_TESTING_GUIDE.md, docs/production-readiness-test-plan.md — 2026-03-08)`
 - [x] Phase D: retire compatibility routes/services only after import checks, route checks, and smoke tests pass `(ASSESSED: api.js and legacy-actions.js audited — both still required by dashboard. portal variants archived. foia-case-agent archived. workers/ removed. Cannot retire remaining legacy routes until dashboard migrates to proposals API — 2026-03-08)`
-- [ ] Phase E: update `guide.md` after each cleanup batch so the map stays accurate
+- [x] Phase E: update `guide.md` after each cleanup batch so the map stays accurate — updated: removed archived services (foia-case-agent, portal variants, adaptive-learning), updated portal section to show only active Skyvern provider, added new services (error-tracking, proposal-lifecycle, decision-trace, etc.), updated route descriptions, added .old/ archive summary, updated test surface with CI info, refreshed dashboard pages list
 
 ---
 
@@ -223,6 +223,11 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately — added `attachment_extraction` section to reconciliation report showing inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate; current: 33 inbound with attachments, 29 extracted (88%), 7 missing (PDFs and images)
 
 #### Verification Follow-Ups (live checks, 2026-03-08)
+- [ ] TESTING NOW — structured error tracking (`error_events`, `/api/eval/errors`)
+- [ ] TESTING NOW — email execution finalization (`provider_message_id`, `completed_at`, final worker update path)
+- [ ] TESTING NOW — portal task writeback (`completed_by`, `confirmation_number`, proposal/execution sync, request-number capture)
+- [ ] TESTING NOW — `/api/dashboard/outcomes` current behavior
+- [ ] TESTING NOW — `response_analysis` model metadata on fresh classify runs
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
 - [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
