@@ -597,6 +597,19 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
     return null;
   }
 
+  const thread = message?.thread_id ? await db.getThreadById(message.thread_id) : null;
+  let resolvedCaseAgencyId = thread?.case_agency_id ? Number(thread.case_agency_id) : null;
+  if (!resolvedCaseAgencyId && message?.from_email) {
+    const caseAgencies = await db.getCaseAgenciesByCaseId(caseData.id);
+    const inboundFrom = String(message.from_email || '').trim().toLowerCase();
+    const matchedAgency = caseAgencies.find((agency) =>
+      String(agency.agency_email || '').trim().toLowerCase() === inboundFrom
+    );
+    resolvedCaseAgencyId = matchedAgency?.id ? Number(matchedAgency.id) : null;
+  }
+  const resolvedCaseAgency = resolvedCaseAgencyId ? await db.getCaseAgencyById(resolvedCaseAgencyId) : null;
+  const resolvedAgencyName = resolvedCaseAgency?.agency_name || caseData.agency_name || 'agency';
+
   const analysis = await db.getResponseAnalysisByMessageId(message.id);
   const intent = String(llmStubs?.classify?.classification || analysis?.intent || '').trim().toUpperCase();
   const localDecision = inferInboundLocalDecision({
@@ -639,12 +652,13 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
     caseId: caseData.id,
     runId: run.id,
     triggerMessageId: message.id,
+    caseAgencyId: resolvedCaseAgencyId,
     actionType: localDecision.actionType,
     draftSubject,
     draftBodyText,
     draftBodyHtml: draft?.bodyHtml || null,
     reasoning: [
-      `Locally materialized ${localDecision.actionType} response for ${caseData.agency_name || 'agency'}`,
+      `Locally materialized ${localDecision.actionType} response for ${resolvedAgencyName}`,
       `Inbound message ${message.id} classified as ${intent}`,
       `Autopilot: ${autopilotMode || 'SUPERVISED'}`,
     ],
@@ -836,7 +850,13 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
   const caseData = await db.getCaseById(caseId);
   const executionKey = proposal.execution_key || `direct-email:${proposalId}`;
 
-  const effectiveTo = humanDecision?.recipient_override || caseData?.agency_email;
+  const targetAgency = proposal.case_agency_id
+    ? await db.getCaseAgencyById(proposal.case_agency_id)
+    : null;
+  const effectiveTo =
+    humanDecision?.recipient_override ||
+    targetAgency?.agency_email ||
+    caseData?.agency_email;
   if (!effectiveTo) {
     throw new Error(`Case ${caseId} has no agency_email — cannot send email directly`);
   }
@@ -856,7 +876,12 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
     }
   }
 
-  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const thread = proposal.case_agency_id
+    ? await db.getThreadByCaseAgencyId(proposal.case_agency_id)
+    : await db.getThreadByCaseId(caseId);
+  const threadMessages = thread?.id ? await db.getMessagesByThreadId(thread.id) : [];
+  const latestInbound = threadMessages.find((message) => message.direction === 'inbound')
+    || await db.getLatestInboundMessage(caseId);
   const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
   const targetTo = String(effectiveTo || '').trim().toLowerCase();
   const freshEmailActions = ['REFORMULATE_REQUEST', 'SEND_INITIAL_REQUEST'];
@@ -875,6 +900,8 @@ async function executeApprovedProposalEmailDirectly(proposal, humanDecision) {
     bodyText: proposal.draft_body_text,
     bodyHtml: proposal.draft_body_html || null,
     headers: replyHeaders,
+    originalMessageId: latestInbound?.message_id || null,
+    threadId: thread?.thread_id || thread?.initial_message_id || null,
     caseId,
     proposalId,
     runId: null,
@@ -939,8 +966,15 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
   const proposalId = proposal.id;
   const caseData = await db.getCaseById(caseId);
   const executionKey = proposal.execution_key || `direct-pdf-email:${proposalId}`;
+  const targetAgency = proposal.case_agency_id
+    ? await db.getCaseAgencyById(proposal.case_agency_id)
+    : null;
+  const effectiveTo =
+    humanDecision?.recipient_override ||
+    targetAgency?.agency_email ||
+    caseData?.agency_email;
 
-  if (!caseData?.agency_email) {
+  if (!effectiveTo) {
     throw new Error(`Case ${caseId} has no agency_email — cannot send PDF email directly`);
   }
 
@@ -991,9 +1025,14 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
     throw new Error('Prepared PDF file is unavailable for this proposal');
   }
 
-  const latestInbound = await db.getLatestInboundMessage(caseId);
+  const thread = proposal.case_agency_id
+    ? await db.getThreadByCaseAgencyId(proposal.case_agency_id)
+    : await db.getThreadByCaseId(caseId);
+  const threadMessages = thread?.id ? await db.getMessagesByThreadId(thread.id) : [];
+  const latestInbound = threadMessages.find((message) => message.direction === 'inbound')
+    || await db.getLatestInboundMessage(caseId);
   const inboundFrom = String(latestInbound?.from_email || '').trim().toLowerCase();
-  const targetTo = String(caseData.agency_email || '').trim().toLowerCase();
+  const targetTo = String(effectiveTo || '').trim().toLowerCase();
   const replyHeaders =
     latestInbound?.message_id && inboundFrom && targetTo && inboundFrom === targetTo
       ? {
@@ -1005,7 +1044,7 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
   let emailResult;
   try {
     emailResult = await emailExecutor.sendEmail({
-      to: caseData.agency_email,
+      to: effectiveTo,
       subject: proposal.draft_subject || `Public Records Request - ${caseData.subject_name || caseData.case_name}`,
       bodyText: proposal.draft_body_text,
       bodyHtml: proposal.draft_body_html || null,
@@ -1015,6 +1054,8 @@ async function executeApprovedProposalPdfEmailDirectly(proposal, humanDecision) 
             'References': replyHeaders.references || null,
           }
         : null,
+      originalMessageId: latestInbound?.message_id || null,
+      threadId: thread?.thread_id || thread?.initial_message_id || null,
       caseId,
       proposalId,
       runId: null,

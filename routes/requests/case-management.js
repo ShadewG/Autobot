@@ -792,6 +792,42 @@ router.put('/:id/tags', async (req, res) => {
 });
 
 /**
+ * PUT /api/requests/:id/priority
+ * Update case priority (0=normal, 1=low, 2=urgent).
+ */
+router.put('/:id/priority', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const { priority } = req.body;
+        const level = parseInt(priority);
+
+        if (![0, 1, 2].includes(level)) {
+            return res.status(400).json({ success: false, error: 'priority must be 0 (normal), 1 (low), or 2 (urgent)' });
+        }
+
+        const result = await db.query(
+            'UPDATE cases SET priority = $1, updated_at = NOW() WHERE id = $2 RETURNING id, priority',
+            [level, caseId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const labels = { 0: 'normal', 1: 'low', 2: 'urgent' };
+        await db.logActivity('priority_updated', `Priority set to ${labels[level]}`, {
+            case_id: caseId,
+            priority: level,
+            user_id: req.body?.userId || 'dashboard',
+        });
+
+        res.json({ success: true, priority: result.rows[0].priority });
+    } catch (error) {
+        logger.error('Error updating priority:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * POST /api/requests/create
  * Create a new case from the dashboard form (cookie-auth).
  */

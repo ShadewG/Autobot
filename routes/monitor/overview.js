@@ -502,6 +502,7 @@ router.get('/live-overview', async (req, res) => {
             AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
             ${caseUserFilter}
             ORDER BY
+                CASE WHEN COALESCE(c.priority, 0) = 2 THEN 0 ELSE 1 END ASC,
                 CASE WHEN p.risk_flags IS NOT NULL AND array_length(p.risk_flags, 1) > 0 THEN 0
                      WHEN p.confidence < 0.6 THEN 1 ELSE 2 END ASC,
                 p.created_at DESC

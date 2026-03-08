@@ -355,6 +355,15 @@ interface PreComputedContext {
   threadMessages: any[];
   canDirectWrongAgencySend: boolean;
   researchAttemptCount: number;
+  agencyIntelligence: {
+    total_cases: number;
+    completed: number;
+    denied: number;
+    denial_rate: number;
+    avg_response_days: number | null;
+    fee_cases: number;
+    top_denial_reasons: string[];
+  } | null;
 }
 
 export async function getDecisionLessons(
@@ -457,7 +466,10 @@ async function preComputeDecisionContext(
 
   // Pre-compute bodycam research flag
   const bodycamResearchNeeded = shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, constraints);
-  const canDirectWrongAgencySend = !!(await getWrongAgencyDirectAction(caseId));
+  const [canDirectWrongAgencySend, agencyIntelligence] = await Promise.all([
+    getWrongAgencyDirectAction(caseId).then((r: any) => !!r),
+    db.getAgencyIntelligence(caseData?.agency_name, caseData?.agency_id),
+  ]);
 
   // Count dismissed actions
   const dismissedActionCounts: Record<string, number> = {};
@@ -479,6 +491,7 @@ async function preComputeDecisionContext(
     threadMessages: Array.isArray(threadMessages) ? threadMessages : [],
     canDirectWrongAgencySend,
     researchAttemptCount: researchAttemptResult,
+    agencyIntelligence,
   };
 }
 
@@ -590,6 +603,18 @@ function buildEnrichedDecisionPrompt(params: {
 - Follow-up count: ${preComputed.followupCount}/${MAX_FOLLOWUPS}
 - Portal automatable: ${caseData?.portal_url ? "yes" : "no"}`;
 
+  // Agency track record
+  let agencyTrackRecord = "";
+  if (preComputed.agencyIntelligence) {
+    const ai = preComputed.agencyIntelligence;
+    const parts = [`- Prior cases with this agency: ${ai.total_cases}`];
+    if (ai.avg_response_days != null) parts.push(`- Average response time: ${ai.avg_response_days} days`);
+    parts.push(`- Denial rate: ${ai.denial_rate}%`);
+    if (ai.fee_cases > 0) parts.push(`- Cases involving fees: ${ai.fee_cases}`);
+    if (ai.top_denial_reasons.length > 0) parts.push(`- Common denial reasons: ${ai.top_denial_reasons.join(", ")}`);
+    agencyTrackRecord = `\n## Agency Track Record\n${parts.join("\n")}\nUse this history to calibrate your response — e.g., if this agency typically responds within ${ai.avg_response_days || "N/A"} days, don't send a follow-up too early. If denial rate is high, prepare stronger legal arguments.`;
+  }
+
   // Decision history section
   let decisionHistorySection = "";
   if (preComputed.dismissedProposals?.length > 0 || preComputed.humanDirectives?.length > 0) {
@@ -636,7 +661,7 @@ function buildEnrichedDecisionPrompt(params: {
 
   return `You are the decision engine for a FOIA (public records) automation system.
 ${humanDirectivesSection}${customSection}${params.lessonsContext || ""}${params.successfulExamplesContext || ""}
-${preComputedSection}
+${preComputedSection}${agencyTrackRecord}
 
 ## Case Context
 - Agency: ${caseData?.agency_name || "Unknown"}

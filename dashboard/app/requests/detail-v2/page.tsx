@@ -57,6 +57,7 @@ import type {
 } from "@/lib/types";
 import { formatDate, formatRelativeTime, cn, formatReasoning, ACTION_TYPE_LABELS, formatCurrency, isTrackingUrl, stripHtmlTags } from "@/lib/utils";
 import {
+  ArrowUp,
   ArrowLeft,
   Loader2,
   Clock,
@@ -1491,6 +1492,32 @@ function DetailV2Content() {
           )}
           <div className="flex-1" />
           {/* Controls */}
+          <Select
+            value={String(request.priority ?? 0)}
+            onValueChange={async (val) => {
+              try {
+                await fetchAPI(`/requests/${id}/priority`, {
+                  method: "PUT",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ priority: parseInt(val) }),
+                });
+                mutate();
+              } catch {}
+            }}
+          >
+            <SelectTrigger className={cn(
+              "h-6 w-auto gap-1 px-1.5 text-[10px] border rounded shrink-0",
+              request.priority === 2 && "border-red-500 text-red-400",
+              request.priority === 1 && "border-muted text-muted-foreground",
+            )}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="2"><span className="flex items-center gap-1"><ArrowUp className="h-2.5 w-2.5 text-red-400" />Urgent</span></SelectItem>
+              <SelectItem value="0">Normal</SelectItem>
+              <SelectItem value="1">Low</SelectItem>
+            </SelectContent>
+          </Select>
           <AutopilotSelector
             requestId={request.id}
             currentMode={request.autopilot_mode}

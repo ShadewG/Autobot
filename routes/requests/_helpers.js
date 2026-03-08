@@ -974,6 +974,7 @@ function toRequestDetail(caseData) {
         import_warnings: caseData.import_warnings || null,
         last_notion_synced_at: caseData.last_notion_synced_at || null,
         tags: Array.isArray(caseData.tags) ? caseData.tags : [],
+        priority: caseData.priority ?? 0,
     };
 }
 

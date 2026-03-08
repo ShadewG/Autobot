@@ -148,6 +148,7 @@ export interface RequestDetail extends RequestListItem {
   }> | null;
   last_notion_synced_at?: string | null;
   tags?: string[] | null;
+  priority?: number | null;
 }
 
 // Timeline Event for the timeline column

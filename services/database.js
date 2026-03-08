@@ -22,6 +22,7 @@ const CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'r
 // CLEAR is used when a case transitions INTO one of these statuses — dismiss stale proposals.
 // Excludes needs_phone_call because that is still a human review state where proposals may be relevant.
 const CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS = ['sent', 'awaiting_response', 'responded', 'completed', 'cancelled'];
+const CASE_STATUSES_PRESERVING_INBOUND_PROPOSALS = ['sent', 'awaiting_response', 'responded'];
 const FOLLOWUP_ELIGIBLE_CASE_STATUSES = ['sent', 'awaiting_response'];
 const FOLLOWUP_TERMINAL_CASE_STATUSES = ['completed', 'cancelled', 'needs_phone_call'];
 
@@ -445,6 +446,7 @@ class DatabaseService {
         // Keep case/proposal state aligned: once a case is advanced out of review,
         // any active proposal should no longer remain in queue-facing states.
         if (updatedCase && CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS.includes(status)) {
+            const preserveInboundProposals = CASE_STATUSES_PRESERVING_INBOUND_PROPOSALS.includes(status);
             await this.query(
                 `UPDATE proposals
                  SET status = 'DISMISSED',
@@ -452,8 +454,9 @@ class DatabaseService {
                      human_decision = COALESCE(human_decision, '{}'::jsonb)
                        || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
                  WHERE case_id = $1
-                   AND status = ANY($3::text[])`,
-                [caseId, `case_status:${status}`, ACTIVE_PROPOSAL_STATUSES]
+                   AND status = ANY($3::text[])
+                   AND ($4::boolean = false OR trigger_message_id IS NULL)`,
+                [caseId, `case_status:${status}`, ACTIVE_PROPOSAL_STATUSES, preserveInboundProposals]
             );
         }
 
@@ -650,6 +653,7 @@ class DatabaseService {
         const result = await this.query(query, values);
         const updated = result.rows[0];
         if (updated && updates.status && CASE_STATUSES_CLEAR_ACTIVE_PROPOSALS.includes(updates.status)) {
+            const preserveInboundProposals = CASE_STATUSES_PRESERVING_INBOUND_PROPOSALS.includes(updates.status);
             await this.query(
                 `UPDATE proposals
                  SET status = 'DISMISSED',
@@ -657,8 +661,9 @@ class DatabaseService {
                      human_decision = COALESCE(human_decision, '{}'::jsonb)
                        || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
                  WHERE case_id = $1
-                   AND status = ANY($3::text[])`,
-                [caseId, `case_status:${updates.status}`, ACTIVE_PROPOSAL_STATUSES]
+                   AND status = ANY($3::text[])
+                   AND ($4::boolean = false OR trigger_message_id IS NULL)`,
+                [caseId, `case_status:${updates.status}`, ACTIVE_PROPOSAL_STATUSES, preserveInboundProposals]
             );
         }
         if (updated && (updates.status || updates.requires_human != null || updates.substatus)) {
@@ -2065,11 +2070,11 @@ class DatabaseService {
                 decision_model_id, decision_prompt_tokens, decision_completion_tokens, decision_latency_ms,
                 draft_model_id, draft_prompt_tokens, draft_completion_tokens, draft_latency_ms,
                 reasoning, confidence, risk_flags, warnings,
-                can_auto_execute, requires_human, status,
+                can_auto_execute, requires_human, status, case_agency_id,
                 langgraph_thread_id, adjustment_count, lessons_applied,
                 gate_options,
                 action_chain, chain_id, chain_step
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
             ON CONFLICT (proposal_key) DO UPDATE SET
                 -- Update when existing row is PENDING_APPROVAL, or system-DISMISSED
                 -- (auto-superseded, no human_decision). Human-dismissed proposals must
@@ -2199,6 +2204,12 @@ class DatabaseService {
                     THEN EXCLUDED.status
                     ELSE proposals.status
                 END,
+                case_agency_id = CASE
+                    WHEN proposals.status = 'PENDING_APPROVAL'
+                      OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
+                    THEN COALESCE(EXCLUDED.case_agency_id, proposals.case_agency_id)
+                    ELSE proposals.case_agency_id
+                END,
                 langgraph_thread_id = CASE
                     WHEN proposals.status = 'PENDING_APPROVAL'
                       OR (proposals.status = 'DISMISSED' AND proposals.human_decision IS NULL)
@@ -2282,6 +2293,7 @@ class DatabaseService {
             proposalData.canAutoExecute || false,
             proposalData.requiresHuman || true,
             proposalData.status || 'PENDING_APPROVAL',
+            proposalData.caseAgencyId || null,
             proposalData.langgraphThreadId || null,
             proposalData.adjustmentCount || 0,
             proposalData.lessonsApplied ? JSON.stringify(proposalData.lessonsApplied) : null,
@@ -3878,6 +3890,62 @@ class DatabaseService {
             RETURNING *
         `, [signalId, caseId]);
         return result.rows[0];
+    }
+    /**
+     * Get agency intelligence for AI prompt injection.
+     * Returns avg response time, denial rate, total cases, common denial reasons.
+     */
+    async getAgencyIntelligence(agencyName, agencyId) {
+        try {
+            const result = await this.query(`
+                SELECT
+                    COUNT(*)::int AS total_cases,
+                    COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+                    COUNT(*) FILTER (WHERE status = 'denied')::int AS denied,
+                    AVG(CASE WHEN last_response_date IS NOT NULL AND send_date IS NOT NULL
+                        THEN EXTRACT(EPOCH FROM (last_response_date - send_date)) / 86400
+                        END)::int AS avg_response_days,
+                    COUNT(*) FILTER (WHERE fee_quote_jsonb IS NOT NULL)::int AS fee_cases
+                FROM cases
+                WHERE (agency_id = $1 OR ($2 IS NOT NULL AND agency_name = $2))
+                  AND status NOT IN ('draft', 'cancelled')
+            `, [agencyId || 0, agencyName || null]);
+
+            const stats = result.rows[0] || {};
+            if (!stats.total_cases || stats.total_cases < 2) return null;
+
+            // Get top denial reasons
+            const denialResult = await this.query(`
+                SELECT
+                    COALESCE(ra.full_analysis_json->>'denial_subtype', 'unspecified') AS reason,
+                    COUNT(*)::int AS count
+                FROM response_analysis ra
+                JOIN messages m ON ra.message_id = m.id
+                JOIN cases c ON m.case_id = c.id
+                WHERE ra.intent = 'denial'
+                  AND (c.agency_id = $1 OR ($2 IS NOT NULL AND c.agency_name = $2))
+                GROUP BY reason
+                ORDER BY count DESC
+                LIMIT 3
+            `, [agencyId || 0, agencyName || null]);
+
+            const denialRate = stats.total_cases > 0
+                ? Math.round((stats.denied / stats.total_cases) * 100)
+                : 0;
+
+            return {
+                total_cases: stats.total_cases,
+                completed: stats.completed,
+                denied: stats.denied,
+                denial_rate: denialRate,
+                avg_response_days: stats.avg_response_days,
+                fee_cases: stats.fee_cases,
+                top_denial_reasons: denialResult.rows.map(r => r.reason),
+            };
+        } catch (error) {
+            console.error('Error fetching agency intelligence:', error.message);
+            return null;
+        }
     }
 }
 

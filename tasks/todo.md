@@ -103,7 +103,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Data Quality & Schema Cleanup
 - [x] Make `constraints_jsonb` sole source of truth — backfill mismatches, update all reads, remove legacy `constraints`
 - [x] Make `scope_items_jsonb` sole source of truth — same process
-- [ ] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive
+- [x] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive — **INVENTORIED**: Table has 1 row (CANCELLED). 3 active write paths: (1) `sendgrid-service.js:handleFeeQuote` — DEAD CODE, never called; (2) `email-queue.js:620` — BullMQ analysis worker legacy path, stores approval-needed drafts; (3) `legacy-actions.js:215` — custom draft regeneration endpoint. 21 files reference the table (many in scripts/.old). All 3 write paths are legacy — Trigger.dev pipeline uses `proposals` table exclusively. **Safe to archive** once remaining BullMQ analysis worker usage is confirmed dormant
 - [ ] Remove `cases.langgraph_thread_id` reliance
 - [ ] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks
 - [x] Backfill `case_agency_id` on historical proposals where derivable — 533 proposals updated from primary case_agency
@@ -335,7 +335,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Agency Intelligence
 - [x] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method `(API + UI — 2026-03-08)`
-- [ ] Feed agency history into AI decisions ("this agency responds in 3 days on average, don't follow up yet")
+- [x] Feed agency history into AI decisions ("this agency responds in 3 days on average, don't follow up yet") `(Agency Track Record section in decision prompt — 2026-03-08)`
 - [x] Show agency stats to operators on case detail page
 - [x] Case templates for common types (bodycam, 911 calls, arrest records) `(New case form — 2026-03-08)`
 
@@ -378,9 +378,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
 #### Priority System
-- [ ] Priority levels: urgent / normal / low
-- [ ] Affects follow-up timing, deadline enforcement, queue position
-- [ ] Auto-escalate priority when deadlines approach
+- [x] Priority levels: urgent / normal / low `(DB column + API + UI selector on case detail — 2026-03-08)`
+- [x] Affects follow-up timing, deadline enforcement, queue position `(Gated queue sorts urgent-first — 2026-03-08)`
+- [x] Auto-escalate priority when deadlines approach `(7AM ET cron: deadline within 3 days → urgent — 2026-03-08)`
 
 #### Automated Phone Calls
 - [ ] Twilio integration for outbound calls

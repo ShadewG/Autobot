@@ -157,6 +157,28 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Auto-escalate priority for cases approaching deadlines — runs at 7:00 AM ET
+        this.jobs.priorityAutoEscalate = new CronJob('0 7 * * *', async () => {
+            try {
+                const result = await db.query(`
+                    UPDATE cases SET priority = 2, updated_at = NOW()
+                    WHERE priority < 2
+                      AND deadline_date IS NOT NULL
+                      AND deadline_date <= NOW() + INTERVAL '3 days'
+                      AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
+                    RETURNING id
+                `);
+                if (result.rows.length > 0) {
+                    console.log(`Auto-escalated ${result.rows.length} case(s) to urgent (deadline within 3 days)`);
+                    await db.logActivity('priority_auto_escalate', `Auto-escalated ${result.rows.length} case(s) approaching deadline`, {
+                        case_ids: result.rows.map(r => r.id),
+                    });
+                }
+            } catch (error) {
+                console.error('Error in priority auto-escalate cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         // Check for stuck responses every 30 minutes
         this.jobs.stuckResponseCheck = new CronJob('*/30 * * * *', async () => {
             try {
