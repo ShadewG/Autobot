@@ -1009,6 +1009,19 @@ router.get('/dashboard/hourly-activity', async (req, res) => {
 });
 
 /**
+ * KPI Dashboard - Get daily message volume (inbound vs outbound, last 30 days)
+ */
+router.get('/dashboard/message-volume', async (req, res) => {
+    try {
+        const volume = await dashboardService.getMessageVolumeByDay();
+        res.json({ success: true, ...volume });
+    } catch (error) {
+        console.error('Error getting message volume:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * Get queued messages (pending emails)
  * Shows what messages are waiting to be sent and when
  */

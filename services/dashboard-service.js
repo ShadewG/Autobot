@@ -251,6 +251,46 @@ class DashboardService {
         `);
         return result.rows;
     }
+
+    /**
+     * Get daily message volume (inbound vs outbound) for the last 30 days
+     */
+    async getMessageVolumeByDay() {
+        const result = await db.query(`
+            WITH days AS (
+                SELECT generate_series(
+                    (CURRENT_DATE - INTERVAL '29 days')::date,
+                    CURRENT_DATE,
+                    '1 day'::interval
+                )::date AS day
+            )
+            SELECT
+                d.day,
+                COALESCE(SUM(CASE WHEN m.direction = 'inbound' THEN 1 ELSE 0 END), 0)::int AS inbound,
+                COALESCE(SUM(CASE WHEN m.direction = 'outbound' THEN 1 ELSE 0 END), 0)::int AS outbound
+            FROM days d
+            LEFT JOIN messages m ON (
+                (m.direction = 'inbound' AND m.received_at::date = d.day)
+                OR (m.direction = 'outbound' AND m.sent_at::date = d.day)
+            )
+            GROUP BY d.day
+            ORDER BY d.day
+        `);
+
+        const rows = result.rows;
+        const totalInbound = rows.reduce((s, r) => s + r.inbound, 0);
+        const totalOutbound = rows.reduce((s, r) => s + r.outbound, 0);
+        const replyRate = totalInbound > 0
+            ? Math.round((totalOutbound / totalInbound) * 100)
+            : 0;
+
+        return {
+            days: rows,
+            totalInbound,
+            totalOutbound,
+            replyRate
+        };
+    }
 }
 
 module.exports = new DashboardService();

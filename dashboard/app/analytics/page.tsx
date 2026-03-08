@@ -15,6 +15,7 @@ import {
   Cell,
   PieChart,
   Pie,
+  Legend,
 } from "recharts";
 
 interface CostsResponse {
@@ -79,6 +80,27 @@ interface OutcomesResponse {
   statusBreakdown: Array<{ status: string; count: string }>;
 }
 
+interface MessageVolumeResponse {
+  success: boolean;
+  days: Array<{
+    day: string;
+    inbound: number;
+    outbound: number;
+  }>;
+  totalInbound: number;
+  totalOutbound: number;
+  replyRate: number;
+}
+
+interface HourlyActivityResponse {
+  success: boolean;
+  activity: Array<{
+    hour: string;
+    event_type: string;
+    count: string;
+  }>;
+}
+
 const STATUS_COLORS: Record<string, string> = {
   completed: "#4ade80",
   sent: "#60a5fa",
@@ -114,6 +136,18 @@ export default function AnalyticsPage() {
 
   const { data: complianceData } = useSWR<ComplianceResponse>(
     "/dashboard/compliance",
+    fetcher,
+    { refreshInterval: 120000 }
+  );
+
+  const { data: messageVolumeData } = useSWR<MessageVolumeResponse>(
+    "/dashboard/message-volume",
+    fetcher,
+    { refreshInterval: 120000 }
+  );
+
+  const { data: hourlyData } = useSWR<HourlyActivityResponse>(
+    "/dashboard/hourly-activity",
     fetcher,
     { refreshInterval: 120000 }
   );
@@ -162,6 +196,36 @@ export default function AnalyticsPage() {
       })),
     };
   }, [data]);
+
+  const hourlyChartData = useMemo(() => {
+    if (!hourlyData?.activity) return [];
+    // Aggregate all event types by hour-of-day (0-23)
+    const byHour: Record<number, number> = {};
+    for (let h = 0; h < 24; h++) byHour[h] = 0;
+
+    for (const row of hourlyData.activity) {
+      const hourDate = new Date(row.hour);
+      const h = hourDate.getUTCHours();
+      byHour[h] += Number(row.count) || 0;
+    }
+
+    return Array.from({ length: 24 }, (_, h) => ({
+      hour: `${h.toString().padStart(2, "0")}:00`,
+      events: byHour[h],
+    }));
+  }, [hourlyData]);
+
+  const messageVolumeChartData = useMemo(() => {
+    if (!messageVolumeData?.days) return [];
+    return messageVolumeData.days.map((d) => ({
+      date: new Date(d.day).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      }),
+      inbound: d.inbound,
+      outbound: d.outbound,
+    }));
+  }, [messageVolumeData]);
 
   if (error) {
     return (
@@ -555,6 +619,116 @@ export default function AnalyticsPage() {
           </Card>
         </>
       )}
+
+      {/* ── Message Activity ── */}
+      {messageVolumeData?.success && (
+        <>
+          <h2 className="text-lg font-semibold mt-4">Message Activity</h2>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <KPICard
+              label="Inbound (30d)"
+              value={messageVolumeData.totalInbound}
+              accent="blue"
+            />
+            <KPICard
+              label="Outbound (30d)"
+              value={messageVolumeData.totalOutbound}
+              accent="green"
+            />
+            <KPICard
+              label="Reply Rate"
+              value={`${messageVolumeData.replyRate}%`}
+              accent={messageVolumeData.replyRate >= 80 ? "green" : messageVolumeData.replyRate >= 50 ? "amber" : "red"}
+            />
+          </div>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                Messages by Direction (Last 30 Days)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {messageVolumeChartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={320}>
+                  <BarChart
+                    data={messageVolumeChartData}
+                    margin={{ left: 0, right: 16, top: 8, bottom: 8 }}
+                  >
+                    <XAxis
+                      dataKey="date"
+                      tick={{ fontSize: 10 }}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar
+                      dataKey="inbound"
+                      stackId="msg"
+                      fill="#60a5fa"
+                      radius={[0, 0, 0, 0]}
+                      name="Inbound"
+                    />
+                    <Bar
+                      dataKey="outbound"
+                      stackId="msg"
+                      fill="#4ade80"
+                      radius={[4, 4, 0, 0]}
+                      name="Outbound"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-sm text-muted-foreground py-8 text-center">
+                  No message data
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {/* ── Hourly Activity ── */}
+      {hourlyData?.success && hourlyChartData.length > 0 && (
+        <>
+          <h2 className="text-lg font-semibold mt-4">Hourly Activity</h2>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                Activity by Hour of Day (Last 24 Hours)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={280}>
+                <BarChart
+                  data={hourlyChartData}
+                  margin={{ left: 0, right: 16, top: 8, bottom: 8 }}
+                >
+                  <XAxis
+                    dataKey="hour"
+                    tick={{ fontSize: 10 }}
+                    interval={1}
+                  />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip
+                    formatter={(value: any) => [value, "Events"]}
+                    labelFormatter={(label) => `Hour: ${label}`}
+                  />
+                  <Bar dataKey="events" fill="#a78bfa" radius={[4, 4, 0, 0]}>
+                    {hourlyChartData.map((entry, i) => (
+                      <Cell
+                        key={i}
+                        fill={entry.events > 0 ? "#a78bfa" : "#374151"}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
@@ -566,7 +740,7 @@ function KPICard({
 }: {
   label: string;
   value: string | number;
-  accent?: "green" | "red" | "amber";
+  accent?: "green" | "red" | "amber" | "blue";
 }) {
   const accentClass =
     accent === "green"
@@ -575,7 +749,9 @@ function KPICard({
         ? "text-red-400"
         : accent === "amber"
           ? "text-amber-400"
-          : "text-foreground";
+          : accent === "blue"
+            ? "text-blue-400"
+            : "text-foreground";
 
   return (
     <Card>
