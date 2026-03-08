@@ -2,6 +2,7 @@
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   FileText,
   Send,
@@ -13,29 +14,33 @@ import {
   Shield,
   Clock,
   Globe,
+  Bug,
+  BookOpen,
 } from "lucide-react";
 import Link from "next/link";
+
+const ONBOARDING_KEY = "autobot_onboarding_completed";
 
 const steps = [
   {
     icon: FileText,
     title: "1. Create a Case",
     description:
-      'Go to Cases and click "New Case" to start a FOIA request. Fill in the subject name, agency, state, and record types you need.',
+      'Go to Cases and click "New Case" to start a FOIA request. Fill in the subject name, agency, state, and record types. You can also import cases directly from Notion.',
     link: "/requests",
     linkLabel: "Go to Cases",
   },
   {
     icon: Zap,
-    title: "2. Generate the Request",
+    title: "2. AI Drafts the Request",
     description:
-      "The AI drafts a legally compliant FOIA request tailored to the agency and state laws. It researches exemptions, statutes, and deadlines automatically.",
+      "The AI researches the agency, state laws, exemptions, and deadlines. It drafts a legally compliant FOIA request tailored to the jurisdiction.",
   },
   {
     icon: Eye,
     title: "3. Review Proposals",
     description:
-      'Check the Queue for proposals needing your approval. You can Approve, Adjust (edit instructions), or Dismiss any proposal. The AI explains its reasoning.',
+      'Check the Queue for proposals needing your approval. You can Approve, Adjust (give instructions to redraft), or Dismiss. Edit drafts inline before sending.',
     link: "/gated",
     linkLabel: "Go to Queue",
   },
@@ -43,19 +48,19 @@ const steps = [
     icon: Send,
     title: "4. Send & Track",
     description:
-      "Once approved, requests are sent via email or submitted through agency portals automatically. Track delivery status and responses in real-time.",
+      "Approved requests are sent via email or submitted through agency web portals automatically. Track delivery status, bounces, and responses in real-time.",
   },
   {
     icon: MessageSquare,
     title: "5. Handle Responses",
     description:
-      "When agencies reply, the AI analyzes their response and proposes the next action — follow-up, appeal a denial, pay a fee, or close the case.",
+      "When agencies reply, the AI analyzes the response and proposes the next action — follow-up, appeal, pay a fee, or close the case.",
   },
   {
     icon: CheckCircle2,
-    title: "6. Close the Loop",
+    title: "6. Case Resolves",
     description:
-      "Cases resolve when records are received, the request is fulfilled, or you decide to withdraw. Every action is logged for your audit trail.",
+      "Cases close when records are received, the request is fulfilled, or you withdraw. Every action is logged in the audit trail.",
   },
 ];
 
@@ -64,13 +69,13 @@ const features = [
     icon: Shield,
     title: "Supervised Mode",
     description:
-      "Every AI decision requires your approval. Nothing is sent without your explicit sign-off.",
+      "Every AI decision requires your approval. Nothing sends without your explicit sign-off.",
   },
   {
     icon: Clock,
     title: "Deadline Tracking",
     description:
-      "Automatic statutory deadline calculations per state. Get alerted when agencies are overdue.",
+      "Automatic statutory deadline calculations per state. Alerts when agencies are overdue.",
   },
   {
     icon: Globe,
@@ -82,18 +87,28 @@ const features = [
     icon: Zap,
     title: "Batch Operations",
     description:
-      "Send the same request to multiple agencies at once. Great for multi-jurisdiction investigations.",
+      "Send the same request to multiple agencies at once for multi-jurisdiction investigations.",
   },
 ];
 
 export default function OnboardingPage() {
+  const replayOnboarding = () => {
+    localStorage.removeItem(ONBOARDING_KEY);
+    window.location.reload();
+  };
+
   return (
     <div className="max-w-3xl mx-auto space-y-8 py-4">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">Getting Started</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Autobot automates FOIA requests from drafting to fulfillment. Here&apos;s how it works.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">Getting Started</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            How Autobot works, from case creation to fulfillment.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={replayOnboarding}>
+          Replay Welcome Tour
+        </Button>
       </div>
 
       {/* Workflow steps */}
@@ -148,32 +163,54 @@ export default function OnboardingPage() {
         </div>
       </div>
 
-      {/* Quick tips */}
+      {/* Notion */}
       <div className="space-y-3">
         <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Tips
+          Notion Integration
         </h2>
-        <Card className="p-4 space-y-2 text-xs text-muted-foreground">
+        <Card className="p-4 space-y-3 text-xs text-muted-foreground">
           <p>
-            <Badge variant="outline" className="mr-2 text-[10px]">TIP</Badge>
-            Use <strong>Adjust</strong> to refine AI drafts before sending — add specific record numbers, date ranges, or special instructions.
+            Cases can be imported from Notion. The system extracts subject name,
+            agency, incident details, and requested records from your Notion page
+            properties.
           </p>
           <p>
-            <Badge variant="outline" className="mr-2 text-[10px]">TIP</Badge>
-            Set your email signature in{" "}
+            <strong>Police Department data</strong> (email, portal URL, address, phone)
+            syncs from your Notion Police Departments database automatically.
+          </p>
+          <p>
+            <Badge variant="outline" className="mr-1 text-[10px]">TIP</Badge>
+            Set your <strong>Notion Assigned Name</strong> in{" "}
             <Link href="/settings" className="text-blue-400 hover:text-blue-300">Settings</Link>
-            {" "}so requests include your contact information.
+            {" "}so imported cases link to your account.
           </p>
-          <p>
-            <Badge variant="outline" className="mr-2 text-[10px]">TIP</Badge>
-            If something looks wrong with a case, use the <strong>Mark as Bugged</strong> option in the case menu — we&apos;ll investigate.
-          </p>
-          <p>
-            <Badge variant="outline" className="mr-2 text-[10px]">TIP</Badge>
-            Check{" "}
-            <Link href="/analytics" className="text-blue-400 hover:text-blue-300">Analytics</Link>
-            {" "}for response rate trends and agency performance data.
-          </p>
+        </Card>
+      </div>
+
+      {/* Bug reporting */}
+      <div className="space-y-3">
+        <h2 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Reporting Issues
+        </h2>
+        <Card className="p-4 space-y-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <Bug className="h-4 w-4 text-red-400" />
+            <strong className="text-foreground">Bug Button</strong>
+            <span>— The red bug icon in the bottom-right corner is on every page. Click it, describe the issue, and submit. It auto-captures your page and context.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <BookOpen className="h-4 w-4 text-yellow-400" />
+            <strong className="text-foreground">Mark as Bugged</strong>
+            <span>— On any case, open the &#8943; menu and select &quot;Mark as Bugged&quot; to pause and flag it for investigation.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Zap className="h-4 w-4 text-blue-400" />
+            <strong className="text-foreground">Feature Requests</strong>
+            <span>— Go to{" "}
+              <Link href="/feedback" className="text-blue-400 hover:text-blue-300">Feedback</Link>
+              {" "}to submit ideas or browse past requests.
+            </span>
+          </div>
         </Card>
       </div>
     </div>

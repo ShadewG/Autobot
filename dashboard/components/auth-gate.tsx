@@ -5,6 +5,9 @@ import type { ReactNode } from "react";
 import { useAuth } from "./auth-provider";
 import { LoginForm } from "./login-form";
 import { NavLinks } from "./nav-links";
+import { OnboardingModal } from "./onboarding-modal";
+import { ChangelogPopup } from "./changelog-popup";
+import { BugReportButton } from "./bug-report-button";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
@@ -37,6 +40,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
         </div>
       </nav>
       <main className="overflow-x-hidden px-4 py-4">{children}</main>
+      <OnboardingModal />
+      <ChangelogPopup />
+      <BugReportButton />
     </div>
   );
 }
