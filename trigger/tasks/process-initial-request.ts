@@ -362,6 +362,27 @@ export const processInitialRequest = task({
       await markStep("load_context", `Run #${runId}: loading initial-request context`);
       const context = await loadContext(caseId, null);
 
+      // Step 1.5: Proactive contact research if import warnings suggest bad agency info
+      const importWarnings: any[] = context.caseData?.import_warnings || [];
+      const RESEARCH_TRIGGERS = new Set([
+        "MISSING_EMAIL", "NO_MX_RECORD", "AGENCY_NOT_IN_DIRECTORY",
+        "STATE_MISMATCH", "AGENCY_METADATA_MISMATCH",
+      ]);
+      const needsProactiveResearch = importWarnings.some(
+        (w: any) => RESEARCH_TRIGGERS.has(w.type)
+      ) && !context.caseData?.research_context_jsonb;
+
+      if (needsProactiveResearch) {
+        const warningTypes = importWarnings.filter((w: any) => RESEARCH_TRIGGERS.has(w.type)).map((w: any) => w.type);
+        logger.info("Running proactive research before initial request", { caseId, warningTypes });
+        try {
+          await markStep("proactive_research", `Run #${runId}: proactive contact research (warnings: ${warningTypes.join(", ")})`, { warningTypes });
+          await researchContext(caseId, "SEND_INITIAL_REQUEST", "UNKNOWN" as any, null, "medium");
+        } catch (err: any) {
+          logger.warn("Proactive research failed, proceeding with draft", { caseId, error: err.message });
+        }
+      }
+
       // Step 2: Draft initial FOIA request
       await markStep("draft_initial_request", `Run #${runId}: drafting initial request`);
       const draft = await draftInitialRequest(caseId, runId, autopilotMode);

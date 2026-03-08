@@ -2573,6 +2573,20 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 console.warn('[import] Failed to update Notion status:', syncErr.message);
             }
 
+            // Run import validation (same as bulk sync)
+            try {
+                const importWarnings = await validateImportedCase(newCase);
+                if (importWarnings) {
+                    await db.query(
+                        'UPDATE cases SET import_warnings = $1 WHERE id = $2',
+                        [JSON.stringify(importWarnings), newCase.id]
+                    );
+                    console.warn(`[import] Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
+                }
+            } catch (valErr) {
+                console.warn('[import] Validation check failed:', valErr.message);
+            }
+
             await db.logActivity('case_imported', `Imported case from Notion page: ${newCase.case_name}`, {
                 case_id: newCase.id
             });

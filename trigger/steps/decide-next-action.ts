@@ -594,6 +594,61 @@ function buildEnrichedDecisionPrompt(params: {
     ? `\n## Latest Analysis Key Points\n${keyPointsSource.map((p: string) => `- ${p}`).join("\n")}`
     : "";
 
+  // Rich classifier evidence (from response_analysis.full_analysis_json)
+  const la = preComputed.latestAnalysis;
+  const faj = la?.full_analysis_json;
+  const classifierEvidenceParts: string[] = [];
+
+  // Evidence quotes
+  if (faj?.decision_evidence_quotes?.length) {
+    classifierEvidenceParts.push(`### Evidence Quotes\n${faj.decision_evidence_quotes.map((q: string) => `> "${q}"`).join("\n")}`);
+  }
+
+  // Exemption citations
+  if (faj?.detected_exemption_citations?.length) {
+    classifierEvidenceParts.push(`### Exemption Citations\nThe agency cited these legal exemptions:\n${faj.detected_exemption_citations.map((c: string) => `- ${c}`).join("\n")}`);
+  }
+
+  // Referral contact
+  if (faj?.referral_contact && (faj.referral_contact.agency_name || faj.referral_contact.email || faj.referral_contact.url)) {
+    const rc = faj.referral_contact;
+    const rcParts: string[] = [];
+    if (rc.agency_name) rcParts.push(`- Referred agency: ${rc.agency_name}`);
+    if (rc.email) rcParts.push(`- Email: ${rc.email}`);
+    if (rc.phone) rcParts.push(`- Phone: ${rc.phone}`);
+    if (rc.url) rcParts.push(`- URL: ${rc.url}`);
+    if (rc.notes) rcParts.push(`- Notes: ${rc.notes}`);
+    classifierEvidenceParts.push(`### Referral Contact\nThe agency referenced another entity:\n${rcParts.join("\n")}`);
+  }
+
+  // Fee breakdown
+  if (faj?.fee_breakdown && (faj.fee_breakdown.hourly_rate || faj.fee_breakdown.estimated_hours || faj.fee_breakdown.deposit_required || faj.fee_breakdown.items?.length)) {
+    const fb = faj.fee_breakdown;
+    const fbParts: string[] = [];
+    if (fb.hourly_rate != null) fbParts.push(`- Hourly rate: $${fb.hourly_rate}`);
+    if (fb.estimated_hours != null) fbParts.push(`- Estimated hours: ${fb.estimated_hours}`);
+    if (fb.deposit_required != null) fbParts.push(`- Deposit required: $${fb.deposit_required}`);
+    if (fb.items?.length) fbParts.push(`- Items: ${fb.items.join(", ")}`);
+    classifierEvidenceParts.push(`### Fee Breakdown\n${fbParts.join("\n")}`);
+  }
+
+  // Response nature
+  if (faj?.response_nature) {
+    classifierEvidenceParts.push(`### Response Nature: ${faj.response_nature}`);
+  }
+
+  // Scope updates from this response
+  if (faj?.scope_updates?.length) {
+    const suLines = faj.scope_updates.map((su: any) =>
+      `- ${su.name}: ${su.status}${su.reason ? ` (${su.reason})` : ""}${su.confidence != null ? ` [conf: ${su.confidence}]` : ""}`
+    );
+    classifierEvidenceParts.push(`### Scope Updates (from this response)\n${suLines.join("\n")}`);
+  }
+
+  const classifierEvidenceSection = classifierEvidenceParts.length
+    ? `\n## Classifier Evidence\n${classifierEvidenceParts.join("\n\n")}`
+    : "";
+
   // Pre-computed analysis section
   const preComputedSection = `
 ## Pre-computed Analysis
@@ -681,7 +736,7 @@ ${timingSection}
 - Sentiment: ${sentiment}
 - Fee amount: ${extractedFeeAmount ?? "none"}
 - Denial subtype: ${denialSubtype || "none"}
-${latestAnalysisSection}
+${latestAnalysisSection}${classifierEvidenceSection}
 ${decisionHistorySection}
 
 ## Constraints
@@ -2211,7 +2266,7 @@ export async function decideNextAction(
     const actionOverrides = responseRequiringActions.includes(suggestedAction || "") ||
       (suggestedAction === "respond" && classification === "DENIAL");
 
-    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL" || classification === "FEE_QUOTE" || classification === "WRONG_AGENCY")) {
+    if (requiresResponse === false && !actionOverrides && !(isFollowupTrigger || classification === "NO_RESPONSE" || classification === "DENIAL" || classification === "PARTIAL_APPROVAL" || classification === "PARTIAL_DELIVERY" || classification === "FEE_QUOTE" || classification === "WRONG_AGENCY")) {
       reasoning.push(`No response needed: ${reasonNoResponse || "Analysis determined no email required"}`);
 
       // Check for unanswered clarification on denial

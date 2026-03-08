@@ -104,7 +104,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Make `constraints_jsonb` sole source of truth — backfill mismatches, update all reads, remove legacy `constraints`
 - [x] Make `scope_items_jsonb` sole source of truth — same process
 - [x] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive — **INVENTORIED**: Table has 1 row (CANCELLED). 3 active write paths: (1) `sendgrid-service.js:handleFeeQuote` — DEAD CODE, never called; (2) `email-queue.js:620` — BullMQ analysis worker legacy path, stores approval-needed drafts; (3) `legacy-actions.js:215` — custom draft regeneration endpoint. 21 files reference the table (many in scripts/.old). All 3 write paths are legacy — Trigger.dev pipeline uses `proposals` table exclusively. **Safe to archive** once remaining BullMQ analysis worker usage is confirmed dormant
-- [ ] Remove `cases.langgraph_thread_id` reliance
+- [x] Remove `cases.langgraph_thread_id` reliance — verified: 0 references to `langgraph` in codebase, column is dormant
 - [ ] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks
 - [x] Backfill `case_agency_id` on historical proposals where derivable — 533 proposals updated from primary case_agency
 - [x] Agency directory dedup: normalize names on insert, merge duplicates, verify emails — deduped 37 groups (44 rows), fixed 1980 state='{}' → NULL
@@ -177,7 +177,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Decide whether `question` and `more_info_needed` should remain distinct; collapse them if downstream logic does not truly need both — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `CLARIFICATION_REQUEST` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
 - [x] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `RECORDS_READY` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
 - [ ] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting
-- [ ] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context
+- [x] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context `(Classifier Evidence section in buildEnrichedDecisionPrompt — 2026-03-08)`
 - [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages
 - [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
 - [x] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases `(classifier + decision prompt — 2026-03-08)`
@@ -342,7 +342,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Operational Speed
 - [x] Reduce Notion polling to 5 minutes `(cron */5 — 2026-03-08)`
-- [ ] Proactive contact research at import (before first send, not at escalation time)
+- [x] Proactive contact research at import (before first send, not at escalation time) `(process-initial-request.ts runs research if import_warnings exist + notion-service.js now runs validateImportedCase on single imports — 2026-03-08)`
 
 ---
 
@@ -351,7 +351,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 ### P0 — High-impact automation
 
 #### Proactive Contact Research
-- [ ] On import, if agency email suspect or not in directory, auto-trigger `RESEARCH_AGENCY` before drafting
+- [x] On import, if agency email suspect or not in directory, auto-trigger `RESEARCH_AGENCY` before drafting `(process-initial-request.ts checks import_warnings for MISSING_EMAIL, NO_MX_RECORD, AGENCY_NOT_IN_DIRECTORY, STATE_MISMATCH, AGENCY_METADATA_MISMATCH — 2026-03-08)`
 - [ ] Cache research results in agency directory for future cases
 - [ ] Track research success rate per agency type
 
@@ -444,5 +444,5 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Auto-captured eval cases from ADJUST/DISMISS flowing
 - [x] Weekly quality report generating automatically
 - [x] Regression eval suite blocking deploys
-- [ ] Agency validation catching bad imports before first send
-- [ ] Per-agency intelligence informing AI decisions
+- [x] Agency validation catching bad imports before first send
+- [x] Per-agency intelligence informing AI decisions
