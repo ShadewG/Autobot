@@ -436,7 +436,7 @@ export const processInbound = task({
           adjustedOutcome.draft, null, adjustedOutcome.reasoning,
           undefined, undefined,
           null, // classification: fast-path skips classify; side effects ran in original run
-          { recipientOverride: humanDecision?.recipient_override }
+          {} // No recipient override on adjustment fast-path
         );
 
         // Only mark EXECUTED if executeAction didn't set a different status (e.g. PENDING_PORTAL)
@@ -746,6 +746,7 @@ export const processInbound = task({
     });
 
     // Step 8: If human gate, wait for approval
+    let humanDecision: any = null;
     if (gate.shouldWait && gate.waitpointTokenId) {
       await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
       await waitRun(caseId, runId);
@@ -776,7 +777,7 @@ export const processInbound = task({
         return { status: "timed_out", proposalId: gate.proposalId };
       }
 
-      const humanDecision = result.output;
+      humanDecision = result.output;
       if (!humanDecision || !humanDecision.action) {
         logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
         throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);

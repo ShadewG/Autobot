@@ -229,6 +229,7 @@ export const processFollowup = task({
       });
 
       // Step 6: Wait if needed
+      let humanDecision: any = null;
       if (gate.shouldWait && gate.waitpointTokenId) {
         await markStep("wait_human_decision", `Run #${runId}: waiting for human decision`, { proposal_id: gate.proposalId });
         await waitRun(caseId, runId);
@@ -264,7 +265,7 @@ export const processFollowup = task({
           );
         }
 
-        const humanDecision = result.output;
+        humanDecision = result.output;
         if (!humanDecision || !humanDecision.action) {
           logger.error("Invalid human decision output", { caseId, proposalId: gate.proposalId, output: result.output });
           throw new Error(`Invalid human decision for proposal ${gate.proposalId}: missing action`);

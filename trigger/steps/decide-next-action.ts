@@ -611,9 +611,9 @@ function buildEnrichedDecisionPrompt(params: {
     SEND_APPEAL: "File a formal appeal (requires human approval)",
     SEND_FEE_WAIVER_REQUEST: "Request fee waiver citing public interest (requires human approval)",
     SEND_STATUS_UPDATE: "Send a status inquiry to the agency",
-    RESPOND_PARTIAL_APPROVAL: "Accept released records, challenge withheld portions",
+    RESPOND_PARTIAL_APPROVAL: "Acknowledge receipt of released records, request exemption citations for withheld records, ask about segregability and appeal rights",
     ACCEPT_FEE: "Accept the quoted fee amount",
-    NEGOTIATE_FEE: "Propose a lower fee or narrower scope",
+    NEGOTIATE_FEE: "Request a written fee estimate, propose a not-to-exceed cap, or ask to be contacted before charges are incurred. Use when fees are mentioned without a specific dollar amount.",
     DECLINE_FEE: "Decline the fee and explain why",
     ESCALATE: "Escalate to human review (requires human approval)",
     NONE: "No action needed — wait or acknowledge",
@@ -734,6 +734,36 @@ Valid chains:
 - SEND_CLARIFICATION → RESEARCH_AGENCY: Clarify with current agency AND research another entity they mentioned
 - REFORMULATE_REQUEST → RESEARCH_AGENCY: Narrow the request AND research the correct custodian
 Use followUpAction=null (default) when only one action is needed. Do NOT chain if the follow-up depends on the outcome of the first action.
+
+### ESCALATE is a Last Resort
+ESCALATE means you are giving up and handing to a human. Only use it when the situation is genuinely ambiguous, dangerous, or you truly cannot determine the right action. If the trigger message contains ANY of these, take the corresponding action instead of escalating:
+- Agency denied the request (any reason) → SEND_REBUTTAL or SEND_APPEAL
+- Agency asked to narrow scope / provide info → SEND_CLARIFICATION or REFORMULATE_REQUEST
+- Agency quoted a fee → NEGOTIATE_FEE, ACCEPT_FEE, or DECLINE_FEE
+- Agency referred to a different agency → RESEARCH_AGENCY
+- Agency said records are ready → NONE or CLOSE_CASE
+Examples:
+- Terse denial ("request denied", "no responsive records") → SEND_REBUTTAL, NOT ESCALATE
+- "Please narrow your request to 3 years" → SEND_CLARIFICATION or REFORMULATE_REQUEST, NOT ESCALATE
+- "Contact State Police for those records" → RESEARCH_AGENCY, NOT ESCALATE
+- "Please provide a case number or date range" → SEND_CLARIFICATION, NOT ESCALATE
+- "We require identity verification" → SEND_CLARIFICATION, NOT ESCALATE
+
+### SEND_REBUTTAL vs SEND_APPEAL
+- SEND_REBUTTAL: for vague, informal, or procedural denials without cited legal authority.
+- SEND_APPEAL: for FORMAL adverse determinations citing specific exemptions (FOIA exemptions, state statute exemptions, attorney-client privilege, work-product doctrine, Vaughn index). Appeals have legal deadlines — misclassifying as rebuttal risks missing them.
+- Rule: If the denial cites a specific statute, exemption number, privilege, or provides a Vaughn index → SEND_APPEAL. If the denial is vague, informal, or cites only "policy" → SEND_REBUTTAL.
+
+### No Trigger Message = No Action
+If there is no trigger message (no new inbound email or event), strongly prefer NONE or CLOSE_CASE. Do NOT fabricate actions without a clear trigger.
+
+### RESEARCH_AGENCY vs Direct Response
+- Vague denials citing "policy" without statutory authority → SEND_REBUTTAL requesting the specific legal basis.
+- "No duty to create" responses → RESEARCH_AGENCY to find what records the agency actually maintains.
+- "No responsive records" with verified custodian → SEND_REBUTTAL. Without verified custodian → RESEARCH_AGENCY.
+
+### Fee Actions Without Dollar Amounts
+When fees are mentioned without a specific dollar amount, use NEGOTIATE_FEE to request a written estimate. Never use ACCEPT_FEE without a specific amount.
 
 Choose exactly one primary action from the ALLOWED ACTIONS list. Optionally set followUpAction if a chain is appropriate. Provide concise reasoning. Set researchLevel appropriately.`;
 }
@@ -1344,6 +1374,36 @@ Valid chains:
 - SEND_CLARIFICATION → RESEARCH_AGENCY: Clarify with current agency AND research another entity they mentioned
 - REFORMULATE_REQUEST → RESEARCH_AGENCY: Narrow the request AND research the correct custodian
 Use followUpAction=null (default) when only one action is needed. Do NOT chain if the follow-up depends on the outcome of the first action.
+
+### ESCALATE is a Last Resort
+ESCALATE means you are giving up and handing to a human. Only use it when the situation is genuinely ambiguous, dangerous, or you truly cannot determine the right action. If the trigger message contains ANY of these, take the corresponding action instead of escalating:
+- Agency denied the request (any reason) → SEND_REBUTTAL or SEND_APPEAL
+- Agency asked to narrow scope / provide info → SEND_CLARIFICATION or REFORMULATE_REQUEST
+- Agency quoted a fee → NEGOTIATE_FEE, ACCEPT_FEE, or DECLINE_FEE
+- Agency referred to a different agency → RESEARCH_AGENCY
+- Agency said records are ready → NONE or CLOSE_CASE
+Examples:
+- Terse denial ("request denied", "no responsive records") → SEND_REBUTTAL, NOT ESCALATE
+- "Please narrow your request to 3 years" → SEND_CLARIFICATION or REFORMULATE_REQUEST, NOT ESCALATE
+- "Contact State Police for those records" → RESEARCH_AGENCY, NOT ESCALATE
+- "Please provide a case number or date range" → SEND_CLARIFICATION, NOT ESCALATE
+- "We require identity verification" → SEND_CLARIFICATION, NOT ESCALATE
+
+### SEND_REBUTTAL vs SEND_APPEAL
+- SEND_REBUTTAL: for vague, informal, or procedural denials without cited legal authority. The agency said "no" but didn't cite specific statutory exemptions.
+- SEND_APPEAL: for FORMAL adverse determinations citing specific exemptions (FOIA exemptions, state statute exemptions, attorney-client privilege, work-product doctrine, Vaughn index, categorical withholding under privilege). Appeals have legal deadlines — misclassifying as rebuttal risks missing them.
+- Rule: If the denial cites a specific statute, exemption number, privilege, or provides a Vaughn index → SEND_APPEAL. If the denial is vague, informal, or cites only "policy" → SEND_REBUTTAL.
+
+### No Trigger Message = No Action
+If there is no trigger message (no new inbound email or event to respond to), strongly prefer NONE or CLOSE_CASE. Do NOT fabricate actions or send emails without a clear trigger. Stale proposals and synthetic QA items with no trigger should be NONE.
+
+### RESEARCH_AGENCY vs Direct Response
+- For vague denials citing only "policy" without statutory authority → SEND_REBUTTAL requesting the specific legal basis. Do NOT research first.
+- For "no duty to create" responses → RESEARCH_AGENCY to find what records the agency actually maintains, THEN reformulate. Do NOT send a rebuttal.
+- For "no responsive records" with a verified custodian → SEND_REBUTTAL. For "no responsive records" without a verified custodian → RESEARCH_AGENCY.
+
+### Fee Actions Without Dollar Amounts
+When the agency mentions fees but has NOT provided a specific dollar amount or written estimate, use NEGOTIATE_FEE to request a written estimate. Never use ACCEPT_FEE without a specific amount to accept.
 
 Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }

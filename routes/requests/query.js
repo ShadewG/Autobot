@@ -750,6 +750,7 @@ router.get('/:id/workspace', async (req, res) => {
         const latestThread = threads.length > 0 ? threads[threads.length - 1] : null;
         let threadMessages = [];
         let analysisMap = {};
+        const caseAttachments = await db.getAttachmentsByCaseId(requestId);
 
         if (threads.length > 0) {
             const threadMessagesByThread = await Promise.all(
@@ -775,8 +776,7 @@ router.get('/:id/workspace', async (req, res) => {
                 }
             }
 
-            // Fetch attachments for the case and group by message_id
-            const caseAttachments = await db.getAttachmentsByCaseId(requestId);
+            // Group attachments by message_id (caseAttachments fetched above)
             const attachmentsByMessageId = {};
             for (const att of caseAttachments) {
                 if (!attachmentsByMessageId[att.message_id]) {

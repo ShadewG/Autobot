@@ -398,6 +398,7 @@ export const processInitialRequest = task({
       );
 
       // If requires human review, wait for approval
+      let humanDecision: any = null;
       if (draft.requiresHuman) {
         await markStep("wait_human_decision", `Run #${runId}: waiting for initial request approval`, { proposal_id: draft.proposalId });
         await waitRun(caseId, runId);
@@ -427,7 +428,7 @@ export const processInitialRequest = task({
           return { status: "timed_out", proposalId: draft.proposalId };
         }
 
-        const humanDecision = result.output;
+        humanDecision = result.output;
         if (!humanDecision || !humanDecision.action) {
           logger.error("Invalid human decision output", { caseId, proposalId: draft.proposalId, output: result.output });
           throw new Error(`Invalid human decision for proposal ${draft.proposalId}: missing action`);

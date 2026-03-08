@@ -68,6 +68,8 @@ export interface HumanDecision {
   action: HumanDecisionAction;
   instruction?: string;
   route_mode?: string;
+  attachments?: Array<{ filename: string; content: string; type: string }>;
+  recipient_override?: string;
 }
 
 export interface InboundPayload {
