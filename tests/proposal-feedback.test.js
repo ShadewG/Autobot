@@ -197,4 +197,53 @@ describe('Proposal feedback helpers', function () {
       priority: 6,
     });
   });
+
+  it('marks applied lessons ineffective when a proposal is dismissed', async function () {
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 951,
+      case_name: 'Jordan Example request',
+      agency_name: 'Synthetic Records Unit',
+    });
+    sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
+    const ineffectiveStub = sinon.stub(decisionMemory, 'markLessonsIneffective').resolves(1);
+
+    await proposalFeedback.captureDismissFeedback({
+      id: 950,
+      case_id: 951,
+      trigger_message_id: 952,
+      action_type: 'SEND_REBUTTAL',
+      lessons_applied: [{ id: 77 }, { id: 78 }],
+    }, {
+      reason: 'Wrong action type',
+    });
+
+    sinon.assert.calledOnceWithExactly(ineffectiveStub, [{ id: 77 }, { id: 78 }]);
+  });
+
+  it('fetches the latest proposal when lessons_applied is missing before marking lessons ineffective', async function () {
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 961,
+      case_name: 'Jordan Example request',
+      agency_name: 'Synthetic Records Unit',
+    });
+    sinon.stub(db, 'getProposalById').resolves({
+      id: 960,
+      lessons_applied: [{ id: 88 }],
+    });
+    sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
+    const ineffectiveStub = sinon.stub(decisionMemory, 'markLessonsIneffective').resolves(1);
+
+    await proposalFeedback.captureDismissFeedback({
+      id: 960,
+      case_id: 961,
+      trigger_message_id: 962,
+      action_type: 'SEND_REBUTTAL',
+    }, {
+      reason: 'Wrong action type',
+    });
+
+    sinon.assert.calledOnceWithExactly(ineffectiveStub, [{ id: 88 }]);
+  });
 });

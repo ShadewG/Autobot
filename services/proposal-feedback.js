@@ -165,6 +165,20 @@ async function learnFromDismiss(proposal, { reason = null } = {}) {
   }
 }
 
+async function markAppliedLessonsIneffective(proposal) {
+  try {
+    if (!proposal?.id) return;
+    const decisionMemory = require('./decision-memory-service');
+    const latestProposal = proposal.lessons_applied
+      ? proposal
+      : await db.getProposalById(proposal.id).catch(() => proposal);
+    const lessonsApplied = latestProposal?.lessons_applied || latestProposal?.lessonsApplied || [];
+    await decisionMemory.markLessonsIneffective(lessonsApplied);
+  } catch (_) {
+    // Non-blocking
+  }
+}
+
 async function learnFromAdjust(proposal, { instruction = null, reason = null } = {}) {
   try {
     if (!proposal?.id || !proposal?.action_type || !proposal?.case_id) return;
@@ -221,10 +235,12 @@ async function captureDismissFeedback(proposal, { instruction = null, reason = n
     decidedBy,
   });
   await learnFromDismiss(proposal, { reason });
+  await markAppliedLessonsIneffective(proposal);
 }
 
 module.exports = {
   autoCaptureEvalCase,
+  markAppliedLessonsIneffective,
   learnFromApprove,
   learnFromAdjust,
   learnFromDismiss,

@@ -10,6 +10,26 @@ describe('Decision memory stale lesson decay', function () {
     decisionMemory._lastDecaySweepAt = 0;
   });
 
+  it('lowers priority once for each unique ineffective lesson id', async function () {
+    const queryStub = sinon.stub(db, 'query').resolves({ rows: [{ id: 31 }, { id: 32 }] });
+
+    const count = await decisionMemory.markLessonsIneffective([
+      { id: 31 },
+      { id: '32' },
+      { id: 31 },
+      { id: null },
+      {},
+    ]);
+
+    assert.strictEqual(count, 2);
+    sinon.assert.calledOnce(queryStub);
+    sinon.assert.calledWithMatch(
+      queryStub.firstCall,
+      sinon.match(/SET priority = GREATEST\(priority - 1, 1\)/),
+      [[31, 32]]
+    );
+  });
+
   it('deactivates stale unused auto lessons', async function () {
     const queryStub = sinon.stub(db, 'query');
     queryStub.onFirstCall().resolves({ rows: [{ id: 11 }, { id: 12 }] });

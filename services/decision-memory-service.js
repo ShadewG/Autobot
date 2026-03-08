@@ -97,6 +97,36 @@ class DecisionMemoryService {
         }
     }
 
+    async markLessonsIneffective(lessonsApplied = []) {
+        try {
+            const ids = [...new Set(
+                (Array.isArray(lessonsApplied) ? lessonsApplied : [])
+                    .map((lesson) => Number(lesson?.id))
+                    .filter((id) => Number.isInteger(id) && id > 0)
+            )];
+            if (ids.length === 0) return 0;
+
+            const result = await db.query(
+                `UPDATE ai_decision_lessons
+                 SET priority = GREATEST(priority - 1, 1),
+                     updated_at = NOW()
+                 WHERE id = ANY($1::int[])
+                 RETURNING id`,
+                [ids]
+            );
+            if (result.rows.length > 0) {
+                logger.info('Marked applied decision lessons as ineffective', {
+                    count: result.rows.length,
+                    ids,
+                });
+            }
+            return result.rows.length;
+        } catch (error) {
+            logger.error('Error marking decision lessons ineffective:', error.message);
+            return 0;
+        }
+    }
+
     /**
      * Format lessons into a prompt-injection block for the AI.
      */
