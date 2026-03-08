@@ -136,7 +136,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Notion Sync
 - [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTED IN UI - Codex 2026-03-08 - control and last-synced date render correctly in the case actions menu on localhost:3001; sync action itself was not fired to avoid mutating live state)`
 - [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTED IN UI - Codex 2026-03-08)`
-- [x] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues) — **ROOT CAUSED & FIXED**: (1) Status map casing bug: `mapStatusToNotion()` had duplicate inline map with "Ready To Send" (uppercase T) vs `NOTION_STATUS_MAP` "Ready to Send" (lowercase t) — consolidated to single `NOTION_STATUS_MAP`; (2) Missing `closed` status mapping — added; (3) Silent error swallowing in `_syncStatusToNotion` — now logs to `activity_log` as `notion_sync_error`; (4) `last_notion_synced_at` never updated on outbound sync — now set after successful `updatePage`; (5) malformed synthetic/QA page IDs now fail fast or skip cleanly across `updatePage`, status sync, submission memory/comments, and single-page import paths — 2026-03-08)
+- [x] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues) — **ROOT CAUSED & FIXED**: (1) Status map casing bug: `mapStatusToNotion()` had duplicate inline map with "Ready To Send" (uppercase T) vs `NOTION_STATUS_MAP` "Ready to Send" (lowercase t) — consolidated to single `NOTION_STATUS_MAP`; (2) Missing `closed` status mapping — added; (3) Silent error swallowing in `_syncStatusToNotion` — now logs to `activity_log` as `notion_sync_error`; (4) `last_notion_synced_at` never updated on outbound sync — now set after successful `updatePage`; (5) malformed synthetic/QA page IDs now fail fast or skip cleanly across `updatePage`, status sync, submission memory/comments, and single-page import paths; (6) AI summary / submission-memory / submission-comment failures now emit tracked `error_events` for debugging — 2026-03-08)
 
 #### Constraint Management
 - [x] Allow removing/overriding stale constraints from dashboard `(TESTED IN UI - Codex 2026-03-08 - edit mode, remove controls, history, and Add Constraint dialog verified on localhost:3001; destructive remove/add submissions were not executed)`
@@ -151,8 +151,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - local verification must use the actual Autobot stack: dashboard on localhost:3001 and backend on localhost:3004. Earlier page-load failures on localhost:3000 were from another repo running on that port, not from this middleware.)`
 
 #### Future-Proof Data Capture
-- [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change — 2026-03-08)`
-- [x] Capture raw inbound/outbound provider payloads — `messages.provider_payload` now stores sanitized inbound/outbound SendGrid payloads, webhook fallbacks persist raw inbound envelope/body/attachment metadata, and message upserts merge provider payloads safely `(2026-03-08)`
+- [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change; audit route now exposed at /api/requests/:id/event-ledger — 2026-03-08)`
+- [x] Capture raw inbound/outbound provider payloads — `messages.provider_payload` now stores sanitized inbound/outbound SendGrid payloads, webhook fallbacks persist raw inbound envelope/body/attachment metadata, and message upserts merge provider payloads safely; debug route now exposed at /api/requests/:id/provider-payloads `(2026-03-08)`
 - [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
 
@@ -403,7 +403,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Case completion report: requested vs received
 
 #### Case Intake Beyond Notion
-- [ ] API endpoint for programmatic case creation (`POST /api/cases`) — current isolated backend check on 2026-03-08 returns `404`; `routes/cases.js` exposes `/import-notion` and `/import-direct` but no generic `POST /`
+- [x] API endpoint for programmatic case creation (`POST /api/cases`) — added authenticated `POST /api/cases` with synthetic Notion-page generation, basic channel validation, and `case_created_api` activity logging; covered by route tests `(2026-03-08)`
 - [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - /requests/new loads correctly on the stabilized localhost:3001 static stack)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
@@ -439,9 +439,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Infrastructure
 - [ ] Staging environment on Railway with separate database
-- [x] CI/CD pipeline: lint → type check → test → eval gate → deploy `(GitHub Actions: typecheck job (tsc trigger + dashboard + build) + regression job (backend tests + prompt eval gate). Added npm run typecheck/typecheck:dashboard scripts — 2026-03-08)`
+- [x] CI/CD pipeline: lint → type check → test → eval gate → deploy `(GitHub Actions: typecheck job (tsc trigger + dashboard + build) + regression job (backend tests + prompt eval gate). Added npm run typecheck/typecheck:dashboard scripts; regression workflow now also supports workflow_dispatch, branch-scoped concurrency cancellation, verify:migrations, and test:prompts:dry before the live prompt gate — 2026-03-08)`
 - [ ] Database performance: indexes, N+1 query optimization, consider read replicas
-- [x] Proposal content versioning (draft history instead of overwrite) `(append-only proposal_content_versions via migration 068; create/update now persist per-version subject/body/html snapshots with change source + actor metadata, plus original draft preservation — 2026-03-08)`
+- [x] Proposal content versioning (draft history instead of overwrite) `(append-only proposal_content_versions via migration 068; create/update now persist per-version subject/body/html snapshots with change source + actor metadata, plus original draft preservation; audit route now exposed at /api/requests/:id/proposals/:proposalId/versions — 2026-03-08)`
 
 ---
 

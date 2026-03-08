@@ -1190,4 +1190,84 @@ router.get('/:id/export', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/requests/:id/event-ledger
+ * Return append-only event ledger rows for a case.
+ */
+router.get('/:id/event-ledger', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 500));
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const result = await db.query(
+            `SELECT id, case_id, event, transition_key, context, mutations_applied, projection, created_at
+             FROM case_event_ledger
+             WHERE case_id = $1
+             ORDER BY created_at DESC, id DESC
+             LIMIT $2`,
+            [caseId, limit]
+        );
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            count: result.rows.length,
+            events: result.rows,
+        });
+    } catch (error) {
+        logger.error('Error fetching event ledger:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/:id/provider-payloads
+ * Return sanitized provider payloads for debugging message/execution state.
+ */
+router.get('/:id/provider-payloads', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const [messageResult, executionResult] = await Promise.all([
+            db.query(
+                `SELECT id, direction, message_type, subject, from_email, to_email, provider_payload, created_at
+                 FROM messages
+                 WHERE case_id = $1
+                   AND provider_payload IS NOT NULL
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT $2`,
+                [caseId, limit]
+            ),
+            db.query(
+                `SELECT id, proposal_id, action_type, status, provider, provider_payload, created_at, completed_at
+                 FROM executions
+                 WHERE case_id = $1
+                   AND provider_payload IS NOT NULL
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT $2`,
+                [caseId, limit]
+            ),
+        ]);
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            messages: messageResult.rows,
+            executions: executionResult.rows,
+        });
+    } catch (error) {
+        logger.error('Error fetching provider payloads:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

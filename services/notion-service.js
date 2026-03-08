@@ -2060,6 +2060,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 ai_summary: summary
             });
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'add_ai_summary',
+                caseId,
+                retryable: isRetryableNotionError(error),
+            });
             console.error('Error adding AI summary to Notion:', error);
         }
     }
@@ -2094,6 +2100,13 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 });
                 console.log(`📝 Submission comment added to case #${caseId} Notion page`);
             } catch (err) {
+                await errorTrackingService.captureException(err, {
+                    sourceService: 'notion_service',
+                    operation: 'add_submission_comment_case',
+                    caseId,
+                    retryable: isRetryableNotionError(err),
+                    metadata: { notionPageId: caseData?.notion_page_id || null },
+                });
                 console.error(`Failed to add case submission comment for case ${caseId}:`, err.message);
             }
         }
@@ -2118,6 +2131,13 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 console.log(`📝 Submission comment added to PD Notion page for case #${caseId}`);
                 this.submissionMemoryCache.delete(submissionInfo.agency_notion_page_id);
             } catch (err) {
+                await errorTrackingService.captureException(err, {
+                    sourceService: 'notion_service',
+                    operation: 'add_submission_comment_agency',
+                    caseId,
+                    retryable: isRetryableNotionError(err),
+                    metadata: { agencyNotionPageId: submissionInfo.agency_notion_page_id || null },
+                });
                 console.error(`Failed to add PD submission comment for case ${caseId}:`, err.message);
             }
         }
@@ -2180,6 +2200,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             this.submissionMemoryCache.set(agencyNotionPageId, { data: submissionComments, fetchedAt: Date.now() });
             return submissionComments;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'get_submission_memory',
+                retryable: isRetryableNotionError(error),
+                metadata: { agencyNotionPageId },
+            });
             console.error(`Failed to read submission memory for page ${agencyNotionPageId}:`, error.message);
             return [];
         }

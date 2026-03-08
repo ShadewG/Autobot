@@ -148,6 +148,39 @@ router.get('/:id/proposals/:proposalId', async (req, res) => {
 });
 
 /**
+ * GET /api/requests/:id/proposals/:proposalId/versions
+ * Return append-only draft/version history for a proposal.
+ */
+router.get('/:id/proposals/:proposalId/versions', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id, 10);
+        const proposalId = parseInt(req.params.proposalId, 10);
+
+        const proposal = await db.getProposalById(proposalId);
+        if (!proposal || proposal.case_id !== requestId) {
+            return res.status(404).json({
+                success: false,
+                error: 'Proposal not found'
+            });
+        }
+
+        const versions = await db.getProposalContentVersions(proposalId);
+        res.json({
+            success: true,
+            proposal_id: proposalId,
+            count: versions.length,
+            versions
+        });
+    } catch (error) {
+        console.error('Error fetching proposal versions:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
  * POST /api/requests/:id/proposals/:proposalId/approve
  * Approve a LangGraph proposal and resume the graph
  */

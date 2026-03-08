@@ -16,6 +16,23 @@ const notionService = require('../services/notion-service');
 const logger = require('../services/logger');
 const { normalizeStateCode, parseStateFromAgencyName } = require('../utils/state-utils');
 
+function hasValidServiceKey(req) {
+  const serviceKey = process.env.FOIA_SERVICE_KEY;
+  if (!serviceKey) return false;
+  const provided = req.headers['x-service-key'] || '';
+  try {
+    const a = Buffer.from(String(provided));
+    const b = Buffer.from(serviceKey);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+function createSyntheticCasePageId() {
+  return crypto.randomUUID().replace(/-/g, '');
+}
+
 /**
  * Extract Notion page ID from various URL formats
  *
@@ -212,6 +229,106 @@ router.post('/import-notion', async (req, res) => {
       success: false,
       error: error.message
     });
+  }
+});
+
+/**
+ * POST /cases
+ *
+ * Programmatic case creation for internal services.
+ * Auth: X-Service-Key header checked against FOIA_SERVICE_KEY.
+ */
+router.post('/', async (req, res) => {
+  if (!hasValidServiceKey(req)) {
+    return res.status(401).json({ success: false, error: 'Invalid service key' });
+  }
+
+  const {
+    case_name,
+    subject_name,
+    agency_name,
+    agency_email = null,
+    alternate_agency_email = null,
+    portal_url = null,
+    portal_provider = null,
+    state = null,
+    incident_date = null,
+    incident_location = null,
+    requested_records = null,
+    additional_details = null,
+    deadline_date = null,
+    tags = [],
+    priority = 0,
+    user_id = null,
+    status = 'ready_to_send',
+    agency_id = null,
+    scope_items_jsonb = null,
+  } = req.body || {};
+
+  if (!case_name || !subject_name || !agency_name) {
+    return res.status(400).json({
+      success: false,
+      error: 'case_name, subject_name, and agency_name are required',
+    });
+  }
+
+  if (!agency_email && !portal_url) {
+    return res.status(400).json({
+      success: false,
+      error: 'Either agency_email or portal_url is required',
+    });
+  }
+
+  try {
+    const normalizedState = normalizeStateCode(state) || parseStateFromAgencyName(agency_name) || null;
+    const notion_page_id = createSyntheticCasePageId();
+    const newCase = await db.createCase({
+      notion_page_id,
+      case_name,
+      subject_name,
+      agency_name,
+      agency_email,
+      alternate_agency_email,
+      portal_url,
+      portal_provider,
+      state: normalizedState,
+      incident_date,
+      incident_location,
+      requested_records,
+      additional_details,
+      deadline_date,
+      tags,
+      priority,
+      user_id,
+      status,
+      agency_id,
+      scope_items_jsonb,
+    });
+
+    await db.logActivity('case_created_api', `Created case "${case_name}" via API`, {
+      case_id: newCase.id,
+      actor_type: 'system',
+      source_service: 'api',
+    });
+
+    return res.status(201).json({
+      success: true,
+      case_id: newCase.id,
+      case: {
+        id: newCase.id,
+        notion_page_id: newCase.notion_page_id,
+        case_name: newCase.case_name,
+        subject_name: newCase.subject_name,
+        agency_name: newCase.agency_name,
+        agency_email: newCase.agency_email,
+        portal_url: newCase.portal_url,
+        state: newCase.state,
+        status: newCase.status,
+      },
+    });
+  } catch (error) {
+    logger.error('Error creating case via API', { error: error.message, case_name, agency_name });
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 

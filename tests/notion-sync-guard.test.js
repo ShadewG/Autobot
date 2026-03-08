@@ -66,6 +66,47 @@ describe('Notion sync guards', function () {
     assert.strictEqual(commentStub.called, false);
   });
 
+  it('tracks AI summary sync failures with case context', async function () {
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 11,
+      notion_page_id: '12345678123412341234123456789012',
+      case_name: 'QA Summary Case',
+    });
+    sinon.stub(notionService, 'updatePage').rejects(Object.assign(new Error('summary sync failed'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await notionService.addAISummaryToNotion(11, 'summary text');
+
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'add_ai_summary');
+    assert.strictEqual(captureStub.firstCall.args[1].caseId, 11);
+  });
+
+  it('tracks submission comment failures for both case and agency pages', async function () {
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 12,
+      notion_page_id: '12345678123412341234123456789012',
+      case_name: 'QA Submission Case',
+    });
+    const commentStub = sinon.stub(notionService.notion.comments, 'create');
+    commentStub.onFirstCall().rejects(Object.assign(new Error('case comment failed'), { status: 503 }));
+    commentStub.onSecondCall().rejects(Object.assign(new Error('agency comment failed'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await notionService.addSubmissionComment(12, {
+      portal_url: 'https://example.gov/portal',
+      provider: 'govqa',
+      account_email: 'records@example.gov',
+      status: 'completed',
+      confirmation_number: 'ABC-123',
+      agency_notion_page_id: '87654321876543218765432187654321',
+    });
+
+    assert.strictEqual(captureStub.callCount, 2);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'add_submission_comment_case');
+    assert.strictEqual(captureStub.secondCall.args[1].operation, 'add_submission_comment_agency');
+  });
+
   it('rejects invalid page ids before single-page import fetches from Notion', async function () {
     const retrieveStub = sinon.stub(notionService.notion.pages, 'retrieve').resolves({});
 
