@@ -8,7 +8,7 @@
 import { generateObject } from "ai";
 import { decisionModel, decisionOptions, telemetry } from "../lib/ai";
 import { decisionSchema, type DecisionOutput } from "../lib/schemas";
-import db, { logger, caseRuntime, decisionMemory } from "../lib/db";
+import db, { logger, caseRuntime, decisionMemory, successfulExamples } from "../lib/db";
 // @ts-ignore
 import { createPortalTask } from "../../services/executor-adapter";
 import { hasAutomatablePortal } from "../lib/portal-utils";
@@ -503,6 +503,7 @@ function buildEnrichedDecisionPrompt(params: {
   customInstruction?: string | null;
   inlineKeyPoints?: string[];
   lessonsContext?: string;
+  successfulExamplesContext?: string;
 }): string {
   const {
     caseData, classification, classificationConfidence, constraints, scopeItems,
@@ -634,7 +635,7 @@ function buildEnrichedDecisionPrompt(params: {
     : "";
 
   return `You are the decision engine for a FOIA (public records) automation system.
-${humanDirectivesSection}${customSection}${params.lessonsContext || ""}
+${humanDirectivesSection}${customSection}${params.lessonsContext || ""}${params.successfulExamplesContext || ""}
 ${preComputedSection}
 
 ## Case Context
@@ -799,6 +800,15 @@ async function makeAIDecisionV2(params: {
     preComputed.threadMessages,
     preComputed.dismissedProposals,
   );
+  const decisionExamples = await successfulExamples.getRelevantExamples(preComputed.caseData, {
+    classification,
+    limit: 2,
+  });
+  const successfulExamplesContext = decisionExamples.length > 0
+    ? successfulExamples.formatExamplesForPrompt(decisionExamples, {
+        heading: "Similar approved decisions",
+      })
+    : "";
 
   const prompt = buildEnrichedDecisionPrompt({
     caseData: preComputed.caseData,
@@ -821,6 +831,7 @@ async function makeAIDecisionV2(params: {
     customInstruction,
     inlineKeyPoints: params.inlineKeyPoints,
     lessonsContext,
+    successfulExamplesContext,
   });
 
   // 3-attempt self-repair loop
@@ -1196,6 +1207,7 @@ function buildDecisionPrompt(params: {
   phoneNotes?: any[];
   latestAnalysis?: any;
   lessonsContext?: string;
+  successfulExamplesContext?: string;
 }): string {
   const {
     caseData,
@@ -1277,7 +1289,7 @@ function buildDecisionPrompt(params: {
     : "";
 
   return `You are the decision engine for a FOIA (public records) automation system. Choose the single best next action.
-${humanDirectivesSection}${params.lessonsContext || ""}
+${humanDirectivesSection}${params.lessonsContext || ""}${params.successfulExamplesContext || ""}
 ## Case Context
 - Agency: ${caseData?.agency_name || "Unknown"}
 - Agency email: ${caseData?.agency_email || "Unknown"}
@@ -1623,6 +1635,15 @@ async function aiDecision(params: {
       Array.isArray(threadMessages) ? threadMessages : [],
       dismissedProposals,
     );
+    const decisionExamples = await successfulExamples.getRelevantExamples(caseData, {
+      classification: params.classification,
+      limit: 2,
+    });
+    const successfulExamplesContext = decisionExamples.length > 0
+      ? successfulExamples.formatExamplesForPrompt(decisionExamples, {
+          heading: "Similar approved decisions",
+        })
+      : "";
 
     const prompt = buildDecisionPrompt({
       caseData,
@@ -1641,6 +1662,7 @@ async function aiDecision(params: {
       phoneNotes,
       latestAnalysis,
       lessonsContext,
+      successfulExamplesContext,
     });
 
     const startedAt = Date.now();

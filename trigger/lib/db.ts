@@ -20,6 +20,7 @@ export default db;
 export const aiService: any = lazyProxy(() => require("../../services/ai-service"));
 export const pdContactService: any = lazyProxy(() => require("../../services/pd-contact-service"));
 export const decisionMemory: any = lazyProxy(() => require("../../services/decision-memory-service"));
+export const successfulExamples: any = lazyProxy(() => require("../../services/successful-examples-service"));
 export const logger: any = lazyProxy(() => require("../../services/logger"));
 
 export const caseRuntime: any = lazyProxy(() => require("../../services/case-runtime"));

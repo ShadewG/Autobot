@@ -20,6 +20,72 @@ function normalizeRequestedRecords(value) {
   return text || null;
 }
 
+async function getRelevantExamples(caseData, { classification = null, actionType = null, limit = 3 } = {}) {
+  try {
+    const agencyType = inferAgencyType(caseData?.agency_name);
+    const stateCode = caseData?.state || caseData?.agency_state || null;
+    const cappedLimit = Math.max(1, Math.min(Number(limit) || 3, 5));
+    const fetchLimit = cappedLimit * 5;
+    const result = await db.query(
+      `SELECT proposal_id,
+              action_type,
+              classification,
+              agency_name,
+              agency_type,
+              state_code,
+              draft_subject,
+              draft_body_text,
+              human_edited,
+              created_at,
+              (
+                CASE WHEN $1::text IS NOT NULL AND classification = $1 THEN 4 ELSE 0 END +
+                CASE WHEN $2::text IS NOT NULL AND agency_type = $2 THEN 3 ELSE 0 END +
+                CASE WHEN $3::text IS NOT NULL AND state_code = $3 THEN 2 ELSE 0 END +
+                CASE WHEN $4::text IS NOT NULL AND action_type = $4 THEN 2 ELSE 0 END
+              ) AS match_score
+       FROM successful_examples
+       WHERE outcome = 'approved'
+         AND (
+           ($1::text IS NOT NULL AND classification = $1) OR
+           ($2::text IS NOT NULL AND agency_type = $2) OR
+           ($3::text IS NOT NULL AND state_code = $3) OR
+           ($4::text IS NOT NULL AND action_type = $4)
+         )
+       ORDER BY match_score DESC, human_edited ASC, created_at DESC
+       LIMIT $5`,
+      [classification || null, agencyType || null, stateCode || null, actionType || null, fetchLimit]
+    );
+
+    return result.rows
+      .filter((row) => Number(row.match_score || 0) > 0)
+      .slice(0, cappedLimit);
+  } catch (error) {
+    console.warn(`Successful example retrieval failed: ${error.message}`);
+    return [];
+  }
+}
+
+function formatExamplesForPrompt(examples, { heading = 'Similar approved examples' } = {}) {
+  if (!Array.isArray(examples) || examples.length === 0) return '';
+  const formatted = examples.map((example, index) => {
+    const body = String(example.draft_body_text || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 700);
+    return [
+      `Example ${index + 1}:`,
+      `- Classification: ${example.classification || 'unknown'}`,
+      `- Agency type: ${example.agency_type || 'unknown'}`,
+      `- State: ${example.state_code || 'unknown'}`,
+      `- Approved action: ${example.action_type}`,
+      `- Subject: ${example.draft_subject || '(no subject)'}`,
+      `- Body: ${body}`,
+    ].join('\n');
+  });
+
+  return `\n## ${heading}\nUse these as patterns, not text to copy verbatim.\n${formatted.join('\n\n')}\n`;
+}
+
 async function storeApprovedExample(proposal, { decidedBy = null } = {}) {
   try {
     if (!proposal?.id || !proposal?.case_id || !proposal?.action_type) return null;
@@ -103,6 +169,8 @@ async function storeApprovedExample(proposal, { decidedBy = null } = {}) {
 }
 
 module.exports = {
+  formatExamplesForPrompt,
+  getRelevantExamples,
   inferAgencyType,
   normalizeRequestedRecords,
   storeApprovedExample,

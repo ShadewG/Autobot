@@ -6,7 +6,7 @@
  * Uses existing aiService methods (rewrite to Vercel AI SDK in Phase 2).
  */
 
-import db, { aiService, decisionMemory, logger } from "../lib/db";
+import db, { aiService, decisionMemory, logger, successfulExamples } from "../lib/db";
 import type { DraftResult, ActionType, ResearchContext } from "../lib/types";
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 
@@ -75,6 +75,7 @@ export async function draftResponse(
   // Build correspondence context for AI grounding (last 15 messages)
   let correspondenceContext = "";
   let lessonsContext = "";
+  let examplesContext = "";
   try {
     const allMessages = await db.getMessagesByCaseId(caseId);
     const recentMessages = allMessages.slice(0, 15).reverse();
@@ -177,6 +178,17 @@ export async function draftResponse(
         }))
       );
     }
+
+    const successfulDraftExamples = await successfulExamples.getRelevantExamples(enrichedCaseData, {
+      classification: latestAnalysis?.classification || null,
+      actionType,
+      limit: 2,
+    });
+    if (successfulDraftExamples.length > 0) {
+      examplesContext = successfulExamples.formatExamplesForPrompt(successfulDraftExamples, {
+        heading: "Similar approved drafts",
+      });
+    }
   } catch (err: any) {
     logger.warn("Failed to fetch decision lessons", { caseId, error: err.message });
   }
@@ -194,6 +206,7 @@ export async function draftResponse(
       draft = await aiService.generateFollowUp(caseData, attemptNumber, {
         adjustmentInstruction,
         lessonsContext,
+        examplesContext,
         correspondenceContext,
       });
       break;
@@ -215,6 +228,7 @@ export async function draftResponse(
           scopeItems,
           adjustmentInstruction: rebuttalAdjust || undefined,
           lessonsContext,
+          examplesContext,
           correspondenceContext,
           legalResearchOverride: researchCtx?.state_law_notes || undefined,
           rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
@@ -234,6 +248,7 @@ export async function draftResponse(
           {
             adjustmentInstruction,
             lessonsContext,
+            examplesContext,
             correspondenceContext,
             clarificationResearch: researchCtx?.clarification_answer_support || undefined,
           }
@@ -276,6 +291,7 @@ export async function draftResponse(
         recommendedAction: "accept",
         instructions: adjustmentInstruction,
         lessonsContext,
+        examplesContext,
         correspondenceContext,
         agencyMessage: latestInbound,
         agencyAnalysis: latestAnalysis,
@@ -290,6 +306,7 @@ export async function draftResponse(
         recommendedAction: "negotiate",
         instructions: adjustmentInstruction,
         lessonsContext,
+        examplesContext,
         correspondenceContext,
         agencyMessage: latestInbound,
         agencyAnalysis: latestAnalysis,
@@ -304,6 +321,7 @@ export async function draftResponse(
         recommendedAction: "decline",
         instructions: adjustmentInstruction,
         lessonsContext,
+        examplesContext,
         correspondenceContext,
       });
       break;
@@ -315,14 +333,14 @@ export async function draftResponse(
           latestInbound,
           latestAnalysis,
           caseData,
-          { feeAmount: extractedFeeAmount, adjustmentInstruction, lessonsContext, correspondenceContext }
+          { feeAmount: extractedFeeAmount, adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext }
         );
       } else {
         draft = await aiService.generateDenialRebuttal(
           latestInbound,
           latestAnalysis,
           caseData,
-          { scopeItems, adjustmentInstruction, lessonsContext, correspondenceContext }
+          { scopeItems, adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext }
         );
       }
       break;
@@ -337,6 +355,7 @@ export async function draftResponse(
           {
             adjustmentInstruction,
             lessonsContext,
+            examplesContext,
             correspondenceContext,
             legalResearchOverride: researchCtx?.state_law_notes || undefined,
             rebuttalSupportPoints: researchCtx?.rebuttal_support_points?.length
@@ -354,6 +373,7 @@ export async function draftResponse(
             scopeItems,
             adjustmentInstruction: (adjustmentInstruction || "") + "\nFrame this as a formal administrative appeal, not just a rebuttal. Cite appeal procedures and deadlines.",
             lessonsContext,
+            examplesContext,
             correspondenceContext,
             legalResearchOverride: researchCtx?.state_law_notes || undefined,
           }
@@ -368,6 +388,7 @@ export async function draftResponse(
         recommendedAction: "waiver",
         instructions: adjustmentInstruction,
         lessonsContext,
+        examplesContext,
         correspondenceContext,
         agencyMessage: latestInbound,
         agencyAnalysis: latestAnalysis,
@@ -380,6 +401,7 @@ export async function draftResponse(
       draft = await aiService.generateFollowUp(caseData, 0, {
         adjustmentInstruction: (adjustmentInstruction || "") + "\nThis is a brief status inquiry, not a follow-up. Keep it under 100 words. Ask for an update on when records will be available.",
         lessonsContext,
+        examplesContext,
         correspondenceContext,
       });
       break;
@@ -477,7 +499,7 @@ export async function draftResponse(
 
     case "REFORMULATE_REQUEST": {
       const analysis = await db.getLatestResponseAnalysis(caseId);
-      const reformulated = await aiService.generateReformulatedRequest(caseData, analysis);
+      const reformulated = await aiService.generateReformulatedRequest(caseData, analysis, { examplesContext });
       return {
         subject: reformulated.subject,
         bodyText: reformulated.body_text,
@@ -526,7 +548,7 @@ export async function draftResponse(
         enrichedCaseData.additional_details = `${enrichedCaseData.additional_details || ''}\n\nCRITICAL ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}`.trim();
       }
 
-      const foiaResult = await aiService.generateFOIARequest(enrichedCaseData);
+      const foiaResult = await aiService.generateFOIARequest(enrichedCaseData, { examplesContext });
       const foiaText = foiaResult?.request_text || foiaResult?.body || foiaResult?.requestText;
       if (!foiaText) throw new Error(`AI returned empty FOIA request for case ${caseId}`);
       draft = {

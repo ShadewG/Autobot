@@ -81,4 +81,62 @@ describe('Successful examples service', function () {
     assert.strictEqual(result, null);
     sinon.assert.notCalled(queryStub);
   });
+
+  it('retrieves the closest approved examples for the current case context', async function () {
+    const queryStub = sinon.stub(db, 'query').resolves({
+      rows: [
+        {
+          proposal_id: 1301,
+          action_type: 'SEND_CLARIFICATION',
+          classification: 'CLARIFICATION_REQUEST',
+          agency_type: 'police agency',
+          state_code: 'TX',
+          draft_subject: 'Clarify date range',
+          draft_body_text: 'Please confirm the date range.',
+          match_score: 9,
+          human_edited: false,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const results = await successfulExamples.getRelevantExamples({
+      agency_name: 'Synthetic Police Department',
+      state: 'TX',
+    }, {
+      classification: 'CLARIFICATION_REQUEST',
+      actionType: 'SEND_CLARIFICATION',
+      limit: 2,
+    });
+
+    assert.strictEqual(results.length, 1);
+    assert.strictEqual(results[0].proposal_id, 1301);
+    sinon.assert.calledOnce(queryStub);
+    assert.deepStrictEqual(queryStub.firstCall.args[1], [
+      'CLARIFICATION_REQUEST',
+      'police agency',
+      'TX',
+      'SEND_CLARIFICATION',
+      10,
+    ]);
+  });
+
+  it('formats approved examples into a prompt block', function () {
+    const block = successfulExamples.formatExamplesForPrompt([
+      {
+        action_type: 'SEND_CLARIFICATION',
+        classification: 'CLARIFICATION_REQUEST',
+        agency_type: 'police agency',
+        state_code: 'TX',
+        draft_subject: 'Clarify date range',
+        draft_body_text: 'Please confirm the date range and incident number.',
+      },
+    ], {
+      heading: 'Similar approved drafts',
+    });
+
+    assert.match(block, /## Similar approved drafts/);
+    assert.match(block, /Approved action: SEND_CLARIFICATION/);
+    assert.match(block, /Please confirm the date range and incident number\./);
+  });
 });

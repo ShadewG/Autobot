@@ -281,9 +281,10 @@ class AIService {
     /**
      * Generate a FOIA request from case data
      */
-    async generateFOIARequest(caseData) {
+    async generateFOIARequest(caseData, options = {}) {
         try {
             console.log(`Generating FOIA request for case: ${caseData.case_name}`);
+            const examplesContext = options.examplesContext || '';
 
             // Load user signature if case is assigned
             const userSignature = await this.getUserSignatureForCase(caseData);
@@ -293,7 +294,7 @@ class AIService {
             console.log('Using strategy:', strategy);
 
             const systemPrompt = this.buildFOIASystemPrompt(caseData.state, strategy);
-            const userPrompt = this.buildFOIAUserPrompt(caseData, strategy, userSignature);
+            const userPrompt = this.buildFOIAUserPrompt(caseData, strategy, userSignature, examplesContext);
 
             // Combine system and user prompts for GPT-5
             const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
@@ -371,7 +372,7 @@ class AIService {
                 };
             } catch (openaiError) {
                 console.error('OpenAI failed, trying Claude:', openaiError.message);
-                return await this.generateWithClaude(caseData, userSignature);
+                return await this.generateWithClaude(caseData, userSignature, { examplesContext });
             }
         } catch (error) {
             console.error('Error generating FOIA request:', error);
@@ -382,12 +383,12 @@ class AIService {
     /**
      * Generate FOIA request using Claude (fallback)
      */
-    async generateWithClaude(caseData, userSignature = null) {
+    async generateWithClaude(caseData, userSignature = null, options = {}) {
         if (!this.anthropic) {
             throw new Error('ANTHROPIC_API_KEY not configured for Claude fallback');
         }
         const systemPrompt = this.buildFOIASystemPrompt(caseData.state);
-        const userPrompt = this.buildFOIAUserPrompt(caseData, null, userSignature);
+        const userPrompt = this.buildFOIAUserPrompt(caseData, null, userSignature, options.examplesContext || '');
 
         const modelUsed = process.env.CLAUDE_MODEL || 'claude-3-7-sonnet-20250219';
         const startedAt = Date.now();
@@ -463,7 +464,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
     /**
      * Build the user prompt for FOIA request generation (documentary-focused)
      */
-    buildFOIAUserPrompt(caseData, strategy = null, userSignature = null) {
+    buildFOIAUserPrompt(caseData, strategy = null, userSignature = null, examplesContext = '') {
         const legalStyle = strategy?.tone || caseData.legal_style || 'standard';
         const legalStyleInstructions = {
             'standard': 'Use standard professional legal language with polite but firm tone.',
@@ -559,6 +560,8 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
    - Mention non-commercial/documentary purpose and reasonable cost agreement
    - Request preservation of footage
    - Keep total request to 200-400 words
+
+${examplesContext || ''}
 
 7. CLOSING SIGNATURE — use EXACTLY these values, do NOT use placeholders like [Your Name]:
 ${signatureBlock}
@@ -979,7 +982,7 @@ Return concise legal citations and key statutory language with sources.`;
     async generateDenialRebuttal(messageData, analysis, caseData, options = {}) {
         try {
             console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
-            const { adjustmentInstruction, lessonsContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
             const userSignature = await this.getUserSignatureForCase(caseData);
             const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
             const requesterTitle = userSignature?.title || process.env.REQUESTER_TITLE || '';
@@ -1080,7 +1083,7 @@ EMAIL FORMAT (required):
   - Title: ${requesterTitle || '(none)'}
   - Do NOT invent or hardcode company/person names
 ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Pre-Researched Support Points (use these):**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}
-${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
+${lessonsContext || ''}${examplesContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 Return ONLY the email body text, no subject line.`;
 
             const rebuttalResult = await this.callAI(
@@ -1224,7 +1227,7 @@ Respond with JSON ONLY.`;
     async generateFollowUp(caseData, followUpCount = 0, options = {}) {
         try {
             console.log(`Generating follow-up #${followUpCount + 1} for case: ${caseData.case_name}`);
-            const { adjustmentInstruction, lessonsContext, correspondenceContext } = options;
+            const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext } = options;
 
             const tone = followUpCount === 0 ? 'polite and professional' : 'firm but professional';
             const stateDeadline = await db.getStateDeadline(caseData.state);
@@ -1255,7 +1258,7 @@ The email should:
 4. Request a status update
 5. Restate our interest in the records
 ${followUpCount > 0 ? '6. Note this is a follow-up and we\'re still awaiting response' : ''}
-${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
+${lessonsContext || ''}${examplesContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}
 Return ONLY the email body text.`;
 
             const followupResult = await this.callAI(
@@ -1314,6 +1317,7 @@ Return ONLY the email body text.`;
             recommendedAction = 'negotiate', // accept | negotiate | decline | waiver
             instructions = null,
             lessonsContext = '',
+            examplesContext = '',
             correspondenceContext = '',
             agencyMessage = null,
             agencyAnalysis = null
@@ -1362,7 +1366,7 @@ If the agency denied or withheld ANY record types, you MUST aggressively challen
 - For BWC specifically: Note that BWC is routinely released in other jurisdictions, that the public interest in police accountability outweighs privacy concerns for on-duty conduct, and that redaction of sensitive portions (e.g. faces of bystanders) is the appropriate remedy — NOT blanket withholding.
 - Be firm but professional. Make clear that withholding without proper legal basis will be appealed.` : ''}
 ${customInstruction}
-${lessonsContext}${correspondenceSection}
+${lessonsContext}${examplesContext}${correspondenceSection}
 Email requirements:
 1. Reference the request using the SHORT case reference ("${shortReference}") - NOT the full case name
 2. If a fee amount was quoted, mention it explicitly. If no specific amount was quoted, acknowledge the agency's fee terms without inventing a number
@@ -1929,6 +1933,7 @@ Return valid JSON matching the schema below. Use null for missing fields, [] for
     async generateClarificationResponse(message, analysis, caseData, options = {}) {
         const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
         const lessonsContext = options.lessonsContext || '';
+        const examplesContext = options.examplesContext || '';
         const clarificationResearch = options.clarificationResearch || '';
         const correspondenceContext = options.correspondenceContext || '';
         const userSignature = await this.getUserSignatureForCase(caseData);
@@ -1953,7 +1958,7 @@ ORIGINAL REQUEST:
 
 ${clarificationResearch ? `PRE-RESEARCHED CONTEXT (use this to answer their question):\n${clarificationResearch}\n` : ''}
 ${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
-${lessonsContext}${correspondenceSection}
+${lessonsContext}${examplesContext}${correspondenceSection}
 Generate a professional, helpful response that:
 1. Directly addresses their specific questions or requests for clarification
 2. Provides any additional details they need
@@ -1996,7 +2001,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
      */
     async generateAppealLetter(messageData, analysis, caseData, options = {}) {
         try {
-            const { adjustmentInstruction, lessonsContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
+            const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
             const correspondenceSection = correspondenceContext
                 ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your appeal MUST be consistent with the thread above. Reference specific prior correspondence where relevant.`
                 : '';
@@ -2029,7 +2034,7 @@ ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Support Point
 - Records requested: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
 - Incident date: ${caseData.incident_date || 'Unknown'}
 
-${lessonsContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
+${lessonsContext || ''}${examplesContext || ''}${adjustmentInstruction ? `\nADDITIONAL INSTRUCTIONS: ${adjustmentInstruction}` : ''}${correspondenceSection}
 
 Generate a formal appeal letter under 300 words. Return ONLY the letter body, no subject line.`;
 
@@ -2061,6 +2066,7 @@ Generate a formal appeal letter under 300 words. Return ONLY the letter body, no
      */
     async generateFeeAcceptance(caseData, feeAmount, options = {}) {
         const adjustmentInstruction = options.adjustmentInstruction || options.instruction || '';
+        const examplesContext = options.examplesContext || '';
         const currency = options.currency || 'USD';
 
         const prompt = `Generate a professional response accepting a fee quote for a public records request.
@@ -2072,6 +2078,7 @@ CASE DETAILS:
 - Fee Amount: $${typeof feeAmount === 'number' ? feeAmount.toFixed(2) : feeAmount}
 
 ${adjustmentInstruction ? `USER ADJUSTMENT INSTRUCTION: ${adjustmentInstruction}` : ''}
+${examplesContext}
 
 The response should:
 1. Confirm acceptance of the quoted fee amount
@@ -2260,9 +2267,10 @@ Return ONLY valid JSON.`;
      * Generate a reformulated FOIA request after a denial.
      * Creates a new request with different angle, narrower scope, or different record types.
      */
-    async generateReformulatedRequest(caseData, denialAnalysis) {
+    async generateReformulatedRequest(caseData, denialAnalysis, options = {}) {
         const denialContext = denialAnalysis?.full_analysis_json || denialAnalysis || {};
         const keyPoints = denialContext.key_points || [];
+        const examplesContext = options.examplesContext || '';
 
         // Load requester info for signature
         const userSignature = await this.getUserSignatureForCase(caseData);
@@ -2299,6 +2307,7 @@ REFORMULATION STRATEGY:
 - Keep request specific enough to avoid "overly broad" but broad enough to capture relevant records
 - Cite applicable state public records law
 - Sign with the requester's real name and title above — NEVER use [Your Name] or similar placeholders
+${examplesContext}
 
 Return JSON:
 {
