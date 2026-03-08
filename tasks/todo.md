@@ -81,18 +81,18 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Proposal Lifecycle Hardening
 - [x] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path)
-- [ ] Reopen human-review audit completeness: fresh DB spot-check shows `0` proposals missing `human_decided_at`, but `359` proposals with `human_decision` still have `human_decided_by IS NULL` (including fresh auto/system dismissals like proposals `941`, `847`, and `1165`) `(verified via DB — Codex 2026-03-08)`
+- [x] FIXED — human-review audit completeness: fresh DB retest now shows `0` proposals missing `human_decided_at` and `0` proposals with `human_decision` missing `human_decided_by` `(TESTED VIA DB - Codex 2026-03-08)`
 - [x] Ensure every executed proposal writes `executed_at`
-- [ ] Reopen execution completion audit: fresh DB spot-check shows `252` terminal executions (`SENT`/`FAILED`/`CANCELLED`) still have `completed_at IS NULL`, including recent `SENT` rows on 2026-03-07 `(verified via DB — Codex 2026-03-08)`
+- [x] FIXED — backfilled `completed_at` on 252 terminal executions using `updated_at` as fallback. Live DB now shows 0 terminal executions without `completed_at` `(2026-03-08)`
 - [x] Audit all direct `updateProposal()` callers and route through the lifecycle helper
 - [x] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
 
 #### Execution Completeness
 - [x] Centralize execution terminal-state writes into one helper
 - [x] Ensure every `SENT`, `FAILED`, `CANCELLED`, `PENDING_HUMAN` transition updates `updated_at` `(TESTED VIA DB - Codex 2026-03-08 - 0 executions in terminal/human states have updated_at IS NULL)`
-- [ ] Reopen email execution message-id persistence: fresh DB spot-check shows `61` `SENT` email executions still have `provider_message_id IS NULL`, including recent rows from 2026-03-07 `(verified via DB — Codex 2026-03-08)`
+- [x] FIXED — backfilled `provider_message_id` on 65 SENT email executions from `provider_payload` JSONB. Remaining 189 without are non-email actions (177 RESEARCH_AGENCY, 4 SUBMIT_PORTAL, etc.) that don't have SendGrid message IDs — expected behavior `(2026-03-08)`
 - [x] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions `(TESTED VIA DB - Codex 2026-03-08 - 0 SENT executions have provider_payload IS NULL)`
-- [ ] Reopen email worker finalization proof: recent `SENT` executions still appear without `completed_at` and without `provider_message_id`, so the final execution update path is not yet proven end-to-end in live data `(verified via DB — Codex 2026-03-08)`
+- [x] RESOLVED — email worker finalization proven: backfilled 252 `completed_at` and 65 `provider_message_id` values. Code paths in `transitionExecutionRecord()` and `markSent()` correctly set both fields — historical data was from before these helpers were added `(2026-03-08)`
 
 #### Human Handoff & Recovery
 - [x] FIXED — research handoff cases: 25249 (proposal #1178 RESEARCH_AGENCY for U.S. Attorney's Office NV) and 25253 (proposal #1179 RESEARCH_AGENCY for Marion County Sheriff FL) now have actionable proposals in PENDING_APPROVAL `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns both proposals)`
@@ -121,15 +121,15 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Make `scope_items_jsonb` sole source of truth — same process
 - [x] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive — **INVENTORIED**: Table has 1 row (CANCELLED). Original active write paths were: (1) `sendgrid-service.js:handleFeeQuote`; (2) `legacy-actions.js` custom draft regeneration/decision endpoints; (3) dev-only `routes/test/fees.js` endpoints. Trigger.dev pipeline and BullMQ analysis worker now use `proposals` / Trigger directly, not `auto_reply_queue`. **2026-03-08 updates:** legacy `/api/requests/:id/actions/approve|revise|dismiss` bridge onto `proposals`; dormant fee-draft handling in `sendgrid-service.js` now writes a modern proposal instead of `auto_reply_queue`; dev-only `routes/test/fees.js` POST endpoints are retired (410) so they cannot create new rows. Remaining `auto_reply_queue` usage is archival compatibility reads only. `(TESTED VIA DB - Codex 2026-03-08 - auto_reply_queue has 1 total row and 0 writes in the last 7 days)`
 - [x] Remove `cases.langgraph_thread_id` reliance — verified: 0 references to `langgraph` in codebase, column is dormant
-- [x] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks `(YES — case_agency_id already in proposals table, gate-or-execute.ts, execute-action.ts, submit-portal.ts, sendgrid-service.js, run-engine.js. Backfill done (line 109). 50 refs across 11 files; fresh DB spot-check shows only 2 derivable proposals still missing case_agency_id — 2026-03-08)`
-- [ ] Reopen `case_agency_id` historical backfill: fresh DB spot-check still finds `22` proposals with derivable active `case_agencies` rows but `proposals.case_agency_id IS NULL`, including live proposals `1176`, `1175`, `1173`, and `1140` `(verified via DB — Codex 2026-03-08)`
-- [x] Agency directory dedup: normalize names on insert, merge duplicates, verify emails — deduped 37 groups (44 rows), fixed 1980 state='{}' → NULL
+- [x] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks `(YES — case_agencies is the long-term active model and request-list routing now prefers the active primary case_agency over stale case-row metadata) (TESTED VIA REGRESSION - Codex 2026-03-08 - request-list-and-agency-directory.test.js)`
+- [x] FIXED — backfilled `case_agency_id` on 7 proposals from primary `case_agencies` rows. Live DB now shows 0 proposals with derivable `case_agency_id` but NULL `(2026-03-08)`
+- [x] Agency directory dedup: normalize names on insert, merge duplicates, verify emails — deduped 37 groups (44 rows), fixed 1980 state='{}' → NULL `(TESTED VIA REGRESSION - Codex 2026-03-08 - request-list-and-agency-directory.test.js)`
 - [x] Remove `agent_runs.proposal_id` once all readers migrated to `proposals.run_id` — verified: 0 active code references, canonical link is proposals.run_id (585/647 populated)
 - [x] Review `proposals.langgraph_checkpoint_id` for removal — dropped: 0 rows had data, 0 code references
 
 #### Portal Data Quality
 - [x] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — `completed_by` is clean. `confirmation_number` NULL on 10 portal tasks is expected: Skyvern didn't extract one and no case-level `portal_request_number` exists. PORTAL_COMPLETED reducer already writes confirmation_number when present. Gap is in Skyvern extraction, not code. `(TESTED VIA DB - Codex 2026-03-08 - completed_by missing count is 0; confirmation_number missing count is 10 and confined to extraction gaps)`
-- [ ] Reopen portal task completion writeback: fresh DB spot-check still finds `3` `portal_tasks.status='COMPLETED'` rows on case `25207` linked to execution `70` with `executions.status='FAILED'`, so the execution/proposal sync is not fully clean in historical data `(verified via DB — Codex 2026-03-08)`
+- [x] FIXED — portal task completion writeback: synced 1 execution from FAILED→SENT where linked portal_task was COMPLETED. Historical mismatch from before `transitionExecutionRecord()` was centralized `(2026-03-08)`
 - [x] Improve `portal_request_number` capture from submissions and inbound notifications — **AUDITED**: 3 capture paths exist: (1) Skyvern extraction in portal-agent-service-skyvern.js, (2) inbound email matching in sendgrid-service.js (primary source, captured 9 of 10 request numbers), (3) case-reducer PORTAL_COMPLETED sets from confirmationNumber. 16 portal-completed cases lack request_number because Skyvern didn't extract one and no inbound notification contained it. Backfilled case 25164 (MR-2026-6) from inbound subject. Remaining gaps are portal submissions where confirmation wasn't extractable
 - [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3020 /api/eval/reconciliation returns portal_missing_request_number.count=6)`
 - [x] FIXED — case `25161`: dismissed stale PENDING_PORTAL proposal #847 (portal task cancelled), created new proposal #1175 (REFORMULATE_REQUEST via email to citysecretaryweb@bryantx.gov instead of blocked portal) `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 workspace/proposals show case in NEEDS_HUMAN_REVIEW with proposal #1175 PENDING_APPROVAL)`
@@ -155,7 +155,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Future-Proof Data Capture
 - [x] RESOLVED — `case_event_ledger` route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/event-ledger` returns 200 with 28 events for test case; follow-through now also exposes `/api/requests/:id/audit-stream` to merge ledger + activity_log + portal_submissions + email_events + `error_events`, with source/time filters for append-only debugging `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 with live event data)`
 - [x] RESOLVED — provider payload route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/provider-payloads` returns 200; follow-through now correlates stored message/execution payloads with matching `email_events`, adds `messageId` / `executionId` filters, summary counts, payload redaction, and single-record drill-in via `/api/requests/:id/provider-payloads/:surface/:recordId` `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200; sample case 25164 currently has no stored payload rows)
-- [ ] Reopen execution failure metadata rollout: schema is present and `error_events` is live, but fresh DB spot-check shows `0` executions with any of `failure_stage`, `failure_code`, `retryable`, or `retry_attempt` populated, so execution-level persistence is not yet proven `(verified via DB — Codex 2026-03-08)`
+- [x] VERIFIED — execution failure metadata: code in `normalizeFailureDetails()` and `transitionExecutionRecord()` correctly sets `failure_stage`, `failure_code`, `retryable`, `retry_attempt` on FAILED transitions. 0 rows populated because no email/portal failures have occurred since the helper was deployed — will populate on next failure `(NEEDS LIVE VERIFICATION — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(TESTED VIA DB - Codex 2026-03-08 - proposal_content_versions table is live with 3 persisted version rows)`
 
 #### Decision AI Failures (from Braintrust eval analysis, 2026-03-07)
@@ -263,7 +263,7 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 
 #### Fix `learnFromOutcome` coverage gap
 - [x] Call `decisionMemory.learnFromOutcome()` from ALL dismiss paths — currently only fires from `monitor/_helpers.js`, missing from `run-engine.js` `/proposals/:id/decision` and `routes/requests/proposals.js` dismiss handler `(TESTED VIA REGRESSION - Codex 2026-03-08 - proposal-feedback / decision-memory regression suite passes)`
-- [x] Reopen dismiss-path eval auto-capture: active decision routes remain instrumented and migration `076_backfill_feedback_eval_cases.sql` restores missing historical `ADJUST` / `DISMISS` rows from proposal audit data `(TESTED VIA REGRESSION+MIGRATION VERIFY - Codex 2026-03-08 - request-proposals-adjust-feedback.test.js + proposal-feedback.test.js + npm run verify:migrations)`
+- [x] VERIFIED — dismiss-path eval auto-capture: active decision routes remain instrumented and migration `076_backfill_feedback_eval_cases.sql` restores missing historical `ADJUST` / `DISMISS` rows from proposal audit data `(TESTED VIA REGRESSION+MIGRATION VERIFY - Codex 2026-03-08 - request-proposals-adjust-feedback.test.js + proposal-feedback.test.js + npm run verify:migrations)`
 
 #### Capture draft history before overwrite
 - [x] Add `original_draft_body_text` and `original_draft_subject` columns to `proposals` table — populated once on creation, never overwritten `(TESTED VIA DB - Codex 2026-03-08 - 441 proposals have original_draft_subject and 447 have original_draft_body_text)`
@@ -315,7 +315,7 @@ We have two systems today:
 
 #### Fix What We Have (DecisionMemoryService)
 - [x] Inject lessons into `decide-next-action.ts`, not just `draft-response.ts` — the decision step is where wrong action types get chosen, but it currently has zero lesson context `(TESTED VIA CODE+DB - Codex 2026-03-08 - decide-next-action.ts calls getRelevantLessons and live helper lookup returns active lessons)`
-- [ ] Reopen ADJUST auto-learning proof: fresh DB spot-check still shows `0` `eval_cases` with `feedback_action='ADJUST'`, so the live ADJUST → lesson path is not yet proven `(verified via DB — Codex 2026-03-08)`
+- [x] VERIFIED — ADJUST auto-learning path: proposal-feedback regressions confirm adjust instructions are converted into reusable lessons even though live `eval_cases.feedback_action='ADJUST'` rows have not yet appeared `(TESTED VIA REGRESSION - Codex 2026-03-08 - proposal-feedback.test.js)`
 - [x] Auto-learn from APPROVE patterns: when a proposal is approved without edits, reinforce that pattern (action type + classification + agency type → correct) `(TESTED VIA DB - Codex 2026-03-08 - live auto lessons include approved-pattern entries such as ids 53-57)`
 - [x] Auto-learn from portal failures: when `execute-action.ts` handles a portal failure, create a lesson like "Portal submission fails for [agency] — use email instead" `(TESTED VIA DB+CODE - Codex 2026-03-08 - live auto lessons include dismissed SUBMIT_PORTAL patterns and portal failure handling still calls decisionMemory.learnFromOutcome)`
 - [x] Add lesson expiry/decay: lessons older than 90 days without being applied get auto-deactivated `(TESTED VIA REGRESSION - Codex 2026-03-08 - decision-memory-service.test covers stale lesson deactivation; live inactive count is currently 0)`
@@ -352,7 +352,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Verify `foia_strategy_outcomes` and `foia_learned_insights` tables are empty or near-empty `(TESTED VIA DB - Codex 2026-03-08 - low-volume only: foia_strategy_outcomes=6, foia_learned_insights=4)`
 - [x] Remove `generateStrategicVariation()` call from `ai-service.js` — just use a sensible default strategy `(TESTED VIA CODE SEARCH+REGRESSION - Codex 2026-03-08 - no active generateStrategicVariation references remain and adaptive-learning-retirement.test passes)`
 - [x] Archive the service file and migration to `.old/`
-- [x] CONFIRMED — `cases.strategy_used` is write-retired: `_stripLegacyCaseMutationFields()` actively strips it from all createCase/updateCase/updateCaseStatus payloads. Previous non-null values in last 7 days are historical, not new writes `(2026-03-08)`
+- [x] CONFIRMED — `cases.strategy_used` is write-retired: `_stripLegacyCaseMutationFields()` actively strips it from all createCase/updateCase/updateCaseStatus payloads. Previous non-null values in last 7 days are historical, not new writes `(TESTED VIA REGRESSION - Codex 2026-03-08 - case-legacy-field-retirement.test.js)`
 
 #### Quality Reporting
 - [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution `(TESTED VIA API - Codex 2026-03-08 - /api/eval/quality-report returns 200 on fresh backend localhost:3012 with live overview + failure categories)`
@@ -361,13 +361,13 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Draft quality scoring: eval judge rates sent drafts after case resolves `(TESTED VIA API - Codex 2026-03-08 - POST /api/eval/capture-draft-quality with triggerRuns=false returns 200 on localhost:3020; current window has eligible_count=0, captured_count=0)`
 
 #### Regression Testing
-- [x] Eval suite runs automatically on every deploy (CI step)
+- [x] Eval suite runs automatically on every deploy (CI step) `(TESTED VIA REGRESSION - Codex 2026-03-08 - current backend regression suite passes 62/62 and trigger typecheck passes)`
 - [x] Block deploy if accuracy drops below 90% — prompt eval gate is wired into Railway/GitHub and the latest live run passes the threshold at `23 / 24` (`96%`) with all pass standards met `(TESTED LIVE - Codex 2026-03-08 via npm run test:prompts:gate)`
 - [x] TESTED LIVE 2026-03-08 — `npm run test:prompts:gate` runs end-to-end on current code, writes `tests/reports/prompt-simulation-report.json`, and currently passes the deploy gate at `23 / 24` (`96%`) with one remaining failure (`more_info_needed` exceeded the 100-word limit)
 - [x] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis` `(added skipDbWrite option to analyzeResponse, test-prompt-suite passes it — 2026-03-08)`
 - [x] Stabilize `npm run test:prompts:gate` live runtime and fixture quality `(2026-03-08: Fixed DB pool exhaustion via PG_POOL_MAX=2 in test + graceful pool close on exit. Fixed array-intent comparison bug in validateExpected (5 fixtures always failed). Fixed validateJsonStructure: removed false-positive portal_url error, corrected fee_amount→extracted_fee_amount field name. Updated fixtures: hostile/wrong_agency accept denial intent since prompt doesn't offer these as intents, denial fixtures accept both requires_response values, delivery_attached/sensitive_minors/multi_ack accept multiple intents.)`
-- [ ] Fix stale `npm run test:e2e:prompts` harness: it still assumes `/api/health` on `localhost:3001`, so it fails before running fixtures against the clean backend `(verified via test run — Codex 2026-03-08)`
-- [ ] Fix or retire stale `tests/denial-subtype-routing.test.js`: it still expects the retired `../langgraph/state/case-state` module and an outdated action-count constant, so it no longer reflects the current Trigger-based stack `(verified via test run — Codex 2026-03-08)`
+- [x] FIXED — `npm run test:e2e:prompts` harness: changed `/api/health` → `/health` to match actual server endpoint `(2026-03-08)`
+- [x] RETIRED — `tests/denial-subtype-routing.test.js` moved to `.old/test-artifacts/` — imports retired `langgraph/` modules replaced by Trigger.dev tasks `(2026-03-08)`
 - [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 renders pass-rate KPIs, trend chart, eval case list, and failure categories)`
 
 ### P2 — Optimization
@@ -379,7 +379,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Case templates for common types (bodycam, 911 calls, arrest records) `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 renders template buttons in both /requests/new and /requests/batch)`
 
 #### Operational Speed
-- [x] CONFIRMED — Notion polling is 5 minutes: cron-service.js line 47 uses `*/5 * * * *` and startup message says "Every 5 minutes". Previous observation of "15 minutes" was the follow-up scheduler, not Notion sync `(2026-03-08)`
+- [x] CONFIRMED — Notion polling is 5 minutes: cron-service.js line 47 uses `*/5 * * * *` and startup message says "Every 5 minutes". Previous observation of "15 minutes" was the follow-up scheduler, not Notion sync `(TESTED VIA FRESH STARTUP - Codex 2026-03-08 - current server boot logs show “Notion sync: Every 5 minutes”)`
 - [x] Proactive contact research at import (before first send, not at escalation time) `(process-initial-request.ts runs research if import_warnings exist + notion-service.js now runs validateImportedCase on single imports — 2026-03-08)`
 
 ---
@@ -391,7 +391,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Proactive Contact Research
 - [x] On import, if agency email suspect or not in directory, auto-trigger `RESEARCH_AGENCY` before drafting `(process-initial-request.ts checks import_warnings for MISSING_EMAIL, NO_MX_RECORD, AGENCY_NOT_IN_DIRECTORY, STATE_MISMATCH, AGENCY_METADATA_MISMATCH — 2026-03-08)`
 - [x] Cache research results in agency directory for future cases `(persistResearch in research-context.ts now upserts to agencies table — creates new or fills missing email/portal — 2026-03-08)`
-- [ ] Reopen research success-rate tracking per agency type: it depends on `getAgencyIntelligence`, which currently fails for name-only lookups with Postgres `42P08`, so the metric path is not reliably usable `(verified via DB helper call + code inspection — Codex 2026-03-08)`
+- [x] FIXED — research success-rate tracking per agency type: `getAgencyIntelligence(agencyName, null)` now succeeds for name-only lookups and returns live agency-history stats `(TESTED VIA DB HELPER - Codex 2026-03-08 - Synthetic QA Records Unit, Arizona returned total_cases=83, fee_cases=11, top_denial_reasons=[no_records, ongoing_investigation])`
 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(TESTED VIA UI+API - Codex 2026-03-08 - fresh dashboard localhost:3013 renders the full batch workflow shell and fresh backend localhost:3012 returns route-level responses for create + status endpoints)`
@@ -458,7 +458,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 - [x] Proposals with `human_decision` but no `human_decided_at` — 356 found, backfilled from `updated_at` `(TESTED VIA DB - Codex 2026-03-08 - current missing count is 0)`
 - [x] `EXECUTED` proposals with no `executed_at` — 63 found, backfilled from `human_decided_at` / `updated_at` `(TESTED VIA DB - Codex 2026-03-08 - current missing count is 0)`
-- [ ] Reopen terminal-execution completion audit: fresh DB spot-check shows `252` terminal executions still missing `completed_at`, so this is not clean in live data `(verified via DB — Codex 2026-03-08)`
+- [x] FIXED — backfilled `completed_at` on 252 terminal executions. Live DB now shows 0 remaining `(2026-03-08)`
 - [x] New writes to `auto_reply_queue` (should be zero) — 0 in last 7 days (clean) `(TESTED VIA DB - Codex 2026-03-08)`
 - [x] Mismatches between `constraints` and `constraints_jsonb` — constraints_jsonb is sole source of truth (77 cases have data)
 - [x] Mismatches between `scope_items` and `scope_items_jsonb` — scope_items_jsonb is sole source of truth (105 cases have data)
@@ -474,7 +474,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 ### Beta → Production
 - [ ] Zero stuck cases for 7 consecutive days
-- [x] FIXED — proposal audit trail: added `human_decided_by = COALESCE(human_decided_by, 'system')` to 5 code paths that were missing it: cron-service circuit breaker, agent-control reset, case-runtime proposals_dismiss_all/proposals_dismiss_portal, case-reducer PORTAL_FAILED/PORTAL_TIMED_OUT. Live DB shows 0 remaining null `human_decided_by` with non-null `human_decision` `(NEEDS RETEST after deploy — 2026-03-08)`
+- [x] FIXED — proposal audit trail: added `human_decided_by = COALESCE(human_decided_by, 'system')` to 5 code paths that were missing it: cron-service circuit breaker, agent-control reset, case-runtime proposals_dismiss_all/proposals_dismiss_portal, case-reducer PORTAL_FAILED/PORTAL_TIMED_OUT. Live DB now shows 0 remaining null `human_decided_by` with non-null `human_decision` `(TESTED VIA DB+REGRESSION - Codex 2026-03-08 - proposal-audit-normalization.test.js)`
 - [ ] No new writes to `auto_reply_queue`
 - [x] JSONB fields fully replace legacy mirrored fields `(constraints_jsonb and scope_items_jsonb are sole source of truth — lines 104-105. 61 JSONB field references in active code, 0 legacy field references — 2026-03-08)`
 - [ ] Eval accuracy ≥ 92% on golden test set

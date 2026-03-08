@@ -280,7 +280,7 @@ async function startServer() {
             console.log(`\n   Agent pipeline: Trigger.dev (cloud)`);
             console.log(`   BullMQ workers: email/analysis/portal only`);
             console.log(`   Automated follow-ups enabled`);
-            console.log(`   Notion sync every 15 minutes`);
+            console.log(`   Notion sync every 5 minutes`);
             console.log(`   Adaptive learning system active`);
 
             // Log shadow mode status

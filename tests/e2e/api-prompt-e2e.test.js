@@ -414,7 +414,7 @@ async function main() {
     // Test API connectivity
     try {
         console.log('Testing API connectivity...');
-        await get('/api/health');
+        await get('/health');
         console.log('✅ API is reachable\n');
     } catch (error) {
         console.error(`❌ Cannot reach API at ${API_BASE_URL}`);

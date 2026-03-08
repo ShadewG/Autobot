@@ -121,6 +121,34 @@ describe('Notion sync guards', function () {
     assert.strictEqual(captureStub.firstCall.args[1].operation, 'get_database_schema_properties');
   });
 
+  it('tracks full-page text fetch failures with block context', async function () {
+    sinon.stub(notionService.notion.blocks.children, 'list').rejects(Object.assign(new Error('blocks unavailable'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    const result = await notionService.getFullPagePlainText('12345678-1234-1234-1234-123456789012');
+
+    assert.strictEqual(result, '');
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'get_full_page_plain_text');
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.blockId, '12345678-1234-1234-1234-123456789012');
+  });
+
+  it('tracks police-department enrichment failures with department context', async function () {
+    sinon.stub(notionService.notion.pages, 'retrieve').rejects(Object.assign(new Error('pd unavailable'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    const result = await notionService.enrichWithPoliceDepartment(
+      { police_dept_id: '12345678123412341234123456789012', case_name: 'QA PD Case' },
+      { id: '87654321876543218765432187654321', properties: {} }
+    );
+
+    assert.strictEqual(result.agency_name, 'Police Department');
+    assert.strictEqual(result.agency_email, null);
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'enrich_with_police_department');
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.policeDeptId, '12345678123412341234123456789012');
+  });
+
   it('tracks AI summary sync failures with case context', async function () {
     sinon.stub(db, 'getCaseById').resolves({
       id: 11,

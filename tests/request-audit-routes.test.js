@@ -75,6 +75,7 @@ describe('Request audit/debug routes', function () {
           provider_message_id: 'sg-msg-1',
           event_type: 'delivered',
           event_timestamp: '2026-03-08T10:05:00.000Z',
+          raw_payload: { token: 'secret-token', event: 'delivered' },
         },
       ];
     };
@@ -90,7 +91,7 @@ describe('Request audit/debug routes', function () {
               direction: 'outbound',
               subject: 'Subject',
               sendgrid_message_id: 'sg-msg-1',
-              provider_payload: { provider: 'sendgrid', direction: 'outbound' },
+              provider_payload: { provider: 'sendgrid', direction: 'outbound', authorization: 'Bearer abc' },
             },
           ],
         };
@@ -98,14 +99,14 @@ describe('Request audit/debug routes', function () {
       assert.match(sql, /FROM executions/);
       return {
         rows: [
-          {
-            id: 101,
-            proposal_id: 900,
-            action_type: 'SEND_INITIAL_REQUEST',
-            provider_payload: { provider: 'sendgrid', jobId: 'job_123' },
-          },
-        ],
-      };
+            {
+              id: 101,
+              proposal_id: 900,
+              action_type: 'SEND_INITIAL_REQUEST',
+              provider_payload: { provider: 'sendgrid', jobId: 'job_123', api_key: 'abc123' },
+            },
+          ],
+        };
     };
 
     const app = express();
@@ -121,6 +122,70 @@ describe('Request audit/debug routes', function () {
     assert.strictEqual(response.body.summary.email_event_count, 1);
     assert.strictEqual(response.body.messages[0].provider_payload.provider, 'sendgrid');
     assert.strictEqual(response.body.executions[0].provider_payload.jobId, 'job_123');
+    assert.strictEqual(response.body.messages[0].provider_payload.authorization, '[redacted]');
+    assert.strictEqual(response.body.executions[0].provider_payload.api_key, '[redacted]');
+    assert.strictEqual(response.body.email_events[0].raw_payload.token, '[redacted]');
+  });
+
+  it('returns a correlated provider payload detail for a message', async function () {
+    db.getCaseById = async () => ({ id: 25169, case_name: 'QA Case' });
+    db.getCaseEmailEvents = async () => ([
+      {
+        id: 700,
+        message_id: 91,
+        provider_message_id: 'sg-msg-1',
+        event_type: 'processed',
+        event_timestamp: '2026-03-08T10:05:00.000Z',
+        raw_payload: { secret: 'should-hide', event: 'processed' },
+      },
+    ]);
+
+    let callCount = 0;
+    db.query = async (sql) => {
+      callCount += 1;
+      if (callCount === 1) {
+        assert.match(sql, /FROM messages/);
+        return {
+          rows: [
+            {
+              id: 91,
+              case_id: 25169,
+              direction: 'outbound',
+              subject: 'Subject',
+              sendgrid_message_id: 'sg-msg-1',
+              provider_payload: { provider: 'sendgrid', authorization: 'Bearer 123' },
+            },
+          ],
+        };
+      }
+
+      assert.match(sql, /FROM executions/);
+      return {
+        rows: [
+          {
+            id: 101,
+            case_id: 25169,
+            proposal_id: 900,
+            action_type: 'SEND_INITIAL_REQUEST',
+            provider_message_id: 'sg-msg-1',
+            provider_payload: { token: 'execution-secret', provider: 'sendgrid' },
+          },
+        ],
+      };
+    };
+
+    const app = express();
+    app.use('/api/requests', caseManagementRouter);
+
+    const response = await supertest(app).get('/api/requests/25169/provider-payloads/messages/91');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.strictEqual(response.body.source, 'messages');
+    assert.strictEqual(response.body.entry.provider_payload.authorization, '[redacted]');
+    assert.strictEqual(response.body.related.executions.length, 1);
+    assert.strictEqual(response.body.related.executions[0].provider_payload.token, '[redacted]');
+    assert.strictEqual(response.body.related.email_events[0].raw_payload.secret, '[redacted]');
   });
 
   it('returns portal submission history for a case', async function () {
@@ -183,14 +248,29 @@ describe('Request audit/debug routes', function () {
         };
       }
 
-      assert.match(sql, /FROM activity_log/);
+      if (callCount === 2) {
+        assert.match(sql, /FROM activity_log/);
+        return {
+          rows: [
+            {
+              id: 2,
+              event_type: 'manual_override',
+              description: 'Operator changed course',
+              created_at: '2026-03-08T10:03:00.000Z',
+            },
+          ],
+        };
+      }
+
+      assert.match(sql, /FROM error_events/);
       return {
         rows: [
           {
-            id: 2,
-            event_type: 'manual_override',
-            description: 'Operator changed course',
-            created_at: '2026-03-08T10:03:00.000Z',
+            id: 3,
+            source_service: 'notion_service',
+            operation: 'sync_status',
+            error_message: 'Notion unavailable',
+            created_at: '2026-03-08T10:04:30.000Z',
           },
         ],
       };
@@ -203,11 +283,39 @@ describe('Request audit/debug routes', function () {
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.success, true);
-    assert.strictEqual(response.body.count, 4);
+    assert.strictEqual(response.body.count, 5);
     assert.deepStrictEqual(
       response.body.entries.map((entry) => entry.source),
-      ['email_events', 'portal_submissions', 'activity_log', 'case_event_ledger']
+      ['email_events', 'error_events', 'portal_submissions', 'activity_log', 'case_event_ledger']
     );
+    assert.strictEqual(response.body.summary.by_source.error_events, 1);
+  });
+
+  it('filters the audit stream by source', async function () {
+    db.getCaseById = async () => ({ id: 25169, case_name: 'QA Case' });
+    db.getPortalSubmissions = async () => ([{ id: 44, started_at: '2026-03-08T10:04:00.000Z' }]);
+    db.getCaseEmailEvents = async () => ([{ id: 700, event_timestamp: '2026-03-08T10:05:00.000Z' }]);
+
+    let callCount = 0;
+    db.query = async () => {
+      callCount += 1;
+      if (callCount === 1) return { rows: [{ id: 1, created_at: '2026-03-08T10:00:00.000Z' }] };
+      if (callCount === 2) return { rows: [{ id: 2, created_at: '2026-03-08T10:03:00.000Z' }] };
+      return { rows: [{ id: 3, created_at: '2026-03-08T10:04:30.000Z' }] };
+    };
+
+    const app = express();
+    app.use('/api/requests', caseManagementRouter);
+
+    const response = await supertest(app).get('/api/requests/25169/audit-stream?source=email_events,error_events');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.success, true);
+    assert.deepStrictEqual(
+      response.body.entries.map((entry) => entry.source),
+      ['email_events', 'error_events']
+    );
+    assert.strictEqual(response.body.summary.total, 2);
   });
 
   it('returns proposal content versions for a case proposal', async function () {

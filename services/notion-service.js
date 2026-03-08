@@ -701,6 +701,16 @@ class NotionService {
             console.log(`Enriched case with Police Dept: ${caseData.agency_name} (${caseData.agency_email})`);
 
         } catch (error) {
+            errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'enrich_with_police_department',
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    policeDeptId: caseData.police_dept_id || null,
+                    notionPageId: notionPage?.id || null,
+                    caseName: caseData.case_name || null,
+                },
+            }).catch(() => null);
             console.error('Error fetching police department details:', error.message);
             // NO FALLBACK - return null so it flags for human review
             caseData.agency_email = null;
@@ -1137,6 +1147,12 @@ Respond with JSON:
 
             return lines.join('\n').trim();
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'get_full_page_plain_text',
+                retryable: isRetryableNotionError(error),
+                metadata: { blockId, depth },
+            });
             console.warn(`Failed to fetch full page text for block ${blockId}:`, error.message);
             return '';
         }
@@ -2478,6 +2494,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     .join('\n');
                 console.log(`[import] Extracted ${pageContent.length} chars of content`);
             } catch (contentError) {
+                await errorTrackingService.captureException(contentError, {
+                    sourceService: 'notion_service',
+                    operation: 'process_single_page_fetch_content',
+                    retryable: isRetryableNotionError(contentError),
+                    metadata: { pageId },
+                });
                 console.warn('[import] Could not fetch page content:', contentError.message);
             }
 
@@ -2498,6 +2520,15 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     deptPage = await this.notion.pages.retrieve({ page_id: notionCase.police_dept_id });
                     deptText = await this.getFullPagePlainText(notionCase.police_dept_id);
                 } catch (pdErr) {
+                    await errorTrackingService.captureException(pdErr, {
+                        sourceService: 'notion_service',
+                        operation: 'process_single_page_fetch_police_dept',
+                        retryable: isRetryableNotionError(pdErr),
+                        metadata: {
+                            pageId,
+                            policeDeptId: notionCase.police_dept_id,
+                        },
+                    });
                     console.warn(`[import] Failed to fetch PD page: ${pdErr.message}`);
                 }
             }
@@ -2657,6 +2688,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         });
                         console.log(`[import] Added additional agency "${pdName}"`);
                     } catch (pdErr) {
+                        await errorTrackingService.captureException(pdErr, {
+                            sourceService: 'notion_service',
+                            operation: 'process_single_page_import_additional_pd',
+                            caseId: newCase.id,
+                            retryable: isRetryableNotionError(pdErr),
+                            metadata: {
+                                pageId,
+                                policeDeptId: pdId,
+                            },
+                        });
                         console.warn(`[import] Failed to import additional PD ${pdId}: ${pdErr.message}`);
                     }
                 }
