@@ -4,6 +4,7 @@ const sinon = require('sinon');
 const db = require('../services/database');
 const decisionMemory = require('../services/decision-memory-service');
 const proposalFeedback = require('../services/proposal-feedback');
+const successfulExamples = require('../services/successful-examples-service');
 
 describe('Proposal feedback helpers', function () {
   afterEach(function () {
@@ -127,6 +128,7 @@ describe('Proposal feedback helpers', function () {
       classification: 'CLARIFICATION_REQUEST',
     });
     const learnStub = sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
+    const storeStub = sinon.stub(successfulExamples, 'storeApprovedExample').resolves({ id: 77 });
 
     await proposalFeedback.autoCaptureEvalCase({
       id: 931,
@@ -145,6 +147,14 @@ describe('Proposal feedback helpers', function () {
       lesson: 'When the classification is CLARIFICATION_REQUEST for a police agency, SEND_CLARIFICATION has been approved without edits. Prefer this action when the surrounding facts match.',
       sourceCaseId: 932,
       priority: 6,
+    });
+    sinon.assert.calledOnceWithExactly(storeStub, {
+      id: 931,
+      case_id: 932,
+      trigger_message_id: 933,
+      action_type: 'SEND_CLARIFICATION',
+    }, {
+      decidedBy: 'qa-user',
     });
   });
 

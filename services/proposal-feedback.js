@@ -1,4 +1,5 @@
 const db = require('./database');
+const successfulExamples = require('./successful-examples-service');
 
 function normalizeExpectedAction(proposal, action, expectedAction) {
   if (expectedAction) return expectedAction;
@@ -142,6 +143,7 @@ async function autoCaptureEvalCase(
     }
     if (action === "APPROVE") {
       await learnFromApprove(proposal, { decidedBy });
+      await successfulExamples.storeApprovedExample(proposal, { decidedBy });
     }
   } catch (err) {
     console.warn(`Auto eval-case capture failed for proposal ${proposal?.id}: ${err.message}`);
