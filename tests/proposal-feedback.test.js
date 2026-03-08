@@ -47,6 +47,11 @@ describe('Proposal feedback helpers', function () {
 
   it('captures adjust eval cases with structured feedback fields', async function () {
     const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 912,
+      agency_name: 'Synthetic Records Unit',
+    });
+    sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
 
     await proposalFeedback.autoCaptureEvalCase({
       id: 911,
@@ -74,6 +79,36 @@ describe('Proposal feedback helpers', function () {
     assert.strictEqual(params[8], 'Too long');
     assert.strictEqual(params[9], 'qa-user');
     assert.match(params[10], /Auto-captured from monitor decision: ADJUST/);
+  });
+
+  it('learns reusable lessons from adjust instructions', async function () {
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 912,
+      agency_name: 'Synthetic Records Unit',
+    });
+    const learnStub = sinon.stub(decisionMemory, 'learnFromOutcome').resolves();
+
+    await proposalFeedback.autoCaptureEvalCase({
+      id: 921,
+      case_id: 912,
+      trigger_message_id: 913,
+      action_type: 'SEND_INITIAL_REQUEST',
+    }, {
+      action: 'ADJUST',
+      instruction: "Don't be aggressive with this agency",
+      reason: 'Tone',
+      decidedBy: 'qa-user',
+    });
+
+    sinon.assert.calledOnce(learnStub);
+    sinon.assert.calledWithMatch(learnStub, {
+      category: 'general',
+      triggerPattern: 'adjusted SEND_INITIAL_REQUEST for Synthetic Records Unit',
+      lesson: 'Use a collaborative, non-aggressive tone unless the agency has clearly denied the request with cited authority.',
+      sourceCaseId: 912,
+      priority: 7,
+    });
   });
 
   it('learns from dismiss outcomes without throwing when the DB case exists', async function () {
