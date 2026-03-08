@@ -118,9 +118,9 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate) `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - Message Activity renders: 281 inbound, 179 outbound, 64% reply rate with stacked bar chart Feb 7–Mar 8. BUG FIXED: trailing-slash proxy rule in next.config.js)`
 - [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - Hourly Activity chart renders with 24-hour bar chart on /analytics/)`
 - [x] Add Error Events dashboard page — filterable table with KPI cards, source/operation filters, expandable stack traces, auto-refresh `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /errors/ renders "Error Events" heading with "Recent Errors (92 shown)" table)`
-- [x] Add AI Decision Lessons dashboard page — CRUD, AI parse button, active toggle, text search, source/status filters `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /lessons/ renders "AI Decision Lessons" heading with lesson list)`
+- [x] Add AI Decision Lessons dashboard page — CRUD, AI parse button, active toggle, text search, source/status filters `(TESTED VIA UI+API - Codex 2026-03-09 - /lessons/ renders lesson list; POST/PUT/DELETE /api/monitor/lessons succeeded on localhost:3025 (created test lesson #58, toggled active, then deleted). Parse route is live but local verification is blocked without ANTHROPIC_API_KEY.)`
 - [x] Add Reconciliation Report dashboard page — system diagnostic cards with green/red status, 9 expandable sections, case ID links `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /reconciliation/ shows 120 Total Issues, 7 Categories With Issues, 2 Clean, 9 expandable sections: Dropped Actions 20, Dead End Cases 0, Unanalyzed Inbound 20, Processing Errors 0, Runs Without Traces 1, Portal Missing Request Number 7, Attachment Extraction 7, Stale Proposals 2, Orphaned Inbound 63)`
-- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /examples/ renders 16 examples with filters, expandable rows showing Subject/Draft Body/Requested Records/Case#/Proposal#/Approved by. Filtering by action type works (e.g. SEND_CLARIFICATION → 2 of 2). BUG FIXED: trailing-slash proxy rule in next.config.js)`
+- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator `(TESTED VIA UI+API - Codex 2026-03-09 - /examples/ renders 16 examples with filters, expandable rows showing Subject/Draft Body/Requested Records/Case#/Proposal#/Approved by; /api/eval/examples?action_type=SEND_CLARIFICATION&limit=5 returns the expected 2 filtered examples on localhost:3025. BUG FIXED: trailing-slash proxy rule in next.config.js)`
 - [x] Add Proposal History section to case detail — expandable cards showing all proposals (not just pending), human_decided_by audit, original vs edited draft comparison, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08)`
 - [x] Add Decision Traces section to case detail — AI classification/routing/gate decision visualization with node trace flow, confidence coloring, run links, lazy-load from audit-stream `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "Decision Traces 0" with "No decision traces recorded" empty state)`
 - [x] Add decision_traces to audit-stream endpoint — backend now includes decision traces in unified event feed alongside ledger, activity, portal, email, and error events `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 audit-stream summary includes decision_traces alongside activity_log and case_event_ledger)`
@@ -224,7 +224,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier — PDF extraction now falls back to rasterizing the first pages with `pdftoppm` and OCRing them when direct text extraction is too thin `(TESTED VIA REGRESSION - Codex 2026-03-08 - attachment-processor-ocr-fallback.test.js)`
 - [x] Ensure fallback constraint extraction can use attachment text, not just email body text — `update-constraints.ts` now feeds extracted attachment text into both the AI fallback extractor and the regex fallback signals `(2026-03-08)`
 - [x] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals — added `prompt-pattern-dataset-service` plus `npm run test:prompts:build-real` to generate grouped real-message fixtures from production-shaped inbound traffic `(TESTED VIA SCRIPT - Codex 2026-03-08 - npm run test:prompts:build-real completed and wrote tests/fixtures/inbound/real-message-patterns.json with all target pattern buckets)`
-- [x] Low-confidence / `other` review-candidate feed: route works (200 OK), Codex report was stale — verified locally with fresh server start `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3020 returns success with 15 current candidates across low_confidence and other_intent buckets)`
+- [x] Low-confidence / `other` review-candidate feed: route works (200 OK), Codex report was stale — verified locally with fresh server start `(TESTED VIA API - Codex 2026-03-09 - fresh backend localhost:3025 returns success; current dataset happens to have 0 returned candidates, but the feed contract is live and shaped correctly)`
 - [x] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text — added `attachment_extraction` section to reconciliation report with inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate metrics `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3020 /api/eval/reconciliation reports 33 inbound with attachments, 29 extracted, 7 missing, extraction_rate=0.8788)`
 
 #### Live Data Workflow Anomalies (from production DB, 2026-03-07)
@@ -321,9 +321,9 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 
 #### Bug Reporting
 - [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTED IN UI+API - Codex 2026-03-08 - opens in-app modal, posts to /api/feedback, and includes page + case context in the stored description)`
-- [x] Store bug reports in the internal feedback DB with case/page context instead of GitHub issues `(TESTED IN UI+API - Codex 2026-03-08 - bug-report modal posts to /api/feedback and persists context in user_feedback)`
+- [x] Store bug reports in the internal feedback DB with case/page context instead of GitHub issues `(TESTED IN UI+API - Codex 2026-03-09 - bug-report flow posts to /api/feedback and persists context in user_feedback; direct API verification also created feedback row #3 for case #25509 and stored it successfully)`
 - [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTED IN UI - Codex 2026-03-08)`
-- [x] RESOLVED — feedback route exists in codebase (`routes/feedback.js` mounted at `/api/feedback`), was stale local backend. Fresh backend process returns 200 `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 200 with empty items list)`
+- [x] RESOLVED — feedback route exists in codebase (`routes/feedback.js` mounted at `/api/feedback`), was stale local backend. Fresh backend process returns 200 `(TESTED VIA API - Codex 2026-03-09 - fresh backend localhost:3025 supports GET list, POST create, and PATCH close on /api/feedback)`
 
 ### P1 — Adaptive Learning System
 
@@ -421,7 +421,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] FIXED — batch status route `GET /api/requests/batch/:batchId/status` had SQL type mismatch (`text[] @> jsonb`). Fixed by using `ARRAY[$1]::text[]` instead of `$1::text[]`. Deployed to Railway `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 no longer throws SQL error; nonexistent batch now returns 404 Batch not found)`
 
 #### Portal Status Monitoring
-- [x] Scheduled Skyvern scrape of portal status pages for submitted cases `(IMPLEMENTED - Codex 2026-03-08: cron-service now runs portal-status monitoring every 6 hours via portal-status-monitor-service.monitorSubmittedPortalCases)`
+- [x] Scheduled Skyvern scrape of portal status pages for submitted cases `(TESTED VIA ISOLATED CRON+REGRESSION - Codex 2026-03-09 - cronService.start()/stop() registers `portalStatusMonitoring` and reports it running; portal-status-monitor-service.test.js passes 5/5 including submitted-case sweep behavior)`
 - [x] Auto-update case status when portal shows "completed" or "records ready" `(TESTED VIA REGRESSION - Codex 2026-03-08: portal-status-monitor-service.test.js marks portal-monitored cases completed with outcome_type=records_ready)`
 - [x] Alert operator when portal shows "denied" or "more info needed" `(TESTED VIA REGRESSION - Codex 2026-03-08: portal-status-monitor-service.test.js creates ESCALATE proposals and moves cases to needs_human_review)`
 
@@ -505,7 +505,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 ### Production → Scale
 - [x] VERIFIED — eval auto-capture code is wired correctly at all 3 entry points (monitor, run-engine, proposals API). Zero rows is expected — no human ADJUST/DISMISS actions have occurred since capture code deployed `(NEEDS LIVE VERIFICATION — 2026-03-08)`
-- [x] Weekly quality report generating automatically `(TESTED VIA ISOLATED CRON STATUS - Codex 2026-03-08 - cronService.start()/getStatus()/stop() reports weeklyQualityReport=true, and /api/eval/quality-report returns 200 on localhost:3020)`
+- [x] Weekly quality report generating automatically `(TESTED VIA ISOLATED CRON STATUS - Codex 2026-03-09 - cronService.start()/getStatus()/stop() reports weeklyQualityReport=true on current code, and /api/eval/quality-report returns 200 on fresh local backend)`
 - [x] Regression eval suite blocking deploys `(TESTED LIVE - Codex 2026-03-08 - npm run test:prompts:gate passes at 23/24 and the deploy gate is wired in Railway/GitHub)`
 - [x] Agency validation catching bad imports before first send `(TESTED VIA DB+UI - Codex 2026-03-08 - 169 live cases have import_warnings and the dashboard banner renders on case detail)`
 - [x] FIXED — `getAgencyIntelligence` Postgres 42P08: replaced static `$1::int IS NOT NULL` with dynamically-built WHERE clause that only includes non-null params. Tested all 3 param combos (name-only, id-only, both) successfully `(2026-03-08)`
@@ -522,22 +522,23 @@ Full browser-based UI verification of all dashboard pages at `localhost:3013` (b
 | Gated Queue | `/gated/` | PASS | KPIs (18 attention, 11 proposals, 7 review, 4 inbound 24h, 1 unmatched), proposal cards with draft editing, bulk button, keyboard shortcuts overlay (←→↑↓JK/A/D/?/Esc), system health drill-down (19 overdue table with clickable case links), INBOUND tab (100 messages with all/unmatched/matched filters), PHONE CALLS tab (14 pending with call purpose/phone/state), Next/Previous navigation between proposals |
 | Case Detail | `/requests/detail-v2/?id=25148` | PASS | Thread, agency panel, deadline, constraints, timeline (50), Decision Traces, Event Ledger (49), Portal Submissions, Provider Payloads (12 exec) |
 | Analytics | `/analytics/` | PASS | All sections render: Outcomes (277 total, 11 completed, 4%), Cost ($0.40, 41 calls), Compliance (9 overdue, 16 states), Message Activity (281 inbound, 179 outbound, 64% reply, stacked bar chart), Hourly Activity. Bug fixed via trailing-slash proxy rule. |
-| Eval | `/eval/` | PASS | Pass Rate KPIs, Decision Quality chart, eval cases table, failure categories |
-| Errors | `/errors/` | PASS | Error Events heading, 92 recent errors shown |
-| Lessons | `/lessons/` | PASS | AI Decision Lessons with lesson list |
+| Eval | `/eval/` | PASS | 319 cases, 61% pass rate, 3.2/5 avg score, 64 runs, Decision Quality chart, failure categories (WRONG_ROUTING 23, UNKNOWN 3, CONTEXT_MISSED 2), View history dialog, Run eval buttons |
+| Errors | `/errors/` | PASS | 200 errors, Source Service filter (notion_service), Operation filter, Case ID search, expandable rows with full stack traces |
+| Lessons | `/lessons/` | PASS | 56 total (52 active, 41 manual, 15 auto-learned), search, source/status filters, Add Lesson dialog with AI-parse + manual fields |
 | Examples | `/examples/` | PASS | 16 examples with 4 filter dropdowns, expandable rows (Subject/Draft Body/Requested Records/Case#), filtering works (SEND_CLARIFICATION → 2 of 2). Bug fixed via trailing-slash proxy rule. |
-| Reconciliation | `/reconciliation/` | PASS | 120 issues, 9 expandable sections, KPI cards |
+| Reconciliation | `/reconciliation/` | PASS | 172 issues, 9 expandable sections (Dropped Actions 20, Orphaned Inbound 111, Portal Missing 11, etc.), clickable case links in expanded view |
 | Agencies | `/agencies/` | PASS | 95 total, 43 portal, 30 email-only, search, table. Agency detail page: KPIs (requests/completed/avg response/fees), Submission Details, Fee Behavior, Denial Metrics (rate + reasons), Automation Rules, Recent Requests table |
 | Cases | `/requests/` | PASS | Full-text search works (typed "Perry" → filtered to 1 result #25148), quick filters (My urgent decisions, Overdue waiting, Unknown agency, Out of sync), Gate Type filter, New Case + Batch + Import buttons, grouped status sections with checkboxes |
-| Inbox | `/inbox/` | PASS | 50 pending proposals, list/detail layout, confidence %, action types |
-| Runs | `/runs/` | PASS | KPI cards (Running, Completed, Failed, Gated), runs table |
+| Inbox | `/inbox/` | PASS | 50 pending proposals, detail panel with AI Reasoning, Warnings, editable Draft, Approve/Adjust/Dismiss/Withdraw buttons |
+| Runs | `/runs/` | PASS | 2 Running, 20 Completed, 0 Failed, 28 Gated, runs table with click-through to case detail |
 | Portal Tasks | `/portal-tasks/` | PASS | Status KPIs (Pending, In Progress, Completed, Failed, Cancelled) |
 | Onboarding | `/onboarding/` | PASS | 6-step workflow, Key Features, Notion Integration, Reporting Issues |
 | Changelog | `/changelog/` | PASS | Versioned notes (0.9.2, 0.9.1, 0.9.0, 0.8.9) |
-| Settings | `/settings/` | PASS | Profile, autopilot mode, Notion mapping, signature, address, preview |
-| Feedback | `/feedback/` | PASS | Submit/History tabs, Bug Report/Feature Request forms |
-| Admin | `/admin/` | PASS | Overview (5 users, 220 cases), status breakdown, alerts, activity log |
-| New Case | `/requests/new/` | PASS | 5 templates, case details form, agency fields, state dropdown, requested records |
+| Settings | `/settings/` | PASS | Autopilot toggle (Supervised↔Autopilot with live description), Notion mapping input, signature editing with live preview, mailing address |
+| Feedback | `/feedback/` | PASS | Submit tab (Bug Report/Feature Request forms with priority), History tab (past submissions with All/Bugs/Features filters, status badges) |
+| Admin | `/admin/` | PASS | Overview (5 users, 276 cases), Users tab (admin/deactivate/reset), Activity Log (200 events, user filter), All Cases tab |
+| New Case | `/requests/new/` | PASS | 5 templates with pre-fill (Body Camera fills 2 records + details), case/agency forms, state dropdown |
+| Batch | `/requests/batch/` | PASS | Shared template, agency directory search with state filter, manual agency add, Create N Cases button |
 | Mobile 390px | gated + detail | PASS | Both pages fully usable at 390×844 viewport |
 
 ### Bugs Found & Fixed
@@ -560,3 +561,30 @@ Full browser-based UI verification of all dashboard pages at `localhost:3013` (b
 | Simulator presets | PASS | Fee Quote preset fills From/Subject/Body fields, enables Run button |
 | Report a Bug dialog | PASS | Modal with text input, auto-captures page context and user email, Submit/Close buttons |
 | Bug dialog close | PASS | Closes cleanly without side effects |
+
+### Interactive Flows Tested (2026-03-09, session 3)
+| Flow | Status | Notes |
+|------|--------|-------|
+| Settings autopilot toggle | PASS | Switch toggles Supervised↔Autopilot with description update, live preview |
+| Settings signature editing | PASS | Title field edits update live preview (adds "Documentary Researcher" to sig block) |
+| Settings Notion mapping | PASS | Text input accepts and displays Notion Assigned Name |
+| Eval case table | PASS | 319 cases, 61% pass rate, 3.2/5 avg score, 64 runs, Run eval + View history buttons |
+| Eval history dialog | PASS | Opens modal with case title, shows "No eval runs yet", Close button works |
+| Errors service filter | PASS | Source Service dropdown filters to notion_service only |
+| Errors row expansion | PASS | Click row expands to show full stack trace (APIResponseError with call frames) |
+| Runs row click → case detail | PASS | Clicking run navigates to case detail (#25525), shows full thread/timeline/agency panel |
+| Case detail Decision Traces | PASS | Expandable section shows count (0) and empty state message |
+| Case detail Portal Submissions | PASS | Expandable section shows 1 completed nextrequest submission with JSON result |
+| Case detail Constraints Edit | PASS | Edit mode shows Remove buttons per constraint, Add constraint button, Done exits edit |
+| Inbox proposal detail panel | PASS | Click proposal → detail panel with AI Reasoning (3 bullets), Warnings (3), editable Draft, Approve/Adjust/Dismiss/Withdraw buttons |
+| Lessons Add Lesson dialog | PASS | Modal with AI-parse input, manual fields (Lesson Text, Category dropdown, Priority 1-10, Trigger Pattern), Cancel/Create |
+| Reconciliation section expand | PASS | Dropped Actions expands showing 20 issues with clickable case links, action types, statuses, timestamps |
+| Admin Overview tab | PASS | 5 users, 276 cases, 107 needs review, case status breakdown (12 statuses), operational alerts, recent activity |
+| Admin Users tab | PASS | 5 users with case counts, Make/Remove admin, Reset password, Deactivate buttons |
+| Admin Activity Log tab | PASS | User filter dropdown (All/per-user), 200 events with timestamps, actor, action type, details |
+| New Case template pre-fill | PASS | Body Camera Footage populates 2 requested records + additional details, removable items |
+| Batch page | PASS | Shared template, agency directory search with state filter, manual agency add, Create N Cases button |
+| Feedback Bug Report form | PASS | Title, Details, Priority dropdown (Medium default), Related Case ID, Submit disabled until filled |
+| Feedback Feature Request | PASS | Switches form to "What would you like?" with feature-specific placeholders |
+| Feedback History tab | PASS | Shows past submissions with All/Bugs/Features filters, status badges, linked cases |
+| MY CASES toggle | PASS | Toggles to ALL USERS mode, filters nav badges to current user's cases |
