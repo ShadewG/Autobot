@@ -1445,6 +1445,27 @@ function DetailV2Content() {
               <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}><AlarmClock className="h-3.5 w-3.5 mr-1.5" />Snooze</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowCorrespondenceDialog(true)}><Phone className="h-3.5 w-3.5 mr-1.5" />Log Call</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowPasteInboundDialog(true)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />Paste Email</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => {
+                const title = encodeURIComponent(`[Case #${id}] Issue Report`);
+                const body = encodeURIComponent(
+                  `## Case Context\n` +
+                  `- **Case ID**: ${id}\n` +
+                  `- **Status**: ${request.status}\n` +
+                  `- **Substatus**: ${request.substatus || 'N/A'}\n` +
+                  `- **Agency**: ${request.agency_name}\n` +
+                  `- **Autopilot**: ${request.autopilot_mode}\n` +
+                  `- **Control State**: ${control_state}\n` +
+                  `- **Review State**: ${review_state}\n` +
+                  `- **Active Run**: ${active_run?.status || 'none'}\n` +
+                  `- **Pending Proposal**: ${pending_proposal ? `${pending_proposal.action_type} (${(pending_proposal as any).status})` : 'none'}\n` +
+                  `- **Constraints**: ${request.constraints?.length || 0}\n\n` +
+                  `## Issue Description\n\n_Describe the issue here..._\n\n` +
+                  `## Expected Behavior\n\n_What should have happened..._\n`
+                );
+                window.open(`https://github.com/ShadewG/Autobot/issues/new?title=${title}&body=${body}&labels=bug,operator-report`, '_blank');
+              }}>
+                <AlertTriangle className="h-3.5 w-3.5 mr-1.5" />Report Issue
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => setWithdrawDialogOpen(true)}><Ban className="h-3.5 w-3.5 mr-1.5" />Withdraw</DropdownMenuItem>
             </DropdownMenuContent>

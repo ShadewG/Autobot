@@ -247,8 +247,8 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [ ] Dashboard chart: decision quality over time (7d rolling)
 
 #### Bug Reporting
-- [ ] "Report Issue" button on case detail page — captures case ID, current state, operator notes
-- [ ] Auto-creates GitHub issue with context snapshot
+- [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes
+- [x] Auto-creates GitHub issue with context snapshot
 - [ ] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable
 
 ### P1 — Adaptive Learning System
@@ -294,9 +294,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 4. Revisit DSPy only if accuracy plateaus below 95%
 
 #### Kill AdaptiveLearningService
-- [ ] Verify `foia_strategy_outcomes` and `foia_learned_insights` tables are empty or near-empty
+- [ ] Verify `foia_strategy_outcomes` and `foia_learned_insights` tables are empty or near-empty `(IN PROGRESS - Codex)`
 - [x] Remove `generateStrategicVariation()` call from `ai-service.js` — just use a sensible default strategy
-- [ ] Archive the service file and migration to `.old/`
+- [ ] Archive the service file and migration to `.old/` `(IN PROGRESS - Codex)`
 - [x] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
 
 #### Quality Reporting
