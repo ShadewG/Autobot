@@ -291,7 +291,7 @@ class CronService {
             try {
                 console.log('Running stuck portal & orphaned review sweep...');
                 const result = await this.sweepStuckPortalCases();
-                console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.followUpFixed} follow-up fixes, ${result.staleHumanFlagsCleared || 0} stale flags cleared`);
+                console.log(`Stuck portal sweep: ${result.portalEscalated} portal, ${result.proposalsCreated} orphan proposals, ${result.feeProposalsCreated || 0} fee proposals, ${result.followUpFixed} follow-up fixes, ${result.staleHumanFlagsCleared || 0} stale flags cleared`);
             } catch (error) {
                 console.error('Error in stuck portal sweep cron:', error);
             }
@@ -1279,6 +1279,70 @@ class CronService {
             console.error('Error in orphaned review sweep:', error);
         }
 
+        // Sweep 2b: Fee-stranded cases — dismissed fee proposal, no active proposal, case not in review
+        // These cases had a fee_request/partial_delivery intent and the operator dismissed the proposal,
+        // but reconcileCaseAfterDismiss moved the case out of review with no new proposal.
+        // Fast sweep (1h window instead of 48h) to re-create a fee decision proposal.
+        let feeProposalsCreated = 0;
+        try {
+            const feeStranded = await db.query(`
+                SELECT DISTINCT c.id, c.case_name, c.agency_email,
+                    ra.intent, ra.extracted_fee_amount,
+                    p.action_type as dismissed_action
+                FROM cases c
+                JOIN messages m ON m.case_id = c.id AND m.direction = 'inbound'
+                JOIN response_analysis ra ON ra.message_id = m.id
+                    AND ra.intent IN ('FEE_QUOTE', 'PARTIAL_DELIVERY')
+                    AND ra.created_at > NOW() - INTERVAL '7 days'
+                LEFT JOIN proposals dp ON dp.case_id = c.id
+                    AND dp.action_type IN ('ACCEPT_FEE', 'NEGOTIATE_FEE', 'DECLINE_FEE', 'SEND_FEE_WAIVER_REQUEST')
+                    AND dp.status = 'DISMISSED'
+                    AND dp.updated_at > NOW() - INTERVAL '7 days'
+                WHERE c.status NOT IN ('completed', 'cancelled', 'closed')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM proposals p2
+                    WHERE p2.case_id = c.id
+                      AND p2.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DRAFT', 'DECISION_RECEIVED', 'PENDING_PORTAL')
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM agent_runs ar
+                    WHERE ar.case_id = c.id AND ar.status IN ('created', 'queued', 'running', 'processing')
+                  )
+                ORDER BY c.id
+            `);
+
+            for (const row of feeStranded.rows) {
+                try {
+                    const feeAmount = row.extracted_fee_amount ? `$${row.extracted_fee_amount}` : 'unspecified amount';
+                    await db.upsertProposal({
+                        proposalKey: `${row.id}:fee_sweep:NEGOTIATE_FEE`,
+                        caseId: row.id,
+                        actionType: 'NEGOTIATE_FEE',
+                        reasoning: [
+                            { step: 'Fee sweep', detail: `Agency sent fee notice (${feeAmount}) but the prior fee proposal was dismissed. Re-creating for operator review.` },
+                            { step: 'Intent', detail: row.intent },
+                        ],
+                        confidence: 0.5,
+                        requiresHuman: true,
+                        canAutoExecute: false,
+                        draftSubject: `RE: ${row.case_name || 'Records Request'} - Fee Response`,
+                        draftBodyText: `A fee of ${feeAmount} was quoted by the agency. The previous proposal (${row.dismissed_action || 'fee action'}) was dismissed.\n\nPlease review and decide:\n- Accept the fee\n- Negotiate a lower fee\n- Decline and request fee waiver\n- Close the case`,
+                        status: 'PENDING_APPROVAL'
+                    });
+                    feeProposalsCreated++;
+                    console.log(`Fee sweep: created NEGOTIATE_FEE proposal for case ${row.id} (${row.case_name})`);
+                    await db.logActivity('fee_sweep_proposal',
+                        `Fee sweep: re-created fee proposal for case ${row.case_name} (${feeAmount})`,
+                        { case_id: row.id, fee_amount: row.extracted_fee_amount, dismissed_action: row.dismissed_action }
+                    );
+                } catch (err) {
+                    console.error(`Error creating fee sweep proposal for case ${row.id}:`, err.message);
+                }
+            }
+        } catch (error) {
+            console.error('Error in fee-stranded sweep:', error);
+        }
+
         // Sweep 3: Fix follow_up_schedule records with status='sent' → 'scheduled'
         try {
             const fixResult = await db.query(`
@@ -1622,7 +1686,7 @@ class CronService {
             console.error('Error in stuck portal_tasks sweep:', error);
         }
 
-        return { portalEscalated, proposalsCreated, followUpFixed, stuckRunsCleaned, staleResolvingFixed, stuckDecisionsRetried, staleHumanFlagsCleared, stuckPortalTasksCleaned };
+        return { portalEscalated, proposalsCreated, feeProposalsCreated, followUpFixed, stuckRunsCleaned, staleResolvingFixed, stuckDecisionsRetried, staleHumanFlagsCleared, stuckPortalTasksCleaned };
     }
 
     /**
