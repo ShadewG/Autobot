@@ -9,7 +9,7 @@
  */
 
 import db, { logger, caseRuntime } from "../lib/db";
-import type { ActionType, ProposalRecord, ChainAction } from "../lib/types";
+import type { ActionType, ProposalRecord, ChainAction, AIModelMetadata } from "../lib/types";
 
 const ACTIONS_REQUIRING_REVIEWABLE_DRAFT = new Set<ActionType>([
   "SEND_INITIAL_REQUEST",
@@ -92,7 +92,9 @@ export async function createProposalAndGate(
   caseAgencyId: number | null,
   lessonsApplied: any[] | null,
   gateOptions?: string[],
-  chainActions?: ChainAction[]
+  chainActions?: ChainAction[],
+  decisionModelMetadata?: AIModelMetadata | null,
+  draftModelMetadata?: AIModelMetadata | null
 ): Promise<GateResult> {
   // NONE actions skip proposal creation
   if (actionType === "NONE") {
@@ -180,14 +182,14 @@ export async function createProposalAndGate(
     draftSubject: effectiveDraft.subject,
     draftBodyText: effectiveDraft.bodyText,
     draftBodyHtml: effectiveDraft.bodyHtml,
-    decisionModelId: effectiveDecision?.modelMetadata?.modelId || null,
-    decisionPromptTokens: effectiveDecision?.modelMetadata?.promptTokens ?? null,
-    decisionCompletionTokens: effectiveDecision?.modelMetadata?.completionTokens ?? null,
-    decisionLatencyMs: effectiveDecision?.modelMetadata?.latencyMs ?? null,
-    draftModelId: effectiveDraft?.modelMetadata?.modelId || null,
-    draftPromptTokens: effectiveDraft?.modelMetadata?.promptTokens ?? null,
-    draftCompletionTokens: effectiveDraft?.modelMetadata?.completionTokens ?? null,
-    draftLatencyMs: effectiveDraft?.modelMetadata?.latencyMs ?? null,
+    decisionModelId: decisionModelMetadata?.modelId || null,
+    decisionPromptTokens: decisionModelMetadata?.promptTokens ?? null,
+    decisionCompletionTokens: decisionModelMetadata?.completionTokens ?? null,
+    decisionLatencyMs: decisionModelMetadata?.latencyMs ?? null,
+    draftModelId: draftModelMetadata?.modelId || null,
+    draftPromptTokens: draftModelMetadata?.promptTokens ?? null,
+    draftCompletionTokens: draftModelMetadata?.completionTokens ?? null,
+    draftLatencyMs: draftModelMetadata?.latencyMs ?? null,
     reasoning,
     confidence: confidence ?? 0.8,
     riskFlags: effectiveSafety.riskFlags || [],
@@ -223,10 +225,10 @@ export async function createProposalAndGate(
         draftSubject: chainAction.draftSubject,
         draftBodyText: chainAction.draftBodyText,
         draftBodyHtml: chainAction.draftBodyHtml,
-        decisionModelId: effectiveDecision?.modelMetadata?.modelId || null,
-        decisionPromptTokens: effectiveDecision?.modelMetadata?.promptTokens ?? null,
-        decisionCompletionTokens: effectiveDecision?.modelMetadata?.completionTokens ?? null,
-        decisionLatencyMs: effectiveDecision?.modelMetadata?.latencyMs ?? null,
+        decisionModelId: decisionModelMetadata?.modelId || null,
+        decisionPromptTokens: decisionModelMetadata?.promptTokens ?? null,
+        decisionCompletionTokens: decisionModelMetadata?.completionTokens ?? null,
+        decisionLatencyMs: decisionModelMetadata?.latencyMs ?? null,
         reasoning: [`Chain step ${step + 1}: follows ${actionType}`],
         confidence: confidence ?? 0.8,
         riskFlags: [],

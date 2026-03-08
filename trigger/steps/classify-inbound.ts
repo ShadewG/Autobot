@@ -624,10 +624,11 @@ export async function classifyInbound(
   });
 
   // Update Notion with AI summary (non-blocking)
-  if (aiResult.summary || (aiResult.key_points && aiResult.key_points.length > 0)) {
+  const aiSummary = (aiResult as any).summary as string | undefined;
+  if (aiSummary || (aiResult.key_points && aiResult.key_points.length > 0)) {
     try {
       const notionService = require("../../services/notion-service");
-      const summary = aiResult.summary || aiResult.key_points.join("; ");
+      const summary = aiSummary || aiResult.key_points.join("; ");
       await notionService.addAISummaryToNotion(context.caseId, summary);
     } catch (err: any) {
       logger.warn("Failed to update Notion with AI summary", { caseId: context.caseId, error: err.message });
@@ -642,7 +643,7 @@ export async function classifyInbound(
       await discordService.notifyResponseReceived(caseData, {
         intent: aiResult.intent,
         sentiment: aiResult.sentiment,
-        summary: aiResult.summary,
+        summary: aiSummary,
         requires_action: aiResult.requires_response,
       });
     }

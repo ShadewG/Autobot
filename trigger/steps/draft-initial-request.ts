@@ -6,7 +6,7 @@
  */
 
 import db, { aiService, logger } from "../lib/db";
-import type { AutopilotMode, ProposalRecord } from "../lib/types";
+import type { AutopilotMode, ProposalRecord, AIModelMetadata } from "../lib/types";
 import { hasAutomatablePortal } from "../lib/portal-utils";
 
 function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean): string {
@@ -25,6 +25,7 @@ export interface InitialDraftResult {
   canAutoExecute: boolean;
   requiresHuman: boolean;
   reasoning: string[];
+  modelMetadata?: AIModelMetadata | null;
 }
 
 export async function draftInitialRequest(

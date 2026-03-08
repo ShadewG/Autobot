@@ -49,7 +49,7 @@ export const healthCheck = task({
     // Test loadContext
     if (payload.caseId) {
       try {
-        const { loadContext } = await import("../steps/load-context");
+        const { loadContext } = await import("../steps/load-context.js");
         const ctx = await loadContext(payload.caseId, null);
         results.loadContext = `ok (agency: ${ctx.caseData?.agency_name})`;
       } catch (e: any) { results.loadContext = e.message; }
