@@ -136,7 +136,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Future-Proof Data Capture
 - [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change — 2026-03-08)`
-- [ ] Capture raw inbound/outbound provider payloads
+- [ ] Capture raw inbound/outbound provider payloads `(IN PROGRESS - Codex 2026-03-08)`
 - [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
 
@@ -178,15 +178,15 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `RECORDS_READY` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
 - [x] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting — **AUDITED**: 4 production cases found (2 partial_denial, 2 partial_delivery). Both partial_delivery cases were misclassified (should be partial_denial — agencies withholding, not interim delivery). **FIXED**: (1) Added all partial_* intents + wrong_agency to `isComplexCase` gate in email-queue.js so they route to Trigger.dev; (2) Added `PARTIAL_DELIVERY` to requires_response bypass list in decide-next-action.ts; (3) Strengthened classifier prompt to distinguish partial_delivery (interim, more coming) from partial_denial (final, some withheld)
 - [x] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context — **FIXED**: Classifier Evidence section existed in `buildEnrichedDecisionPrompt` but was reading `la.decision_evidence_quotes` instead of `la.full_analysis_json.decision_evidence_quotes` (fields were always undefined). Fixed all 6 field paths to read from `full_analysis_json`
-- [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages
+- [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages `(IN PROGRESS - Codex 2026-03-08)`
 - [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
 - [x] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases `(classifier + decision prompt — 2026-03-08)`
 - [x] Add explicit guidance for “closure after we did not answer” portal messages so they are not treated like generic denials or generic acknowledgments `(classifier prompt — 2026-03-08)`
 - [x] Add explicit guidance for request-form and mailing-address workflows so they classify as clarification/process blockers rather than delivery `(classifier prompt — 2026-03-08)`
 - [x] Add explicit guidance that attached letters may be acknowledgments, denials, fee notices, formal responses, or actual records, and must be classified from content rather than file presence `(classifier prompt — 2026-03-08)`
-- [ ] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier
-- [ ] Ensure fallback constraint extraction can use attachment text, not just email body text
-- [ ] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals
+- [ ] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier `(IN PROGRESS - Codex 2026-03-08)`
+- [ ] Ensure fallback constraint extraction can use attachment text, not just email body text `(IN PROGRESS - Codex 2026-03-08)`
+- [ ] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals `(IN PROGRESS - Codex 2026-03-08)`
 - [ ] Review low-confidence and `other` classifications regularly and feed those examples into the prompt test set
 - [x] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text — added `attachment_extraction` section to reconciliation report with inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate metrics
 
@@ -219,9 +219,9 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 - [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
-- [ ] Fix `/api/dashboard/outcomes` against the current schema — isolated current backend on `localhost:3010` returns `500` with `column "completed_at" does not exist`
+- [x] Fix `/api/dashboard/outcomes` against the current schema — replaced `completed_at` (doesn't exist) with `updated_at` filtered to `status = 'completed'`; also fixed denial queries to use case-insensitive LOWER(intent) to match both legacy uppercase and Trigger.dev lowercase intents
 - [ ] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL
-- [ ] Fix `response_analysis` model metadata persistence for live classify runs — DB spot-check 2026-03-08 shows `0` `response_analysis` rows with `model_id`/usage fields populated even though proposal metadata is being written
+- [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
 
 ---
 

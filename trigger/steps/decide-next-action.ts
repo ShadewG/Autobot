@@ -21,8 +21,15 @@ import type {
 } from "../lib/types";
 // @ts-ignore
 const { detectCaseMetadataAgencyMismatch } = require("../../utils/request-normalization");
-// @ts-ignore
-const { buildModelMetadata } = require("../../utils/ai-model-metadata");
+// Inline model metadata extraction — avoids CJS require() bundling issues in Trigger.dev
+function extractModelMetadata(response: any, usage: any, startedAt: number) {
+  return {
+    modelId: response?.modelId || response?.model || null,
+    promptTokens: usage?.promptTokens ?? usage?.inputTokens ?? usage?.prompt_tokens ?? usage?.input_tokens ?? null,
+    completionTokens: usage?.completionTokens ?? usage?.outputTokens ?? usage?.completion_tokens ?? usage?.output_tokens ?? null,
+    latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : null,
+  };
+}
 
 const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || "100");
 const FEE_NEGOTIATE_THRESHOLD = parseFloat(process.env.FEE_NEGOTIATE_THRESHOLD || "500");
@@ -937,7 +944,7 @@ async function makeAIDecisionV2(params: {
         providerOptions: decisionOptions,
         experimental_telemetry: telemetry,
       });
-      const modelMetadata = buildModelMetadata({ response, usage, startedAt });
+      const modelMetadata = extractModelMetadata(response, usage, startedAt);
 
       // Validate structure
       const validation = validateStructureV2(object, allowedActions, extractedFeeAmount, autopilotMode);
@@ -1760,7 +1767,7 @@ async function aiDecision(params: {
       providerOptions: decisionOptions,
       experimental_telemetry: telemetry,
     });
-    const modelMetadata = buildModelMetadata({ response, usage, startedAt });
+    const modelMetadata = extractModelMetadata(response, usage, startedAt);
 
     const validation = await validateDecision(object, {
       caseId: params.caseId,

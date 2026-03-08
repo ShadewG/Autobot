@@ -909,8 +909,8 @@ router.get('/dashboard/outcomes', async (req, res) => {
                     ROUND(AVG(EXTRACT(EPOCH FROM (last_response_date - send_date)) / 86400)
                         FILTER (WHERE last_response_date IS NOT NULL AND send_date IS NOT NULL)::numeric, 1)
                         as avg_response_days,
-                    ROUND(AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400)
-                        FILTER (WHERE completed_at IS NOT NULL)::numeric, 1)
+                    ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) / 86400)
+                        FILTER (WHERE status = 'completed')::numeric, 1)
                         as avg_case_duration_days
                 FROM cases
             `),
@@ -926,7 +926,7 @@ router.get('/dashboard/outcomes', async (req, res) => {
                         as avg_response_days,
                     (SELECT COUNT(*) FROM response_analysis ra
                         JOIN messages m ON ra.message_id = m.id
-                        WHERE m.case_id = ANY(ARRAY_AGG(c.id)) AND ra.intent = 'denial') as denials
+                        WHERE m.case_id = ANY(ARRAY_AGG(c.id)) AND LOWER(ra.intent) = 'denial') as denials
                 FROM cases c
                 WHERE c.state IS NOT NULL AND c.state != ''
                 GROUP BY c.state
@@ -940,7 +940,7 @@ router.get('/dashboard/outcomes', async (req, res) => {
                     COALESCE(full_analysis_json->>'denial_subtype', 'unspecified') as reason,
                     COUNT(*) as count
                 FROM response_analysis
-                WHERE intent = 'denial'
+                WHERE LOWER(intent) = 'denial'
                 GROUP BY full_analysis_json->>'denial_subtype'
                 ORDER BY count DESC
             `),

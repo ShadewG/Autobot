@@ -12,8 +12,15 @@ import { classifyModel, classifyOptions, telemetry } from "../lib/ai";
 import { classificationSchema, type ClassificationOutput } from "../lib/schemas";
 import db, { aiService, logger } from "../lib/db";
 import type { ClassificationResult, CaseContext, Classification } from "../lib/types";
-// @ts-ignore
-const { buildModelMetadata } = require("../../utils/ai-model-metadata");
+// Inline model metadata extraction — avoids CJS require() bundling issues in Trigger.dev
+function extractModelMetadata(response: any, usage: any, startedAt: number) {
+  return {
+    modelId: response?.modelId || response?.model || null,
+    promptTokens: usage?.promptTokens ?? usage?.inputTokens ?? usage?.prompt_tokens ?? usage?.input_tokens ?? null,
+    completionTokens: usage?.completionTokens ?? usage?.outputTokens ?? usage?.completion_tokens ?? usage?.output_tokens ?? null,
+    latencyMs: startedAt ? Math.max(0, Date.now() - startedAt) : null,
+  };
+}
 
 export const CLASSIFICATION_MAP: Record<string, Classification> = {
   fee_request: "FEE_QUOTE",
@@ -537,7 +544,7 @@ export async function classifyInbound(
       experimental_telemetry: telemetry,
     });
     aiResult = object;
-    modelMetadata = buildModelMetadata({ response, usage, startedAt });
+    modelMetadata = extractModelMetadata(response, usage, startedAt);
   } catch (aiError: any) {
     // Fallback to existing aiService if Vercel AI SDK fails
     logger.warn("Vercel AI SDK classification failed, falling back to aiService", {
@@ -732,7 +739,7 @@ export async function classifyMessageContent(
       experimental_telemetry: telemetry,
     });
     aiResult = object;
-    modelMetadata = buildModelMetadata({ response, usage, startedAt });
+    modelMetadata = extractModelMetadata(response, usage, startedAt);
   } catch (aiError: any) {
     logger.warn("classifyMessageContent: Vercel AI SDK failed, falling back to aiService", {
       error: aiError.message,
