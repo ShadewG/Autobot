@@ -4,8 +4,53 @@ const db = require('./database');
 const documentaryFOIAPrompts = require('../prompts/documentary-foia-prompts');
 const responseHandlingPrompts = require('../prompts/response-handling-prompts');
 const denialResponsePrompts = require('../prompts/denial-response-prompts');
-const adaptiveLearning = require('./adaptive-learning-service');
 const { buildModelMetadata } = require('../utils/ai-model-metadata');
+
+const DEFAULT_REQUEST_STRATEGY = {
+    tone: 'collaborative',
+    emphasis: 'documentary',
+    detail_level: 'moderate',
+    legal_citations: 'moderate',
+    fee_waiver_approach: 'brief',
+    urgency_level: 'moderate'
+};
+
+function buildRequestStrategyInstructions(strategy = DEFAULT_REQUEST_STRATEGY) {
+    const toneInstructions = {
+        collaborative: 'Use a collaborative, cooperative tone that seeks to work with the agency.',
+        assertive: 'Use an assertive, demanding tone that emphasizes legal rights and obligations.',
+        formal: 'Use highly formal, traditional legal language with maximum respect.',
+        urgent: 'Convey appropriate urgency while maintaining professionalism.'
+    };
+    const emphasisInstructions = {
+        legal_pressure: 'Emphasize legal obligations, statutory deadlines, and potential consequences.',
+        public_interest: 'Emphasize public interest, transparency, and civic importance.',
+        documentary: 'Emphasize documentary production and educational purposes.',
+        transparency: 'Emphasize government transparency and accountability.'
+    };
+    const detailInstructions = {
+        minimal: 'Keep the request concise and to the point.',
+        moderate: 'Provide moderate detail with clear specifications.',
+        comprehensive: 'Provide comprehensive detail, covering all bases.'
+    };
+    const legalInstructions = {
+        few: 'Include only essential legal citations.',
+        moderate: 'Include moderate legal citations and case law.',
+        extensive: 'Include extensive legal citations, case law, and statutory references.'
+    };
+    const feeInstructions = {
+        none: 'Do not include fee waiver language.',
+        brief: 'Include brief fee waiver request.',
+        detailed: 'Include detailed fee waiver justification with legal basis.'
+    };
+    const urgencyInstructions = {
+        none: 'Standard processing timeframe is acceptable.',
+        moderate: 'Request timely response within statutory deadlines.',
+        high: 'Request expedited processing with urgency justification.'
+    };
+
+    return `\n\nSTRATEGIC APPROACH FOR THIS REQUEST:\n- Tone: ${toneInstructions[strategy.tone] || toneInstructions.collaborative}\n- Emphasis: ${emphasisInstructions[strategy.emphasis] || emphasisInstructions.documentary}\n- Detail Level: ${detailInstructions[strategy.detail_level] || detailInstructions.moderate}\n- Legal Citations: ${legalInstructions[strategy.legal_citations] || legalInstructions.moderate}\n- Fee Waiver: ${feeInstructions[strategy.fee_waiver_approach] || feeInstructions.brief}\n- Urgency: ${urgencyInstructions[strategy.urgency_level] || urgencyInstructions.moderate}`;
+}
 
 class AIService {
     constructor() {
@@ -289,9 +334,10 @@ class AIService {
             // Load user signature if case is assigned
             const userSignature = await this.getUserSignatureForCase(caseData);
 
-            // Get adaptive strategy based on learned patterns
-            const strategy = await adaptiveLearning.generateStrategicVariation(caseData);
-            console.log('Using strategy:', strategy);
+            // Keep initial requests deterministic. The older adaptive strategy
+            // path produced random exploration more often than useful learned guidance.
+            const strategy = DEFAULT_REQUEST_STRATEGY;
+            console.log('Using default request strategy:', strategy);
 
             const systemPrompt = this.buildFOIASystemPrompt(caseData.state, strategy);
             const userPrompt = this.buildFOIAUserPrompt(caseData, strategy, userSignature, examplesContext);
@@ -353,12 +399,6 @@ class AIService {
                     },
                     status: 'approved'
                 });
-
-                // Store strategy in case record for later learning
-                await db.query(
-                    'UPDATE cases SET strategy_used = $1 WHERE id = $2',
-                    [JSON.stringify(strategy), caseData.id]
-                );
 
                 return {
                     success: true,
@@ -445,18 +485,7 @@ JURISDICTION-SPECIFIC GUIDANCE FOR ${jurisdiction}:
 
         // Enhancement prompt removed - using simple documentary style
 
-        // Add strategy-specific instructions if provided
-        let strategyInstructions = '';
-        if (strategy) {
-            const modifications = adaptiveLearning.buildPromptModifications(strategy);
-            strategyInstructions = `\n\nSTRATEGIC APPROACH FOR THIS REQUEST:
-- Tone: ${modifications.tone_instruction}
-- Emphasis: ${modifications.emphasis_instruction}
-- Detail Level: ${modifications.detail_instruction}
-- Legal Citations: ${modifications.legal_instruction}
-- Fee Waiver: ${modifications.fee_instruction}
-- Urgency: ${modifications.urgency_instruction}`;
-        }
+        const strategyInstructions = buildRequestStrategyInstructions(strategy || DEFAULT_REQUEST_STRATEGY);
 
         return basePrompt + jurisdictionGuidance + strategyInstructions;
     }
@@ -1438,84 +1467,11 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
     }
 
     /**
-     * Record outcome for adaptive learning
+     * Legacy adaptive-learning outcomes are disabled.
+     * We keep the method as a no-op until the old service is fully archived.
      */
     async recordOutcomeForLearning(caseData, analysis, messageData) {
-        try {
-            // Check if outcome already recorded
-            if (caseData.outcome_recorded) {
-                return;
-            }
-
-            // Only record definitive/final outcomes — intermediate responses
-            // (ack, fee request, wrong agency, etc.) should NOT lock in outcome_recorded
-            // so the real outcome can be captured when it arrives.
-            let outcomeType = null;
-            let feeWaived = false;
-
-            switch (analysis.intent) {
-                // --- Final outcomes: record and lock ---
-                case 'delivery':
-                case 'records_ready':
-                    outcomeType = 'full_approval';
-                    break;
-                case 'partial_release':
-                    outcomeType = 'partial_approval';
-                    break;
-                case 'denial':
-                    outcomeType = 'denial';
-                    break;
-                case 'partial_denial':
-                    outcomeType = 'partial_denial';
-                    break;
-
-                // --- Intermediate responses: not final outcomes, skip recording ---
-                case 'acknowledgment':
-                case 'fee_request':
-                case 'wrong_agency':
-                case 'portal_redirect':
-                case 'more_info_needed':
-                case 'question':
-                case 'other':
-                default:
-                    // Not a final outcome — don't set outcome_recorded so the
-                    // real outcome gets captured when a definitive response arrives
-                    return;
-            }
-
-            // Check if fee was waived
-            if (analysis.extracted_fee_amount === 0 ||
-                (analysis.key_points && analysis.key_points.some(p =>
-                    p.toLowerCase().includes('waived') || p.toLowerCase().includes('no fee')
-                ))) {
-                feeWaived = true;
-            }
-
-            // Calculate response time
-            const responseTimeDays = caseData.send_date ?
-                Math.floor((new Date(messageData.received_at) - new Date(caseData.send_date)) / (1000 * 60 * 60 * 24)) :
-                null;
-
-            // Get the strategy that was used
-            const strategy = caseData.strategy_used || {};
-
-            // Record the outcome
-            await adaptiveLearning.recordOutcome(caseData.id, strategy, {
-                type: outcomeType,
-                response_time_days: responseTimeDays,
-                fee_waived: feeWaived
-            });
-
-            // Mark outcome as recorded
-            await db.query(
-                'UPDATE cases SET outcome_recorded = TRUE, outcome_type = $1 WHERE id = $2',
-                [outcomeType, caseData.id]
-            );
-
-            console.log(`Recorded learning outcome for case ${caseData.id}: ${outcomeType}`);
-        } catch (error) {
-            console.error('Error recording outcome for learning:', error);
-        }
+        return;
     }
 
     /**
