@@ -66,6 +66,65 @@ describe('decision trace service', function () {
     sinon.assert.notCalled(db.completeDecisionTrace);
   });
 
+  it('always creates a trace row when runId and caseId are present', async function () {
+    const db = {
+      createDecisionTrace: sinon.stub().resolves({ id: 101 }),
+      completeDecisionTrace: sinon.stub().resolves({ id: 101 }),
+    };
+
+    // Simulate all 4 task types that must create traces
+    const taskTypes = [
+      'process-initial-request',
+      'process-inbound',
+      'process-followup',
+      'submit-portal',
+    ];
+
+    for (const taskType of taskTypes) {
+      db.createDecisionTrace.resetHistory();
+      db.completeDecisionTrace.resetHistory();
+
+      const tracker = await createDecisionTraceTracker(db, {
+        taskType,
+        runId: 10,
+        caseId: 20,
+        messageId: 30,
+      });
+
+      sinon.assert.calledOnce(db.createDecisionTrace);
+      const createArgs = db.createDecisionTrace.getCall(0).args[0];
+      assert.strictEqual(createArgs.run_id, 10);
+      assert.strictEqual(createArgs.case_id, 20);
+      assert.strictEqual(createArgs.message_id, 30);
+      assert.strictEqual(createArgs.node_trace.taskType, taskType);
+
+      // Completing should persist
+      tracker.markOutcome('completed', { success: true });
+      await tracker.complete();
+      sinon.assert.calledOnce(db.completeDecisionTrace);
+      assert.strictEqual(db.completeDecisionTrace.getCall(0).args[0], 101);
+    }
+  });
+
+  it('skips persistence when caseId is missing', async function () {
+    const db = {
+      createDecisionTrace: sinon.stub().resolves({ id: 102 }),
+      completeDecisionTrace: sinon.stub().resolves({ id: 102 }),
+    };
+
+    const tracker = await createDecisionTraceTracker(db, {
+      taskType: 'process-inbound',
+      runId: 10,
+      caseId: null,
+    });
+
+    tracker.markOutcome('completed');
+    await tracker.complete();
+
+    sinon.assert.notCalled(db.createDecisionTrace);
+    sinon.assert.notCalled(db.completeDecisionTrace);
+  });
+
   it('summarizes execution results without leaking nested objects', function () {
     const summary = summarizeExecutionResult({
       action: 'email_sent',

@@ -297,7 +297,7 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
 }
 
 async function buildReconciliationReport() {
-  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber] = await Promise.all([
+  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber, runsWithoutTraces] = await Promise.all([
     db.query(`
       WITH latest_analysis AS (
         SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
@@ -356,6 +356,16 @@ async function buildReconciliationReport() {
       ORDER BY c.created_at DESC
       LIMIT 20
     `),
+    db.query(`
+      SELECT ar.id as run_id, ar.case_id, ar.trigger_type, ar.status, ar.started_at
+      FROM agent_runs ar
+      LEFT JOIN decision_traces dt ON dt.run_id = ar.id
+      WHERE ar.started_at > NOW() - INTERVAL '7 days'
+        AND ar.status IN ('completed', 'failed')
+        AND dt.id IS NULL
+      ORDER BY ar.started_at DESC
+      LIMIT 20
+    `),
   ]);
 
   return {
@@ -403,6 +413,16 @@ async function buildReconciliationReport() {
         portal_url: r.portal_url,
         engine: r.last_portal_engine,
         portal_status: (r.last_portal_status || '').substring(0, 80),
+      })),
+    },
+    runs_without_traces: {
+      count: runsWithoutTraces.rows.length,
+      runs: runsWithoutTraces.rows.map(r => ({
+        run_id: r.run_id,
+        case_id: r.case_id,
+        trigger_type: r.trigger_type,
+        status: r.status,
+        started_at: r.started_at,
       })),
     },
   };

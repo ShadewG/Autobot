@@ -98,7 +98,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal) — createDecisionTraceTracker called in all 4 tasks, deployed v20260308.32
 - [x] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
 - [ ] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events
-- [ ] Add regression checks so new runs always create a `decision_traces` row
+- [x] Add regression checks so new runs always create a `decision_traces` row — added `runs_without_traces` section to reconciliation report (agent_runs without matching decision_traces in last 7 days); added unit tests verifying all 4 task types create traces and missing runId/caseId skips persistence
 
 #### Data Quality & Schema Cleanup
 - [x] Make `constraints_jsonb` sole source of truth — backfill mismatches, update all reads, remove legacy `constraints`
@@ -200,7 +200,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Create a repair queue for concrete classifier/handling mismatch cases observed in production: `25211`, `25171`, `25175` — triaged: 25171 closed (records already received); 25175 substatus updated to clarify fee decision needed; 25211 substatus updated to clarify partial delivery fee decision needed
 - [x] Monitor inbound messages with no `response_analysis`, especially non-portal rows with `processed_at IS NULL` — added `unanalyzed_inbound` section to reconciliation report (messages with case_id but no response_analysis and not processed)
 - [x] Add classifier consistency validation for impossible `requires_action` / `suggested_action` combinations before downstream routing uses them — added guard in classify-inbound.ts: if `requiresResponse=true` but `suggestedAction` is null, defaults to `"respond"` with a warning log
-- [ ] Review `partial_delivery` and `delivery` examples that are actually fee letters, acknowledgment letters, or mixed responses and add them to prompt tests
+- [x] Review `partial_delivery` and `delivery` examples that are actually fee letters, acknowledgment letters, or mixed responses and add them to prompt tests — audited all 3 production examples: case 25206 correctly classified; case 25211 (partial_delivery→should be fee_request, fee letter with no records delivered) and case 25171 (delivery→should be fee_request, "formal response" was actually a fee schedule). Added CRITICAL distinctions to classifier prompt for both `partial_delivery` and `delivery` intents to prevent fee letters from being misclassified
 - [ ] Review portal-closure and duplicate-request messages that are currently being classified as denials or rebuttal candidates
 - [ ] Review wrong-agency outputs where the suggested action is `respond` instead of reroute or research
 - [x] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed — added `detectPortalSystemEmail()` in portal-utils.js, wired into webhooks.js to skip analysis queue for portal system emails; backfilled 3 existing orphans
