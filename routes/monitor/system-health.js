@@ -9,7 +9,8 @@ const { db } = require('./_helpers');
 router.get('/system-health', async (req, res) => {
     try {
         const [stuckCases, orphanedRuns, staleProposals, overdueDeadlines, bouncedEmails, portalFailures] = await Promise.all([
-            // Stuck cases: needs_human_* status with no active proposal or running agent
+            // Stuck cases: needs_human_* status with no active proposal, agent run,
+            // pending phone call, or active portal task
             db.query(`
                 SELECT COUNT(*)::int AS count FROM cases c
                 WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
@@ -20,6 +21,14 @@ router.get('/system-health', async (req, res) => {
                   AND NOT EXISTS (
                       SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
                       AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
+                      AND pcq.status IN ('pending', 'claimed')
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
+                      AND pt.status IN ('PENDING', 'IN_PROGRESS')
                   )
                   AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
                   AND c.agency_name NOT LIKE 'Synthetic %'
@@ -105,6 +114,14 @@ router.get('/system-health/details', async (req, res) => {
               AND NOT EXISTS (
                   SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
                   AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
+                  AND pcq.status IN ('pending', 'claimed')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
+                  AND pt.status IN ('PENDING', 'IN_PROGRESS')
               )
               AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
               AND c.agency_name NOT LIKE 'Synthetic %'

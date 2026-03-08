@@ -63,6 +63,11 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures `(Discord notification via cron 8AM ET — 2026-03-08)`
 - [x] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions `(2026-03-08 - added persisted searchable \`error_events\`, \`error-tracking-service\`, /api/eval/errors, and wired eval/notion/cron failure capture)`
+- [x] Fix `stuck_cases` health logic so cases with active `phone_call_queue`, active portal work, or other durable human work items are not counted as "stuck" — added NOT EXISTS checks for `phone_call_queue` (pending/claimed) and `portal_tasks` (PENDING/IN_PROGRESS) in both count and details queries; all 7 listed false positives had `needs_phone_call` with pending phone queue entries
+- [ ] Split system-health reporting into true orphaned cases vs pending phone calls vs stale research handoffs vs stale proposals so operators can see what is actually broken
+- [ ] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets
+- [ ] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case
+- [ ] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF`
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
@@ -86,10 +91,18 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions
 - [x] Verify the email worker always calls the final execution update path after success
 
+#### Human Handoff & Recovery
+- [ ] When research concludes "wrong agency" or "manual lookup needed," create a durable operator work item instead of leaving the case paused with bare `RESEARCH_HANDOFF` (`25246`, `25249`, `25253`)
+- [ ] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases)
+- [ ] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`)
+- [ ] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically
+
 #### Operator Workflow
 - [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTED IN UI - Codex 2026-03-08 - bulk mode works on localhost:3001 static stack; Bulk Approve Cancel now closes cleanly without opening Bulk Dismiss)`
 - [x] Full-text case search across case name, agency name, subject, email content `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08 - detail page and mobile timeline verified at 390px; full page sweep not complete)`
+- [ ] Add a simple operator onboarding flow — first-run checklist for queue review, case detail, sync, constraints, and issue reporting
+- [ ] Add a lightweight changelog / release notes surface in the dashboard so operators can see what changed without reading commits
 
 ### P1 — Important for confidence
 
@@ -116,6 +129,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Sync portal task completion back to `executions` and `proposals` — case-reducer already updates proposals to EXECUTED on PORTAL_COMPLETED; backfilled 29 orphan portal_tasks with proposal_id from SUBMIT_PORTAL proposals
 - [x] Improve `portal_request_number` capture from submissions and inbound notifications — **AUDITED**: 3 capture paths exist: (1) Skyvern extraction in portal-agent-service-skyvern.js, (2) inbound email matching in sendgrid-service.js (primary source, captured 9 of 10 request numbers), (3) case-reducer PORTAL_COMPLETED sets from confirmationNumber. 16 portal-completed cases lack request_number because Skyvern didn't extract one and no inbound notification contained it. Backfilled case 25164 (MR-2026-6) from inbound subject. Remaining gaps are portal submissions where confirmation wasn't extractable
 - [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers
+- [ ] Fix portal approval propagation so an approved portal proposal cannot still hit `portal_submission_blocked` / "no approved proposal" and strand the case in `PENDING_HUMAN` (`25161`)
+- [ ] Reconcile portal auto-fail cleanup so a failed portal task cannot leave `ready_to_send` plus a stale pending fallback proposal / mismatched execution state (`25152`)
 
 #### Notion Sync
 - [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTED IN UI - Codex 2026-03-08 - control and last-synced date render correctly in the case actions menu on localhost:3001; sync action itself was not fired to avoid mutating live state)`
@@ -431,6 +446,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Proposals missing `case_agency_id` when derivable — 18 found, backfilled from primary case_agency
 - [x] Cases with agency email but no matching directory entry — now mitigated by research caching (persistResearch upserts to `agencies` table) + import validation (validateImportedCase checks `findAgencyByName`)
 - [x] Cases with bounced emails still in "awaiting_response" — 0 found (clean)
+- [ ] Cases in `needs_human_review` / `needs_phone_call` with no active proposal, no active agent run, and no pending phone/portal/human work item — should be zero
+- [ ] Cases with pending `phone_call_queue` or portal tasks still counted by system health as `stuck_cases` — should be zero
 
 ---
 
