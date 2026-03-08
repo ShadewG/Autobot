@@ -642,6 +642,267 @@ function PortalSubmissionsSection({ caseId }: { caseId: string }) {
   );
 }
 
+// ── Provider Payloads Section ─────────────────────────────────────────────
+
+interface ProviderPayloadMessage {
+  id: number;
+  direction: string;
+  message_type: string | null;
+  subject: string | null;
+  from_email: string | null;
+  to_email: string | null;
+  provider_payload: Record<string, unknown> | null;
+  created_at: string;
+  delivered_at: string | null;
+  bounced_at: string | null;
+  sendgrid_message_id: string | null;
+}
+
+interface ProviderPayloadExecution {
+  id: number;
+  proposal_id: number | null;
+  action_type: string;
+  status: string;
+  provider: string | null;
+  provider_payload: Record<string, unknown> | null;
+  created_at: string;
+  completed_at: string | null;
+  provider_message_id: string | null;
+  failure_stage: string | null;
+  failure_code: string | null;
+}
+
+interface ProviderPayloadEmailEvent {
+  id: number;
+  event_type: string;
+  provider_message_id: string | null;
+  raw_payload: Record<string, unknown> | null;
+  event_timestamp: string;
+}
+
+interface ProviderPayloadsResponse {
+  success: boolean;
+  case_id: number;
+  messages: ProviderPayloadMessage[];
+  executions: ProviderPayloadExecution[];
+  email_events: ProviderPayloadEmailEvent[];
+  summary: {
+    message_payload_count: number;
+    execution_payload_count: number;
+    email_event_count: number;
+  };
+}
+
+function directionBadge(direction: string) {
+  if (direction === "inbound")
+    return <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/30 text-[10px] px-1 py-0">IN</Badge>;
+  return <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px] px-1 py-0">OUT</Badge>;
+}
+
+function ExpandablePayloadRow({ children, payload }: { children: React.ReactNode; payload: Record<string, unknown> | null }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <>
+      <TableRow
+        className="hover:bg-muted/30 cursor-pointer"
+        onClick={() => payload && setExpanded(!expanded)}
+      >
+        {children}
+      </TableRow>
+      {expanded && payload && (
+        <TableRow className="hover:bg-transparent">
+          <TableCell colSpan={99} className="p-0">
+            <pre className="text-[10px] bg-muted/30 p-2 overflow-x-auto max-h-[300px] overflow-y-auto font-mono whitespace-pre-wrap break-all border-t border-border/30">
+              {JSON.stringify(payload, null, 2)}
+            </pre>
+          </TableCell>
+        </TableRow>
+      )}
+    </>
+  );
+}
+
+function ProviderPayloadsSection({ caseId }: { caseId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [data, setData] = useState<ProviderPayloadsResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleToggle = async () => {
+    const willOpen = !isOpen;
+    setIsOpen(willOpen);
+    if (willOpen && !hasLoaded) {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const result = await fetcher<ProviderPayloadsResponse>(
+          `/requests/${caseId}/provider-payloads`
+        );
+        setData(result);
+        setHasLoaded(true);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load provider payloads");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  const msgCount = data?.summary?.message_payload_count ?? 0;
+  const execCount = data?.summary?.execution_payload_count ?? 0;
+  const eventCount = data?.summary?.email_event_count ?? 0;
+
+  return (
+    <details open={isOpen || undefined} className="border-b border-border/50 group" onToggle={(e) => {
+      const open = (e.target as HTMLDetailsElement).open;
+      if (open && !isOpen) handleToggle();
+      else if (!open && isOpen) setIsOpen(false);
+    }}>
+      <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
+        Provider Payloads
+        {hasLoaded && (
+          <span className="ml-auto text-muted-foreground">
+            {msgCount} msg, {execCount} exec{eventCount > 0 ? `, ${eventCount} events` : ""}
+          </span>
+        )}
+      </summary>
+      <div className="px-3 pb-2">
+        {isLoading && (
+          <div className="flex items-center gap-2 py-3 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading provider payloads...
+          </div>
+        )}
+        {error && (
+          <div className="text-[10px] text-red-400 py-2">{error}</div>
+        )}
+        {hasLoaded && msgCount === 0 && execCount === 0 && !isLoading && (
+          <div className="text-[10px] text-muted-foreground py-2">No provider payloads recorded</div>
+        )}
+
+        {/* Messages sub-section */}
+        {hasLoaded && data && data.messages.length > 0 && (
+          <div className="mb-3">
+            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Messages</div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-[10px] h-6 px-1">Dir</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">Subject</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">From / To</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">Delivery</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1 text-right">When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.messages.map((msg) => (
+                  <ExpandablePayloadRow key={msg.id} payload={msg.provider_payload}>
+                    <TableCell className="text-[10px] px-1 py-1">
+                      {directionBadge(msg.direction)}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 max-w-[140px] truncate" title={msg.subject || undefined}>
+                      {msg.subject || "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground max-w-[120px] truncate" title={`${msg.from_email || ""} \u2192 ${msg.to_email || ""}`}>
+                      {msg.from_email ? msg.from_email.split("@")[0] : "\u2014"} {"\u2192"} {msg.to_email ? msg.to_email.split("@")[0] : "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1">
+                      {msg.bounced_at ? (
+                        <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-[10px] px-1 py-0">bounced</Badge>
+                      ) : msg.delivered_at ? (
+                        <Badge className="bg-green-500/15 text-green-400 border-green-500/30 text-[10px] px-1 py-0">delivered</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] px-1 py-0">pending</Badge>
+                      )}
+                      {msg.provider_payload && (
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 ml-1">payload</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground text-right whitespace-nowrap">
+                      {formatRelativeTime(msg.created_at)}
+                    </TableCell>
+                  </ExpandablePayloadRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {/* Executions sub-section */}
+        {hasLoaded && data && data.executions.length > 0 && (
+          <div className="mb-3">
+            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Executions</div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-[10px] h-6 px-1">Action</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">Status</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">Provider</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">Msg ID</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1 text-right">When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.executions.map((exec) => (
+                  <ExpandablePayloadRow key={exec.id} payload={exec.provider_payload}>
+                    <TableCell className="text-[10px] px-1 py-1 font-mono">
+                      {exec.action_type}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1">
+                      {portalStatusBadge(exec.status)}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground">
+                      {exec.provider || "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground font-mono max-w-[100px] truncate" title={exec.provider_message_id || undefined}>
+                      {exec.provider_message_id ? exec.provider_message_id.slice(0, 12) + "\u2026" : "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground text-right whitespace-nowrap">
+                      {formatRelativeTime(exec.created_at)}
+                    </TableCell>
+                  </ExpandablePayloadRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+
+        {/* Email Events sub-section */}
+        {hasLoaded && data && data.email_events.length > 0 && (
+          <div>
+            <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mb-1">Email Events</div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-[10px] h-6 px-1">Event</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1">Provider Msg ID</TableHead>
+                  <TableHead className="text-[10px] h-6 px-1 text-right">When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.email_events.map((evt) => (
+                  <ExpandablePayloadRow key={evt.id} payload={evt.raw_payload}>
+                    <TableCell className="text-[10px] px-1 py-1">
+                      <Badge variant="outline" className="text-[10px] px-1 py-0">{evt.event_type}</Badge>
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground font-mono max-w-[120px] truncate" title={evt.provider_message_id || undefined}>
+                      {evt.provider_message_id || "\u2014"}
+                    </TableCell>
+                    <TableCell className="text-[10px] px-1 py-1 text-muted-foreground text-right whitespace-nowrap">
+                      {formatRelativeTime(evt.event_timestamp)}
+                    </TableCell>
+                  </ExpandablePayloadRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 function DetailV2Content() {
@@ -2709,6 +2970,7 @@ function DetailV2Content() {
               )}
               <EventLedgerSection caseId={id!} />
               <PortalSubmissionsSection caseId={id!} />
+              <ProviderPayloadsSection caseId={id!} />
               {hasPortalHistory && (
                 <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
                   <PortalLiveView caseId={id!} portalTaskUrl={request.last_portal_task_url} isLive={false} />
@@ -2880,6 +3142,9 @@ function DetailV2Content() {
 
               {/* PORTAL SUBMISSIONS */}
               <PortalSubmissionsSection caseId={id!} />
+
+              {/* PROVIDER PAYLOADS */}
+              <ProviderPayloadsSection caseId={id!} />
 
               {/* Portal history */}
               {hasPortalHistory && (
