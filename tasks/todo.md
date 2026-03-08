@@ -132,7 +132,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
 
 #### Dashboard API Hygiene
-- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301
+- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - app page routes appear to be affected too: /gated/ → /gated then 500, /requests/ → /requests 404, /eval/ → /eval 500, /analytics/ → /analytics 404, /requests/new → 500)`
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -201,8 +201,8 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Monitor inbound messages with no `response_analysis`, especially non-portal rows with `processed_at IS NULL` — added `unanalyzed_inbound` section to reconciliation report (messages with case_id but no response_analysis and not processed)
 - [x] Add classifier consistency validation for impossible `requires_action` / `suggested_action` combinations before downstream routing uses them — added guard in classify-inbound.ts: if `requiresResponse=true` but `suggestedAction` is null, defaults to `"respond"` with a warning log
 - [x] Review `partial_delivery` and `delivery` examples that are actually fee letters, acknowledgment letters, or mixed responses and add them to prompt tests — audited all 3 production examples: case 25206 correctly classified; case 25211 (partial_delivery→should be fee_request, fee letter with no records delivered) and case 25171 (delivery→should be fee_request, "formal response" was actually a fee schedule). Added CRITICAL distinctions to classifier prompt for both `partial_delivery` and `delivery` intents to prevent fee letters from being misclassified
-- [ ] Review portal-closure and duplicate-request messages that are currently being classified as denials or rebuttal candidates
-- [ ] Review wrong-agency outputs where the suggested action is `respond` instead of reroute or research
+- [x] Review portal-closure and duplicate-request messages that are currently being classified as denials or rebuttal candidates — audited 5 portal/closure denials: 4 were GovQA "request has been closed" system emails misclassified as denial (cases 25167, 25170); 1 correctly classified (case 25172). Added classifier guidance: portal closure system emails → `other`, not `denial`
+- [x] Review wrong-agency outputs where the suggested action is `respond` instead of reroute or research — audited 5 wrong_agency classifications: 2 had `respond` action (RA 1308 case 25206, RA 488 case 25169) instead of `find_correct_agency`. Added classifier guidance: wrong_agency intent should always use `find_correct_agency` as suggested_action
 - [x] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed — added `detectPortalSystemEmail()` in portal-utils.js, wired into webhooks.js to skip analysis queue for portal system emails; backfilled 3 existing orphans
 - [x] Exclude manual notes, synthetic QA replies, and phone-call update messages from the normal inbound classifier pipeline — phone call updates auto-classified in classify-inbound.ts; [TEST] mode already handled in webhooks.js; no synthetic QA messages found in production data
 - [ ] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately
@@ -220,6 +220,8 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 
 ---
+
+- [ ] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 (`/gated/` loops into `/gated` then 500, `/requests/` → `/requests` 404, `/eval/` → `/eval` 500, `/analytics/` → `/analytics` 404, `/requests/new` 500)
 
 ## Phase 2: Feedback & Continuous Improvement
 
@@ -327,7 +329,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
 - [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow
-- [x] Track eval results over time in `/eval` dashboard
+- [x] Track eval results over time in `/eval` dashboard `(UI BUG FOUND 2026-03-08 - direct load on localhost:3000 returns 500)`
 
 ### P2 — Optimization
 
@@ -372,7 +374,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Case Intake Beyond Notion
 - [x] API endpoint for programmatic case creation (`POST /api/cases`)
-- [x] Web form in dashboard for manual case creation
+- [x] Web form in dashboard for manual case creation `(UI BUG FOUND 2026-03-08 - /requests/new direct load returns 500 with missing error components)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
 #### Priority System
@@ -394,7 +396,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Per-team queue isolation
 
 #### Analytics & Reporting
-- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type
+- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(UI BUG FOUND 2026-03-08 - /analytics direct load 404s and requests missing Next chunks)`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(API + analytics page — 2026-03-08)`
 - [ ] Compliance report: correct statute, correct deadlines, correct custodian — per state
 - [x] Export case package for journalists: correspondence, records, timeline — one click
