@@ -294,10 +294,11 @@ router.get('/', async (req, res) => {
             }
         }
 
-        // Search by subject/agency name (V1: simple ILIKE)
+        // Full-text search across case fields + email content
         if (q) {
             params.push(`%${q}%`);
-            query += ` AND (c.subject_name ILIKE $${params.length} OR c.agency_name ILIKE $${params.length} OR c.case_name ILIKE $${params.length})`;
+            const p = params.length;
+            query += ` AND (c.subject_name ILIKE $${p} OR c.agency_name ILIKE $${p} OR c.case_name ILIKE $${p} OR CAST(c.id AS TEXT) LIKE $${p} OR EXISTS (SELECT 1 FROM messages m WHERE m.case_id = c.id AND (m.subject ILIKE $${p} OR m.body_text ILIKE $${p} OR m.from_email ILIKE $${p})))`;
         }
 
         // Sort: requires_human first (by next_due_at), then by last_activity
@@ -1529,6 +1530,16 @@ router.get('/:id/workspace', async (req, res) => {
             requestDetail.portal_url = null;
             requestDetail.portal_provider = null;
         }
+        // Populate case-level attachments with direction for UI display
+        requestDetail.attachments = (caseAttachments || []).map(att => ({
+            id: att.id,
+            filename: att.filename,
+            content_type: att.content_type,
+            size_bytes: att.size_bytes,
+            download_url: `/api/monitor/attachments/${att.id}/download`,
+            direction: att.message_id ? 'inbound' : 'outbound',
+        }));
+
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
         const dbStatus = String(rawCaseData?.status || '').toLowerCase();

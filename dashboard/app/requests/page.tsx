@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
 import { InboxSections } from "@/components/inbox-sections";
@@ -68,10 +68,24 @@ function sortByImpact(requests: RequestListItem[]): RequestListItem[] {
 
 export default function RequestsPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const { appendUser, isAdmin } = useUserFilter();
 
+  // Debounce search query (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const swrKey = useMemo(() => {
+    const base = appendUser("/requests");
+    if (!debouncedQuery) return base;
+    const sep = base.includes("?") ? "&" : "?";
+    return `${base}${sep}q=${encodeURIComponent(debouncedQuery)}`;
+  }, [appendUser, debouncedQuery]);
+
   const { data, error, isLoading, mutate } = useSWR<RequestsListResponse>(
-    appendUser("/requests"),
+    swrKey,
     fetcher,
     { refreshInterval: 30000 }
   );
@@ -180,18 +194,7 @@ export default function RequestsPage() {
       return { needsDecision: [], botWorking: [], waitingOnAgency: [] };
     }
 
-    let filtered = data.requests;
-
-    // Apply search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (r) =>
-          r.subject.toLowerCase().includes(query) ||
-          r.agency_name.toLowerCase().includes(query) ||
-          r.id.includes(query)
-      );
-    }
+    const filtered = data.requests;
 
     const needsDecisionItems: RequestListItem[] = [];
     const botWorkingItems: RequestListItem[] = [];
@@ -242,7 +245,7 @@ export default function RequestsPage() {
       botWorking: sortByImpact(botWorkingItems),
       waitingOnAgency: sortByImpact(waitingItems),
     };
-  }, [data, searchQuery]);
+  }, [data]);
 
   if (error) {
     return (
