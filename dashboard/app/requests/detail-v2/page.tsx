@@ -369,6 +369,149 @@ function CollapsibleSection({ title, defaultOpen = true, count, action, children
   );
 }
 
+// ── Event Ledger types & helpers ──────────────────────────────────────────
+
+interface EventLedgerRow {
+  id: number;
+  case_id: number;
+  event: string;
+  transition_key: string | null;
+  context: Record<string, any> | null;
+  mutations_applied: Record<string, any> | null;
+  projection: Record<string, any> | null;
+  created_at: string;
+}
+
+function eventTypeColor(event: string): string {
+  const e = event.toUpperCase();
+  if (e.includes("ERROR") || e.includes("FAIL") || e.includes("BOUNCE")) return "text-red-400 bg-red-500/10 border-red-700/40";
+  if (e.includes("NOTIF") || e.includes("ALERT") || e.includes("WARN") || e.includes("EMAIL_EVENT")) return "text-yellow-400 bg-yellow-500/10 border-yellow-700/40";
+  // State transitions / default = blue
+  return "text-blue-400 bg-blue-500/10 border-blue-700/40";
+}
+
+function eventDotColor(event: string): string {
+  const e = event.toUpperCase();
+  if (e.includes("ERROR") || e.includes("FAIL") || e.includes("BOUNCE")) return "bg-red-400";
+  if (e.includes("NOTIF") || e.includes("ALERT") || e.includes("WARN") || e.includes("EMAIL_EVENT")) return "bg-yellow-400";
+  return "bg-blue-400";
+}
+
+function summarizeContext(context: Record<string, any> | null): string | null {
+  if (!context || typeof context !== "object") return null;
+  const parts: string[] = [];
+  // Pick the most useful keys
+  const interestingKeys = ["action", "status", "from_status", "to_status", "trigger_type", "reason", "decision", "action_type", "proposal_id", "run_id", "error", "message"];
+  for (const key of interestingKeys) {
+    if (context[key] !== undefined && context[key] !== null) {
+      const val = typeof context[key] === "object" ? JSON.stringify(context[key]) : String(context[key]);
+      if (val.length < 120) parts.push(`${key}: ${val}`);
+    }
+  }
+  if (parts.length === 0) {
+    // Fallback: show first few keys
+    const keys = Object.keys(context).slice(0, 3);
+    for (const key of keys) {
+      const val = typeof context[key] === "object" ? JSON.stringify(context[key]) : String(context[key]);
+      if (val.length < 120) parts.push(`${key}: ${val}`);
+    }
+  }
+  return parts.length > 0 ? parts.join(" | ") : null;
+}
+
+function EventLedgerSection({ caseId }: { caseId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [events, setEvents] = useState<EventLedgerRow[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleToggle = async () => {
+    const willOpen = !isOpen;
+    setIsOpen(willOpen);
+    if (willOpen && !hasLoaded) {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await fetcher<{ success: boolean; count: number; events: EventLedgerRow[] }>(
+          `/requests/${caseId}/event-ledger`
+        );
+        setEvents(data.events || []);
+        setHasLoaded(true);
+      } catch (err: any) {
+        setError(err?.message || "Failed to load events");
+      } finally {
+        setIsLoading(false);
+      }
+    }
+  };
+
+  return (
+    <details open={isOpen || undefined} className="border-b border-border/50 group" onToggle={(e) => {
+      const open = (e.target as HTMLDetailsElement).open;
+      if (open && !isOpen) handleToggle();
+      else if (!open && isOpen) setIsOpen(false);
+    }}>
+      <summary className="px-3 py-1.5 cursor-pointer select-none flex items-center gap-2 text-[10px] uppercase tracking-widest text-muted-foreground font-medium hover:text-foreground list-none [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
+        Event Ledger
+        {hasLoaded && <span className="ml-auto text-muted-foreground">{events.length}</span>}
+      </summary>
+      <div className="px-3 pb-2">
+        {isLoading && (
+          <div className="flex items-center gap-2 py-3 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading events...
+          </div>
+        )}
+        {error && (
+          <div className="text-[10px] text-red-400 py-2">{error}</div>
+        )}
+        {hasLoaded && events.length === 0 && !isLoading && (
+          <div className="text-[10px] text-muted-foreground py-2">No events recorded</div>
+        )}
+        {hasLoaded && events.length > 0 && (
+          <div className="relative space-y-0">
+            {/* Timeline line */}
+            <div className="absolute left-[5px] top-2 bottom-2 w-px bg-border/50" />
+            {events.map((evt) => {
+              const ctx = summarizeContext(evt.context);
+              return (
+                <div key={evt.id} className="relative pl-5 py-1.5 group/evt">
+                  {/* Dot */}
+                  <div className={cn("absolute left-[3px] top-[10px] h-[5px] w-[5px] rounded-full", eventDotColor(evt.event))} />
+                  {/* Content */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={cn("text-[10px] font-medium px-1 py-0.5 rounded border", eventTypeColor(evt.event))}>
+                          {evt.event}
+                        </span>
+                        {evt.transition_key && (
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {evt.transition_key}
+                          </span>
+                        )}
+                      </div>
+                      {ctx && (
+                        <div className="text-[10px] text-muted-foreground mt-0.5 truncate" title={ctx}>
+                          {ctx}
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">
+                      {formatRelativeTime(evt.created_at)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 function DetailV2Content() {
@@ -2434,6 +2577,7 @@ function DetailV2Content() {
                   <Timeline events={timeline_events.slice(0, 20)} compact />
                 </CollapsibleSection>
               )}
+              <EventLedgerSection caseId={id!} />
               {hasPortalHistory && (
                 <CollapsibleSection title="PORTAL HISTORY" defaultOpen={false}>
                   <PortalLiveView caseId={id!} portalTaskUrl={request.last_portal_task_url} isLive={false} />
@@ -2599,6 +2743,9 @@ function DetailV2Content() {
                   <Timeline events={timeline_events.slice(0, 20)} compact />
                 </CollapsibleSection>
               )}
+
+              {/* EVENT LEDGER */}
+              <EventLedgerSection caseId={id!} />
 
               {/* Portal history */}
               {hasPortalHistory && (
