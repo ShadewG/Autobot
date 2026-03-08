@@ -37,6 +37,7 @@ import {
   ChevronRight,
   Download,
 } from "lucide-react";
+import { DecisionQualityChart } from "@/components/decision-quality-chart";
 
 interface EvalCase {
   id: number;
@@ -381,6 +382,9 @@ export default function EvalPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Decision Quality Trend */}
+      <DecisionQualityChart />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Eval Cases Table */}

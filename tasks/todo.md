@@ -101,8 +101,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Add regression checks so new runs always create a `decision_traces` row
 
 #### Data Quality & Schema Cleanup
-- [ ] Make `constraints_jsonb` sole source of truth — backfill mismatches, update all reads, remove legacy `constraints`
-- [ ] Make `scope_items_jsonb` sole source of truth — same process
+- [x] Make `constraints_jsonb` sole source of truth — backfill mismatches, update all reads, remove legacy `constraints`
+- [x] Make `scope_items_jsonb` sole source of truth — same process
 - [ ] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive
 - [ ] Remove `cases.langgraph_thread_id` reliance
 - [ ] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks
@@ -144,31 +144,31 @@ Ordered by priority within each phase. Check items off as completed.
 
 Eval run scored 61 cases: 36 correct (59%), 25 wrong (41%). All failures are WRONG_ROUTING (23) or CONTEXT_MISSED (2). Five root causes identified below, with fixes.
 
-**Root Cause 1: ESCALATE overuse (10 failures)** 🔧 IN PROGRESS (Claude-main)
+**Root Cause 1: ESCALATE overuse (10 failures)** ✅ DONE
 The AI escalates to human review when it has enough info to act. Examples: agency says "Request denied" → AI escalates instead of sending rebuttal. Agency says "narrow to 3 years" → AI escalates instead of sending clarification. Agency says "contact State Police" → AI escalates instead of researching agency.
-- [ ] Add decision prompt rule: "ESCALATE is a last resort. If the trigger message contains a clear agency request, denial, fee notice, or referral, take the corresponding action (SEND_REBUTTAL, SEND_CLARIFICATION, RESEARCH_AGENCY, NEGOTIATE_FEE). Only ESCALATE when the situation is genuinely ambiguous or dangerous."
-- [ ] Add examples to decision prompt: terse denial → SEND_REBUTTAL, scope narrowing → SEND_CLARIFICATION, wrong agency with referral → RESEARCH_AGENCY, identity verification → SEND_CLARIFICATION
+- [x] Add decision prompt rule: "ESCALATE is a last resort. If the trigger message contains a clear agency request, denial, fee notice, or referral, take the corresponding action (SEND_REBUTTAL, SEND_CLARIFICATION, RESEARCH_AGENCY, NEGOTIATE_FEE). Only ESCALATE when the situation is genuinely ambiguous or dangerous."
+- [x] Add examples to decision prompt: terse denial → SEND_REBUTTAL, scope narrowing → SEND_CLARIFICATION, wrong agency with referral → RESEARCH_AGENCY, identity verification → SEND_CLARIFICATION
 
-**Root Cause 2: SEND_REBUTTAL vs SEND_APPEAL confusion (3 failures)** 🔧 IN PROGRESS (Claude-main)
+**Root Cause 2: SEND_REBUTTAL vs SEND_APPEAL confusion (3 failures)** ✅ DONE
 When agency cites privilege or provides Vaughn index (formal adverse determination), AI sends informal rebuttal instead of formal appeal. Risk: missed appeal deadlines.
-- [ ] Add decision prompt rule: "When agency issues a formal denial citing specific exemptions, provides a Vaughn index, or asserts categorical withholding under privilege, the next step is SEND_APPEAL (not SEND_REBUTTAL). Rebuttals are for vague/informal denials. Appeals are for formal exemption-based denials with cited statutes."
-- [ ] Add lesson: "Attorney-client privilege / work product assertions = formal denial → SEND_APPEAL"
+- [x] Add decision prompt rule: "When agency issues a formal denial citing specific exemptions, provides a Vaughn index, or asserts categorical withholding under privilege, the next step is SEND_APPEAL (not SEND_REBUTTAL). Rebuttals are for vague/informal denials. Appeals are for formal exemption-based denials with cited statutes."
+- [x] Add lesson: "Attorney-client privilege / work product assertions = formal denial → SEND_APPEAL"
 
-**Root Cause 3: Missing action types RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE (5 failures)** 🔧 IN PROGRESS (Claude-main)
+**Root Cause 3: Missing action types RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE (5 failures)** ✅ DONE
 AI doesn't know how to handle partial approvals (some records released, some withheld) or fee warnings without dollar amounts. Defaults to NONE or ESCALATE.
-- [ ] Verify RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE are in the allowed actions list in `decide-next-action.ts`
-- [ ] If not present, add them with clear descriptions: RESPOND_PARTIAL_APPROVAL = "acknowledge receipt, request exemption citations for withheld records, ask about segregability and appeal rights"; NEGOTIATE_FEE = "request written estimate, set not-to-exceed cap, ask to be contacted before charges incurred"
-- [ ] Add decision prompt rule: "When agency releases some records but withholds others, use RESPOND_PARTIAL_APPROVAL. When agency mentions fees but hasn't given a dollar amount, use NEGOTIATE_FEE (never ACCEPT_FEE without a specific amount)."
+- [x] Verify RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE are in the allowed actions list in `decide-next-action.ts`
+- [x] If not present, add them with clear descriptions: RESPOND_PARTIAL_APPROVAL = "acknowledge receipt, request exemption citations for withheld records, ask about segregability and appeal rights"; NEGOTIATE_FEE = "request written estimate, set not-to-exceed cap, ask to be contacted before charges incurred"
+- [x] Add decision prompt rule: "When agency releases some records but withholds others, use RESPOND_PARTIAL_APPROVAL. When agency mentions fees but hasn't given a dollar amount, use NEGOTIATE_FEE (never ACCEPT_FEE without a specific amount)."
 
-**Root Cause 4: Monitor-dismissed cases getting actions (7 failures, all score 1)** 🔧 IN PROGRESS (Claude-main)
+**Root Cause 4: Monitor-dismissed cases getting actions (7 failures, all score 1)** ✅ DONE
 Cases with no trigger message that should be DISMISSED (stale proposals, wrong agency, synthetic QA). AI invents actions instead of recognizing there's nothing to do. 4 of these specifically route to wrong jurisdiction (Lubbock TX portal for FL/GA/IL cases).
-- [ ] Add decision prompt rule: "If there is no trigger message (no new inbound email or event), strongly prefer DISMISS or NONE. Do not fabricate actions without a clear trigger."
-- [ ] Add guard in `decide-next-action.ts`: if no trigger message AND case status is not actively awaiting action, default to DISMISS without AI call
-- [ ] Investigate why Lubbock TX portal is being selected for unrelated jurisdictions — likely a stale/default portal_url on cases or a bug in portal URL resolution
+- [x] Add decision prompt rule: "If there is no trigger message (no new inbound email or event), strongly prefer DISMISS or NONE. Do not fabricate actions without a clear trigger."
+- [x] Add guard in `decide-next-action.ts`: if no trigger message AND case status is not actively awaiting action, default to DISMISS without AI call
+- [x] Investigate why Lubbock TX portal is being selected for unrelated jurisdictions — fixed cross-state agency matching with NULLIF(state, '{}') and generic name guard
 
-**Root Cause 5: RESEARCH_AGENCY vs direct response confusion (3 failures)** 🔧 IN PROGRESS (Claude-main)
+**Root Cause 5: RESEARCH_AGENCY vs direct response confusion (3 failures)** ✅ DONE
 AI sometimes wants to research before responding (when it should just respond) or responds (when it should research first). Pattern: vague "policy" denial → should rebut, but AI researches. "No duty to create" → should research what records exist, but AI reformulates.
-- [ ] Add decision prompt rule: "For vague denials citing 'policy' without statutory authority, SEND_REBUTTAL requesting the specific legal basis. For 'no duty to create' responses, RESEARCH_AGENCY to find what records the agency actually maintains before reformulating."
+- [x] Add decision prompt rule: "For vague denials citing 'policy' without statutory authority, SEND_REBUTTAL requesting the specific legal basis. For 'no duty to create' responses, RESEARCH_AGENCY to find what records the agency actually maintains before reformulating."
 
 #### Prompt & Classifier Alignment
 - [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract
@@ -206,6 +206,16 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [ ] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed
 - [ ] Exclude manual notes, synthetic QA replies, and phone-call update messages from the normal inbound classifier pipeline
 - [ ] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately
+
+#### Verification Follow-Ups (live checks, 2026-03-08)
+- [ ] Fix live `/api/eval/quality-report` route against the current schema — it currently errors with `column "human_action" does not exist`
+- [ ] Verify live rollout of `decision_traces` writes — table exists but current live row count is `0`
+- [ ] Verify live rollout of `successful_examples` capture — table exists but current live row count is `0`
+- [ ] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0`
+- [ ] Verify live rollout of `portal_submissions` capture — table exists but current live row count is `0`
+- [ ] Finish live schema rollout for proposal AI metadata — `response_analysis` has model metadata columns, but `proposals` is still missing `model_id`, `prompt_tokens`, `completion_tokens`, and `latency_ms`
+- [ ] Verify AI model metadata is actually being written on new analyses — live `response_analysis` currently has `0` rows with `model_id`
+- [ ] Verify `last_notion_synced_at` is actually populated after case syncs — live schema has the column, but current non-null row count is `0`
 
 ---
 
@@ -252,7 +262,7 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] Every ADJUST auto-creates an eval case: original AI action as predicted, human's correction as ground truth
 - [x] Every DISMISS auto-creates an eval case tagged "dismissed"
 - [x] Track metrics: adjust rate, dismiss rate, approval rate — by action type, agency, classification
-- [ ] Dashboard chart: decision quality over time (7d rolling)
+- [x] Dashboard chart: decision quality over time (7d rolling)
 
 #### Bug Reporting
 - [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes

@@ -492,6 +492,58 @@ router.get('/summary', async (req, res) => {
 });
 
 /**
+ * GET /api/eval/decision-quality-trend?days=30
+ * Daily approval/adjust/dismiss rates for time-series charting.
+ */
+router.get('/decision-quality-trend', async (req, res) => {
+    try {
+        const days = Math.min(Math.max(parseInt(req.query.days) || 30, 7), 90);
+
+        const result = await db.query(`
+            WITH daily_decisions AS (
+                SELECT
+                    DATE(p.human_decided_at) AS decision_date,
+                    COUNT(*) FILTER (WHERE UPPER(COALESCE(p.human_decision->>'action', '')) IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
+                    COUNT(*) FILTER (WHERE UPPER(COALESCE(p.human_decision->>'action', '')) = 'APPROVE')::int AS approve_count,
+                    COUNT(*) FILTER (WHERE UPPER(COALESCE(p.human_decision->>'action', '')) = 'ADJUST')::int AS adjust_count,
+                    COUNT(*) FILTER (WHERE UPPER(COALESCE(p.human_decision->>'action', '')) = 'DISMISS')::int AS dismiss_count
+                FROM proposals p
+                WHERE p.human_decided_at > NOW() - INTERVAL '1 day' * $1
+                  AND UPPER(COALESCE(p.human_decision->>'action', '')) IN ('APPROVE', 'ADJUST', 'DISMISS')
+                GROUP BY DATE(p.human_decided_at)
+                ORDER BY decision_date ASC
+            )
+            SELECT
+                decision_date,
+                total_reviews,
+                approve_count,
+                adjust_count,
+                dismiss_count
+            FROM daily_decisions
+        `, [days]);
+
+        const trend = result.rows.map(row => {
+            const total = Number(row.total_reviews) || 0;
+            return {
+                date: row.decision_date,
+                total_reviews: total,
+                approve_count: Number(row.approve_count) || 0,
+                adjust_count: Number(row.adjust_count) || 0,
+                dismiss_count: Number(row.dismiss_count) || 0,
+                approval_rate: rate(Number(row.approve_count) || 0, total),
+                adjust_rate: rate(Number(row.adjust_count) || 0, total),
+                dismiss_rate: rate(Number(row.dismiss_count) || 0, total),
+            };
+        });
+
+        res.json({ success: true, days, trend });
+    } catch (error) {
+        console.error('Error fetching decision quality trend:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /api/eval/quality-report?windowDays=7
  * Build the backend weekly quality report used by cron/reporting.
  */
