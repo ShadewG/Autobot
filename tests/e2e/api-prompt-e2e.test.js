@@ -189,7 +189,8 @@ async function triggerInbound(caseId, messageId) {
  * Get case details
  */
 async function getCase(caseId) {
-    return get(`/api/requests/${caseId}`);
+    const response = await get(`/api/requests/${caseId}`);
+    return response.request || response;
 }
 
 /**

@@ -33,6 +33,22 @@ function createSyntheticCasePageId() {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
+function createDeterministicSyntheticId(seed) {
+  return crypto.createHash('sha256').update(String(seed || crypto.randomUUID())).digest('hex').slice(0, 32);
+}
+
+function extractFirstUrl(text) {
+  if (!text) return null;
+  const match = String(text).match(/https?:\/\/[^\s<>"')]+/i);
+  return match ? match[0] : null;
+}
+
+function cleanForwardedSubject(subject) {
+  return String(subject || '')
+    .replace(/^\s*(fwd?|fw):\s*/i, '')
+    .trim();
+}
+
 /**
  * Extract Notion page ID from various URL formats
  *
@@ -328,6 +344,131 @@ router.post('/', async (req, res) => {
     });
   } catch (error) {
     logger.error('Error creating case via API', { error: error.message, case_name, agency_name });
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /cases/email-intake
+ *
+ * Create a synthetic intake case from a forwarded article/link email.
+ * This is intentionally conservative: if agency/contact info is not known yet,
+ * the case is created in a human-review state for later enrichment.
+ *
+ * Auth: X-Service-Key header checked against FOIA_SERVICE_KEY.
+ */
+router.post('/email-intake', async (req, res) => {
+  if (!hasValidServiceKey(req)) {
+    return res.status(401).json({ success: false, error: 'Invalid service key' });
+  }
+
+  const {
+    forwarded_subject = '',
+    forwarded_body_text = '',
+    forwarded_from = null,
+    source_article_url = null,
+    source_article_id = null,
+    case_name = null,
+    subject_name = null,
+    agency_name = null,
+    state = null,
+    additional_details = null,
+    tags = [],
+    priority = 0,
+    user_id = null,
+  } = req.body || {};
+
+  const extractedUrl = source_article_url || extractFirstUrl(forwarded_body_text);
+  const cleanedSubject = cleanForwardedSubject(forwarded_subject);
+  const resolvedCaseName = case_name || cleanedSubject || (extractedUrl ? `Article Intake: ${extractedUrl}` : null);
+  const resolvedSubjectName = subject_name || cleanedSubject || 'Unknown subject';
+  const resolvedAgencyName = agency_name || 'Unknown agency';
+  const normalizedState = normalizeStateCode(state) || parseStateFromAgencyName(resolvedAgencyName) || null;
+
+  if (!resolvedCaseName) {
+    return res.status(400).json({
+      success: false,
+      error: 'A forwarded subject, case_name, or source_article_url is required',
+    });
+  }
+
+  if (!extractedUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'A source article URL is required in source_article_url or forwarded_body_text',
+    });
+  }
+
+  try {
+    const syntheticId = createDeterministicSyntheticId(source_article_id || extractedUrl);
+    const existing = await db.getCaseByNotionId(syntheticId);
+    if (existing) {
+      return res.json({
+        success: true,
+        message: 'Case already exists (dedup)',
+        case_id: existing.id,
+        case: {
+          id: existing.id,
+          notion_page_id: existing.notion_page_id,
+          case_name: existing.case_name,
+          subject_name: existing.subject_name,
+          agency_name: existing.agency_name,
+          state: existing.state,
+          status: existing.status,
+        },
+      });
+    }
+
+    const details = [
+      additional_details || null,
+      `Source article: ${extractedUrl}`,
+      forwarded_from ? `Forwarded from: ${forwarded_from}` : null,
+      cleanedSubject ? `Forwarded subject: ${cleanedSubject}` : null,
+    ].filter(Boolean).join('\n');
+
+    const newCase = await db.createCase({
+      notion_page_id: syntheticId,
+      case_name: resolvedCaseName,
+      subject_name: resolvedSubjectName,
+      agency_name: resolvedAgencyName,
+      agency_email: null,
+      alternate_agency_email: null,
+      portal_url: null,
+      portal_provider: null,
+      state: normalizedState,
+      incident_date: null,
+      incident_location: null,
+      requested_records: ['Review forwarded article and create request strategy'],
+      additional_details: details,
+      tags: Array.from(new Set([...(Array.isArray(tags) ? tags : []), 'source:email_intake'])),
+      priority,
+      user_id,
+      status: 'needs_human_review',
+    });
+
+    await db.logActivity('case_created_email_intake', `Created case "${resolvedCaseName}" from forwarded article email`, {
+      case_id: newCase.id,
+      actor_type: 'system',
+      source_service: 'email_intake',
+      source_article_url: extractedUrl,
+      forwarded_from,
+    });
+
+    return res.status(201).json({
+      success: true,
+      case_id: newCase.id,
+      case: {
+        id: newCase.id,
+        notion_page_id: newCase.notion_page_id,
+        case_name: newCase.case_name,
+        subject_name: newCase.subject_name,
+        agency_name: newCase.agency_name,
+        state: newCase.state,
+        status: newCase.status,
+      },
+    });
+  } catch (error) {
+    logger.error('Error creating case via email intake', { error: error.message, forwarded_subject });
     return res.status(500).json({ success: false, error: error.message });
   }
 });
