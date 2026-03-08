@@ -708,6 +708,13 @@ function MonitorPageContent() {
     total_issues: number;
     metrics: {
       stuck_cases: number;
+      stuck_breakdown?: {
+        needs_human_review: number;
+        needs_phone_call: number;
+        needs_contact_info: number;
+        needs_human_fee_approval: number;
+        research_handoff: number;
+      };
       orphaned_runs: number;
       stale_proposals: number;
       overdue_deadlines: number;
@@ -1619,7 +1626,16 @@ function MonitorPageContent() {
           <CollapsibleContent>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border border border-t-0">
               {[
-                { label: "Stuck cases", value: healthData.metrics.stuck_cases, href: "/requests?status=needs_human_review" },
+                ...(healthData.metrics.stuck_breakdown && healthData.metrics.stuck_cases > 0
+                  ? [
+                      { label: "Stuck: review", value: healthData.metrics.stuck_breakdown.needs_human_review, href: "/requests?status=needs_human_review" },
+                      { label: "Stuck: phone", value: healthData.metrics.stuck_breakdown.needs_phone_call },
+                      { label: "Stuck: contact", value: healthData.metrics.stuck_breakdown.needs_contact_info },
+                      { label: "Stuck: fee", value: healthData.metrics.stuck_breakdown.needs_human_fee_approval },
+                      { label: "Stuck: research handoff", value: healthData.metrics.stuck_breakdown.research_handoff },
+                    ].filter(m => m.value > 0)
+                  : [{ label: "Stuck cases", value: healthData.metrics.stuck_cases, href: "/requests?status=needs_human_review" }]
+                ),
                 { label: "Orphaned runs", value: healthData.metrics.orphaned_runs, href: "/runs" },
                 { label: "Stale proposals", value: healthData.metrics.stale_proposals },
                 { label: "Overdue deadlines", value: healthData.metrics.overdue_deadlines },

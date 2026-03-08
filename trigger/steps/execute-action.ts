@@ -714,7 +714,7 @@ export async function executeAction(
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           targetStatus: "needs_phone_call",
           substatus: "phone_followup_proposed",
-          pauseReason: "RESEARCH_HANDOFF",
+          pauseReason: "PHONE_ESCALATION",
         });
       } else {
         await caseRuntime.transitionCaseRuntime(caseId, "PROPOSAL_EXECUTED", { proposalId });
@@ -1129,7 +1129,7 @@ export async function executeAction(
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           targetStatus: "needs_phone_call",
           substatus: "agency_research_failed",
-          pauseReason: "RESEARCH_HANDOFF",
+          pauseReason: "PHONE_ESCALATION",
         });
         executionResult = { action: "research_failed", followup: "phone_handoff_required" };
         break;
@@ -1410,7 +1410,7 @@ export async function executeAction(
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
           targetStatus: "needs_phone_call",
           substatus: "agency_research_complete",
-          pauseReason: "RESEARCH_HANDOFF",
+          pauseReason: "PHONE_ESCALATION",
         });
         executionResult = { action: "research_complete", followup: "phone_handoff_no_new_channel" };
         break;

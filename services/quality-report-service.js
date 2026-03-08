@@ -297,7 +297,7 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
 }
 
 async function buildReconciliationReport() {
-  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber, runsWithoutTraces, attachmentGaps] = await Promise.all([
+  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber, runsWithoutTraces, attachmentGaps, deadEndCases] = await Promise.all([
     db.query(`
       WITH latest_analysis AS (
         SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
@@ -381,6 +381,31 @@ async function buildReconciliationReport() {
       FROM messages m
       JOIN attachments a ON a.message_id = m.id
     `),
+    db.query(`
+      SELECT c.id as case_id, c.agency_name, c.state, c.status, c.pause_reason, c.updated_at
+      FROM cases c
+      WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+        AND NOT EXISTS (
+            SELECT 1 FROM proposals p WHERE p.case_id = c.id
+            AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
+            AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM phone_call_queue pcq WHERE pcq.case_id = c.id
+            AND pcq.status IN ('pending', 'claimed')
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM portal_tasks pt WHERE pt.case_id = c.id
+            AND pt.status IN ('PENDING', 'IN_PROGRESS')
+        )
+        AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+        AND c.agency_name NOT LIKE 'Synthetic %'
+      ORDER BY c.updated_at DESC
+      LIMIT 20
+    `),
   ]);
 
   return {
@@ -448,6 +473,17 @@ async function buildReconciliationReport() {
         Number(attachmentGaps.rows[0]?.has_extraction) || 0,
         Number(attachmentGaps.rows[0]?.inbound_with_attachments) || 0
       ),
+    },
+    dead_end_cases: {
+      count: deadEndCases.rows.length,
+      cases: deadEndCases.rows.map(r => ({
+        case_id: r.case_id,
+        agency_name: r.agency_name,
+        state: r.state,
+        status: r.status,
+        pause_reason: r.pause_reason,
+        updated_at: r.updated_at,
+      })),
     },
   };
 }

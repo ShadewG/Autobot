@@ -1051,9 +1051,9 @@ router.get('/batch/:batchId/status', async (req, res) => {
                 id, case_name, agency_name, state, status, send_date,
                 last_response_date, portal_url
             FROM cases
-            WHERE tags @> $1::jsonb
+            WHERE tags @> $1::text[]
             ORDER BY id ASC
-        `, [JSON.stringify([tag])]);
+        `, [[tag]]);
 
         if (result.rows.length === 0) {
             return res.status(404).json({ success: false, error: 'Batch not found' });

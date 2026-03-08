@@ -317,7 +317,8 @@ async function runFixture(fixture, options = {}) {
 
         const analysis = await getAIService().analyzeResponse(
             fixture.message,
-            fixture.case_data || {}
+            fixture.case_data || {},
+            { skipDbWrite: true }
         );
         result.analysis = analysis;
 

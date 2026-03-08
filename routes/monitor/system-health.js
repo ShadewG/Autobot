@@ -8,11 +8,11 @@ const { db } = require('./_helpers');
  */
 router.get('/system-health', async (req, res) => {
     try {
-        const [stuckCases, orphanedRuns, staleProposals, overdueDeadlines, bouncedEmails, portalFailures] = await Promise.all([
-            // Stuck cases: needs_human_* status with no active proposal, agent run,
-            // pending phone call, or active portal task
+        const [stuckCasesGrouped, orphanedRuns, staleProposals, overdueDeadlines, bouncedEmails, portalFailures] = await Promise.all([
+            // Stuck cases grouped by status and pause_reason
             db.query(`
-                SELECT COUNT(*)::int AS count FROM cases c
+                SELECT c.status, COALESCE(c.pause_reason, 'none') AS pause_reason, COUNT(*)::int AS count
+                FROM cases c
                 WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
                   AND NOT EXISTS (
                       SELECT 1 FROM proposals p WHERE p.case_id = c.id
@@ -32,6 +32,7 @@ router.get('/system-health', async (req, res) => {
                   )
                   AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
                   AND c.agency_name NOT LIKE 'Synthetic %'
+                GROUP BY c.status, c.pause_reason
             `),
 
             // Orphaned runs: running for > 2h
@@ -74,8 +75,28 @@ router.get('/system-health', async (req, res) => {
             `),
         ]);
 
+        // Build stuck cases breakdown from grouped query
+        const stuckBreakdown = {
+            needs_human_review: 0,
+            needs_phone_call: 0,
+            needs_contact_info: 0,
+            needs_human_fee_approval: 0,
+            research_handoff: 0,
+        };
+        let stuckTotal = 0;
+        for (const row of stuckCasesGrouped.rows) {
+            stuckTotal += row.count;
+            if (stuckBreakdown[row.status] !== undefined) {
+                stuckBreakdown[row.status] += row.count;
+            }
+            if (row.pause_reason === 'RESEARCH_HANDOFF') {
+                stuckBreakdown.research_handoff += row.count;
+            }
+        }
+
         const metrics = {
-            stuck_cases: stuckCases.rows[0]?.count || 0,
+            stuck_cases: stuckTotal,
+            stuck_breakdown: stuckBreakdown,
             orphaned_runs: orphanedRuns.rows[0]?.count || 0,
             stale_proposals: staleProposals.rows[0]?.count || 0,
             overdue_deadlines: overdueDeadlines.rows[0]?.count || 0,

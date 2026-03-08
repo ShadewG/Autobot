@@ -141,7 +141,7 @@ class FollowupScheduler {
           LOWER(c.status) = ANY($3::text[])
           OR (
             LOWER(c.status) = ANY($4::text[])
-            AND UPPER(COALESCE(c.pause_reason, '')) = 'RESEARCH_HANDOFF'
+            AND UPPER(COALESCE(c.pause_reason, '')) IN ('RESEARCH_HANDOFF', 'PHONE_ESCALATION')
           )
         )
         AND NOT EXISTS (

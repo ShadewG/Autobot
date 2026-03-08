@@ -64,10 +64,10 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures `(Discord notification via cron 8AM ET — 2026-03-08)`
 - [x] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions `(2026-03-08 - added persisted searchable \`error_events\`, \`error-tracking-service\`, /api/eval/errors, and wired eval/notion/cron failure capture)`
 - [x] Fix `stuck_cases` health logic so cases with active `phone_call_queue`, active portal work, or other durable human work items are not counted as "stuck" — added NOT EXISTS checks for `phone_call_queue` (pending/claimed) and `portal_tasks` (PENDING/IN_PROGRESS) in both count and details queries; all 7 listed false positives had `needs_phone_call` with pending phone queue entries
-- [ ] Split system-health reporting into true orphaned cases vs pending phone calls vs stale research handoffs vs stale proposals so operators can see what is actually broken
-- [ ] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets
-- [ ] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case
-- [ ] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF`
+- [x] Split system-health reporting into true orphaned cases vs pending phone calls vs stale research handoffs vs stale proposals so operators can see what is actually broken `(stuck_cases now returns stuck_breakdown grouped by status + pause_reason; dashboard shows subcategories when issues exist — 2026-03-08)`
+- [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(summary uses grouped query, total is sum of all subcategories — 2026-03-08)`
+- [x] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case `(createPhoneCallTask now checks for recently-skipped entries within 7 days and returns existing instead of creating new — 2026-03-08)`
+- [x] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF` `(execute-action.ts now uses PHONE_ESCALATION for needs_phone_call transitions; followup-scheduler updated to recognize both — 2026-03-08)`
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
@@ -226,20 +226,20 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] TESTED — structured error tracking: `/api/eval/errors` returns `200` and `error_events` has live rows (`3` currently)
 - [x] TESTED — email execution finalization: `0` terminal email executions missing `completed_at` and `0` sent email executions missing `provider_message_id`
 - [ ] FAILED VERIFICATION — portal task writeback is still incomplete: `10` completed portal tasks are missing `confirmation_number`, `2` completed portal tasks still have no `proposal_id`, and `7` completed portal tasks still have no matching `SUBMIT_PORTAL` execution row
-- [x] FIXED — `/api/dashboard/outcomes` was querying nonexistent `completed_at` column; replaced with `updated_at` filtered to `status = 'completed'`; also fixed denial queries to use LOWER(intent)
+- [ ] FAILED VERIFICATION 2026-03-08 — `/api/dashboard/outcomes` still returns `500` on the isolated current backend (`localhost:3010`) with `column "completed_at" does not exist`, so the earlier current-code fix note is not reflected in the backend process under test
 - [x] FIXED — `response_analysis` model metadata: replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures; deployed as v20260308.82
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
 - [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
-- [x] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0` — **code is complete and tested**: `POST /webhooks/events` handler in webhooks.js, `processSendgridEvent()` in email-event-service.js, `createEmailEvent()` + `updateMessageDeliveryStatus()` in database.js; **needs SendGrid Event Webhook configuration** to point at `https://<domain>/webhooks/events`
-- [x] Verify live rollout of `portal_submissions` capture — DB spot-check 2026-03-08 still shows `0` live rows. **Code exists only in submit-portal.ts** (Trigger.dev task); legacy paths (email-queue.js, run-pending-portals.js) bypass it; this still needs a real Trigger.dev portal submission to confirm end-to-end capture
+- [ ] EXTERNAL BLOCKER 2026-03-08 — live rollout of `email_events` capture is still not verified: route/code exists, but live counts remain `0` and the SendGrid Event Webhook still needs to be pointed at `https://<domain>/webhooks/events`
+- [ ] NEEDS LIVE VERIFICATION 2026-03-08 — `portal_submissions` capture is still not proven end-to-end: DB spot-check still shows `0` live rows, and this needs a real Trigger.dev portal submission because legacy paths bypass `submit-portal.ts`
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
-- [x] Verify AI model metadata is actually being written on new analyses — local regression now proves both `classify-inbound` and legacy `aiService.analyzeResponse()` persist `model_id`, token counts, and latency into `response_analysis`; proposal metadata remained green `(2026-03-08)`
+- [ ] FAILED VERIFICATION 2026-03-08 — proposal AI metadata is live (`5` proposals with model/usage fields), but `response_analysis` model metadata is still `0 / 179`, so the classify-step write path remains unresolved
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 - [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
-- [x] Fix `/api/dashboard/outcomes` against the current schema — replaced `completed_at` with `updated_at`, fixed denial queries to use case-insensitive intent matching `(2026-03-08)`
+- [ ] FAILED VERIFICATION 2026-03-08 — `/api/dashboard/outcomes` still returns `500` on the isolated current backend (`localhost:3010`) with `column "completed_at" does not exist`, so the current-code fix is either incomplete or not deployed to the backend process under test
 - [x] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL — changed to relative `/api/requests/:id/export` path which works via same-origin in production and via next.config.js proxy locally
 - [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
 
@@ -354,7 +354,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
 - [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow `(FOLLOW-UP 2026-03-08 - dry-run + gate unit tests pass, but the LIVE prompt suite currently fails before scoring because fixtures use synthetic string message IDs like "msg-portal-001" and the real DB write path expects integer message_id values in response_analysis)`
-- [ ] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis`
+- [x] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis` `(added skipDbWrite option to analyzeResponse, test-prompt-suite passes it — 2026-03-08)`
 - [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - loads correctly on the stabilized localhost:3001 static stack)`
 
 ### P2 — Optimization

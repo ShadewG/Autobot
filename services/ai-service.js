@@ -739,30 +739,33 @@ ${prompt}`
                 analysis.requires_action = analysis.requires_response;
             }
 
-            // Store analysis in database
-            // Sanitize values: convert string "null" to actual null
-            const analysisRecord = await db.createResponseAnalysis({
-                message_id: messageData.id,
-                case_id: caseData.id,
-                intent: analysis.intent,
-                confidence_score: analysis.confidence_score,
-                sentiment: analysis.sentiment,
-                key_points: analysis.key_points,
-                extracted_deadline: analysis.extracted_deadline === "null" || !analysis.extracted_deadline ? null : analysis.extracted_deadline,
-                extracted_fee_amount: analysis.extracted_fee_amount === "null" || !analysis.extracted_fee_amount ? null : analysis.extracted_fee_amount,
-                requires_action: analysis.requires_action,
-                suggested_action: analysis.suggested_action,
-                full_analysis_json: analysis,
-                model_id: modelMetadata.modelId,
-                prompt_tokens: modelMetadata.promptTokens,
-                completion_tokens: modelMetadata.completionTokens,
-                latency_ms: modelMetadata.latencyMs,
-            });
+            // Store analysis in database (skip when running with synthetic/test fixtures)
+            let analysisRecord = null;
+            if (!options.skipDbWrite) {
+                // Sanitize values: convert string "null" to actual null
+                analysisRecord = await db.createResponseAnalysis({
+                    message_id: messageData.id,
+                    case_id: caseData.id,
+                    intent: analysis.intent,
+                    confidence_score: analysis.confidence_score,
+                    sentiment: analysis.sentiment,
+                    key_points: analysis.key_points,
+                    extracted_deadline: analysis.extracted_deadline === "null" || !analysis.extracted_deadline ? null : analysis.extracted_deadline,
+                    extracted_fee_amount: analysis.extracted_fee_amount === "null" || !analysis.extracted_fee_amount ? null : analysis.extracted_fee_amount,
+                    requires_action: analysis.requires_action,
+                    suggested_action: analysis.suggested_action,
+                    full_analysis_json: analysis,
+                    model_id: modelMetadata.modelId,
+                    prompt_tokens: modelMetadata.promptTokens,
+                    completion_tokens: modelMetadata.completionTokens,
+                    latency_ms: modelMetadata.latencyMs,
+                });
 
-            // Backfill message summary from analysis
-            if (analysis.summary) {
-                await db.query('UPDATE messages SET summary = $1 WHERE id = $2 AND summary IS NULL',
-                    [analysis.summary, messageData.id]);
+                // Backfill message summary from analysis
+                if (analysis.summary) {
+                    await db.query('UPDATE messages SET summary = $1 WHERE id = $2 AND summary IS NULL',
+                        [analysis.summary, messageData.id]);
+                }
             }
 
             // Record outcome for adaptive learning
