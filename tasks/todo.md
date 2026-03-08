@@ -118,13 +118,13 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Add validation so portal cases without a request number are identifiable
 
 #### Notion Sync
-- [ ] Add "Sync Now" button for a specific Notion page (instant import)
+- [x] Add "Sync Now" button for a specific Notion page (instant import)
 - [ ] Add "last synced" timestamp per case in dashboard
 - [ ] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues)
 
 #### Constraint Management
 - [x] Allow removing/overriding stale constraints from dashboard
-- [ ] Show constraint history (when added, by whom/what)
+- [x] Show constraint history (when added, by whom/what)
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -259,21 +259,21 @@ We have two systems today:
 2. **DecisionMemoryService** (lessons injection) — partially working. 34 manual lessons injected into draft prompts. Auto-learns from DISMISS only. Doesn't inject into the decision step (only drafts). No learning from APPROVE, ADJUST, or portal failures.
 
 #### Fix What We Have (DecisionMemoryService)
-- [ ] Inject lessons into `decide-next-action.ts`, not just `draft-response.ts` — the decision step is where wrong action types get chosen, but it currently has zero lesson context
-- [ ] Auto-learn from ADJUST: extract the human's instruction as a reusable lesson (e.g., "user said 'don't be aggressive' → lesson: use collaborative tone for this agency type")
-- [ ] Auto-learn from APPROVE patterns: when a proposal is approved without edits, reinforce that pattern (action type + classification + agency type → correct)
-- [ ] Auto-learn from portal failures: when `execute-action.ts` handles a portal failure, create a lesson like "Portal submission fails for [agency] — use email instead"
-- [ ] Add lesson expiry/decay: lessons older than 90 days without being applied get auto-deactivated
-- [ ] Add lesson effectiveness tracking: if a lesson fires but the proposal is still DISMISSED, flag the lesson as ineffective
-- [ ] Deduplicate auto-generated lessons — current system creates narrow per-case lessons ("dismissed SUBMIT_PORTAL for Odessa PD") instead of generalizable patterns
+- [x] Inject lessons into `decide-next-action.ts`, not just `draft-response.ts` — the decision step is where wrong action types get chosen, but it currently has zero lesson context
+- [x] Auto-learn from ADJUST: extract the human's instruction as a reusable lesson (e.g., "user said 'don't be aggressive' → lesson: use collaborative tone for this agency type")
+- [x] Auto-learn from APPROVE patterns: when a proposal is approved without edits, reinforce that pattern (action type + classification + agency type → correct)
+- [x] Auto-learn from portal failures: when `execute-action.ts` handles a portal failure, create a lesson like "Portal submission fails for [agency] — use email instead"
+- [x] Add lesson expiry/decay: lessons older than 90 days without being applied get auto-deactivated
+- [x] Add lesson effectiveness tracking: if a lesson fires but the proposal is still DISMISSED, flag the lesson as ineffective
+- [x] Deduplicate auto-generated lessons — current system creates narrow per-case lessons ("dismissed SUBMIT_PORTAL for Odessa PD") instead of generalizable patterns
 
 #### Dynamic Few-Shot Examples (new capability)
 Instead of only injecting text rules, retrieve actual successful past cases as examples:
-- [ ] Build a `successful_examples` table: case context (classification, agency type, state) + action taken + draft sent + outcome (approved, records received, etc.)
-- [ ] On every APPROVE, store the case context + draft as a successful example
-- [ ] At draft time, retrieve the 2-3 most similar successful examples (by classification + agency type + state) and include them as few-shot examples in the prompt
-- [ ] At decision time, retrieve similar past decisions and their outcomes to guide action type selection
-- [ ] Use simple keyword/category matching first (not vector search) — keep it lightweight
+- [x] Build a `successful_examples` table: case context (classification, agency type, state) + action taken + draft sent + outcome (approved, records received, etc.)
+- [x] On every APPROVE, store the case context + draft as a successful example
+- [x] At draft time, retrieve the 2-3 most similar successful examples (by classification + agency type + state) and include them as few-shot examples in the prompt
+- [x] At decision time, retrieve similar past decisions and their outcomes to guide action type selection
+- [x] Use simple keyword/category matching first (not vector search) — keep it lightweight
 
 #### Evaluate External Tools
 Before building more custom infrastructure, evaluate these platforms that solve parts of this problem:
@@ -295,9 +295,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Kill AdaptiveLearningService
 - [ ] Verify `foia_strategy_outcomes` and `foia_learned_insights` tables are empty or near-empty
-- [ ] Remove `generateStrategicVariation()` call from `ai-service.js` — just use a sensible default strategy
+- [x] Remove `generateStrategicVariation()` call from `ai-service.js` — just use a sensible default strategy
 - [ ] Archive the service file and migration to `.old/`
-- [ ] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
+- [x] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
 
 #### Quality Reporting
 - [ ] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
@@ -418,7 +418,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Every operator action has error feedback (no silent failures)
 
 ### Production → Scale
-- [ ] Auto-captured eval cases from ADJUST/DISMISS flowing
+- [x] Auto-captured eval cases from ADJUST/DISMISS flowing
 - [ ] Weekly quality report generating automatically
 - [ ] Regression eval suite blocking deploys
 - [ ] Agency validation catching bad imports before first send
