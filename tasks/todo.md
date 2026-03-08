@@ -128,8 +128,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
 - [ ] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events
 - [ ] Backfill or reconstruct constraint history for existing cases so the new history UI is not empty on older requests
-- [ ] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes
-- [ ] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
+- [x] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes
+- [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
 
 #### Dashboard API Hygiene
 - [ ] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots`
