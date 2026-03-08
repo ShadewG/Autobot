@@ -22,6 +22,7 @@ router.get('/system-health', async (req, res) => {
                       AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
                   )
                   AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+                  AND c.agency_name NOT LIKE 'Synthetic %'
             `),
 
             // Orphaned runs: running for > 2h
@@ -45,7 +46,7 @@ router.get('/system-health', async (req, res) => {
                 SELECT COUNT(*)::int AS count FROM cases
                 WHERE deadline_date IS NOT NULL
                   AND deadline_date < CURRENT_DATE
-                  AND status NOT IN ('completed', 'cancelled')
+                  AND status NOT IN ('completed', 'cancelled', 'closed')
                   AND (notion_page_id IS NULL OR notion_page_id NOT LIKE 'test-%')
             `),
 
@@ -81,6 +82,89 @@ router.get('/system-health', async (req, res) => {
             total_issues: issues,
             metrics,
         });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * GET /api/monitor/system-health/details?metric=stuck_cases|stale_proposals|overdue_deadlines|portal_failures
+ * Returns the actual records behind each health metric
+ */
+router.get('/system-health/details', async (req, res) => {
+    const { metric } = req.query;
+    const queries = {
+        stuck_cases: `
+            SELECT c.id, c.agency_name, c.state, c.status, c.pause_reason, c.updated_at
+            FROM cases c
+            WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
+              AND NOT EXISTS (
+                  SELECT 1 FROM proposals p WHERE p.case_id = c.id
+                  AND p.status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED')
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM agent_runs ar WHERE ar.case_id = c.id
+                  AND ar.status IN ('created', 'queued', 'processing', 'running', 'waiting')
+              )
+              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+              AND c.agency_name NOT LIKE 'Synthetic %'
+            ORDER BY c.updated_at DESC LIMIT 100`,
+        stale_proposals: `
+            SELECT p.id as proposal_id, p.case_id, p.action_type, p.status as proposal_status, p.created_at,
+                   c.agency_name, c.state, c.status as case_status, c.pause_reason
+            FROM proposals p
+            JOIN cases c ON c.id = p.case_id
+            WHERE p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+              AND p.created_at < NOW() - INTERVAL '48 hours'
+              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+            ORDER BY p.created_at ASC LIMIT 100`,
+        overdue_deadlines: `
+            SELECT c.id, c.agency_name, c.state, c.status, c.pause_reason,
+                   c.deadline_date, (CURRENT_DATE - c.deadline_date) as days_overdue
+            FROM cases c
+            WHERE c.deadline_date IS NOT NULL
+              AND c.deadline_date < CURRENT_DATE
+              AND c.status NOT IN ('completed', 'cancelled', 'closed')
+              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+            ORDER BY c.deadline_date ASC LIMIT 100`,
+        portal_failures: `
+            SELECT pt.id as task_id, pt.case_id, pt.action_type, pt.status, pt.portal_url,
+                   pt.completion_notes, pt.updated_at,
+                   c.agency_name, c.state
+            FROM portal_tasks pt
+            JOIN cases c ON c.id = pt.case_id
+            WHERE pt.status = 'FAILED'
+              AND pt.updated_at > NOW() - INTERVAL '24 hours'
+            ORDER BY pt.updated_at DESC LIMIT 100`,
+        orphaned_runs: `
+            SELECT ar.id as run_id, ar.case_id, ar.trigger_type, ar.status, ar.started_at,
+                   c.agency_name, c.state
+            FROM agent_runs ar
+            LEFT JOIN cases c ON c.id = ar.case_id
+            WHERE ar.status IN ('processing', 'running')
+              AND ar.started_at < NOW() - INTERVAL '2 hours'
+            ORDER BY ar.started_at ASC LIMIT 100`,
+        bounced_emails: `
+            SELECT m.id as message_id, m.case_id, m.direction, m.from_address, m.to_address,
+                   m.bounced_at,
+                   c.agency_name, c.state
+            FROM messages m
+            LEFT JOIN cases c ON c.id = m.case_id
+            WHERE m.bounced_at IS NOT NULL
+              AND m.bounced_at > NOW() - INTERVAL '24 hours'
+            ORDER BY m.bounced_at DESC LIMIT 100`,
+    };
+
+    if (!metric || !queries[metric]) {
+        return res.status(400).json({
+            success: false,
+            error: `Invalid metric. Use one of: ${Object.keys(queries).join(', ')}`,
+        });
+    }
+
+    try {
+        const result = await db.query(queries[metric]);
+        res.json({ success: true, metric, count: result.rows.length, items: result.rows });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
