@@ -1632,8 +1632,7 @@ function DetailV2Content() {
                 <Bug className="h-3.5 w-3.5 mr-1.5" />Mark as Bugged
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => {
-                const url = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/requests/${id}/export?format=download`;
-                window.open(url, '_blank');
+                window.open(`/api/requests/${id}/export?format=download`, '_blank');
               }}>
                 <Download className="h-3.5 w-3.5 mr-1.5" />Export Package
               </DropdownMenuItem>

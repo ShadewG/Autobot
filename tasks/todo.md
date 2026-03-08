@@ -223,11 +223,11 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately — added `attachment_extraction` section to reconciliation report showing inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate; current: 33 inbound with attachments, 29 extracted (88%), 7 missing (PDFs and images)
 
 #### Verification Follow-Ups (live checks, 2026-03-08)
-- [ ] TESTING NOW — structured error tracking (`error_events`, `/api/eval/errors`)
-- [ ] TESTING NOW — email execution finalization (`provider_message_id`, `completed_at`, final worker update path)
-- [ ] TESTING NOW — portal task writeback (`completed_by`, `confirmation_number`, proposal/execution sync, request-number capture)
-- [ ] TESTING NOW — `/api/dashboard/outcomes` current behavior
-- [ ] TESTING NOW — `response_analysis` model metadata on fresh classify runs
+- [x] TESTED — structured error tracking: `/api/eval/errors` returns `200` and `error_events` has live rows (`3` currently)
+- [x] TESTED — email execution finalization: `0` terminal email executions missing `completed_at` and `0` sent email executions missing `provider_message_id`
+- [ ] FAILED VERIFICATION — portal task writeback is still incomplete: `10` completed portal tasks are missing `confirmation_number`, `2` completed portal tasks still have no `proposal_id`, and `7` completed portal tasks still have no matching `SUBMIT_PORTAL` execution row
+- [x] FIXED — `/api/dashboard/outcomes` was querying nonexistent `completed_at` column; replaced with `updated_at` filtered to `status = 'completed'`; also fixed denial queries to use LOWER(intent)
+- [x] FIXED — `response_analysis` model metadata: replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures; deployed as v20260308.82
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
 - [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
@@ -240,7 +240,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 - [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
 - [x] Fix `/api/dashboard/outcomes` against the current schema — replaced `completed_at` (doesn't exist) with `updated_at` filtered to `status = 'completed'`; also fixed denial queries to use case-insensitive LOWER(intent) to match both legacy uppercase and Trigger.dev lowercase intents
-- [ ] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL
+- [x] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL — changed to relative `/api/requests/:id/export` path which works via same-origin in production and via next.config.js proxy locally
 - [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
 
 ---
