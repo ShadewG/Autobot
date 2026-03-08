@@ -1431,6 +1431,17 @@ function DetailV2Content() {
                   <ExternalLink className="h-3.5 w-3.5 mr-1.5" />Notion
                 </DropdownMenuItem>
               )}
+              {request.notion_url && (
+                <DropdownMenuItem onClick={async () => {
+                  try {
+                    await fetchAPI(`/requests/${id}/sync-notion`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+                    toast.success("Notion sync triggered");
+                    mutate();
+                  } catch { toast.error("Notion sync failed"); }
+                }}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />Sync Notion
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}><AlarmClock className="h-3.5 w-3.5 mr-1.5" />Snooze</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowCorrespondenceDialog(true)}><Phone className="h-3.5 w-3.5 mr-1.5" />Log Call</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowPasteInboundDialog(true)}><ClipboardPaste className="h-3.5 w-3.5 mr-1.5" />Paste Email</DropdownMenuItem>

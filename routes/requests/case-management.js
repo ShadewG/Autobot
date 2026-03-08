@@ -718,4 +718,28 @@ router.post('/:id/constraints/add', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/requests/:id/sync-notion
+ * Sync a case's status to its linked Notion page
+ */
+router.post('/:id/sync-notion', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
+        if (!caseData.notion_page_id) return res.status(400).json({ success: false, error: 'Case has no linked Notion page' });
+
+        const notionService = require('../../services/notion-service');
+        await notionService.syncStatusToNotion(caseId);
+
+        await db.logActivity(caseId, 'notion_manual_sync', {
+            user_id: req.body?.userId || 'dashboard',
+        });
+
+        res.json({ success: true, message: 'Notion sync triggered' });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;
