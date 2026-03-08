@@ -103,7 +103,7 @@ This is a working map of the repo so you can move through it in VS Code without 
 ### Portal Automation
 
 - `services/portal-agent-service-skyvern.js`: active Skyvern portal submission provider.
-- `services/portal-service.js`: shared portal-facing service logic (used by test endpoints).
+- `services/portal-service-test-only.js`: legacy Playwright portal service (test endpoints only, not production).
 
 Legacy portal variants (hyperbrowser, managed, agentkit, base) archived to `.old/legacy-services/`.
 
@@ -136,8 +136,8 @@ Legacy portal variants (hyperbrowser, managed, agentkit, base) archived to `.old
 - `services/logger.js`: structured logging with agent context.
 - `services/email-event-service.js`: SendGrid delivery event processing.
 - `services/event-bus.js`: in-process event bus.
-- `services/follow-up-service.js`: follow-up scheduling logic.
-- `services/followup-scheduler.js`: follow-up timer management.
+- `services/follow-up-legacy.js`: legacy direct-email follow-up service (superseded by followup-scheduler).
+- `services/followup-scheduler.js`: active follow-up scheduling and lifecycle management (Run Engine integrated).
 - `services/stuck-response-detector.js`: detect stuck response patterns.
 - `services/pdf-form-service.js`: PDF form generation.
 

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
-const portalService = require('../services/portal-service');
+const portalService = require('../services/portal-service-test-only');
 const dashboardService = require('../services/dashboard-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
 

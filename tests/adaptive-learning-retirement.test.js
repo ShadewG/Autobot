@@ -27,7 +27,7 @@ describe('Adaptive learning retirement regressions', function () {
       syncCasesFromNotion: async () => [],
       processSinglePage: async () => ({ id: 1, case_name: 'Case', agency_name: 'Agency', status: 'ready_to_send' }),
     }, injected);
-    injectModule('../services/portal-service', {}, injected);
+    injectModule('../services/portal-service-test-only', {}, injected);
     injectModule('../services/dashboard-service', {}, injected);
     injectModule('../queues/email-queue', {
       generateQueue: { add: async () => ({}) },

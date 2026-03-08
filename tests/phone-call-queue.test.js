@@ -401,16 +401,16 @@ async function testEscalationLogic() {
         log('escalateToPhoneQueue', false, err.message);
     }
 
-    // Test follow-up-service references escalation
+    // Test follow-up-legacy references escalation
     try {
-        const followUpService = require('../services/follow-up-service');
+        const followUpService = require('../services/follow-up-legacy');
         // Read the source to verify it calls escalateToPhoneQueue
         const fs = require('fs');
-        const source = fs.readFileSync(require.resolve('../services/follow-up-service'), 'utf8');
+        const source = fs.readFileSync(require.resolve('../services/follow-up-legacy'), 'utf8');
         const hasEscalation = source.includes('escalateToPhoneQueue');
-        log('follow-up-service.js references escalateToPhoneQueue', hasEscalation);
+        log('follow-up-legacy.js references escalateToPhoneQueue', hasEscalation);
     } catch (err) {
-        log('follow-up-service escalation check', false, err.message);
+        log('follow-up-legacy escalation check', false, err.message);
     }
 }
 

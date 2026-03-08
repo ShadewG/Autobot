@@ -41,7 +41,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Naming & Structure
 - [x] Standardize where operational scripts live (`scripts/`), where docs live (`docs/` or `tasks/`), and where archived files live (`.old/`) `(Added to CLAUDE.md: scripts/ for scripts, tests/ for tests, .old/ for archived, routes+services+queues+trigger for runtime — 2026-03-08)`
-- [ ] Rename ambiguous files where needed so active runtime paths are obvious from their filenames
+- [x] Rename ambiguous files where needed so active runtime paths are obvious from their filenames `(run-pending-portals.js→scripts/, portal-service.js→portal-service-test-only.js, follow-up-service.js→follow-up-legacy.js, removed dead utils/logger.js shim — 2026-03-08)`
 - [x] Add a lightweight rule for future work: no new root-level one-off scripts unless they are immediately placed under `scripts/` `(Added to project CLAUDE.md under File Organization rules — 2026-03-08)`
 
 ### P2 — Execute cleanup in phases
