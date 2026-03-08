@@ -171,41 +171,55 @@ async function runStep(client, stepNumber, description, queries) {
     // ---------------------------------------------------------------
     // Step 5: Fix strategy outcomes
     // ---------------------------------------------------------------
-    await client.query('BEGIN');
-    try {
-      await runStep(client, 5, 'Fix strategy outcomes (partial_approval + negative response times)', [
-        {
-          label: 'Reset incorrect partial_approval outcomes on cases',
-          sql: `
-            UPDATE cases
-            SET outcome_type = NULL,
-                outcome_recorded = false
-            WHERE outcome_recorded = true
-              AND outcome_type = 'partial_approval';
-          `,
-        },
-        {
-          label: 'Null out negative response_time_days',
-          sql: `
-            UPDATE foia_strategy_outcomes
-            SET response_time_days = NULL
-            WHERE response_time_days < 0;
-          `,
-        },
-        {
-          label: 'Delete partial_approval outcomes with empty strategy_config',
-          sql: `
-            DELETE FROM foia_strategy_outcomes
-            WHERE outcome_type = 'partial_approval'
-              AND (strategy_config IS NULL OR strategy_config::text = '{}');
-          `,
-        },
-      ]);
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK');
-      console.error(`  FAILED: ${err.message}`);
-      record('Fix strategy outcomes (FAILED)', 0);
+    const retiredAdaptiveTable = await client.query(`
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'foia_strategy_outcomes'
+      ) AS exists
+    `);
+
+    if (!retiredAdaptiveTable.rows[0].exists) {
+      console.log('  SKIPPED: foia_strategy_outcomes has been retired');
+      record('Fix strategy outcomes (SKIPPED)', 0);
+    } else {
+      await client.query('BEGIN');
+      try {
+        await runStep(client, 5, 'Fix strategy outcomes (partial_approval + negative response times)', [
+          {
+            label: 'Reset incorrect partial_approval outcomes on cases',
+            sql: `
+              UPDATE cases
+              SET outcome_type = NULL,
+                  outcome_recorded = false
+              WHERE outcome_recorded = true
+                AND outcome_type = 'partial_approval';
+            `,
+          },
+          {
+            label: 'Null out negative response_time_days',
+            sql: `
+              UPDATE foia_strategy_outcomes
+              SET response_time_days = NULL
+              WHERE response_time_days < 0;
+            `,
+          },
+          {
+            label: 'Delete partial_approval outcomes with empty strategy_config',
+            sql: `
+              DELETE FROM foia_strategy_outcomes
+              WHERE outcome_type = 'partial_approval'
+                AND (strategy_config IS NULL OR strategy_config::text = '{}');
+            `,
+          },
+        ]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(`  FAILED: ${err.message}`);
+        record('Fix strategy outcomes (FAILED)', 0);
+      }
     }
 
     // ---------------------------------------------------------------

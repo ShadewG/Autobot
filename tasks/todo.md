@@ -64,7 +64,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures
 - [ ] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions
 
-#### Agency Validation at Import
+#### Agency Validation at Import 🔧 IN PROGRESS (Claude-main)
 - [ ] On Notion import, validate agency email (format check + MX record lookup)
 - [ ] On import, check if agency exists in directory — flag if not found
 - [ ] On import, verify state matches agency state — flag mismatches
@@ -125,6 +125,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Constraint Management
 - [x] Allow removing/overriding stale constraints from dashboard
 - [x] Show constraint history (when added, by whom/what)
+- [ ] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` and backfill if needed — live DB check on 2026-03-08 found `0` matching rows, so the new history UI has no production data yet
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -294,9 +295,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 4. Revisit DSPy only if accuracy plateaus below 95%
 
 #### Kill AdaptiveLearningService
-- [ ] Verify `foia_strategy_outcomes` and `foia_learned_insights` tables are empty or near-empty `(IN PROGRESS - Codex)`
+- [x] Verify `foia_strategy_outcomes` and `foia_learned_insights` tables are empty or near-empty
 - [x] Remove `generateStrategicVariation()` call from `ai-service.js` — just use a sensible default strategy
-- [ ] Archive the service file and migration to `.old/` `(IN PROGRESS - Codex)`
+- [x] Archive the service file and migration to `.old/`
 - [x] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
 
 #### Quality Reporting

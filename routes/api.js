@@ -3,27 +3,91 @@ const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const portalService = require('../services/portal-service');
-const adaptiveLearning = require('../services/adaptive-learning-service');
 const dashboardService = require('../services/dashboard-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
 
+const RETIRED_ADAPTIVE_LEARNING_MESSAGE =
+    'AdaptiveLearningService has been retired. Use decision memory and successful examples instead.';
+
+function formatSyncedCasesResponse(cases) {
+    return {
+        success: true,
+        synced: cases.length,
+        cases: cases.map(c => ({
+            id: c.id,
+            case_name: c.case_name,
+            agency: c.agency_name
+        }))
+    };
+}
+
+async function syncNotionCasesByStatus(status = 'Ready to Send') {
+    const cases = await notionService.syncCasesFromNotion(status);
+    return formatSyncedCasesResponse(cases);
+}
+
+async function syncSingleNotionPage(pageId) {
+    if (!pageId) {
+        const error = new Error('pageId is required');
+        error.status = 400;
+        throw error;
+    }
+
+    const caseData = await notionService.processSinglePage(pageId);
+
+    await generateQueue.add('generate-and-send', {
+        caseId: caseData.id
+    });
+
+    return {
+        success: true,
+        message: 'Case imported and queued for processing',
+        case: {
+            id: caseData.id,
+            case_name: caseData.case_name,
+            agency_name: caseData.agency_name,
+            status: caseData.status
+        },
+        delay_minutes: Math.round(Math.random() * 8) + 2
+    };
+}
+
+function buildRetiredAdaptiveLearningResponse(overrides = {}) {
+    return {
+        success: true,
+        deprecated: true,
+        message: RETIRED_ADAPTIVE_LEARNING_MESSAGE,
+        ...overrides,
+    };
+}
+
 /**
- * Sync cases from Notion
+ * Canonical Notion sync endpoint for both bulk sync and single-page "Sync Now".
+ * - Send `pageId` to import one specific Notion page immediately.
+ * - Omit `pageId` to run the existing bulk sync by status.
+ */
+router.post('/notion/sync', async (req, res) => {
+    try {
+        if (req.body.pageId) {
+            return res.json(await syncSingleNotionPage(req.body.pageId));
+        }
+
+        return res.json(await syncNotionCasesByStatus(req.body.status || 'Ready to Send'));
+    } catch (error) {
+        console.error('Error syncing from Notion:', error);
+        res.status(error.status || 500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Legacy bulk Notion sync endpoint kept for compatibility.
  */
 router.post('/sync/notion', async (req, res) => {
     try {
-        const status = req.body.status || 'Ready to Send';
-        const cases = await notionService.syncCasesFromNotion(status);
-
-        res.json({
-            success: true,
-            synced: cases.length,
-            cases: cases.map(c => ({
-                id: c.id,
-                case_name: c.case_name,
-                agency: c.agency_name
-            }))
-        });
+        res.json(await syncNotionCasesByStatus(req.body.status || 'Ready to Send'));
     } catch (error) {
         console.error('Error syncing from Notion:', error);
         res.status(500).json({
@@ -63,42 +127,15 @@ router.post('/process/all', async (req, res) => {
 });
 
 /**
- * Process a single Notion page by URL/ID
+ * Legacy single-page Notion sync endpoint kept for compatibility.
  * IMPORTANT: This must come BEFORE the :caseId route
  */
 router.post('/process/notion-page', async (req, res) => {
     try {
-        const { pageId } = req.body;
-
-        if (!pageId) {
-            return res.status(400).json({
-                success: false,
-                error: 'pageId is required'
-            });
-        }
-
-        // Fetch and create case from Notion page
-        const caseData = await notionService.processSinglePage(pageId);
-
-        // Queue for generation and sending
-        const job = await generateQueue.add('generate-and-send', {
-            caseId: caseData.id
-        });
-
-        res.json({
-            success: true,
-            message: 'Case imported and queued for processing',
-            case: {
-                id: caseData.id,
-                case_name: caseData.case_name,
-                agency_name: caseData.agency_name,
-                status: caseData.status
-            },
-            delay_minutes: Math.round(Math.random() * 8) + 2 // Estimate 2-10 min
-        });
+        res.json(await syncSingleNotionPage(req.body.pageId));
     } catch (error) {
         console.error('Error processing Notion page:', error);
-        res.status(500).json({
+        res.status(error.status || 500).json({
             success: false,
             error: error.message
         });
@@ -590,13 +627,11 @@ router.get('/insights/:agency', async (req, res) => {
     try {
         const { agency } = req.params;
         const { state } = req.query;
-
-        const insights = await adaptiveLearning.getInsightsReport(agency, state);
-
-        res.json({
-            success: true,
-            insights
-        });
+        res.json(buildRetiredAdaptiveLearningResponse({
+            agency,
+            state: state || null,
+            insights: [],
+        }));
     } catch (error) {
         console.error('Error getting insights:', error);
         res.status(500).json({
@@ -611,22 +646,9 @@ router.get('/insights/:agency', async (req, res) => {
  */
 router.get('/insights', async (req, res) => {
     try {
-        const result = await db.query(`
-            SELECT
-                agency_name,
-                state,
-                best_strategies,
-                sample_size,
-                last_updated
-            FROM foia_learned_insights
-            ORDER BY sample_size DESC
-            LIMIT 50
-        `);
-
-        res.json({
-            success: true,
-            insights: result.rows
-        });
+        res.json(buildRetiredAdaptiveLearningResponse({
+            insights: [],
+        }));
     } catch (error) {
         console.error('Error getting all insights:', error);
         res.status(500).json({
@@ -641,33 +663,15 @@ router.get('/insights', async (req, res) => {
  */
 router.get('/strategy-performance', async (req, res) => {
     try {
-        const stats = await db.query(`
-            SELECT
-                COUNT(*) as total_cases,
-                COUNT(CASE WHEN outcome_type = 'full_approval' THEN 1 END) as approvals,
-                COUNT(CASE WHEN outcome_type = 'denial' THEN 1 END) as denials,
-                AVG(CASE WHEN outcome_recorded THEN 1 ELSE 0 END) as completion_rate
-            FROM cases
-            WHERE strategy_used IS NOT NULL
-        `);
-
-        const topStrategies = await db.query(`
-            SELECT
-                strategy_config,
-                outcome_type,
-                COUNT(*) as count,
-                AVG(outcome_score) as avg_score
-            FROM foia_strategy_outcomes
-            GROUP BY strategy_config, outcome_type
-            ORDER BY avg_score DESC
-            LIMIT 10
-        `);
-
-        res.json({
-            success: true,
-            stats: stats.rows[0],
-            topStrategies: topStrategies.rows
-        });
+        res.json(buildRetiredAdaptiveLearningResponse({
+            stats: {
+                total_cases: 0,
+                approvals: 0,
+                denials: 0,
+                completion_rate: 0,
+            },
+            topStrategies: [],
+        }));
     } catch (error) {
         console.error('Error getting strategy performance:', error);
         res.status(500).json({
