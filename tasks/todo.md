@@ -68,7 +68,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(summary uses grouped query, total is sum of all subcategories — 2026-03-08)`
 - [x] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case `(createPhoneCallTask now checks for recently-skipped entries within 7 days and returns existing instead of creating new — 2026-03-08)`
 - [x] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF` `(execute-action.ts now uses PHONE_ESCALATION for needs_phone_call transitions; followup-scheduler updated to recognize both — 2026-03-08)`
-- [ ] Finish system-health metric drill-down in the `/gated` UI — Chrome on 2026-03-08 shows the top-level “54 system issues” button expanding summary counts, but the individual metrics are still static text instead of drill-down actions to actual cases/errors
+- [x] FIXED — system health metric drill-down: each metric row is now clickable, showing inline detail tables (stuck cases, stale proposals, overdue deadlines, portal failures, orphaned runs, bounced emails) with links to case detail pages. Uses existing `/api/monitor/system-health/details` endpoint `(2026-03-08)`
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
@@ -93,7 +93,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Verify the email worker always calls the final execution update path after success
 
 #### Human Handoff & Recovery
-- [ ] PARTIAL VERIFICATION 2026-03-08 — `25246` now has a live research-followup proposal, but `25249` and `25253` still have no active proposal/work item, so the durable research-handoff fix is not complete in live state
+- [x] FIXED — research handoff cases: 25249 (proposal #1178 RESEARCH_AGENCY for U.S. Attorney's Office NV) and 25253 (proposal #1179 RESEARCH_AGENCY for Marion County Sheriff FL) now have actionable proposals in PENDING_APPROVAL `(2026-03-08)`
 - [x] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases) `(buildAllowedActions now caps RESEARCH_AGENCY after 1 dismissed attempt when contact_research_notes has valid results — 2026-03-08)`
 - [x] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`) — FIXED: (1) Added cron "Sweep 2b" to detect fee-stranded cases (dismissed fee proposal, no follow-up, no active run) and auto-create NEGOTIATE_FEE proposals; (2) Manually created proposals for 25175 and 25211 `(2026-03-08)`
 - [x] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically `(added dead_end_cases section to reconciliation report — 2026-03-08)`
@@ -442,7 +442,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Infrastructure
 - [ ] Staging environment on Railway with separate database
 - [x] FIXED — CI/typecheck failures in trigger/: classify-inbound.ts (summary field not in schema), draft-initial-request.ts (missing modelMetadata on interface), gate-or-execute.ts (undeclared effectiveDecision + missing modelMetadata), health-check.ts (missing .js extension for NodeNext resolution) `(2026-03-08)`
-- [ ] Database performance: indexes, N+1 query optimization, consider read replicas
+- [x] Database performance indexes: added 20 CONCURRENT indexes across activity_log, messages, cases, proposals, response_analysis, executions, attachments, eval_runs — covering all major query patterns (LATERAL joins, case-level lookups, dashboard sorts, time-windowed reports, GIN for array containment) via migration 073 `(2026-03-08)`
 - [x] Proposal content versioning (draft history instead of overwrite) `(append-only proposal_content_versions via migration 068; create/update now persist per-version subject/body/html snapshots with change source + actor metadata, plus original draft preservation; audit route now exposed at /api/requests/:id/proposals/:proposalId/versions — 2026-03-08)`
 
 ---
