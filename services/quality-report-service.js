@@ -297,7 +297,7 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
 }
 
 async function buildReconciliationReport() {
-  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber, runsWithoutTraces] = await Promise.all([
+  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber, runsWithoutTraces, attachmentGaps] = await Promise.all([
     db.query(`
       WITH latest_analysis AS (
         SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
@@ -366,6 +366,21 @@ async function buildReconciliationReport() {
       ORDER BY ar.started_at DESC
       LIMIT 20
     `),
+    db.query(`
+      SELECT
+        COUNT(DISTINCT m.id) FILTER (WHERE m.direction = 'inbound') AS inbound_with_attachments,
+        COUNT(DISTINCT m.id) FILTER (
+          WHERE m.direction = 'inbound'
+            AND (a.extracted_text IS NULL OR a.extracted_text = '')
+            AND a.content_type IN ('application/pdf', 'image/png', 'image/jpeg', 'image/jpg')
+        ) AS missing_extraction,
+        COUNT(DISTINCT m.id) FILTER (
+          WHERE m.direction = 'inbound'
+            AND a.extracted_text IS NOT NULL AND a.extracted_text != ''
+        ) AS has_extraction
+      FROM messages m
+      JOIN attachments a ON a.message_id = m.id
+    `),
   ]);
 
   return {
@@ -424,6 +439,15 @@ async function buildReconciliationReport() {
         status: r.status,
         started_at: r.started_at,
       })),
+    },
+    attachment_extraction: {
+      inbound_with_attachments: Number(attachmentGaps.rows[0]?.inbound_with_attachments) || 0,
+      has_extraction: Number(attachmentGaps.rows[0]?.has_extraction) || 0,
+      missing_extraction: Number(attachmentGaps.rows[0]?.missing_extraction) || 0,
+      extraction_rate: rate(
+        Number(attachmentGaps.rows[0]?.has_extraction) || 0,
+        Number(attachmentGaps.rows[0]?.inbound_with_attachments) || 0
+      ),
     },
   };
 }
