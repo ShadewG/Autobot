@@ -192,7 +192,8 @@ describe('Proposal feedback helpers', function () {
     sinon.assert.calledOnce(learnStub);
     sinon.assert.calledWithMatch(learnStub, {
       category: 'general',
-      triggerPattern: 'dismissed SEND_REBUTTAL for Synthetic Records Unit',
+      triggerPattern: 'dismissed SEND_REBUTTAL for records agency',
+      lesson: 'When humans dismiss SEND_REBUTTAL for a records agency, avoid proposing it again unless new facts materially change the situation. Latest dismiss reason: Wrong action type',
       sourceCaseId: 902,
       priority: 6,
     });

@@ -33,6 +33,19 @@ const MAX_PORTAL_RUNS_PER_DAY = 3;
 const MAX_PORTAL_RUNS_TOTAL = 8;
 const STALE_CREDENTIAL_DAYS = 30;
 
+function inferAgencyType(agencyName: any): string {
+  const text = String(agencyName || "").toLowerCase();
+  if (!text) return "unknown agency";
+  if (text.includes("sheriff")) return "sheriff agency";
+  if (text.includes("police")) return "police agency";
+  if (text.includes("state patrol") || text.includes("trooper") || text.includes("dci")) return "state law enforcement agency";
+  if (text.includes("district attorney") || text.includes("prosecutor")) return "prosecutor office";
+  if (text.includes("attorney general")) return "attorney general office";
+  if (text.includes("county")) return "county agency";
+  if (text.includes("city")) return "city agency";
+  return "records agency";
+}
+
 export function getPortalFailureSignature(errorText: any): string {
   const text = String(errorText || "").toLowerCase();
   if (!text.trim()) return "generic_failure";
@@ -46,17 +59,17 @@ export function getPortalFailureSignature(errorText: any): string {
 }
 
 export function buildPortalFailureLesson(caseData: any, provider: string | null, errorText: any) {
-  const agencyName = caseData?.agency_name || "unknown agency";
+  const agencyType = inferAgencyType(caseData?.agency_name);
   const providerLabel = String(provider || caseData?.portal_provider || "unknown portal").trim();
   const signature = getPortalFailureSignature(errorText);
   const hasEmailFallback = Boolean(caseData?.agency_email || caseData?.alternate_agency_email);
   const lesson = hasEmailFallback
-    ? `Portal submission failed for ${agencyName} via ${providerLabel} (${signature}). Prefer email instead of retrying the same portal path when this failure recurs.`
-    : `Portal submission failed for ${agencyName} via ${providerLabel} (${signature}). Prefer manual portal handling instead of retrying the same portal path when this failure recurs.`;
+    ? `When portal submission for a ${agencyType} fails via ${providerLabel} with ${signature}, prefer email instead of retrying the same portal path.`
+    : `When portal submission for a ${agencyType} fails via ${providerLabel} with ${signature}, prefer manual portal handling instead of retrying the same portal path.`;
 
   return {
     category: "portal",
-    triggerPattern: `portal failed for ${agencyName} via ${providerLabel} (${signature})`,
+    triggerPattern: `portal failed for ${agencyType} (${signature}) with ${hasEmailFallback ? "email_fallback" : "manual_fallback"}`,
     lesson,
     priority: 8,
   };

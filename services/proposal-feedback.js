@@ -53,9 +53,9 @@ function deriveAdjustLesson(proposal, caseData, instruction, reason = null) {
     return "When reliable phone contact is available and the human requests it, prefer a manual phone follow-up handoff instead of another automated email.";
   }
 
-  const agencyName = caseData?.agency_name || "this agency";
+  const agencyType = inferAgencyType(caseData?.agency_name);
   const suffix = reason ? ` (${reason})` : "";
-  return `When handling ${proposal?.action_type || "this action"} for ${agencyName}, follow this human adjustment: ${normalized}${suffix}`;
+  return `When handling ${proposal?.action_type || "this action"} for a ${agencyType}, follow this human adjustment: ${normalized}${suffix}`;
 }
 
 function inferAgencyType(agencyName) {
@@ -153,10 +153,11 @@ async function learnFromDismiss(proposal, { reason = null } = {}) {
     if (!proposal?.id || !proposal?.action_type || !proposal?.case_id) return;
     const decisionMemory = require('./decision-memory-service');
     const caseData = await db.getCaseById(proposal.case_id);
+    const agencyType = inferAgencyType(caseData?.agency_name);
     await decisionMemory.learnFromOutcome({
       category: 'general',
-      triggerPattern: `dismissed ${proposal.action_type} for ${caseData?.agency_name || 'unknown agency'}`,
-      lesson: `Do not propose ${proposal.action_type} for case #${proposal.case_id} (${caseData?.case_name || 'unknown'}) — it was dismissed by human reviewer.${reason ? ' Reason: ' + reason : ''}`,
+      triggerPattern: `dismissed ${proposal.action_type} for ${agencyType}`,
+      lesson: `When humans dismiss ${proposal.action_type} for a ${agencyType}, avoid proposing it again unless new facts materially change the situation.${reason ? ' Latest dismiss reason: ' + reason : ''}`,
       sourceCaseId: proposal.case_id,
       priority: 6,
     });

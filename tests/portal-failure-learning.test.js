@@ -38,8 +38,9 @@ describe('Portal failure learning helpers', function () {
 
     assert.strictEqual(result.category, 'portal');
     assert.strictEqual(result.priority, 8);
-    assert.strictEqual(result.triggerPattern, 'portal failed for Synthetic Police Department via GovQA (blocked_words)');
-    assert.match(result.lesson, /Prefer email instead of retrying the same portal path/);
+    assert.strictEqual(result.triggerPattern, 'portal failed for police agency (blocked_words) with email_fallback');
+    assert.match(result.lesson, /When portal submission for a police agency fails via GovQA with blocked_words/);
+    assert.match(result.lesson, /prefer email instead of retrying the same portal path/i);
   });
 
   it('recommends manual handling when no email fallback exists', function () {
@@ -76,7 +77,8 @@ describe('Portal failure learning helpers', function () {
     const lines = stdout.trim().split('\n');
     const result = JSON.parse(lines[lines.length - 1]);
 
-    assert.strictEqual(result.triggerPattern, 'portal failed for Synthetic Sheriff Office via NextRequest (timeout)');
-    assert.match(result.lesson, /Prefer manual portal handling instead of retrying the same portal path/);
+    assert.strictEqual(result.triggerPattern, 'portal failed for sheriff agency (timeout) with manual_fallback');
+    assert.match(result.lesson, /When portal submission for a sheriff agency fails via NextRequest with timeout/);
+    assert.match(result.lesson, /prefer manual portal handling instead of retrying the same portal path/i);
   });
 });
