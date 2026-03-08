@@ -95,8 +95,8 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Case Timeline & Audit Trail
 - [x] Add "Case Timeline" view to case detail — every state transition chronologically
-- [ ] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal)
-- [ ] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
+- [x] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal) — createDecisionTraceTracker called in all 4 tasks, deployed v20260308.32
+- [x] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
 - [ ] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events
 - [ ] Add regression checks so new runs always create a `decision_traces` row
 
@@ -106,7 +106,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Inventory all writes to `auto_reply_queue` — replace with `proposals`, add compat adapter if needed, then archive
 - [ ] Remove `cases.langgraph_thread_id` reliance
 - [ ] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks
-- [ ] Backfill `case_agency_id` on historical proposals where derivable
+- [x] Backfill `case_agency_id` on historical proposals where derivable — 533 proposals updated from primary case_agency
 - [ ] Agency directory dedup: normalize names on insert, merge duplicates, verify emails
 - [ ] Remove `agent_runs.proposal_id` once all readers migrated to `proposals.run_id`
 - [ ] Review `proposals.langgraph_checkpoint_id` for removal
@@ -333,7 +333,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Agency Intelligence
 - [ ] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method
 - [ ] Feed agency history into AI decisions ("this agency responds in 3 days on average, don't follow up yet")
-- [ ] Show agency stats to operators on case detail page
+- [x] Show agency stats to operators on case detail page
 - [ ] Case templates for common types (bodycam, 911 calls, arrest records)
 
 #### Operational Speed

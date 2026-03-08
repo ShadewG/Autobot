@@ -209,6 +209,57 @@ function resolvePortalUrl(caseUrl: string | null, agencyUrl: string | null): str
   return null;
 }
 
+function AgencyStatsBar({ agencyId }: { agencyId: string | number }) {
+  const { data } = useSWR<{ success: boolean; agency: { stats: { total_requests: number; completed_requests: number; avg_response_days: number | null; has_fees: number; total_fees: number }; fee_behavior: { typical_fee_range: string | null; waiver_success_rate: number | null } } }>(
+    `/agencies/${agencyId}`,
+    fetcher,
+    { revalidateOnFocus: false }
+  );
+  const stats = data?.agency?.stats;
+  if (!stats || stats.total_requests === 0) return null;
+  const completionRate = stats.total_requests > 0 ? Math.round((stats.completed_requests / stats.total_requests) * 100) : 0;
+  const feeBehavior = data?.agency?.fee_behavior;
+  return (
+    <div className="text-[10px] space-y-1.5 pt-1.5 border-t border-border/30">
+      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Track Record</div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Cases</span>
+          <span className="font-medium">{stats.total_requests}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-muted-foreground">Completed</span>
+          <span className={cn("font-medium", completionRate >= 50 ? "text-green-400" : completionRate > 0 ? "text-amber-400" : "")}>{completionRate}%</span>
+        </div>
+        {stats.avg_response_days != null && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Avg response</span>
+            <span className="font-medium">{stats.avg_response_days}d</span>
+          </div>
+        )}
+        {stats.has_fees > 0 && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Fee cases</span>
+            <span className="font-medium">{stats.has_fees}</span>
+          </div>
+        )}
+        {feeBehavior?.typical_fee_range && (
+          <div className="flex justify-between col-span-2">
+            <span className="text-muted-foreground">Typical fees</span>
+            <span className="font-medium">{feeBehavior.typical_fee_range}</span>
+          </div>
+        )}
+        {feeBehavior?.waiver_success_rate != null && feeBehavior.waiver_success_rate > 0 && (
+          <div className="flex justify-between col-span-2">
+            <span className="text-muted-foreground">Fee waiver rate</span>
+            <span className="font-medium">{Math.round(feeBehavior.waiver_success_rate * 100)}%</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function extractManualPdfEscalation(reasoning: string[] | null | undefined) {
   const lines = formatReasoning(reasoning || [], 8);
   const instruction =
@@ -2266,6 +2317,9 @@ function DetailV2Content() {
                   {agency_summary?.submission_method && (
                     <Badge variant="outline" className="text-[10px] px-1 py-0">{agency_summary.submission_method}</Badge>
                   )}
+                  {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
+                    <AgencyStatsBar agencyId={agency_summary.id} />
+                  )}
                 </div>
               </CollapsibleSection>
               {((request.fee_quote && request.fee_quote.amount > 0) || (request.cost_amount != null && request.cost_amount > 0)) && (
@@ -2409,6 +2463,9 @@ function DetailV2Content() {
                         </div>
                       )}
                     </div>
+                  )}
+                  {agency_summary?.id && /^\d+$/.test(String(agency_summary.id)) && (
+                    <AgencyStatsBar agencyId={agency_summary.id} />
                   )}
                 </div>
               </CollapsibleSection>
