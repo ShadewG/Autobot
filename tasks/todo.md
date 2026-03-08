@@ -36,8 +36,8 @@ Ordered by priority within each phase. Check items off as completed.
 #### Legacy Runtime Files
 - [ ] Review `routes/api.js`, `routes/requests/legacy-actions.js`, and other compatibility-heavy routes; document whether they are still required
 - [x] Review `services/foia-case-agent.js` and older orchestration helpers; archive them if the Trigger.dev flow fully replaced them — archived to `.old/legacy-services/`; 3 references cleaned up (email-queue.js import+fallback, simulation.js, test file); Trigger.dev pipeline fully replaces all agent functionality
-- [ ] Compare portal service variants and identify the single active provider path; move inactive variants to `.old/legacy-services` after validation
-- [ ] Review unused or empty directories such as `workers/` and either wire them up properly or archive/remove them `(REVIEWED - directory is empty, but legacy refs to workers/agent-worker.js still exist)`
+- [x] Compare portal service variants and identify the single active provider path; move inactive variants to `.old/legacy-services` after validation — active: `portal-agent-service-skyvern.js` (used by submit-portal.ts, email-queue.js, run-pending-portals.js). Archived 4 legacy variants: hyperbrowser, base, managed, agentkit. `portal-service.js` kept for test endpoint only.
+- [x] Review unused or empty directories such as `workers/` and either wire them up properly or archive/remove them — removed empty `workers/` directory; remaining refs to `workers/agent-worker.js` are only in docs/plans/scripts, not runtime code
 
 #### Naming & Structure
 - [ ] Standardize where operational scripts live (`scripts/`), where docs live (`docs/` or `tasks/`), and where archived files live (`.old/`)
@@ -132,7 +132,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
 
 #### Dashboard API Hygiene
-- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - app page routes appear to be affected too: direct loads for /gated, /requests, /runs, /agencies, /eval, /analytics, and /simulate are broken on localhost:3000; /settings and /admin still return 200)`
+- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - local verification must use the actual Autobot stack: dashboard on localhost:3001 and backend on localhost:3004. Earlier page-load failures on localhost:3000 were from another repo running on that port, not from this middleware.)`
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -222,7 +222,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 ---
 
 - [x] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 — **RESOLVED**: trailing-slash middleware was already scoped to `/api` only (server.js:31). Broken page loads were due to stale `dashboard/out` build; rebuilt with all pages present including `/simulate`. Local env issue (another app on port 3000) was the root cause of earlier testing failures.
-- [ ] Stabilize the local dashboard test stack before more UI verification: `localhost:3000` currently serves a mixed shell (`/login` shows `FOIA RESEARCHER`, `/settings` and `/admin` render `Sentencing Tracker`) while direct `/api/*` requests return uvicorn `404`; `localhost:3001` still serves stale Next pages that return `500`
+- [x] Stabilize the local dashboard test stack before more UI verification — normalized local verification to the real Autobot stack (`localhost:3001` dashboard, `localhost:3004` backend), fixed dashboard fallback defaults that still pointed at `localhost:3000`, updated the example env file, and documented the correct local ports in `guide.md`
 
 ## Phase 2: Feedback & Continuous Improvement
 
@@ -424,7 +424,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Mismatches between `constraints` and `constraints_jsonb` — constraints_jsonb is sole source of truth (77 cases have data)
 - [x] Mismatches between `scope_items` and `scope_items_jsonb` — scope_items_jsonb is sole source of truth (105 cases have data)
 - [x] Proposals missing `case_agency_id` when derivable — 18 found, backfilled from primary case_agency
-- [ ] Cases with agency email but no matching directory entry — N/A (`agency_directory` table doesn't exist; uses `agencies` table)
+- [x] Cases with agency email but no matching directory entry — now mitigated by research caching (persistResearch upserts to `agencies` table) + import validation (validateImportedCase checks `findAgencyByName`)
 - [x] Cases with bounced emails still in "awaiting_response" — 0 found (clean)
 
 ---
