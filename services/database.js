@@ -3140,7 +3140,42 @@ class DatabaseService {
             'SELECT COUNT(*) as cnt FROM case_agencies WHERE case_id = $1 AND is_active = true',
             [caseId]
         );
-        const isFirst = parseInt(existing.rows[0].cnt) === 0;
+        let hasSeededPrimaryFromCaseRow = false;
+        if (parseInt(existing.rows[0].cnt) === 0) {
+            const currentCase = await this.getCaseById(caseId);
+            const normalizedCaseName = String(currentCase?.agency_name || '').trim().toLowerCase();
+            const normalizedCaseEmail = String(currentCase?.agency_email || '').trim().toLowerCase();
+            const normalizedCasePortal = normalizePortalUrl(currentCase?.portal_url || null);
+            const normalizedIncomingName = String(agencyData.agency_name || '').trim().toLowerCase();
+            const normalizedIncomingEmail = String(agencyData.agency_email || '').trim().toLowerCase();
+            const normalizedIncomingPortal = normalizePortalUrl(agencyData.portal_url || null);
+
+            const caseRowHasIdentity =
+                Boolean(normalizedCaseName || normalizedCaseEmail || normalizedCasePortal);
+            const matchesCurrentCaseRow =
+                (normalizedCaseName && normalizedCaseName === normalizedIncomingName)
+                || (normalizedCaseEmail && normalizedCaseEmail === normalizedIncomingEmail)
+                || (normalizedCasePortal && normalizedCasePortal === normalizedIncomingPortal);
+
+            if (caseRowHasIdentity && !matchesCurrentCaseRow) {
+                await this.query(`
+                    INSERT INTO case_agencies (
+                        case_id, agency_id, agency_name, agency_email, portal_url, portal_provider,
+                        is_primary, is_active, added_source, status, notes
+                    ) VALUES ($1, $2, $3, $4, $5, $6, true, true, 'case_row_backfill', 'active', $7)
+                `, [
+                    caseId,
+                    currentCase?.agency_id || null,
+                    currentCase?.agency_name || agencyData.agency_name,
+                    currentCase?.agency_email || null,
+                    normalizedCasePortal,
+                    currentCase?.portal_provider || detectPortalProviderByUrl(normalizedCasePortal)?.name || null,
+                    'Seeded from case row before adding additional agency',
+                ]);
+                hasSeededPrimaryFromCaseRow = true;
+            }
+        }
+        const isFirst = parseInt(existing.rows[0].cnt) === 0 && !hasSeededPrimaryFromCaseRow;
         const isPrimary = agencyData.is_primary !== undefined ? agencyData.is_primary : isFirst;
 
         const result = await this.query(`
@@ -3163,6 +3198,11 @@ class DatabaseService {
         ]);
 
         const caseAgency = result.rows[0];
+
+        if (agencyData.is_primary === true) {
+            const switched = await this.switchPrimaryAgency(caseId, caseAgency.id);
+            return switched || caseAgency;
+        }
 
         // Sync to cases table if this is the primary
         if (isPrimary) {
