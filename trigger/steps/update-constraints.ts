@@ -228,6 +228,26 @@ Return constraint tags and scope item updates only when supported by the message
 
   if (Object.keys(updatePayload).length > 0) {
     await db.updateCase(caseId, updatePayload);
+
+    // Log constraint changes to activity_log for history UI
+    if (updatePayload.constraints_jsonb) {
+      const oldConstraints = new Set((caseData.constraints_jsonb || []).map((c: any) => typeof c === 'string' ? c : c?.type || JSON.stringify(c)));
+      const newConstraints = new Set(constraints.map((c: any) => typeof c === 'string' ? c : c?.type || JSON.stringify(c)));
+      for (const c of newConstraints) {
+        if (!oldConstraints.has(c)) {
+          await db.logActivity('constraint_detected', `Constraint detected: ${c}`, {
+            case_id: caseId, constraint: c, source: 'ai_analysis',
+          });
+        }
+      }
+      for (const c of oldConstraints) {
+        if (!newConstraints.has(c)) {
+          await db.logActivity('constraint_removed', `Constraint removed: ${c}`, {
+            case_id: caseId, constraint: c, source: 'ai_analysis',
+          });
+        }
+      }
+    }
   }
 
   return { constraints, scopeItems: updatedScopeItems };

@@ -1726,7 +1726,8 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         const updatedCase = await db.updateCase(existing.id, {
                             agency_name: notionCase.agency_name,
                             agency_email: notionCase.agency_email,
-                            status: 'ready_to_send'
+                            status: 'ready_to_send',
+                            last_notion_synced_at: new Date(),
                         });
 
                         // Dispatch via Run Engine so the case is picked up immediately
@@ -1776,7 +1777,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         const importWarnings = await validateImportedCase(notionCase);
                         if (importWarnings) {
                             await db.query(
-                                'UPDATE cases SET import_warnings = $1 WHERE id = $2',
+                                'UPDATE cases SET import_warnings = $1, last_notion_synced_at = NOW() WHERE id = $2',
                                 [JSON.stringify(importWarnings), newCase.id]
                             );
                             console.warn(`Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
@@ -1784,6 +1785,9 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     } catch (valErr) {
                         console.warn(`Failed to validate imported case ${newCase.id}:`, valErr.message);
                     }
+
+                    // Set last synced timestamp (even if validation had no warnings)
+                    await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1 AND last_notion_synced_at IS NULL', [newCase.id]);
 
                     // Log activity
                     await db.logActivity('case_imported', `Imported case from Notion: ${newCase.case_name}`, {

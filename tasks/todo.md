@@ -119,13 +119,13 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Notion Sync
 - [x] Add "Sync Now" button for a specific Notion page (instant import)
-- [ ] Add "last synced" timestamp per case in dashboard
+- [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`)
 - [ ] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues)
 
 #### Constraint Management
 - [x] Allow removing/overriding stale constraints from dashboard
 - [x] Show constraint history (when added, by whom/what)
-- [ ] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` and backfill if needed — live DB check on 2026-03-08 found `0` matching rows, so the new history UI has no production data yet
+- [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -303,7 +303,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Quality Reporting
 - [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
 - [x] Classification confusion matrix: AI classified vs actual (from human corrections)
-- [ ] Draft quality scoring: eval judge rates sent drafts after case resolves
+- [ ] Draft quality scoring: eval judge rates sent drafts after case resolves `(IN PROGRESS - Codex)`
 
 #### Regression Testing
 - [ ] Eval suite runs automatically on every deploy (CI step)

@@ -146,6 +146,8 @@ export interface RequestDetail extends RequestListItem {
     expected?: string;
     expectedState?: string;
   }> | null;
+  last_notion_synced_at?: string | null;
+  tags?: string[] | null;
 }
 
 // Timeline Event for the timeline column

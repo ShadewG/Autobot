@@ -51,6 +51,9 @@ async function applyClassificationSideEffects(
       await db.updateCase(caseId, {
         constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
       });
+      await db.logActivity('constraint_detected', 'Constraint detected: WRONG_AGENCY', {
+        case_id: caseId, constraint: 'WRONG_AGENCY', source: 'classification',
+      });
     }
 
     logger.info("Applied WRONG_AGENCY classification side effects at execution time (v2)", {
@@ -1545,6 +1548,9 @@ export async function executeAction(
         if (constraintList.includes("WRONG_AGENCY")) {
           const nextConstraints = constraintList.filter((c: string) => c !== "WRONG_AGENCY");
           await db.updateCase(caseId, { constraints_jsonb: JSON.stringify(nextConstraints) });
+          await db.logActivity('constraint_removed', 'Constraint removed: WRONG_AGENCY (rerouted to correct agency)', {
+            case_id: caseId, constraint: 'WRONG_AGENCY', source: 'reroute',
+          });
           logger.info("Cleared WRONG_AGENCY constraint after successful reroute proposal", {
             caseId,
             newAgency: suggestedAgency.name,

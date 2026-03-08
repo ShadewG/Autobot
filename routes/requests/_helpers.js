@@ -972,6 +972,7 @@ function toRequestDetail(caseData) {
             : undefined,
         phone_call_plan: extractPhoneCallPlan(caseData.contact_research_notes, caseData),
         import_warnings: caseData.import_warnings || null,
+        last_notion_synced_at: caseData.last_notion_synced_at || null,
     };
 }
 

@@ -665,8 +665,10 @@ router.post('/:id/constraints/remove', async (req, res) => {
         const removed = current.splice(index, 1)[0];
         await db.updateCase(caseId, { constraints_jsonb: current });
 
-        await db.logActivity(caseId, 'constraint_removed', {
-            removed_constraint: removed,
+        const removedLabel = typeof removed === 'string' ? removed : (removed?.type || JSON.stringify(removed));
+        await db.logActivity('constraint_removed', `Constraint removed: ${removedLabel}${reason ? ' — ' + reason : ''}`, {
+            case_id: caseId,
+            constraint: removedLabel,
             reason: reason || null,
             user_id: userId,
         });
@@ -707,8 +709,11 @@ router.post('/:id/constraints/add', async (req, res) => {
         current.push(constraint);
         await db.updateCase(caseId, { constraints_jsonb: current });
 
-        await db.logActivity(caseId, 'constraint_added', {
-            added_constraint: constraint,
+        await db.logActivity('constraint_added', `Constraint added: ${type}`, {
+            case_id: caseId,
+            constraint: type,
+            description,
+            source: source || 'Manual override',
             user_id: userId,
         });
 
@@ -731,13 +736,51 @@ router.post('/:id/sync-notion', async (req, res) => {
 
         const notionService = require('../../services/notion-service');
         await notionService.syncStatusToNotion(caseId);
+        await db.updateCase(caseId, { last_notion_synced_at: new Date() });
 
-        await db.logActivity(caseId, 'notion_manual_sync', {
+        await db.logActivity('notion_manual_sync', `Manual Notion sync for case #${caseId}`, {
+            case_id: caseId,
             user_id: req.body?.userId || 'dashboard',
         });
 
         res.json({ success: true, message: 'Notion sync triggered' });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * PUT /api/requests/:id/tags
+ * Update operator tags on a case
+ */
+router.put('/:id/tags', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const { tags } = req.body;
+
+        if (!Array.isArray(tags)) {
+            return res.status(400).json({ success: false, error: 'tags must be an array of strings' });
+        }
+
+        // Validate: max 10 tags, each under 50 chars, alphanumeric + hyphens + spaces
+        const cleaned = [...new Set(tags.map(t => String(t).trim().toLowerCase()).filter(Boolean))];
+        if (cleaned.length > 10) {
+            return res.status(400).json({ success: false, error: 'Maximum 10 tags per case' });
+        }
+
+        const updated = await db.updateCaseTags(caseId, cleaned);
+        if (!updated) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        await db.logActivity(caseId, 'tags_updated', `Tags updated to: ${cleaned.join(', ') || '(none)'}`, {
+            tags: cleaned,
+            user_id: req.body?.userId || 'dashboard',
+        });
+
+        res.json({ success: true, tags: updated.tags });
+    } catch (error) {
+        logger.error('Error updating tags:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

@@ -91,6 +91,9 @@ import {
   GripVertical,
   Search,
   Paperclip,
+  Tag,
+  X,
+  Plus,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
@@ -358,6 +361,9 @@ function DetailV2Content() {
   const [addConstraintOpen, setAddConstraintOpen] = useState(false);
   const [newConstraintType, setNewConstraintType] = useState("FEE_REQUIRED");
   const [newConstraintDesc, setNewConstraintDesc] = useState("");
+  // Tags
+  const [tagInput, setTagInput] = useState("");
+  const [tagSaving, setTagSaving] = useState(false);
   // View management
   const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency" | "intel" | "timeline">("thread");
   const [bottomDrawer, setBottomDrawer] = useState<"runs" | "agent-log" | null>(null);
@@ -1289,6 +1295,51 @@ function DetailV2Content() {
   } = data as RequestWorkspaceResponse & { case_agencies?: CaseAgency[]; agency_candidates?: AgencyCandidate[] };
   const pendingAgencyCandidatesCount = agency_candidates.length;
 
+  // ── Tags ────────────────────────────────────────────────────────────────────
+  const PRESET_TAGS = ["ai wrong", "agency difficult", "unusual", "high priority", "needs review", "escalated"];
+  const currentTags: string[] = request?.tags || [];
+
+  const handleAddTag = async (tag: string) => {
+    if (!id || !tag.trim()) return;
+    const cleaned = tag.trim().toLowerCase();
+    if (currentTags.includes(cleaned)) return;
+    const newTags = [...currentTags, cleaned];
+    setTagSaving(true);
+    try {
+      await fetchAPI(`/requests/${id}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: newTags }),
+      });
+      mutate();
+      setTagInput("");
+      toast.success(`Tag "${cleaned}" added`);
+    } catch {
+      toast.error("Failed to update tags");
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
+  const handleRemoveTag = async (tag: string) => {
+    if (!id) return;
+    const newTags = currentTags.filter(t => t !== tag);
+    setTagSaving(true);
+    try {
+      await fetchAPI(`/requests/${id}/tags`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: newTags }),
+      });
+      mutate();
+      toast.success(`Tag "${tag}" removed`);
+    } catch {
+      toast.error("Failed to update tags");
+    } finally {
+      setTagSaving(false);
+    }
+  };
+
   const pendingActionType = pending_proposal?.action_type || "";
   const pendingProposalStatus = String((pending_proposal as any)?.status || "").toUpperCase();
   const isEmailLikePendingAction = [
@@ -1440,6 +1491,11 @@ function DetailV2Content() {
                   } catch { toast.error("Notion sync failed"); }
                 }}>
                   <RefreshCw className="h-3.5 w-3.5 mr-1.5" />Sync Notion
+                  {request.last_notion_synced_at && (
+                    <span className="text-[10px] text-muted-foreground ml-1">
+                      ({new Date(request.last_notion_synced_at).toLocaleDateString()})
+                    </span>
+                  )}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setSnoozeModalOpen(true)}><AlarmClock className="h-3.5 w-3.5 mr-1.5" />Snooze</DropdownMenuItem>
@@ -1556,6 +1612,48 @@ function DetailV2Content() {
             }
           />
         </div>
+      </div>
+
+      {/* ── TAGS BAR ─────────────────────────────────────────────────────────── */}
+      <div className="shrink-0 flex items-center gap-1.5 px-4 py-1 border-b border-border/50 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <Tag className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+        {currentTags.map((tag) => (
+          <Badge key={tag} variant="secondary" className="text-[10px] gap-1 flex-shrink-0">
+            {tag}
+            <button onClick={() => handleRemoveTag(tag)} className="hover:text-red-400 transition-colors" disabled={tagSaving}>
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </Badge>
+        ))}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors flex-shrink-0 px-1">
+              <Plus className="h-2.5 w-2.5" />
+              {currentTags.length === 0 ? "Add tag" : ""}
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-48">
+            {PRESET_TAGS.filter(t => !currentTags.includes(t)).map((tag) => (
+              <DropdownMenuItem key={tag} onClick={() => handleAddTag(tag)} className="text-xs">
+                {tag}
+              </DropdownMenuItem>
+            ))}
+            {PRESET_TAGS.filter(t => !currentTags.includes(t)).length > 0 && <DropdownMenuSeparator />}
+            <div className="px-2 py-1.5">
+              <form onSubmit={(e) => { e.preventDefault(); handleAddTag(tagInput); }} className="flex gap-1">
+                <Input
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  placeholder="Custom tag..."
+                  className="h-6 text-xs"
+                />
+                <Button type="submit" size="sm" className="h-6 px-2 text-[10px]" disabled={!tagInput.trim() || tagSaving}>
+                  Add
+                </Button>
+              </form>
+            </div>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* ── MAIN BODY ─── two-panel split ──────────────────────────────────── */}
