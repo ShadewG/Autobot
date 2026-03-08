@@ -307,7 +307,9 @@ router.post('/:id/reset-to-last-inbound', async (req, res) => {
                             'auto_dismiss_reason', 'reset_to_last_inbound',
                             'auto_dismissed_at', NOW()::text,
                             'reset_anchor_message_id', $2::int
-                        )
+                        ),
+                     human_decided_by = COALESCE(human_decided_by, 'system'),
+                     human_decided_at = COALESCE(human_decided_at, NOW())
                  WHERE case_id = $1
                    AND status IN ('PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL')`,
                 [requestId, latestInbound.id]

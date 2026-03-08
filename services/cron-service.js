@@ -41,7 +41,7 @@ class CronService {
     start() {
         console.log('Starting cron services...');
 
-        // Sync from Notion every 15 minutes
+        // Sync from Notion every 5 minutes
         // Notion sync still runs on cron (Notion has no webhooks), but generation
         // queuing is now reactive — db.createCase() and db.updateCaseStatus() auto-dispatch.
         this.jobs.notionSync = new CronJob('*/5 * * * *', async () => {
@@ -540,7 +540,7 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
-        console.log('✓ Notion sync: Every 15 minutes');
+        console.log('✓ Notion sync: Every 5 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
         console.log('✓ Operational alerts: Every 15 minutes');
@@ -1453,7 +1453,9 @@ class CronService {
                         console.error(`Proposal #${proposal.id} stuck in DECISION_RECEIVED after ${retryCount} retries — marking EXECUTION_FAILED`);
                         await db.query(
                             `UPDATE proposals SET status = 'DISMISSED', updated_at = NOW(),
-                             human_decision = COALESCE(human_decision, '{}'::jsonb) || '{"failure_reason": "execution_retry_exhausted"}'::jsonb
+                             human_decision = COALESCE(human_decision, '{}'::jsonb) || '{"failure_reason": "execution_retry_exhausted", "auto_dismiss_reason": "execution_retry_exhausted"}'::jsonb,
+                             human_decided_by = COALESCE(human_decided_by, 'system'),
+                             human_decided_at = COALESCE(human_decided_at, NOW())
                              WHERE id = $1`,
                             [proposal.id]
                         );

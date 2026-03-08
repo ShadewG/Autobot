@@ -592,6 +592,7 @@ async function processProposalDecision(
             provider: caseData.portal_provider || null,
             instructions: proposal.draft_body_text || null,
             portalTaskId,
+            agentRunId: dispatchRun.id,
         }, triggerOpts(caseId, 'portal', dispatchRun.id), {
             runId: dispatchRun.id,
             caseId,

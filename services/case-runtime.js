@@ -151,7 +151,9 @@ async function applyMutations(txQuery, caseId, mutations) {
       `UPDATE proposals
        SET status = 'DISMISSED', updated_at = NOW(),
            human_decision = COALESCE(human_decision, '{}'::jsonb)
-             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text),
+           human_decided_by = COALESCE(human_decided_by, 'system'),
+           human_decided_at = COALESCE(human_decided_at, NOW())
        WHERE case_id = $1 AND status = ANY($3::text[])`,
       [caseId, reason, ACTIVE_PROPOSAL_STATUSES]
     ));
@@ -160,7 +162,9 @@ async function applyMutations(txQuery, caseId, mutations) {
       `UPDATE proposals
        SET status = 'DISMISSED', updated_at = NOW(),
            human_decision = COALESCE(human_decision, '{}'::jsonb)
-             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text),
+           human_decided_by = COALESCE(human_decided_by, 'system'),
+           human_decided_at = COALESCE(human_decided_at, NOW())
        WHERE case_id = $1 AND status = 'CHAIN_PENDING'`,
       [caseId, reason]
     ));
@@ -173,7 +177,9 @@ async function applyMutations(txQuery, caseId, mutations) {
       `UPDATE proposals
        SET status = 'DISMISSED', updated_at = NOW(),
            human_decision = COALESCE(human_decision, '{}'::jsonb)
-             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text),
+           human_decided_by = COALESCE(human_decided_by, 'system'),
+           human_decided_at = COALESCE(human_decided_at, NOW())
        WHERE case_id = $1 AND status = ANY($3::text[])
          AND action_type IN ('SUBMIT_PORTAL', 'PORTAL_SUBMISSION', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
       [caseId, reason, ACTIVE_PROPOSAL_STATUSES]
@@ -183,7 +189,9 @@ async function applyMutations(txQuery, caseId, mutations) {
       `UPDATE proposals
        SET status = 'DISMISSED', updated_at = NOW(),
            human_decision = COALESCE(human_decision, '{}'::jsonb)
-             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
+             || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text),
+           human_decided_by = COALESCE(human_decided_by, 'system'),
+           human_decided_at = COALESCE(human_decided_at, NOW())
        WHERE case_id = $1 AND status = 'CHAIN_PENDING'
          AND action_type IN ('SUBMIT_PORTAL', 'PORTAL_SUBMISSION', 'SEND_INITIAL_REQUEST', 'SEND_FOLLOWUP')`,
       [caseId, reason]

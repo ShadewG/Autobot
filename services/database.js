@@ -113,6 +113,41 @@ class DatabaseService {
         return 'database';
     }
 
+    _stripLegacyCaseMutationFields(payload = {}) {
+        if (!payload || typeof payload !== 'object') return {};
+        const sanitized = { ...payload };
+        delete sanitized.strategy_used;
+        return sanitized;
+    }
+
+    _normalizeProposalAuditFields(updates = {}) {
+        if (!updates || typeof updates !== 'object') return {};
+
+        const normalized = { ...updates };
+        const decision = normalized.humanDecision ?? normalized.human_decision;
+        if (!decision || typeof decision !== 'object' || Array.isArray(decision)) {
+            return normalized;
+        }
+
+        const explicitDecidedBy = normalized.humanDecidedBy ?? normalized.human_decided_by;
+        const explicitDecidedAt = normalized.humanDecidedAt ?? normalized.human_decided_at;
+        const action = String(decision.action || '').toUpperCase();
+        const inferredDecidedBy = decision.decidedBy
+            || decision.decided_by
+            || (action === 'EXPIRED' || action === 'DISMISSED_EXTERNALLY' || decision.auto_dismiss_reason
+                ? 'system'
+                : 'human');
+
+        if (explicitDecidedBy === undefined && inferredDecidedBy) {
+            normalized.humanDecidedBy = inferredDecidedBy;
+        }
+        if (explicitDecidedAt === undefined && (decision.decidedAt || decision.decided_at)) {
+            normalized.humanDecidedAt = decision.decidedAt || decision.decided_at;
+        }
+
+        return normalized;
+    }
+
     async query(text, params, options = {}) {
         const maxAttempts = Number.isFinite(options.maxAttempts) ? options.maxAttempts : 3;
 
@@ -392,6 +427,7 @@ class DatabaseService {
     }
 
     async createCase(caseData) {
+        caseData = this._stripLegacyCaseMutationFields(caseData);
         const normalizedNotionId = this.normalizeNotionPageId(caseData?.notion_page_id);
         if (!normalizedNotionId) {
             throw new Error('createCase requires notion_page_id');
@@ -505,7 +541,8 @@ class DatabaseService {
     }
 
     async updateCaseStatus(caseId, status, additionalFields = {}) {
-        const { __allowLegacyFromTrigger = false, __source = null, ...effectiveFields } = additionalFields || {};
+        const sanitizedFields = this._stripLegacyCaseMutationFields(additionalFields || {});
+        const { __allowLegacyFromTrigger = false, __source = null, ...effectiveFields } = sanitizedFields;
         if (__source !== 'case_runtime' && this._isTriggerCallsite() && !__allowLegacyFromTrigger) {
             this._assertNoLegacyCaseMutation('updateCaseStatus', { caseId, status });
         }
@@ -531,6 +568,8 @@ class DatabaseService {
                 `UPDATE proposals
                  SET status = 'DISMISSED',
                      updated_at = NOW(),
+                     human_decided_at = COALESCE(human_decided_at, NOW()),
+                     human_decided_by = COALESCE(human_decided_by, 'system'),
                      human_decision = COALESCE(human_decision, '{}'::jsonb)
                        || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
                  WHERE case_id = $1
@@ -716,6 +755,7 @@ class DatabaseService {
     }
 
     async updateCase(caseId, updates = {}) {
+        updates = this._stripLegacyCaseMutationFields(updates);
         if (!updates || Object.keys(updates).length === 0) {
             return await this.getCaseById(caseId);
         }
@@ -738,6 +778,8 @@ class DatabaseService {
                 `UPDATE proposals
                  SET status = 'DISMISSED',
                      updated_at = NOW(),
+                     human_decided_at = COALESCE(human_decided_at, NOW()),
+                     human_decided_by = COALESCE(human_decided_by, 'system'),
                      human_decision = COALESCE(human_decision, '{}'::jsonb)
                        || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
                  WHERE case_id = $1
@@ -1880,7 +1922,32 @@ class DatabaseService {
             RETURNING *
         `;
         const result = await this.query(query, [caseId, normalizedTrigger, JSON.stringify(metadata)]);
-        return result.rows[0];
+        const run = result.rows[0];
+
+        if (run?.id && run?.case_id) {
+            try {
+                await this.createDecisionTrace({
+                    run_id: run.id,
+                    case_id: run.case_id,
+                    message_id: metadata?.messageId || metadata?.triggerMessageId || null,
+                    node_trace: {
+                        taskType: normalizedTrigger,
+                        status: 'created',
+                        startedAt: (run.started_at || new Date()).toISOString?.() || new Date(run.started_at || Date.now()).toISOString(),
+                        triggerType: normalizedTrigger,
+                        context: {
+                            placeholder: true,
+                        },
+                        steps: [],
+                    },
+                    started_at: run.started_at || new Date(),
+                });
+            } catch (error) {
+                console.warn(`[DB] Failed to create placeholder decision trace for run ${run.id}:`, error.message);
+            }
+        }
+
+        return run;
     }
 
     /**
@@ -2698,6 +2765,7 @@ class DatabaseService {
      * Update a proposal.
      */
     async updateProposal(proposalId, updates) {
+        updates = this._normalizeProposalAuditFields(updates || {});
         if (!updates || Object.keys(updates).length === 0) {
             return await this.getProposalById(proposalId);
         }
@@ -2756,9 +2824,11 @@ class DatabaseService {
                 && ['sent', 'awaiting_response', 'responded'].includes(caseRow?.status);
             if (caseRow && CASE_STATUSES_BLOCKING_ACTIVE_PROPOSALS.includes(caseRow.status) && !allowInboundProposal) {
                 const dismissed = await this.query(
-                    `UPDATE proposals
+                `UPDATE proposals
                      SET status = 'DISMISSED',
                          updated_at = NOW(),
+                         human_decided_at = COALESCE(human_decided_at, NOW()),
+                         human_decided_by = COALESCE(human_decided_by, 'system'),
                          human_decision = COALESCE(human_decision, '{}'::jsonb)
                            || jsonb_build_object('auto_dismiss_reason', $2::text, 'auto_dismissed_at', NOW()::text)
                      WHERE id = $1
@@ -3944,6 +4014,34 @@ class DatabaseService {
      * Create a decision trace record for observability
      */
     async createDecisionTrace(data) {
+        if (data.run_id) {
+            const existing = await this.getDecisionTraceByRunId(data.run_id);
+            if (existing) {
+                const result = await this.query(`
+                    UPDATE decision_traces
+                    SET case_id = $2,
+                        message_id = COALESCE($3, message_id),
+                        classification = COALESCE($4::jsonb, classification),
+                        router_output = COALESCE($5::jsonb, router_output),
+                        node_trace = COALESCE($6::jsonb, node_trace),
+                        gate_decision = COALESCE($7::jsonb, gate_decision),
+                        started_at = COALESCE(started_at, $8)
+                    WHERE id = $1
+                    RETURNING *
+                `, [
+                    existing.id,
+                    data.case_id,
+                    data.message_id || null,
+                    data.classification ? JSON.stringify(data.classification) : null,
+                    data.router_output ? JSON.stringify(data.router_output) : null,
+                    data.node_trace ? JSON.stringify(data.node_trace) : null,
+                    data.gate_decision ? JSON.stringify(data.gate_decision) : null,
+                    data.started_at || null,
+                ]);
+                return result.rows[0];
+            }
+        }
+
         const result = await this.query(`
             INSERT INTO decision_traces (
                 run_id, case_id, message_id,
@@ -4263,6 +4361,25 @@ class DatabaseService {
      */
     async getAgencyIntelligence(agencyName, agencyId) {
         try {
+            const normalizedAgencyName = typeof agencyName === 'string' ? agencyName.trim() : null;
+            const normalizedAgencyId = Number.isInteger(agencyId) ? agencyId : null;
+            if (normalizedAgencyId == null && !normalizedAgencyName) {
+                return null;
+            }
+
+            // Build WHERE clause dynamically to avoid Postgres 42P08 when a param is null
+            const conditions = [];
+            const params = [];
+            if (normalizedAgencyId != null) {
+                params.push(normalizedAgencyId);
+                conditions.push(`agency_id = $${params.length}::int`);
+            }
+            if (normalizedAgencyName) {
+                params.push(normalizedAgencyName);
+                conditions.push(`agency_name = $${params.length}::text`);
+            }
+            const whereClause = conditions.join(' OR ');
+
             const result = await this.query(`
                 SELECT
                     COUNT(*)::int AS total_cases,
@@ -4273,14 +4390,14 @@ class DatabaseService {
                         END)::int AS avg_response_days,
                     COUNT(*) FILTER (WHERE fee_quote_jsonb IS NOT NULL)::int AS fee_cases
                 FROM cases
-                WHERE (agency_id = $1 OR ($2 IS NOT NULL AND agency_name = $2))
+                WHERE (${whereClause})
                   AND status NOT IN ('draft', 'cancelled')
-            `, [agencyId || 0, agencyName || null]);
+            `, params);
 
             const stats = result.rows[0] || {};
             if (!stats.total_cases || stats.total_cases < 2) return null;
 
-            // Get top denial reasons
+            // Get top denial reasons — reuse same params for consistent WHERE
             const denialResult = await this.query(`
                 SELECT
                     COALESCE(ra.full_analysis_json->>'denial_subtype', 'unspecified') AS reason,
@@ -4289,11 +4406,11 @@ class DatabaseService {
                 JOIN messages m ON ra.message_id = m.id
                 JOIN cases c ON m.case_id = c.id
                 WHERE ra.intent = 'denial'
-                  AND (c.agency_id = $1 OR ($2 IS NOT NULL AND c.agency_name = $2))
+                  AND (${whereClause.replace(/\bagency_/g, 'c.agency_')})
                 GROUP BY reason
                 ORDER BY count DESC
                 LIMIT 3
-            `, [agencyId || 0, agencyName || null]);
+            `, params);
 
             const denialRate = stats.total_cases > 0
                 ? Math.round((stats.denied / stats.total_cases) * 100)
