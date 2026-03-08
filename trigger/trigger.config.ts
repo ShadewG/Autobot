@@ -1,6 +1,18 @@
 import { defineConfig } from "@trigger.dev/sdk";
 import { syncEnvVars } from "@trigger.dev/build/extensions/core";
-import { BraintrustExporter } from "@braintrust/otel";
+
+const exporters: any[] = [];
+if (process.env.BRAINTRUST_API_KEY) {
+  try {
+    const { BraintrustExporter } = require("@braintrust/otel");
+    exporters.push(
+      new BraintrustExporter({
+        parent: "project_name:Autobot",
+        filterAISpans: true,
+      })
+    );
+  } catch (_) {}
+}
 
 export default defineConfig({
   project: "proj_afwkrlynxcczbgflspqf",
@@ -8,12 +20,7 @@ export default defineConfig({
   logLevel: "log",
   maxDuration: 300,
   telemetry: {
-    exporters: [
-      new BraintrustExporter({
-        parent: "project_name:Autobot",
-        filterAISpans: true,
-      }),
-    ],
+    exporters,
   },
   retries: {
     enabledInDev: true,
