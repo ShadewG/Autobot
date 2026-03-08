@@ -171,7 +171,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Add decision prompt rule: "For vague denials citing 'policy' without statutory authority, SEND_REBUTTAL requesting the specific legal basis. For 'no duty to create' responses, RESEARCH_AGENCY to find what records the agency actually maintains before reformulating."
 
 #### Prompt & Classifier Alignment
-- [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract `(ASSESSED 2026-03-08: both run for every message — legacy first in email-queue.js, then Trigger.dev re-classifies for complex cases. Legacy produces 9 intents, Trigger.dev 15. Trigger.dev is strictly superset. Best path: refactor email-queue.js to call classifyInbound() directly, remove legacy aiService.analyzeResponse(). Medium effort ~2-3 hours.)`
+- [x] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract — removed legacy `aiService.analyzeResponse()` from email-queue.js, removed `isComplexCase` gate and deterministic auto-reply path, now ALL inbound messages route to Trigger.dev `process-inbound` task unconditionally. Moved Notion summary + Discord notification into `classify-inbound.ts`. Removed dead `USE_RUN_ENGINE` and `FEE_AUTO_APPROVE_MAX` constants.
 - [x] Remove or rewrite the PDF bias in `classify-inbound` so attachments do not implicitly force `records_ready` / `delivery` — rewrote attachment instruction to classify based on CONTENT not presence; removed "classify as records_ready or delivery" directive, replaced with reference to Attached Letters & Documents section
 - [x] Add explicit prompt handling for portal/system traffic: submission confirmations, document release notices, password/unlock emails, portal closures, and similar non-agency-human messages — added portal account management auto-classification (password reset, welcome, unlock, activate) in classify-inbound.ts, plus detectPortalSystemEmail() in portal-utils.js for webhook-level filtering
 - [x] Decide whether `question` and `more_info_needed` should remain distinct; collapse them if downstream logic does not truly need both — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `CLARIFICATION_REQUEST` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
@@ -209,16 +209,19 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 
 #### Verification Follow-Ups (live checks, 2026-03-08)
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
-- [x] Verify live rollout of `decision_traces` writes — code wired in all 4 tasks, deployed v20260308.32
-- [x] Verify live rollout of `successful_examples` capture — code wired via proposal-feedback.js, deployed v20260308.32
+- [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
+- [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
 - [x] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0` — **code is complete and tested**: `POST /webhooks/events` handler in webhooks.js, `processSendgridEvent()` in email-event-service.js, `createEmailEvent()` + `updateMessageDeliveryStatus()` in database.js; **needs SendGrid Event Webhook configuration** to point at `https://<domain>/webhooks/events`
-- [x] Verify live rollout of `portal_submissions` capture — table exists but current live row count is `0` — **code exists only in submit-portal.ts** (Trigger.dev task); legacy paths (email-queue.js, run-pending-portals.js) bypass it; all portal submissions currently go through Trigger.dev so table should populate on next real portal submission
+- [x] Verify live rollout of `portal_submissions` capture — DB spot-check 2026-03-08 still shows `0` live rows. **Code exists only in submit-portal.ts** (Trigger.dev task); legacy paths (email-queue.js, run-pending-portals.js) bypass it; this still needs a real Trigger.dev portal submission to confirm end-to-end capture
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
-- [x] Verify AI model metadata is actually being written on new analyses — code wired in classify-inbound.ts and gate-or-execute.ts, deployed v20260308.32
+- [x] Verify AI model metadata is actually being written on new analyses — DB spot-check 2026-03-08 shows proposal metadata live (`5` proposals with model/usage fields) but `response_analysis` model metadata is still `0`, so the classify-step write path remains unresolved
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
-- [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns `404` for `/api/dashboard/outcomes`, `/api/dashboard/costs`, `/api/dashboard/compliance`, and `/api/requests/:id/export` even though those routes exist in repo code, which blocks full analytics/export UI verification on the local stack
+- [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
+- [ ] Fix `/api/dashboard/outcomes` against the current schema — isolated current backend on `localhost:3010` returns `500` with `column "completed_at" does not exist`
+- [ ] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL
+- [ ] Fix `response_analysis` model metadata persistence for live classify runs — DB spot-check 2026-03-08 shows `0` `response_analysis` rows with `model_id`/usage fields populated even though proposal metadata is being written
 
 ---
 
@@ -325,12 +328,13 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Quality Reporting
 - [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
-- [x] Classification confusion matrix: AI classified vs actual (from human corrections)
+- [x] Classification confusion matrix: AI classified vs actual (from human corrections) `(TESTED VIA API - Codex 2026-03-08 - /api/eval/classification-confusion returns 200 on isolated current backend localhost:3010)`
 - [x] Draft quality scoring: eval judge rates sent drafts after case resolves
 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
-- [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow
+- [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow `(FOLLOW-UP 2026-03-08 - dry-run + gate unit tests pass, but the LIVE prompt suite currently fails before scoring because fixtures use synthetic string message IDs like "msg-portal-001" and the real DB write path expects integer message_id values in response_analysis)`
+- [ ] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis`
 - [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - loads correctly on the stabilized localhost:3001 static stack)`
 
 ### P2 — Optimization
@@ -375,7 +379,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Case completion report: requested vs received
 
 #### Case Intake Beyond Notion
-- [x] API endpoint for programmatic case creation (`POST /api/cases`)
+- [ ] API endpoint for programmatic case creation (`POST /api/cases`) — current isolated backend check on 2026-03-08 returns `404`; `routes/cases.js` exposes `/import-notion` and `/import-direct` but no generic `POST /`
 - [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - /requests/new loads correctly on the stabilized localhost:3001 static stack)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
@@ -398,10 +402,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Per-team queue isolation
 
 #### Analytics & Reporting
-- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTING - UI Codex 2026-03-08 - page shell and assets load on localhost:3001 static stack, but data calls to /api/dashboard/outcomes|costs|compliance currently return 404 from the active backend listener on localhost:3004)`
-- [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(API + analytics page — 2026-03-08)`
-- [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(API + analytics page — 2026-03-08)`
-- [x] Export case package for journalists: correspondence, records, timeline — one click `(UI BUG FOUND 2026-03-08 - Export Package menu item opens the expected backend URL, but the active localhost:3004 backend returns 404 for /api/requests/:id/export during local verification)`
+- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTED VIA UI+API - Codex 2026-03-08 - analytics shell loads on isolated localhost:3011 stack and current backend confirms /api/dashboard/costs + /api/dashboard/compliance = 200, but /api/dashboard/outcomes is the real current-code blocker and returns 500: column "completed_at" does not exist)`
+- [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/costs returns 200 on isolated current backend localhost:3010)`
+- [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/compliance returns 200 on isolated current backend localhost:3010)`
+- [x] Export case package for journalists: correspondence, records, timeline — one click `(TESTED VIA API / UI BUG FOUND 2026-03-08 - current export endpoint works on isolated backend (/api/requests/25164/export?format=download returns 200 on localhost:3010), but the dashboard Export Package action still opens absolute URL http://localhost:3004/api/requests/:id/export and 404s against the stale local backend listener)`
 
 #### Fee Payment Automation
 - [ ] Skyvern navigates payment portal (with human approval for amount)

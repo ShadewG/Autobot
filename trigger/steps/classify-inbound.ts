@@ -616,6 +616,33 @@ export async function classifyInbound(
     latencyMs: modelMetadata?.latencyMs ?? null,
   });
 
+  // Update Notion with AI summary (non-blocking)
+  if (aiResult.summary || (aiResult.key_points && aiResult.key_points.length > 0)) {
+    try {
+      const notionService = require("../../services/notion-service");
+      const summary = aiResult.summary || aiResult.key_points.join("; ");
+      await notionService.addAISummaryToNotion(context.caseId, summary);
+    } catch (err: any) {
+      logger.warn("Failed to update Notion with AI summary", { caseId: context.caseId, error: err.message });
+    }
+  }
+
+  // Notify Discord about response received (non-blocking)
+  try {
+    const discordService = require("../../services/discord-service");
+    const caseData = await db.getCaseById(context.caseId);
+    if (caseData) {
+      await discordService.notifyResponseReceived(caseData, {
+        intent: aiResult.intent,
+        sentiment: aiResult.sentiment,
+        summary: aiResult.summary,
+        requires_action: aiResult.requires_response,
+      });
+    }
+  } catch (err: any) {
+    logger.warn("Failed to notify Discord", { caseId: context.caseId, error: err.message });
+  }
+
   // Log fee event
   if (feeAmount != null) {
     try {

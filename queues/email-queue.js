@@ -20,11 +20,6 @@ const { transitionCaseRuntime, CaseLockContention } = require('../services/case-
 const triggerDispatch = require('../services/trigger-dispatch-service');
 const proposalLifecycle = require('../services/proposal-lifecycle');
 
-// Feature flag for Run Engine (Phase 3) - new auditability layer
-const USE_RUN_ENGINE = process.env.USE_RUN_ENGINE !== 'false';
-
-const FEE_AUTO_APPROVE_MAX = parseFloat(process.env.FEE_AUTO_APPROVE_MAX || '100');
-
 const FORCE_INSTANT_EMAILS = (() => {
     if (process.env.FORCE_INSTANT_EMAILS === 'true') return true;
     if (process.env.FORCE_INSTANT_EMAILS === 'false') return false;
@@ -335,7 +330,13 @@ emailWorker?.on('failed', async (job, error) => {
     if (job?.data?.executionKey) {
         try {
             const { emailExecutor } = require('../services/executor-adapter');
-            await emailExecutor.markFailed(job.data.executionKey, error.message);
+            await emailExecutor.markFailed(job.data.executionKey, {
+                message: error.message,
+                code: error.code || error.name || null,
+                failureStage: 'email_queue',
+                retryAttempt: job.attemptsMade,
+                retryable: job.attemptsMade < emailJobOptions.attempts,
+            });
         } catch (execError) {
             console.warn('Failed to update execution record on failure:', execError.message);
         }
@@ -382,232 +383,92 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             throw new Error(`Case ${caseId} not found`);
         }
 
-        console.log(`📧 Analyzing message from: ${messageData.from_email}`);
+        console.log(`📧 Processing inbound from: ${messageData.from_email}`);
         console.log(`   Subject: ${messageData.subject}`);
 
-        // Load full thread so GPT has conversation context
-        const threadMessages = await db.getMessagesByCaseId(caseId);
-
-        // Analyze the response — with full thread context
-        const analysis = await aiService.analyzeResponse(messageData, caseData, { threadMessages });
-
-        // Mark message as processed immediately after analysis — before any routing branches
-        // that may return early (Run Engine, legacy LangGraph, portal_url block, etc.)
+        // Mark message as processed
         await db.query(
             'UPDATE messages SET processed_at = COALESCE(processed_at, NOW()) WHERE id = $1',
             [messageId]
         );
 
-        console.log(`📊 Analysis complete:`);
-        console.log(`   Intent: ${analysis.intent}`);
-        console.log(`   Requires action: ${analysis.requires_action}`);
-        console.log(`   Sentiment: ${analysis.sentiment}`);
+        // === ALL INBOUND → TRIGGER.DEV ===
+        // Trigger.dev handles classification (classify-inbound), decision, draft,
+        // safety, gating, and execution. Notion summary and Discord notification
+        // are handled inside the Trigger.dev classify step.
+        const agentLog = logger.forAgent(caseId, 'agency_reply');
+        agentLog.info('Routing inbound message to Trigger.dev pipeline');
 
-        // Update Notion with summary
-        if (analysis.summary) {
-            await notionService.addAISummaryToNotion(caseId, analysis.summary);
-            console.log(`✅ Updated Notion with summary`);
-        }
+        let triggerEnqueued = false;
+        let run = null;
+        try {
+            const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
 
-        // Notify Discord about response received
-        await discordService.notifyResponseReceived(caseData, analysis);
+            run = await db.createAgentRunFull({
+                case_id: caseId,
+                trigger_type: 'inbound_message',
+                message_id: messageId,
+                status: 'queued',
+                autopilot_mode: autopilotMode,
+                langgraph_thread_id: `case:${caseId}:msg-${messageId}`
+            });
 
-        // Portal emails now flow through the AI/LangGraph agent for proper classification
-        // (confirmations vs rejections) instead of being hardcoded here.
+            const { handle } = await triggerDispatch.triggerTask('process-inbound', {
+                runId: run.id,
+                caseId,
+                messageId,
+                autopilotMode,
+            }, {
+                queue: `case-${caseId}`,
+                idempotencyKey: `analysis:${caseId}:${messageId}`,
+                idempotencyKeyTTL: "1h",
+            }, {
+                runId: run.id,
+                caseId,
+                messageId,
+                triggerType: 'inbound_message',
+                source: 'email_queue',
+                verifyMs: 8000,
+                pollMs: 1200,
+            });
 
-        // ===== HYBRID AGENT APPROACH =====
-        // Use agent for complex cases, deterministic flow for simple ones
-        const useAgent = true; // Agent always enabled for complex cases
+            triggerEnqueued = true;
 
-        const feeAmount = parseFloat(analysis.extracted_fee_amount || '0') || 0;
-        const needsFeeNegotiation = (
-            analysis.intent === 'fee_request' &&
-            feeAmount > FEE_AUTO_APPROVE_MAX
-        );
+            agentLog.info(`Trigger.dev task triggered`, {
+                runId: run.id,
+                triggerRunId: handle.id,
+                autopilotMode
+            });
 
-        // Route portal notifications through agent for proper classification
-        const hasPortalNotification = messageData.portal_notification;
+            try {
+                await db.query(
+                    'UPDATE cases SET agent_handled = true WHERE id = $1',
+                    [caseId]
+                );
+                await db.query(
+                    'UPDATE messages SET processed_at = NOW(), processed_run_id = $2 WHERE id = $1',
+                    [messageId, run.id]
+                );
+            } catch (dbError) {
+                agentLog.error(`Post-trigger DB update failed (task still active): ${dbError.message}`);
+            }
 
-        // Determine if this is a complex case that should use the agent
-        const isComplexCase = (
-            analysis.intent === 'denial' ||
-            analysis.intent === 'more_info_needed' ||
-            analysis.intent === 'portal_redirect' ||
-            analysis.intent === 'partial_denial' ||
-            analysis.intent === 'partial_delivery' ||
-            analysis.intent === 'partial_approval' ||
-            analysis.intent === 'partial_release' ||
-            analysis.intent === 'wrong_agency' ||
-            hasPortalNotification ||
-            needsFeeNegotiation ||
-            (caseData.previous_attempts && caseData.previous_attempts >= 2) ||
-            analysis.sentiment === 'hostile'
-        );
-
-        console.log(`\n🤖 Agent Status:`);
-        console.log(`   Complex case: ${isComplexCase}`);
-        console.log(`   Reason: ${analysis.intent}${feeAmount ? ` ($${feeAmount})` : ''}`);
-        console.log(`   Pipeline: Trigger.dev`);
-
-        // If this is a complex case, let the agent handle it
-        if (isComplexCase) {
-            const agentLog = logger.forAgent(caseId, 'agency_reply');
-
-            // === TRIGGER.DEV PATH ===
-            // Creates agent_run record for auditability, then triggers Trigger.dev task
-            if (USE_RUN_ENGINE) {
-                agentLog.info('Triggering Trigger.dev task for inbound message');
-
-                let triggerEnqueued = false;
-                let run = null;
+            return { triggered: true, runId: run.id };
+        } catch (agentError) {
+            if (triggerEnqueued) {
+                agentLog.error(`Post-trigger error (task still active): ${agentError.message}`);
+                return { triggered: true, runId: run?.id };
+            }
+            agentLog.error(`Failed to trigger Trigger.dev task: ${agentError.message}`);
+            if (run) {
                 try {
-                    const autopilotMode = caseData.autopilot_mode || 'SUPERVISED';
-
-                    run = await db.createAgentRunFull({
-                        case_id: caseId,
-                        trigger_type: 'inbound_message',
-                        message_id: messageId,
-                        status: 'queued',
-                        autopilot_mode: autopilotMode,
-                        langgraph_thread_id: `case:${caseId}:msg-${messageId}`
-                    });
-
-                    const { handle } = await triggerDispatch.triggerTask('process-inbound', {
-                        runId: run.id,
-                        caseId,
-                        messageId,
-                        autopilotMode,
-                    }, {
-                        queue: `case-${caseId}`,
-                        idempotencyKey: `analysis:${caseId}:${messageId}`,
-                        idempotencyKeyTTL: "1h",
-                    }, {
-                        runId: run.id,
-                        caseId,
-                        messageId,
-                        triggerType: 'inbound_message',
-                        source: 'email_queue',
-                        verifyMs: 8000,
-                        pollMs: 1200,
-                    });
-
-                    triggerEnqueued = true;
-
-                    agentLog.info(`Trigger.dev task triggered`, {
-                        runId: run.id,
-                        triggerRunId: handle.id,
-                        autopilotMode
-                    });
-
-                    try {
-                        await db.query(
-                            'UPDATE cases SET agent_handled = true WHERE id = $1',
-                            [caseId]
-                        );
-                        await db.query(
-                            'UPDATE messages SET processed_at = NOW(), processed_run_id = $2 WHERE id = $1',
-                            [messageId, run.id]
-                        );
-                    } catch (dbError) {
-                        agentLog.error(`Post-trigger DB update failed (task still active): ${dbError.message}`);
-                    }
-
-                    return analysis;
-                } catch (agentError) {
-                    if (triggerEnqueued) {
-                        agentLog.error(`Post-trigger error (task still active): ${agentError.message}`);
-                        return analysis;
-                    }
-                    agentLog.error(`Failed to trigger Trigger.dev task: ${agentError.message}`);
-                    if (run) {
-                        try {
-                            await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${agentError.message}` });
-                        } catch (cleanupErr) {
-                            agentLog.error(`Failed to clean up orphaned run: ${cleanupErr.message}`);
-                        }
-                    }
+                    await db.updateAgentRun(run.id, { status: 'failed', ended_at: new Date(), error: `Trigger failed: ${agentError.message}` });
+                } catch (cleanupErr) {
+                    agentLog.error(`Failed to clean up orphaned run: ${cleanupErr.message}`);
                 }
             }
-
-            // Legacy agent path removed — all agent work goes through Trigger.dev
-        } else {
-            console.log(`ℹ️  Simple case (${analysis.intent}), using deterministic flow`);
+            throw agentError;
         }
-
-        // ===== DETERMINISTIC FLOW (Original Logic) =====
-        // NEVER auto-reply if there's a portal_url - portal submission only
-        if (caseData.portal_url) {
-            console.log(`🚫 BLOCKED: Case ${caseId} has portal_url - NO AUTO-REPLY will be sent`);
-            console.log(`🌐 Portal URL: ${caseData.portal_url}`);
-            return analysis;
-        }
-
-        // Check if we should auto-reply (enabled by default)
-        const autoReplyEnabled = process.env.ENABLE_AUTO_REPLY === 'true';
-        const caseNeedsHuman = caseData.status?.startsWith('needs_human');
-        console.log(`⚙️ Auto-reply enabled: ${autoReplyEnabled}`);
-
-        if (analysis.requires_action && autoReplyEnabled && !caseNeedsHuman) {
-            console.log(`🤖 Generating auto-reply...`);
-            const autoReply = await aiService.generateAutoReply(messageData, analysis, caseData);
-
-            console.log(`📝 Auto-reply generation result:`);
-            console.log(`   Should auto-reply: ${autoReply.should_auto_reply}`);
-            console.log(`   Confidence: ${autoReply.confidence}`);
-            console.log(`   Requires approval: ${autoReply.requires_approval || false}`);
-
-            if (autoReply.should_auto_reply) {
-                // Check if this is a test mode case (instant reply)
-                const isTestMode = messageData.sendgrid_message_id?.includes('test-') ||
-                                  job.data.instantReply === true;
-
-                // Add natural delay (2-10 hours) to seem human, or instant for test mode
-                const instantAutoReply = FORCE_INSTANT_EMAILS || isTestMode;
-                const naturalDelay = instantAutoReply ? 0 : getHumanLikeDelay();
-
-                await emailQueue?.add('send-auto-reply', {
-                    type: 'auto_reply',
-                    caseId: caseId,
-                    toEmail: messageData.from_email,
-                    subject: messageData.subject,
-                    content: autoReply.reply_text,
-                    originalMessageId: messageData.message_id
-                }, {
-                    delay: naturalDelay
-                });
-
-                const delayMsg = naturalDelay === 0
-                    ? (isTestMode ? 'instantly (TEST MODE)' : 'instantly (FORCE_INSTANT_EMAILS)')
-                    : `in ${Math.round(naturalDelay / 1000 / 60)} minutes`;
-                console.log(`✅ Auto-reply queued for case ${caseId} (will send ${delayMsg})`);
-            } else if (autoReply.requires_approval) {
-                // Store in approval queue
-                await db.query(
-                    `INSERT INTO auto_reply_queue (message_id, case_id, generated_reply, confidence_score, requires_approval)
-                     VALUES ($1, $2, $3, $4, true)
-                     ON CONFLICT (message_id) DO UPDATE SET
-                        generated_reply = $3,
-                        confidence_score = $4`,
-                    [messageId, caseId, autoReply.reply_text, autoReply.confidence]
-                );
-
-                console.log(`⏸️ Auto-reply requires approval for case ${caseId} (confidence: ${autoReply.confidence})`);
-            } else {
-                console.log(`❌ Auto-reply NOT being sent:`);
-                console.log(`   should_auto_reply: ${autoReply.should_auto_reply}`);
-                console.log(`   confidence: ${autoReply.confidence}`);
-                console.log(`   requires_approval: ${autoReply.requires_approval}`);
-                console.log(`   Full auto-reply object:`, JSON.stringify(autoReply, null, 2));
-            }
-        } else {
-            console.log(`⚠️ Skipping auto-reply generation:`);
-            console.log(`   analysis.requires_action: ${analysis.requires_action}`);
-            console.log(`   autoReplyEnabled: ${autoReplyEnabled}`);
-            console.log(`   caseNeedsHuman: ${caseNeedsHuman}`);
-            console.log(`   Full analysis object:`, JSON.stringify(analysis, null, 2));
-        }
-
-        return analysis;
     } catch (error) {
         console.error('❌ Analysis job failed:', error);
         console.error('   Error message:', error.message);
