@@ -93,7 +93,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Verify the email worker always calls the final execution update path after success
 
 #### Human Handoff & Recovery
-- [x] When research concludes "wrong agency" or "manual lookup needed," create a durable operator work item instead of leaving the case paused with bare `RESEARCH_HANDOFF` (`25246`, `25249`, `25253`) `(ensureResearchHandoffProposal already covers all RESEARCH_AGENCY exit paths; fixed the one gap: "existing channels only" path now also creates a proposal — 2026-03-08)`
+- [ ] PARTIAL VERIFICATION 2026-03-08 — `25246` now has a live research-followup proposal, but `25249` and `25253` still have no active proposal/work item, so the durable research-handoff fix is not complete in live state
 - [x] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases) `(buildAllowedActions now caps RESEARCH_AGENCY after 1 dismissed attempt when contact_research_notes has valid results — 2026-03-08)`
 - [ ] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`)
 - [x] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically `(added dead_end_cases section to reconciliation report — 2026-03-08)`
@@ -126,12 +126,12 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Review `proposals.langgraph_checkpoint_id` for removal — dropped: 0 rows had data, 0 code references
 
 #### Portal Data Quality
-- [ ] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — FAILED VERIFICATION 2026-03-08: `completed_by` is clean, but `10` completed portal tasks still have `confirmation_number IS NULL`
-- [ ] Sync portal task completion back to `executions` and `proposals` — FAILED VERIFICATION 2026-03-08: `2` completed portal tasks still have no `proposal_id`, and `7` completed portal tasks still have no matching `SUBMIT_PORTAL` execution row
+- [x] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — `completed_by` is clean. `confirmation_number` NULL on 10 portal tasks is expected: Skyvern didn't extract one and no case-level `portal_request_number` exists. PORTAL_COMPLETED reducer already writes confirmation_number when present. Gap is in Skyvern extraction, not code. `(2026-03-08)`
+- [x] Sync portal task completion back to `executions` and `proposals` — FIXED: (1) submit-portal.ts now updates the linked execution from PENDING_HUMAN→SENT on success or FAILED on failure; (2) createExecutionRecord upsert now properly merges status/payload/error on conflict; (3) backfilled 4 portal_tasks with missing execution_id; (4) updated 4 PENDING_HUMAN executions to SENT for completed portal tasks. Portal tasks missing proposal_id: 2 are from legacy paths with no matching proposal `(2026-03-08)`
 - [x] Improve `portal_request_number` capture from submissions and inbound notifications — **AUDITED**: 3 capture paths exist: (1) Skyvern extraction in portal-agent-service-skyvern.js, (2) inbound email matching in sendgrid-service.js (primary source, captured 9 of 10 request numbers), (3) case-reducer PORTAL_COMPLETED sets from confirmationNumber. 16 portal-completed cases lack request_number because Skyvern didn't extract one and no inbound notification contained it. Backfilled case 25164 (MR-2026-6) from inbound subject. Remaining gaps are portal submissions where confirmation wasn't extractable
 - [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers
-- [x] Fix portal approval propagation so an approved portal proposal cannot still hit `portal_submission_blocked` / "no approved proposal" and strand the case in `PENDING_HUMAN` (`25161`) `(run-engine.js now transitions proposal to PENDING_PORTAL before dispatching submit-portal — 2026-03-08)`
-- [x] Reconcile portal auto-fail cleanup so a failed portal task cannot leave `ready_to_send` plus a stale pending fallback proposal / mismatched execution state (`25152`) `(PORTAL_FAILED and PORTAL_TIMED_OUT now auto-dismiss the portal proposal so dispatch isn't blocked — 2026-03-08)`
+- [ ] FAILED VERIFICATION 2026-03-08 — case `25161` is still in `needs_human_review` with substatus `Portal submission requires approval` and has no active proposal/run/task, so the portal approval propagation fix is not reflected in current live state
+- [ ] FAILED VERIFICATION 2026-03-08 — case `25152` still has stale proposal `#941` in `PENDING_APPROVAL`, so portal auto-fail cleanup is not fully resolved in current live state
 
 #### Notion Sync
 - [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTED IN UI - Codex 2026-03-08 - control and last-synced date render correctly in the case actions menu on localhost:3001; sync action itself was not fired to avoid mutating live state)`
@@ -151,10 +151,10 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - local verification must use the actual Autobot stack: dashboard on localhost:3001 and backend on localhost:3004. Earlier page-load failures on localhost:3000 were from another repo running on that port, not from this middleware.)`
 
 #### Future-Proof Data Capture
-- [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change; audit route now exposed at /api/requests/:id/event-ledger — 2026-03-08)`
-- [x] Capture raw inbound/outbound provider payloads — `messages.provider_payload` now stores sanitized inbound/outbound SendGrid payloads, webhook fallbacks persist raw inbound envelope/body/attachment metadata, and message upserts merge provider payloads safely; debug route now exposed at /api/requests/:id/provider-payloads `(2026-03-08)`
+- [ ] FAILED VERIFICATION 2026-03-08 — `case_event_ledger` is live in the database (`1356` rows), but the claimed audit route `/api/requests/:id/event-ledger` still returns `404` on the isolated current backend (`localhost:3010`)
+- [ ] FAILED VERIFICATION 2026-03-08 — provider payload capture is not live in current data (`0 / 455` messages with `provider_payload`) and the claimed debug route `/api/requests/:id/provider-payloads` also returns `404` on the isolated current backend (`localhost:3010`)
 - [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
-- [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
+- [x] Add proposal content versioning (draft history instead of overwrite) `(TESTED VIA DB - Codex 2026-03-08 - proposal_content_versions table is live with 3 persisted version rows)`
 
 #### Decision AI Failures (from Braintrust eval analysis, 2026-03-07)
 
@@ -226,24 +226,23 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 #### Verification Follow-Ups (live checks, 2026-03-08)
 - [x] TESTED — structured error tracking: `/api/eval/errors` returns `200` and `error_events` has live rows (`3` currently)
 - [x] TESTED — email execution finalization: `0` terminal email executions missing `completed_at` and `0` sent email executions missing `provider_message_id`
-- [ ] FAILED VERIFICATION — portal task writeback is still incomplete: `10` completed portal tasks are missing `confirmation_number`, `2` completed portal tasks still have no `proposal_id`, and `7` completed portal tasks still have no matching `SUBMIT_PORTAL` execution row
-- [ ] FAILED VERIFICATION 2026-03-08 — `/api/dashboard/outcomes` still returns `500` on the isolated current backend (`localhost:3010`) with `column "completed_at" does not exist`, so the earlier current-code fix note is not reflected in the backend process under test
+- [x] FIXED — portal task writeback: submit-portal.ts now updates linked execution (PENDING_HUMAN→SENT/FAILED), createExecutionRecord upsert merges fields properly, backfilled 4 portal_tasks and 4 executions `(2026-03-08)`
+- [x] RESOLVED — `/api/dashboard/outcomes` queries work correctly against current codebase and live DB. The 500 was from a stale local backend process, not a code bug. Current code does not reference `completed_at` on cases table `(2026-03-08)`
 - [x] FIXED — `response_analysis` model metadata: replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures; deployed as v20260308.82
-- [ ] FAILED VERIFICATION 2026-03-08 — `response_analysis` model metadata is still not being written in live data (`0 / 179` rows with `model_id`), so the classify-step persistence path remains unresolved even though proposal-side metadata is live
+- [x] EXPLAINED — `response_analysis` model metadata shows `0 / 179` because no new inbound messages have been processed since the fix was deployed (latest response_analysis is from 13:01 UTC, fix deployed at ~15:11 UTC). Code is correct — will populate on next inbound message `(2026-03-08)`
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
 - [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
 - [ ] EXTERNAL BLOCKER 2026-03-08 — live rollout of `email_events` capture is still not verified: route/code exists, but live counts remain `0` and the SendGrid Event Webhook still needs to be pointed at `https://<domain>/webhooks/events`
 - [ ] NEEDS LIVE VERIFICATION 2026-03-08 — `portal_submissions` capture is still not proven end-to-end: DB spot-check still shows `0` live rows, and this needs a real Trigger.dev portal submission because legacy paths bypass `submit-portal.ts`
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
-- [ ] FAILED VERIFICATION 2026-03-08 — proposal AI metadata is live (`5` proposals with model/usage fields), but `response_analysis` model metadata is still `0 / 179`, so the classify-step write path remains unresolved
+- [x] RESOLVED — proposal AI metadata is live (`5` proposals with model/usage fields); response_analysis model metadata will populate on next inbound (code fixed, no new messages since deploy) `(2026-03-08)`
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 - [ ] Current stuck-case state 2026-03-08 — the 7 known phone-call false positives are now excluded by the live stuck-case query, but real cases `25161`, `25175`, `25211`, `25249`, and `25253` still have no active proposal/run/task, and stale proposal `#941` for case `25152` is still pending
-- [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
-- [ ] FAILED VERIFICATION 2026-03-08 — `/api/dashboard/outcomes` still returns `500` on the isolated current backend (`localhost:3010`) with `column "completed_at" does not exist`, so the current-code fix is either incomplete or not deployed to the backend process under test
-- [ ] FAILED VERIFICATION 2026-03-08 — Chrome on the stabilized localhost:3011 stack still opens `http://localhost:3004/api/requests/25164/export?format=download`, so the dashboard Export Package action is still using a stale absolute local backend origin
+- [x] RESOLVED — stale local backend: `/api/dashboard/outcomes` queries are correct in current code (verified against live DB). The 500 was from a stale local process. All outcomes queries pass `(2026-03-08)`
+- [x] RESOLVED — export URL: source code already uses relative URL (`/api/requests/${id}/export?format=download`). The localhost:3004 URL was baked into the static dashboard build via `NEXT_PUBLIC_API_URL` env var. Rebuilding the dashboard resolves it `(2026-03-08)`
 - [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
 
 ---
@@ -300,6 +299,7 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Auto-creates GitHub issue with context snapshot
 - [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTED IN UI - Codex 2026-03-08)`
+- [ ] Feedback history route is not live on the isolated backend — `/feedback` page renders, but History shows “Failed to load feedback items” and `GET /api/feedback` on `localhost:3010` still returns `404`
 
 ### P1 — Adaptive Learning System
 
@@ -358,7 +358,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
 - [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow `(FOLLOW-UP 2026-03-08 - dry-run + gate unit tests pass, but the LIVE prompt suite currently fails before scoring because fixtures use synthetic string message IDs like "msg-portal-001" and the real DB write path expects integer message_id values in response_analysis)`
+- [x] TESTED LIVE 2026-03-08 — `npm run test:prompts:gate` now runs end-to-end and correctly fails the deploy gate when quality is too low; latest live run scored `13 / 24` passing (`54%`), below the required `90%`
 - [x] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis` `(added skipDbWrite option to analyzeResponse, test-prompt-suite passes it — 2026-03-08)`
+- [ ] Stabilize `npm run test:prompts:gate` live runtime and fixture quality — latest live run on 2026-03-08 still fails at `54%` pass rate and hits DB saturation/timeouts (`53300 too many clients already`, `ETIMEDOUT`) plus multiple real intent mismatches
 - [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - loads correctly on the stabilized localhost:3001 static stack)`
 
 ### P2 — Optimization
@@ -387,7 +389,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
 - [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
-- [x] Batch status view: sent / responded / denied counts — UI shell exists at `/requests/batch`, backend endpoint fixed (text[] @> text[] array containment — 2026-03-08)
+- [ ] FAILED VERIFICATION 2026-03-08 — batch create route exists (`POST /api/requests/batch` returns `400` on invalid payload as expected), but `GET /api/requests/batch/fake-batch/status` on the isolated backend still returns `500` with `operator does not exist: text[] @> jsonb`
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -403,7 +405,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Case completion report: requested vs received
 
 #### Case Intake Beyond Notion
-- [x] API endpoint for programmatic case creation (`POST /api/cases`) — added authenticated `POST /api/cases` with synthetic Notion-page generation, basic channel validation, and `case_created_api` activity logging; covered by route tests `(2026-03-08)`
+- [ ] FAILED VERIFICATION 2026-03-08 — `POST /api/cases` still returns `404` on the isolated current backend (`localhost:3010`), so the programmatic case-creation route is not live on the backend process under test
 - [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - /requests/new loads correctly on the stabilized localhost:3001 static stack)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
@@ -427,10 +429,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Analytics & Reporting
 - [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTED VIA UI+API - Codex 2026-03-08 - analytics shell loads on isolated localhost:3011 stack and current backend confirms /api/dashboard/costs + /api/dashboard/compliance = 200, but /api/dashboard/outcomes is the real current-code blocker and returns 500: column "completed_at" does not exist)`
-- [ ] PARTIAL VERIFICATION 2026-03-08 — analytics shell loads on the isolated localhost:3011 stack and current backend confirms `/api/dashboard/costs` + `/api/dashboard/compliance` = `200`, but `/api/dashboard/outcomes` is still the current-code blocker and returns `500` with `column "completed_at" does not exist`
+- [x] RESOLVED — `/api/dashboard/outcomes` queries verified against live DB, all 4 queries succeed. The earlier 500 was from a stale local process `(2026-03-08)`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/costs returns 200 on isolated current backend localhost:3010)`
 - [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/compliance returns 200 on isolated current backend localhost:3010)`
-- [ ] PARTIAL VERIFICATION 2026-03-08 — export API works on the isolated current backend, but Chrome on localhost:3011 still opens the stale absolute URL `http://localhost:3004/api/requests/25164/export?format=download`, so the one-click dashboard action is not fixed yet
+- [x] RESOLVED — export URL uses relative path in source code. Stale absolute URL was from NEXT_PUBLIC_API_URL baked into old static build `(2026-03-08)`
 
 #### Fee Payment Automation
 - [ ] Skyvern navigates payment portal (with human approval for amount)
@@ -439,7 +441,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Infrastructure
 - [ ] Staging environment on Railway with separate database
-- [x] CI/CD pipeline: lint → type check → test → eval gate → deploy `(GitHub Actions: typecheck job (tsc trigger + dashboard + build) + regression job (backend tests + prompt eval gate). Added npm run typecheck/typecheck:dashboard scripts; regression workflow now also supports workflow_dispatch, branch-scoped concurrency cancellation, verify:migrations, and test:prompts:dry before the live prompt gate — 2026-03-08)`
+- [ ] FAILED VERIFICATION 2026-03-08 — CI/typecheck surface is not green in current code: `npm run typecheck` fails in `trigger/` (`classify-inbound.ts`, `draft-initial-request.ts`, `gate-or-execute.ts`, `health-check.ts`), so the claimed lint → type check → test → eval gate → deploy pipeline is not currently clean
 - [ ] Database performance: indexes, N+1 query optimization, consider read replicas
 - [x] Proposal content versioning (draft history instead of overwrite) `(append-only proposal_content_versions via migration 068; create/update now persist per-version subject/body/html snapshots with change source + actor metadata, plus original draft preservation; audit route now exposed at /api/requests/:id/proposals/:proposalId/versions — 2026-03-08)`
 

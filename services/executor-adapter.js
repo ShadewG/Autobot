@@ -47,7 +47,13 @@ async function createExecutionRecord(data) {
       failure_stage, failure_code, retryable, retry_attempt, completed_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     ON CONFLICT (execution_key) DO UPDATE
-      SET updated_at = NOW()
+      SET status = EXCLUDED.status,
+          provider_payload = COALESCE(EXCLUDED.provider_payload, executions.provider_payload),
+          error_message = COALESCE(EXCLUDED.error_message, executions.error_message),
+          failure_stage = COALESCE(EXCLUDED.failure_stage, executions.failure_stage),
+          failure_code = COALESCE(EXCLUDED.failure_code, executions.failure_code),
+          completed_at = COALESCE(EXCLUDED.completed_at, executions.completed_at),
+          updated_at = NOW()
     RETURNING *
   `;
 

@@ -26,6 +26,7 @@ const getSkyvern = lazy(() => require("../../services/portal-agent-service-skyve
 const getNotion = lazy(() => require("../../services/notion-service"));
 const getDiscord = lazy(() => require("../../services/discord-service"));
 const getDecisionMemory = lazy(() => require("../../services/decision-memory-service"));
+const getExecutor = lazy(() => require("../../services/executor-adapter"));
 
 const MAX_RECENT_FAILURES = 2;
 const FAILURE_WINDOW_HOURS = 24;
@@ -313,9 +314,22 @@ export const submitPortal = task({
     logger.info("submit-portal started", { caseId, portalUrl, portalTaskId, agentRunId });
     recordNode("start", { portalUrl, provider: provider || null, portalTaskId: portalTaskId || null });
 
-    const linkedProposalId = portalTaskId
-      ? Number((await db.query("SELECT proposal_id FROM portal_tasks WHERE id = $1 LIMIT 1", [portalTaskId])).rows[0]?.proposal_id || 0) || undefined
-      : undefined;
+    let linkedProposalId: number | undefined;
+    let linkedExecutionId: number | undefined;
+    let linkedExecutionKey: string | undefined;
+    if (portalTaskId) {
+      const ptRow = (await db.query(
+        "SELECT proposal_id, execution_id FROM portal_tasks WHERE id = $1 LIMIT 1", [portalTaskId]
+      )).rows[0];
+      linkedProposalId = Number(ptRow?.proposal_id || 0) || undefined;
+      linkedExecutionId = Number(ptRow?.execution_id || 0) || undefined;
+      if (linkedExecutionId) {
+        const execRow = (await db.query(
+          "SELECT execution_key FROM executions WHERE id = $1 LIMIT 1", [linkedExecutionId]
+        )).rows[0];
+        linkedExecutionKey = execRow?.execution_key || undefined;
+      }
+    }
 
     try {
       // Mark agent_run as running
@@ -784,6 +798,25 @@ export const submitPortal = task({
         } catch {}
       }
 
+      // Update the linked execution record from PENDING_HUMAN → SENT
+      if (linkedExecutionKey) {
+        try {
+          await getExecutor().updateExecutionRecord(linkedExecutionKey, {
+            status: "SENT",
+            providerPayload: {
+              portalTaskId,
+              portalUrl: targetUrl,
+              engine: engineUsed,
+              taskId: result.taskId || result.runId || null,
+              confirmationNumber: result.confirmationNumber || null,
+            },
+            completedAt: new Date(),
+          });
+        } catch (execErr: any) {
+          logger.warn("Failed to update portal execution record", { error: execErr?.message });
+        }
+      }
+
       // Portal-specific fields not part of the runtime (portal_url, portal_provider)
       await db.updateCasePortalStatus(caseId, {
         portal_url: targetUrl,
@@ -844,6 +877,22 @@ export const submitPortal = task({
             completed_at: new Date(),
           });
         } catch {}
+      }
+
+      // Update the linked execution record from PENDING_HUMAN → FAILED
+      if (linkedExecutionKey) {
+        try {
+          await getExecutor().updateExecutionRecord(linkedExecutionKey, {
+            status: "FAILED",
+            providerPayload: { portalTaskId, portalUrl: targetUrl },
+            errorMessage: error.message?.substring(0, 500) || null,
+            failureStage: "portal_submission",
+            failureCode: getPortalFailureSignature(error.message),
+            completedAt: new Date(),
+          });
+        } catch (execErr: any) {
+          logger.warn("Failed to update portal execution record", { error: execErr?.message });
+        }
       }
 
       await db.logActivity("portal_submission_failed", `Portal submission failed: ${error.message}`, {
