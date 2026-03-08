@@ -138,6 +138,7 @@ interface PendingProposal {
     filename_signals: string[];
   };
   gate_options?: string[] | null;
+  deadline_date?: string | null;
 }
 
 interface HumanReviewCase {
@@ -1146,9 +1147,22 @@ function MonitorPageContent() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
+
+      // Escape always works — close modals/dialogs
+      if (e.key === "Escape") {
+        if (showShortcutsHelp) { setShowShortcutsHelp(false); e.preventDefault(); return; }
+        if (showDismissDialog) { setShowDismissDialog(false); e.preventDefault(); return; }
+        if (showAdjustModal) { setShowAdjustModal(false); e.preventDefault(); return; }
+        if (showDestructiveConfirm) { setShowDestructiveConfirm(null); e.preventDefault(); return; }
+        return;
+      }
+
+      // Block all other shortcuts when a modal/input is active
       if (
         showAdjustModal ||
         showDestructiveConfirm ||
+        showDismissDialog ||
+        showShortcutsHelp ||
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         target instanceof HTMLSelectElement ||
@@ -1157,11 +1171,20 @@ function MonitorPageContent() {
         target.closest('[role="dialog"]')
       )
         return;
-      if (e.key === "ArrowLeft") {
+
+      // ? — Show shortcuts help
+      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+        e.preventDefault();
+        setShowShortcutsHelp(true);
+        return;
+      }
+
+      // Navigation: ArrowLeft / ArrowRight / j / k / ArrowDown / ArrowUp
+      if (e.key === "ArrowLeft" || e.key === "k" || e.key === "ArrowUp") {
         e.preventDefault();
         navigate(-1);
       }
-      if (e.key === "ArrowRight") {
+      if (e.key === "ArrowRight" || e.key === "j" || e.key === "ArrowDown") {
         e.preventDefault();
         navigate(1);
       }
@@ -1170,10 +1193,19 @@ function MonitorPageContent() {
         e.preventDefault();
         handleApprove();
       }
+      // Quick dismiss with 'd' — opens dismiss reason dialog
+      if (e.key === "d" && selectedItem?.type === "proposal" && !isSubmitting) {
+        const gateOptions = selectedItem.data.gate_options as string[] | null;
+        const showDismiss = !gateOptions || gateOptions.includes("DISMISS");
+        if (showDismiss) {
+          e.preventDefault();
+          setShowDismissDialog(true);
+        }
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigate, showAdjustModal, showDestructiveConfirm, selectedItem, isSubmitting]);
+  }, [navigate, showAdjustModal, showDestructiveConfirm, showDismissDialog, showShortcutsHelp, selectedItem, isSubmitting]);
 
   // ── Actions ────────────────────────────────
 
@@ -2108,11 +2140,37 @@ function MonitorPageContent() {
                     className="h-4 w-4 pointer-events-none"
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-[10px] font-mono text-muted-foreground">#{p.case_id}</span>
                       <Badge variant="outline" className="text-[10px] px-1 py-0">
                         {p.action_type.replace(/_/g, " ")}
                       </Badge>
+                      {p.confidence != null && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-[10px] px-1 py-0",
+                            p.confidence >= 0.8
+                              ? "text-green-400 border-green-700/50"
+                              : p.confidence >= 0.5
+                              ? "text-yellow-400 border-yellow-700/50"
+                              : "text-red-400 border-red-700/50"
+                          )}
+                        >
+                          {Math.round(p.confidence * 100)}%
+                        </Badge>
+                      )}
+                      {(() => {
+                        const dl = p.deadline_date;
+                        if (!dl) return null;
+                        const daysUntil = Math.ceil((new Date(dl).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                        if (daysUntil > 3) return null;
+                        return (
+                          <Badge variant="destructive" className="text-[10px] px-1 py-0">
+                            {daysUntil <= 0 ? "OVERDUE" : "URGENT"}
+                          </Badge>
+                        );
+                      })()}
                       {p.risk_flags && p.risk_flags.filter(f => !["NO_DRAFT", "MISSING_DRAFT", "DRAFT_EMPTY"].includes(f)).length > 0 && (
                         <AlertTriangle className="h-3 w-3 text-amber-400" />
                       )}
@@ -2189,6 +2247,32 @@ function MonitorPageContent() {
                       {sentiment}
                     </Badge>
                   )}
+                  {selectedItem.data.confidence != null && (
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px]",
+                        selectedItem.data.confidence >= 0.8
+                          ? "text-green-400 border-green-700/50"
+                          : selectedItem.data.confidence >= 0.5
+                          ? "text-yellow-400 border-yellow-700/50"
+                          : "text-red-400 border-red-700/50"
+                      )}
+                    >
+                      {Math.round(selectedItem.data.confidence * 100)}% conf
+                    </Badge>
+                  )}
+                  {(() => {
+                    const dl = selectedItem.data.deadline_date;
+                    if (!dl) return null;
+                    const daysUntil = Math.ceil((new Date(dl).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                    if (daysUntil > 3) return null;
+                    return (
+                      <Badge variant="destructive" className="text-[10px]">
+                        {daysUntil <= 0 ? "OVERDUE" : "URGENT"}
+                      </Badge>
+                    );
+                  })()}
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -2204,9 +2288,10 @@ function MonitorPageContent() {
                 >
                   <ExternalLink className="h-3 w-3" /> Case
                 </Link>
-                <span className="text-[10px] text-muted-foreground">
+                <Badge variant="outline" className="text-[10px]">
+                  <Clock className="h-2.5 w-2.5 mr-1" />
                   {formatRelativeTime(selectedItem.data.created_at)}
-                </span>
+                </Badge>
               </div>
             </div>
           </div>
@@ -2807,6 +2892,9 @@ function MonitorPageContent() {
                             disabled={isSubmitting}
                           >
                             <Trash2 className="h-3 w-3 mr-1" /> DISMISS
+                            <span className="ml-1 text-[10px] opacity-60 border border-white/20 px-1">
+                              D
+                            </span>
                             <ChevronDown className="h-3 w-3 ml-1" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -4186,6 +4274,113 @@ function MonitorPageContent() {
 
       {/* Correspondence is now shown inline, no dialog needed */}
 
+      {/* ── Dismiss Reason Dialog (keyboard shortcut D) ── */}
+      <Dialog open={showDismissDialog} onOpenChange={setShowDismissDialog}>
+        <DialogContent className="bg-card border max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Dismiss Proposal</DialogTitle>
+            <DialogDescription className="text-xs">
+              Select a reason for dismissing this proposal
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-1">
+            {DISMISS_REASONS.map((reason, idx) => (
+              <button
+                key={reason}
+                onClick={() => {
+                  setShowDismissDialog(false);
+                  handleDismiss(reason);
+                }}
+                className="text-left text-xs px-3 py-2 rounded hover:bg-muted/50 transition-colors flex items-center justify-between"
+              >
+                <span>{reason}</span>
+                <span className="text-[10px] text-muted-foreground font-mono">{idx + 1}</span>
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setShowDismissDialog(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Keyboard Shortcuts Help Overlay ── */}
+      <Dialog open={showShortcutsHelp} onOpenChange={setShowShortcutsHelp}>
+        <DialogContent className="bg-card border max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">Keyboard Shortcuts</DialogTitle>
+            <DialogDescription className="text-xs">
+              Navigate and act on the approval queue without a mouse
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-xs">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">Navigation</p>
+              <div className="space-y-1.5">
+                {([
+                  { keys: ["\u2190", "\u2192"], label: "Previous / next item" },
+                  { keys: ["\u2191", "\u2193"], label: "Previous / next item" },
+                  { keys: ["J", "K"], label: "Next / previous item" },
+                ] as const).map((row, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="text-muted-foreground">{row.label}</span>
+                    <div className="flex items-center gap-1">
+                      {row.keys.map((k) => (
+                        <kbd key={k} className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded border border-border bg-muted/50 text-[10px] font-mono">
+                          {k}
+                        </kbd>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="border-t pt-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">Actions (proposals)</p>
+              <div className="space-y-1.5">
+                {([
+                  { keys: ["A"], label: "Approve selected proposal" },
+                  { keys: ["D"], label: "Dismiss selected proposal" },
+                ] as const).map((row, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="text-muted-foreground">{row.label}</span>
+                    <div className="flex items-center gap-1">
+                      {row.keys.map((k) => (
+                        <kbd key={k} className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded border border-border bg-muted/50 text-[10px] font-mono">
+                          {k}
+                        </kbd>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="border-t pt-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground mb-1.5">General</p>
+              <div className="space-y-1.5">
+                {([
+                  { keys: ["Esc"], label: "Close dialog / modal" },
+                  { keys: ["?"], label: "Show this help" },
+                ] as const).map((row, i) => (
+                  <div key={i} className="flex items-center justify-between">
+                    <span className="text-muted-foreground">{row.label}</span>
+                    <div className="flex items-center gap-1">
+                      {row.keys.map((k) => (
+                        <kbd key={k} className="inline-flex items-center justify-center min-w-[22px] h-5 px-1.5 rounded border border-border bg-muted/50 text-[10px] font-mono">
+                          {k}
+                        </kbd>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Undo Toast ────────────────────── */}
       {pendingAction && (
         <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:w-96 z-50 px-4 py-3 rounded-md shadow-lg border bg-zinc-900/95 border-zinc-700/50 text-sm flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-2 duration-200">
@@ -4221,6 +4416,21 @@ function MonitorPageContent() {
             <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
           )}
           {toast.message}
+        </div>
+      )}
+
+      {/* ── Keyboard shortcut hint ────────── */}
+      {activeTab === "queue" && queue.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-30">
+          <button
+            onClick={() => setShowShortcutsHelp(true)}
+            className="text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors flex items-center gap-1.5"
+          >
+            Keyboard shortcuts:
+            <kbd className="inline-flex items-center justify-center min-w-[18px] h-4 px-1 rounded border border-border/50 bg-muted/30 text-[10px] font-mono">
+              ?
+            </kbd>
+          </button>
         </div>
       )}
     </div>
