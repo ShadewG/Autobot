@@ -201,14 +201,19 @@ function buildAllowedActions(params: {
   dismissedActionCounts: Record<string, number>;
   canDirectWrongAgencySend?: boolean;
   researchAttemptCount?: number;
+  hasValidResearchResults?: boolean;
 }): ActionType[] {
   const {
     classification, denialSubtype, constraints, followupCount,
     maxFollowups, hasAutomatablePortal: hasPortal, triggerType, dismissedActionCounts,
   } = params;
 
-  // Cap RESEARCH_AGENCY after 2 attempts to prevent infinite loop
-  const researchCapped = (params.researchAttemptCount || 0) >= 2;
+  // Cap RESEARCH_AGENCY after 2 attempts to prevent infinite loop,
+  // or after 1 attempt if valid research results already exist (operator dismissed means "stop researching")
+  const researchAttempts = params.researchAttemptCount || 0;
+  const researchDismissals = dismissedActionCounts["RESEARCH_AGENCY"] || 0;
+  const researchCapped = researchAttempts >= 2
+    || (params.hasValidResearchResults && researchDismissals >= 1);
   const maybeFilterResearch = (actions: ActionType[]): ActionType[] =>
     researchCapped ? actions.filter(a => a !== "RESEARCH_AGENCY") : actions;
 
@@ -362,6 +367,7 @@ interface PreComputedContext {
   threadMessages: any[];
   canDirectWrongAgencySend: boolean;
   researchAttemptCount: number;
+  hasValidResearchResults: boolean;
   agencyIntelligence: {
     total_cases: number;
     completed: number;
@@ -484,6 +490,18 @@ async function preComputeDecisionContext(
     dismissedActionCounts[p.action_type] = (dismissedActionCounts[p.action_type] || 0) + 1;
   }
 
+  // Check if contact research has already found actionable results
+  let hasValidResearchResults = false;
+  if (caseData?.contact_research_notes) {
+    try {
+      const notes = typeof caseData.contact_research_notes === 'string'
+        ? JSON.parse(caseData.contact_research_notes)
+        : caseData.contact_research_notes;
+      hasValidResearchResults = !!(notes?.suggested_agency?.email || notes?.suggested_agency?.phone
+        || notes?.email || notes?.phone);
+    } catch { /* ignore parse errors */ }
+  }
+
   return {
     denialStrength,
     unansweredClarificationMsgId,
@@ -498,6 +516,7 @@ async function preComputeDecisionContext(
     threadMessages: Array.isArray(threadMessages) ? threadMessages : [],
     canDirectWrongAgencySend,
     researchAttemptCount: researchAttemptResult,
+    hasValidResearchResults,
     agencyIntelligence,
   };
 }
@@ -2567,6 +2586,7 @@ export async function decideNextAction(
               dismissedActionCounts: preComputed.dismissedActionCounts,
               canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
               researchAttemptCount: preComputed.researchAttemptCount,
+              hasValidResearchResults: preComputed.hasValidResearchResults,
             });
             const v2Result = await makeAIDecisionV2({
               caseId, classification, constraints, extractedFeeAmount,
@@ -2727,6 +2747,7 @@ export async function decideNextAction(
               dismissedActionCounts: preComputed.dismissedActionCounts,
               canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
               researchAttemptCount: preComputed.researchAttemptCount,
+              hasValidResearchResults: preComputed.hasValidResearchResults,
             });
             // When a human provides explicit custom instructions, don't let an
             // UNKNOWN-only escalate lockout block obvious execution paths.
@@ -2944,6 +2965,7 @@ export async function decideNextAction(
         dismissedActionCounts: preComputed.dismissedActionCounts,
         canDirectWrongAgencySend: preComputed.canDirectWrongAgencySend,
         researchAttemptCount: preComputed.researchAttemptCount,
+        hasValidResearchResults: preComputed.hasValidResearchResults,
       });
 
       // Special handling for classifications with side effects that happen at decision time

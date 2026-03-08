@@ -68,6 +68,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(summary uses grouped query, total is sum of all subcategories — 2026-03-08)`
 - [x] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case `(createPhoneCallTask now checks for recently-skipped entries within 7 days and returns existing instead of creating new — 2026-03-08)`
 - [x] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF` `(execute-action.ts now uses PHONE_ESCALATION for needs_phone_call transitions; followup-scheduler updated to recognize both — 2026-03-08)`
+- [ ] Finish system-health metric drill-down in the `/gated` UI — Chrome on 2026-03-08 shows the top-level “54 system issues” button expanding summary counts, but the individual metrics are still static text instead of drill-down actions to actual cases/errors
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
@@ -92,8 +93,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Verify the email worker always calls the final execution update path after success
 
 #### Human Handoff & Recovery
-- [ ] When research concludes "wrong agency" or "manual lookup needed," create a durable operator work item instead of leaving the case paused with bare `RESEARCH_HANDOFF` (`25246`, `25249`, `25253`)
-- [ ] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases)
+- [x] When research concludes "wrong agency" or "manual lookup needed," create a durable operator work item instead of leaving the case paused with bare `RESEARCH_HANDOFF` (`25246`, `25249`, `25253`) `(ensureResearchHandoffProposal already covers all RESEARCH_AGENCY exit paths; fixed the one gap: "existing channels only" path now also creates a proposal — 2026-03-08)`
+- [x] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases) `(buildAllowedActions now caps RESEARCH_AGENCY after 1 dismissed attempt when contact_research_notes has valid results — 2026-03-08)`
 - [ ] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`)
 - [x] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically `(added dead_end_cases section to reconciliation report — 2026-03-08)`
 
@@ -101,8 +102,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTED IN UI - Codex 2026-03-08 - bulk mode works on localhost:3001 static stack; Bulk Approve Cancel now closes cleanly without opening Bulk Dismiss)`
 - [x] Full-text case search across case name, agency name, subject, email content `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08 - detail page and mobile timeline verified at 390px; full page sweep not complete)`
-- [ ] Add a simple operator onboarding flow — first-run checklist for queue review, case detail, sync, constraints, and issue reporting
-- [ ] Add a lightweight changelog / release notes surface in the dashboard so operators can see what changed without reading commits
+- [x] Add a simple operator onboarding flow — first-run checklist for queue review, case detail, sync, constraints, and issue reporting `(TESTED IN UI - Codex 2026-03-08 - welcome tour modal appears on /gated and dedicated /onboarding guide page renders with workflow walkthrough, quick links, Notion notes, and issue-reporting guidance)`
+- [x] Add a lightweight changelog / release notes surface in the dashboard so operators can see what changed without reading commits `(TESTED IN UI - Codex 2026-03-08 - “What’s New” modal appears on /gated and dedicated /changelog page renders versioned release notes)`
 
 ### P1 — Important for confidence
 
@@ -228,6 +229,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [ ] FAILED VERIFICATION — portal task writeback is still incomplete: `10` completed portal tasks are missing `confirmation_number`, `2` completed portal tasks still have no `proposal_id`, and `7` completed portal tasks still have no matching `SUBMIT_PORTAL` execution row
 - [ ] FAILED VERIFICATION 2026-03-08 — `/api/dashboard/outcomes` still returns `500` on the isolated current backend (`localhost:3010`) with `column "completed_at" does not exist`, so the earlier current-code fix note is not reflected in the backend process under test
 - [x] FIXED — `response_analysis` model metadata: replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures; deployed as v20260308.82
+- [ ] FAILED VERIFICATION 2026-03-08 — `response_analysis` model metadata is still not being written in live data (`0 / 179` rows with `model_id`), so the classify-step persistence path remains unresolved even though proposal-side metadata is live
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
 - [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
@@ -238,9 +240,10 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
+- [ ] Current stuck-case state 2026-03-08 — the 7 known phone-call false positives are now excluded by the live stuck-case query, but real cases `25161`, `25175`, `25211`, `25249`, and `25253` still have no active proposal/run/task, and stale proposal `#941` for case `25152` is still pending
 - [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
 - [ ] FAILED VERIFICATION 2026-03-08 — `/api/dashboard/outcomes` still returns `500` on the isolated current backend (`localhost:3010`) with `column "completed_at" does not exist`, so the current-code fix is either incomplete or not deployed to the backend process under test
-- [x] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL — changed to relative `/api/requests/:id/export` path which works via same-origin in production and via next.config.js proxy locally
+- [ ] FAILED VERIFICATION 2026-03-08 — Chrome on the stabilized localhost:3011 stack still opens `http://localhost:3004/api/requests/25164/export?format=download`, so the dashboard Export Package action is still using a stale absolute local backend origin
 - [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
 
 ---
@@ -349,6 +352,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Quality Reporting
 - [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
 - [x] Classification confusion matrix: AI classified vs actual (from human corrections) `(TESTED VIA API - Codex 2026-03-08 - /api/eval/classification-confusion returns 200 on isolated current backend localhost:3010)`
+- [ ] Improve classification confusion matrix usefulness — current `/api/eval/classification-confusion` returns `200`, but the output is dominated by `predicted_classification = unknown` (for example: `denial→unknown 50`, `none→unknown 48`, `wrong_agency→unknown 30`, `fee_notice→unknown 27`, `initial_request→unknown 27`), so the mapping/report may still be discarding too much signal
 - [x] Draft quality scoring: eval judge rates sent drafts after case resolves
 
 #### Regression Testing
@@ -423,9 +427,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Analytics & Reporting
 - [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTED VIA UI+API - Codex 2026-03-08 - analytics shell loads on isolated localhost:3011 stack and current backend confirms /api/dashboard/costs + /api/dashboard/compliance = 200, but /api/dashboard/outcomes is the real current-code blocker and returns 500: column "completed_at" does not exist)`
+- [ ] PARTIAL VERIFICATION 2026-03-08 — analytics shell loads on the isolated localhost:3011 stack and current backend confirms `/api/dashboard/costs` + `/api/dashboard/compliance` = `200`, but `/api/dashboard/outcomes` is still the current-code blocker and returns `500` with `column "completed_at" does not exist`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/costs returns 200 on isolated current backend localhost:3010)`
 - [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(TESTED VIA API - Codex 2026-03-08 - /api/dashboard/compliance returns 200 on isolated current backend localhost:3010)`
-- [x] Export case package for journalists: correspondence, records, timeline — one click `(TESTED VIA API / UI BUG FOUND 2026-03-08 - current export endpoint works on isolated backend (/api/requests/25164/export?format=download returns 200 on localhost:3010), but the dashboard Export Package action still opens absolute URL http://localhost:3004/api/requests/:id/export and 404s against the stale local backend listener)`
+- [ ] PARTIAL VERIFICATION 2026-03-08 — export API works on the isolated current backend, but Chrome on localhost:3011 still opens the stale absolute URL `http://localhost:3004/api/requests/25164/export?format=download`, so the one-click dashboard action is not fixed yet
 
 #### Fee Payment Automation
 - [ ] Skyvern navigates payment portal (with human approval for amount)

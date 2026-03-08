@@ -1362,6 +1362,16 @@ export async function executeAction(
               portal: knownCasePortalSignal || null,
             },
           });
+          const channelHint = [
+            knownCaseEmailSignal ? `email: ${knownCaseEmailSignal}` : null,
+            knownCasePortalSignal ? `portal: ${knownCasePortalSignal}` : null,
+          ].filter(Boolean).join(", ");
+          await ensureResearchHandoffProposal(
+            "existing-channels-only",
+            "Research found no new channels but existing contact info is available.",
+            `Research completed but no new channels were found. Existing channels: ${channelHint || "unknown"}. Review and decide whether to retry via existing channels or try a different approach.`,
+            { gateOptions: ["ADJUST", "DISMISS"] }
+          );
           await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
             targetStatus: "needs_human_review",
             substatus: "research_exhausted_existing_channels",
