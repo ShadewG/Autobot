@@ -186,19 +186,9 @@ class CronService {
         // Auto-escalate priority for cases approaching deadlines — runs at 7:00 AM ET
         this.jobs.priorityAutoEscalate = new CronJob('0 7 * * *', async () => {
             try {
-                const result = await db.query(`
-                    UPDATE cases SET priority = 2, updated_at = NOW()
-                    WHERE priority < 2
-                      AND deadline_date IS NOT NULL
-                      AND deadline_date <= NOW() + INTERVAL '3 days'
-                      AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
-                    RETURNING id
-                `);
-                if (result.rows.length > 0) {
-                    console.log(`Auto-escalated ${result.rows.length} case(s) to urgent (deadline within 3 days)`);
-                    await db.logActivity('priority_auto_escalate', `Auto-escalated ${result.rows.length} case(s) approaching deadline`, {
-                        case_ids: result.rows.map(r => r.id),
-                    });
+                const result = await this.runPriorityAutoEscalate();
+                if (result.escalated > 0) {
+                    console.log(`Auto-escalated ${result.escalated} case(s) to urgent (deadline within 3 days)`);
                 }
             } catch (error) {
                 console.error('Error in priority auto-escalate cron:', error);
@@ -1992,6 +1982,39 @@ class CronService {
 
         console.log(`Daily digest: ${statusLine}`);
         return { stuckCount, staleCount, bouncedCount, portalFailCount, queue };
+    }
+
+    async runPriorityAutoEscalate() {
+        const result = await db.query(`
+            UPDATE cases
+            SET priority = 2,
+                updated_at = NOW()
+            WHERE COALESCE(priority, 0) < 2
+              AND deadline_date IS NOT NULL
+              AND deadline_date::date <= (CURRENT_DATE + INTERVAL '3 days')::date
+              AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
+            RETURNING id, deadline_date
+        `);
+
+        const rows = result.rows || [];
+        for (const row of rows) {
+            await db.logActivity(
+                'priority_auto_escalate',
+                'Auto-escalated priority to urgent (deadline within 3 days)',
+                {
+                    case_id: row.id,
+                    actor_type: 'system',
+                    source_service: 'cron_service',
+                    deadline_date: row.deadline_date,
+                    escalated_to_priority: 2,
+                }
+            );
+        }
+
+        return {
+            escalated: rows.length,
+            caseIds: rows.map((row) => row.id),
+        };
     }
 
     /**

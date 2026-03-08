@@ -9,6 +9,7 @@ const { analysisQueue, portalQueue } = require('../queues/email-queue');
 const { notify } = require('../services/event-bus');
 const { transitionCaseRuntime } = require('../services/case-runtime');
 const { detectPortalSystemEmail } = require('../utils/portal-utils');
+const emailIntakeService = require('../services/email-intake-service');
 
 /**
  * Detect verification code emails and forward to Skyvern TOTP API
@@ -174,6 +175,46 @@ router.post('/inbound', upload.any(), async (req, res) => {
 
         console.log('Extracted text:', emailText ? emailText.substring(0, 100) : 'NULL');
         console.log('Extracted HTML:', emailHtml ? emailHtml.substring(0, 100) : 'NULL');
+
+        const inboundFrom = inboundData.from || inboundData.sender;
+        const inboundTo = inboundData.to || inboundData.recipient;
+        const inboundText = emailText || inboundData.text || inboundData.body_text || emailHtml || inboundData.html || inboundData.body_html || '';
+
+        if (emailIntakeService.isEmailIntakeRecipient(inboundTo)) {
+            try {
+                const intakeResult = await emailIntakeService.createEmailIntakeCase({
+                    forwarded_subject: inboundData.subject,
+                    forwarded_body_text: inboundText,
+                    forwarded_from: sendgridService.extractEmail(inboundFrom || ''),
+                    tags: ['source:email_webhook_intake'],
+                });
+
+                return res.status(intakeResult.created ? 201 : 200).json({
+                    success: true,
+                    email_intake: true,
+                    ...intakeResult,
+                });
+            } catch (intakeError) {
+                if (intakeError.code === 'EMAIL_INTAKE_VALIDATION' || intakeError.status === 400) {
+                    await db.logActivity('email_intake_skipped', `Skipped email intake webhook: ${intakeError.message}`, {
+                        actor_type: 'system',
+                        source_service: 'sendgrid-webhook',
+                        from: inboundFrom,
+                        to: inboundTo,
+                        subject: inboundData.subject,
+                    }).catch(() => {});
+
+                    return res.status(200).json({
+                        success: true,
+                        email_intake: true,
+                        created: false,
+                        skipped: true,
+                        reason: intakeError.message,
+                    });
+                }
+                throw intakeError;
+            }
+        }
 
         // TOTP: Check if this is a verification code email and forward to Skyvern
         const isVerificationEmail = await detectAndForwardTOTP({

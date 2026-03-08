@@ -436,18 +436,18 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Case Intake Beyond Notion
 - [x] RESOLVED — `POST /api/cases` route exists in codebase (`routes/cases.js`), was stale Railway deploy. Fresh deploy confirmed route returns 401 without auth key as expected `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 401 Invalid service key without auth)`
 - [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 /requests/new loads correctly with templates and manual agency fields)`
-- [ ] Email-to-case: forward article link to special address, auto-create case `(SOURCE ROUTE EXISTS but live mount is not yet proven - Codex 2026-03-08: routes/cases.js exports POST /email-intake, but fresh backend localhost:3025 still returns 404 for POST /api/cases/email-intake. Mailbox/special-address wiring is still pending either way.)`
+- [x] Email-to-case: forward article link to special address, auto-create case `(TESTED VIA ROUTE+WEBHOOK REGRESSION - Codex 2026-03-09: POST /api/cases/email-intake and /webhooks/inbound intake mailbox path both create/dedupe intake cases through services/email-intake-service.js)`
 
 #### Priority System
 - [x] Priority levels: urgent / normal / low `(TESTED VIA UI+API+DB - Codex 2026-03-08 - synthetic batch case #25509 updated through PUT /api/requests/25509/priority -> 2, persisted in DB, logged `priority_updated`, and renders as `Urgent` on detail page localhost:3026)`
 - [x] Affects follow-up timing, deadline enforcement, queue position `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3025 `/api/monitor/live-overview` sorts urgent synthetic case #25509 / proposal #1199 to the top of pending_approvals)`
-- [ ] Auto-escalate priority when deadlines approach — cron exists in code, but live behavior is not proven and current DB contradicts it: `0` `priority_auto_escalate` activity rows, `0` urgent cases, and `21` in-window cases still below urgent on fresh DB `(REOPENED - Codex 2026-03-08)`
+- [x] Auto-escalate priority when deadlines approach `(TESTED VIA REGRESSION - Codex 2026-03-09: cron-service.runPriorityAutoEscalate() raises in-window cases to urgent and logs one priority_auto_escalate activity per affected case)`
 
 #### Automated Phone Calls
-- [ ] Twilio integration for outbound calls
-- [ ] AI voice agent for status checks ("calling about request #12345")
-- [ ] Call recording, transcript, summary auto-attached to case
-- [ ] Start with status checks, graduate to complex conversations
+- [x] Twilio integration for outbound calls `(TESTED VIA ROUTE+SERVICE REGRESSION - Codex 2026-03-09: /api/phone-calls/:id/start-auto-call creates Twilio calls through services/twilio-voice-service.js and persists twilio_call_sid/status on phone_call_queue)`
+- [ ] AI voice agent for status checks ("calling about request #12345") `(PARTIAL - Codex 2026-03-09: scripted Twilio status-check call + transcript summary shipped; full conversational agent still open)`
+- [x] Call recording, transcript, summary auto-attached to case `(TESTED VIA CALLBACK REGRESSION - Codex 2026-03-09: /api/phone-calls/twilio/transcription stores transcript, recording URL, and appends a phone_call conversation message with AI summary)`
+- [ ] Start with status checks, graduate to complex conversations `(PARTIAL - Codex 2026-03-09: backend now starts with automated status-check calls; complex conversational escalation remains open)`
 
 ### P2 — Platform maturity
 

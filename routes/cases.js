@@ -14,6 +14,7 @@ const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const logger = require('../services/logger');
+const emailIntakeService = require('../services/email-intake-service');
 const { normalizeStateCode, parseStateFromAgencyName } = require('../utils/state-utils');
 
 function hasValidServiceKey(req) {
@@ -33,22 +34,6 @@ function createSyntheticCasePageId() {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
-function createDeterministicSyntheticId(seed) {
-  return crypto.createHash('sha256').update(String(seed || crypto.randomUUID())).digest('hex').slice(0, 32);
-}
-
-function extractFirstUrl(text) {
-  if (!text) return null;
-  const match = String(text).match(/https?:\/\/[^\s<>"')]+/i);
-  return match ? match[0] : null;
-}
-
-function cleanForwardedSubject(subject) {
-  return String(subject || '')
-    .replace(/^\s*(fwd?|fw):\s*/i, '')
-    .trim();
-}
-
 /**
  * Extract Notion page ID from various URL formats
  *
@@ -61,42 +46,29 @@ function cleanForwardedSubject(subject) {
 function extractNotionPageId(input) {
   if (!input) return null;
 
-  // Clean up input
   const trimmed = input.trim();
-
-  // If it looks like a raw page ID (32 hex chars with optional hyphens)
   const idPattern = /^[a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12}$/i;
   if (idPattern.test(trimmed.replace(/-/g, '').substring(0, 32))) {
     return trimmed.replace(/-/g, '').substring(0, 32);
   }
 
-  // Try to extract from URL
   try {
     const url = new URL(trimmed);
-
-    // Get the path after notion.so
     const pathParts = url.pathname.split('/').filter(p => p);
 
     if (pathParts.length === 0) return null;
 
-    // The page ID is typically the last 32 characters of the last path segment
-    // (after removing hyphens)
     const lastPart = pathParts[pathParts.length - 1];
-
-    // Try to find a 32-char hex string at the end
-    // Format: Page-Title-abc123def456...
     const match = lastPart.match(/([a-f0-9]{32})$/i);
     if (match) {
       return match[1];
     }
 
-    // Try hyphenated format: abc123-def4-5678-9abc-def012345678
     const hyphenatedMatch = lastPart.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i);
     if (hyphenatedMatch) {
       return hyphenatedMatch[1].replace(/-/g, '');
     }
 
-    // Last resort: take the last segment and check if it's mostly hex
     const cleaned = lastPart.replace(/[^a-f0-9]/gi, '');
     if (cleaned.length >= 32) {
       return cleaned.substring(cleaned.length - 32);
@@ -104,7 +76,6 @@ function extractNotionPageId(input) {
 
     return null;
   } catch (e) {
-    // Not a valid URL, try to extract ID directly
     const cleaned = trimmed.replace(/[^a-f0-9]/gi, '');
     if (cleaned.length >= 32) {
       return cleaned.substring(0, 32);
@@ -113,21 +84,10 @@ function extractNotionPageId(input) {
   }
 }
 
-/**
- * POST /cases/import-notion
- *
- * Import a case from a Notion page URL.
- *
- * Body:
- * - notion_url: (required) URL or page ID of the Notion page
- *
- * Returns the created case.
- */
 router.post('/import-notion', async (req, res) => {
   const { notion_url, refresh_existing = true } = req.body || {};
 
   try {
-    // Validate input
     if (!notion_url) {
       return res.status(400).json({
         success: false,
@@ -135,7 +95,6 @@ router.post('/import-notion', async (req, res) => {
       });
     }
 
-    // Extract page ID
     const pageId = extractNotionPageId(notion_url);
     if (!pageId) {
       return res.status(400).json({
@@ -147,12 +106,10 @@ router.post('/import-notion', async (req, res) => {
 
     logger.info('Importing case from Notion', { pageId, notion_url });
 
-    // Check if case already exists
     const existing = await db.getCaseByNotionId(pageId);
     if (existing) {
       let effectiveCase = existing;
 
-      // Re-sync existing case from Notion so recently added portal/email fields are picked up.
       if (refresh_existing) {
         const freshCase = await notionService.fetchPageById(pageId);
         const updates = {
@@ -189,7 +146,6 @@ router.post('/import-notion', async (req, res) => {
       });
     }
 
-    // Import from Notion
     const newCase = await notionService.processSinglePage(pageId);
 
     if (!newCase) {
@@ -224,7 +180,6 @@ router.post('/import-notion', async (req, res) => {
   } catch (error) {
     logger.error('Error importing case from Notion', { error: error.message, notion_url });
 
-    // Handle specific Notion API errors
     if (error.code === 'object_not_found') {
       return res.status(404).json({
         success: false,
@@ -248,12 +203,6 @@ router.post('/import-notion', async (req, res) => {
   }
 });
 
-/**
- * POST /cases
- *
- * Programmatic case creation for internal services.
- * Auth: X-Service-Key header checked against FOIA_SERVICE_KEY.
- */
 router.post('/', async (req, res) => {
   if (!hasValidServiceKey(req)) {
     return res.status(401).json({ success: false, error: 'Invalid service key' });
@@ -362,113 +311,14 @@ router.post('/email-intake', async (req, res) => {
     return res.status(401).json({ success: false, error: 'Invalid service key' });
   }
 
-  const {
-    forwarded_subject = '',
-    forwarded_body_text = '',
-    forwarded_from = null,
-    source_article_url = null,
-    source_article_id = null,
-    case_name = null,
-    subject_name = null,
-    agency_name = null,
-    state = null,
-    additional_details = null,
-    tags = [],
-    priority = 0,
-    user_id = null,
-  } = req.body || {};
-
-  const extractedUrl = source_article_url || extractFirstUrl(forwarded_body_text);
-  const cleanedSubject = cleanForwardedSubject(forwarded_subject);
-  const resolvedCaseName = case_name || cleanedSubject || (extractedUrl ? `Article Intake: ${extractedUrl}` : null);
-  const resolvedSubjectName = subject_name || cleanedSubject || 'Unknown subject';
-  const resolvedAgencyName = agency_name || 'Unknown agency';
-  const normalizedState = normalizeStateCode(state) || parseStateFromAgencyName(resolvedAgencyName) || null;
-
-  if (!resolvedCaseName) {
-    return res.status(400).json({
-      success: false,
-      error: 'A forwarded subject, case_name, or source_article_url is required',
-    });
-  }
-
-  if (!extractedUrl) {
-    return res.status(400).json({
-      success: false,
-      error: 'A source article URL is required in source_article_url or forwarded_body_text',
-    });
-  }
-
   try {
-    const syntheticId = createDeterministicSyntheticId(source_article_id || extractedUrl);
-    const existing = await db.getCaseByNotionId(syntheticId);
-    if (existing) {
-      return res.json({
-        success: true,
-        message: 'Case already exists (dedup)',
-        case_id: existing.id,
-        case: {
-          id: existing.id,
-          notion_page_id: existing.notion_page_id,
-          case_name: existing.case_name,
-          subject_name: existing.subject_name,
-          agency_name: existing.agency_name,
-          state: existing.state,
-          status: existing.status,
-        },
-      });
-    }
-
-    const details = [
-      additional_details || null,
-      `Source article: ${extractedUrl}`,
-      forwarded_from ? `Forwarded from: ${forwarded_from}` : null,
-      cleanedSubject ? `Forwarded subject: ${cleanedSubject}` : null,
-    ].filter(Boolean).join('\n');
-
-    const newCase = await db.createCase({
-      notion_page_id: syntheticId,
-      case_name: resolvedCaseName,
-      subject_name: resolvedSubjectName,
-      agency_name: resolvedAgencyName,
-      agency_email: null,
-      alternate_agency_email: null,
-      portal_url: null,
-      portal_provider: null,
-      state: normalizedState,
-      incident_date: null,
-      incident_location: null,
-      requested_records: ['Review forwarded article and create request strategy'],
-      additional_details: details,
-      tags: Array.from(new Set([...(Array.isArray(tags) ? tags : []), 'source:email_intake'])),
-      priority,
-      user_id,
-      status: 'needs_human_review',
-    });
-
-    await db.logActivity('case_created_email_intake', `Created case "${resolvedCaseName}" from forwarded article email`, {
-      case_id: newCase.id,
-      actor_type: 'system',
-      source_service: 'email_intake',
-      source_article_url: extractedUrl,
-      forwarded_from,
-    });
-
-    return res.status(201).json({
-      success: true,
-      case_id: newCase.id,
-      case: {
-        id: newCase.id,
-        notion_page_id: newCase.notion_page_id,
-        case_name: newCase.case_name,
-        subject_name: newCase.subject_name,
-        agency_name: newCase.agency_name,
-        state: newCase.state,
-        status: newCase.status,
-      },
-    });
+    const result = await emailIntakeService.createEmailIntakeCase(req.body || {});
+    return res.status(result.created ? 201 : 200).json({ success: true, ...result });
   } catch (error) {
-    logger.error('Error creating case via email intake', { error: error.message, forwarded_subject });
+    if (error.status === 400 || error.code === 'EMAIL_INTAKE_VALIDATION') {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    logger.error('Error creating case via email intake', { error: error.message, forwarded_subject: req.body?.forwarded_subject });
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -487,7 +337,6 @@ router.post('/email-intake', async (req, res) => {
  *                      requested_records, involvement_summary }] }
  */
 router.post('/import-direct', async (req, res) => {
-  // --- Auth: constant-time comparison against FOIA_SERVICE_KEY ---
   const serviceKey = process.env.FOIA_SERVICE_KEY;
   if (!serviceKey) {
     return res.status(503).json({ success: false, error: 'Service key not configured' });
@@ -516,27 +365,22 @@ router.post('/import-direct', async (req, res) => {
     requests = [],
   } = req.body || {};
 
-  // --- Validation ---
   if (!case_name) return res.status(400).json({ success: false, error: 'case_name is required' });
   if (!subject_name) return res.status(400).json({ success: false, error: 'subject_name is required' });
   if (!requests.length) return res.status(400).json({ success: false, error: 'At least one request/agency is required' });
 
   try {
-    // Normalize state to 2-letter uppercase; fall back to parsing from primary agency name
     const normalizedState = normalizeStateCode(state)
       || parseStateFromAgencyName((requests[0] || {}).agency_name);
 
-    // Parse incident_date to ISO YYYY-MM-DD
     let parsedDate = null;
     if (incident_date) {
       const d = new Date(incident_date);
       if (!isNaN(d.getTime())) parsedDate = d.toISOString().split('T')[0];
     }
 
-    // Synthetic notion_page_id for dedup: one case per source article
     const syntheticId = source_article_id ? `foia-${source_article_id}` : null;
 
-    // --- Dedup check ---
     if (syntheticId) {
       const existing = await db.getCaseByNotionId(syntheticId);
       if (existing) {
@@ -553,7 +397,6 @@ router.post('/import-direct', async (req, res) => {
       }
     }
 
-    // Partition agencies: usable (have email or portal) vs skipped
     const usable = [];
     const skipped = [];
     for (const r of requests) {
@@ -573,7 +416,6 @@ router.post('/import-direct', async (req, res) => {
       });
     }
 
-    // Primary agency = first usable
     const primary = usable[0];
     const requestedRecords = Array.isArray(primary.requested_records)
       ? primary.requested_records
@@ -600,7 +442,6 @@ router.post('/import-direct', async (req, res) => {
       tags: source_article_id ? [`source:${source}`] : [],
     });
 
-    // Add primary to case_agencies
     const agencies = [];
     const primaryAgency = await db.addCaseAgency(newCase.id, {
       agency_name: primary.agency_name,
@@ -614,7 +455,6 @@ router.post('/import-direct', async (req, res) => {
     });
     agencies.push({ agency_name: primary.agency_name, is_primary: true, status: 'pending', id: primaryAgency.id });
 
-    // Add remaining usable agencies
     for (let i = 1; i < usable.length; i++) {
       const r = usable[i];
       const ca = await db.addCaseAgency(newCase.id, {
@@ -662,13 +502,6 @@ router.post('/import-direct', async (req, res) => {
   }
 });
 
-/**
- * GET /cases/by-notion/:pageId
- *
- * Look up a case by Notion page ID. Returns { success, case_id } so the
- * Researcher frontend can poll until the webhook-created case exists.
- * Tries both hyphenated and stripped ID formats.
- */
 router.get('/by-notion/:pageId', async (req, res) => {
   try {
     const raw = req.params.pageId.replace(/-/g, '');
@@ -689,11 +522,6 @@ router.get('/by-notion/:pageId', async (req, res) => {
   }
 });
 
-/**
- * GET /cases/:id
- *
- * Get a case by ID.
- */
 router.get('/:id', async (req, res) => {
   const caseId = parseInt(req.params.id);
 

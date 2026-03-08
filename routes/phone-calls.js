@@ -10,6 +10,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const { transitionCaseRuntime, CaseLockContention } = require('../services/case-runtime');
+const twilioVoiceService = require('../services/twilio-voice-service');
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -34,6 +35,82 @@ async function transitionCaseRuntimeWithRetry(caseId, event, context = {}, optio
     }
 
     throw lastError || new Error(`transitionCaseRuntimeWithRetry failed for case ${caseId}`);
+}
+
+async function ensureCaseThread(caseId) {
+    let thread = await db.getThreadByCaseId(caseId);
+    if (thread) return thread;
+
+    const threadResult = await db.query(`
+        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
+        VALUES ($1, $2, NOW(), NOW())
+        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
+        RETURNING *
+    `, [caseId, `Correspondence for case ${caseId}`]);
+    return threadResult.rows[0];
+}
+
+async function appendAutomatedCallTranscript({ task, transcriptText, transcriptStatus, recordingUrl }) {
+    const caseData = await db.getCaseById(task.case_id);
+    const aiService = require('../services/ai-service');
+
+    let summary = null;
+    try {
+        summary = await aiService.summarizePhoneCallForConversation({
+            outcome: 'automated_status_check',
+            notes: transcriptText || '',
+            checked_points: ['automated_status_check'],
+            case_name: caseData?.case_name,
+            agency_name: task.agency_name || caseData?.agency_name,
+        });
+    } catch (error) {
+        console.warn('Failed to summarize automated phone transcript:', error.message);
+    }
+
+    const thread = await ensureCaseThread(task.case_id);
+    const bodyLines = [
+        'Automated status check call transcript received.',
+        transcriptStatus ? `Transcript status: ${transcriptStatus}.` : null,
+        transcriptText ? `Transcript: ${transcriptText}` : 'Transcript unavailable.',
+        recordingUrl ? `Recording: ${recordingUrl}` : null,
+        summary?.recommended_follow_up ? `Recommended follow-up: ${summary.recommended_follow_up}` : null,
+    ].filter(Boolean);
+
+    const message = await db.createMessage({
+        thread_id: thread.id,
+        case_id: task.case_id,
+        message_id: `phone-auto:${task.id}:${Date.now()}`,
+        sendgrid_message_id: null,
+        direction: 'inbound',
+        from_email: task.agency_name || caseData?.agency_name || 'Agency Contact',
+        to_email: 'Our Team',
+        subject: 'Automated phone status check transcript',
+        body_text: bodyLines.join('\n\n'),
+        body_html: null,
+        message_type: 'phone_call',
+        portal_notification: false,
+        sent_at: null,
+        received_at: new Date(),
+        summary: summary?.summary || null,
+        metadata: {
+            source: 'twilio_status_check',
+            phone_call_task_id: task.id,
+            agency_phone: task.agency_phone || null,
+            transcript_status: transcriptStatus || null,
+            recording_url: recordingUrl || null,
+            transcript: transcriptText || null,
+            ai_summary: summary || null,
+        },
+    });
+
+    await db.query(`
+        UPDATE phone_call_queue
+        SET twilio_transcript_summary = $2,
+            updated_at = NOW()
+        WHERE id = $1
+    `, [task.id, summary?.summary || transcriptText || null]);
+
+    return { message, summary };
 }
 
 /**
@@ -233,6 +310,191 @@ router.get('/stats', async (req, res) => {
         res.json({ success: true, stats });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /phone-calls/:id/start-auto-call
+ * Start an automated Twilio status check call for the task's current agency phone.
+ */
+router.post('/:id/start-auto-call', async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const { initiatedBy } = req.body || {};
+
+        const task = await db.getPhoneCallById(id);
+        if (!task) {
+            return res.status(404).json({ success: false, error: 'Phone call task not found' });
+        }
+        if (task.status === 'completed' || task.status === 'skipped') {
+            return res.status(409).json({ success: false, error: `Task is already ${task.status}` });
+        }
+        if (!twilioVoiceService.isConfigured()) {
+            return res.status(503).json({ success: false, error: 'Twilio voice is not configured' });
+        }
+        if (!task.agency_phone) {
+            return res.status(400).json({ success: false, error: 'Task does not have an agency phone number' });
+        }
+
+        const caseData = await db.getCaseById(task.case_id);
+        const call = await twilioVoiceService.startStatusCheckCall({ task, caseData });
+        const updatedResult = await db.query(`
+            UPDATE phone_call_queue
+            SET auto_call_mode = 'status_check',
+                twilio_call_sid = $2,
+                twilio_call_status = $3,
+                twilio_call_started_at = NOW(),
+                updated_at = NOW()
+            WHERE id = $1
+            RETURNING *
+        `, [id, call.callSid, call.status || 'queued']);
+
+        await db.logActivity('phone_call_auto_started', `Started automated status-check call for task ${id}`, {
+            case_id: task.case_id,
+            actor_type: 'system',
+            source_service: 'twilio_voice',
+            phone_call_task_id: id,
+            twilio_call_sid: call.callSid,
+            agency_phone: task.agency_phone,
+            initiated_by: initiatedBy || 'system',
+        });
+
+        return res.json({ success: true, task: updatedResult.rows[0], call });
+    } catch (error) {
+        const status = Number.isInteger(error.status) ? error.status : 500;
+        return res.status(status).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /phone-calls/twilio/status
+ * Twilio call status callback.
+ */
+router.post('/twilio/status', async (req, res) => {
+    try {
+        const { CallSid, CallStatus, AnsweredBy, CallDuration } = req.body || {};
+        if (!CallSid) {
+            return res.status(400).json({ success: false, error: 'CallSid is required' });
+        }
+
+        const result = await db.query(`
+            UPDATE phone_call_queue
+            SET twilio_call_status = COALESCE($2, twilio_call_status),
+                twilio_call_answered_by = COALESCE($3, twilio_call_answered_by),
+                twilio_call_completed_at = CASE
+                    WHEN COALESCE($2, '') IN ('completed', 'busy', 'failed', 'no-answer', 'canceled') THEN NOW()
+                    ELSE twilio_call_completed_at
+                END,
+                updated_at = NOW()
+            WHERE twilio_call_sid = $1
+            RETURNING id, case_id
+        `, [CallSid, CallStatus || null, AnsweredBy || null]);
+
+        if (result.rows[0]) {
+            await db.logActivity('phone_call_auto_status', `Twilio status update: ${CallStatus || 'unknown'}`, {
+                case_id: result.rows[0].case_id,
+                actor_type: 'system',
+                source_service: 'twilio_voice',
+                phone_call_task_id: result.rows[0].id,
+                twilio_call_sid: CallSid,
+                twilio_call_status: CallStatus || null,
+                twilio_answered_by: AnsweredBy || null,
+                twilio_call_duration: CallDuration || null,
+            });
+        }
+
+        return res.status(200).send('ok');
+    } catch (error) {
+        return res.status(500).send(error.message);
+    }
+});
+
+/**
+ * POST /phone-calls/twilio/recording
+ * Twilio recording callback.
+ */
+router.post('/twilio/recording', async (req, res) => {
+    try {
+        const { CallSid, RecordingSid, RecordingUrl, RecordingStatus } = req.body || {};
+        if (!CallSid) {
+            return res.status(400).json({ success: false, error: 'CallSid is required' });
+        }
+
+        const result = await db.query(`
+            UPDATE phone_call_queue
+            SET twilio_recording_sid = COALESCE($2, twilio_recording_sid),
+                twilio_recording_url = COALESCE($3, twilio_recording_url),
+                twilio_recording_status = COALESCE($4, twilio_recording_status),
+                updated_at = NOW()
+            WHERE twilio_call_sid = $1
+            RETURNING id, case_id
+        `, [CallSid, RecordingSid || null, RecordingUrl || null, RecordingStatus || null]);
+
+        if (result.rows[0]) {
+            await db.logActivity('phone_call_recording_received', 'Received Twilio phone call recording', {
+                case_id: result.rows[0].case_id,
+                actor_type: 'system',
+                source_service: 'twilio_voice',
+                phone_call_task_id: result.rows[0].id,
+                twilio_call_sid: CallSid,
+                twilio_recording_sid: RecordingSid || null,
+                twilio_recording_url: RecordingUrl || null,
+                twilio_recording_status: RecordingStatus || null,
+            });
+        }
+
+        return res.status(200).send('ok');
+    } catch (error) {
+        return res.status(500).send(error.message);
+    }
+});
+
+/**
+ * POST /phone-calls/twilio/transcription
+ * Twilio transcription callback.
+ */
+router.post('/twilio/transcription', async (req, res) => {
+    try {
+        const { CallSid, TranscriptionText, TranscriptionStatus } = req.body || {};
+        if (!CallSid) {
+            return res.status(400).json({ success: false, error: 'CallSid is required' });
+        }
+
+        const result = await db.query(`
+            UPDATE phone_call_queue
+            SET twilio_transcript = COALESCE($2, twilio_transcript),
+                twilio_transcript_status = COALESCE($3, twilio_transcript_status),
+                call_notes = COALESCE($2, call_notes),
+                updated_at = NOW()
+            WHERE twilio_call_sid = $1
+            RETURNING *
+        `, [CallSid, TranscriptionText || null, TranscriptionStatus || null]);
+        const task = result.rows[0];
+
+        if (!task) {
+            return res.status(200).send('ok');
+        }
+
+        const transcriptResult = await appendAutomatedCallTranscript({
+            task,
+            transcriptText: TranscriptionText || '',
+            transcriptStatus: TranscriptionStatus || 'completed',
+            recordingUrl: task.twilio_recording_url || null,
+        });
+
+        await db.logActivity('phone_call_transcription_received', 'Received Twilio phone call transcription', {
+            case_id: task.case_id,
+            actor_type: 'system',
+            source_service: 'twilio_voice',
+            phone_call_task_id: task.id,
+            twilio_call_sid: CallSid,
+            transcript_status: TranscriptionStatus || 'completed',
+            conversation_message_id: transcriptResult.message?.id || null,
+        });
+
+        return res.status(200).send('ok');
+    } catch (error) {
+        return res.status(500).send(error.message);
     }
 });
 
