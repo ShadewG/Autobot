@@ -46,7 +46,7 @@ import { ExemptionClaimsList } from "@/components/exemption-claim-card";
 import { AdjustModal } from "@/components/adjust-modal";
 import { DecisionPanel } from "@/components/decision-panel";
 import { DeadlineCalculator } from "@/components/deadline-calculator";
-import { requestsAPI, casesAPI, fetcher, type AgentRun } from "@/lib/api";
+import { requestsAPI, casesAPI, fetcher, fetchAPI, type AgentRun } from "@/lib/api";
 import type {
   RequestWorkspaceResponse,
   NextAction,
@@ -95,6 +95,7 @@ import {
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
 import { SnoozeModal } from "@/components/snooze-modal";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AutopilotSelector } from "@/components/autopilot-selector";
 import { SafetyHints } from "@/components/safety-hints";
 import { PasteInboundDialog } from "@/components/paste-inbound-dialog";
@@ -287,10 +288,11 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-function CollapsibleSection({ title, defaultOpen = true, count, children }: {
+function CollapsibleSection({ title, defaultOpen = true, count, action, children }: {
   title: string;
   defaultOpen?: boolean;
   count?: number | null;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -299,6 +301,7 @@ function CollapsibleSection({ title, defaultOpen = true, count, children }: {
         <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
         {title}
         {count != null && <span className="ml-auto text-muted-foreground">{count}</span>}
+        {action && <span className="ml-auto">{action}</span>}
       </summary>
       <div className="px-3 pb-2">{children}</div>
     </details>
@@ -350,6 +353,11 @@ function DetailV2Content() {
   // Chain draft editing
   const [editedChainSubject, setEditedChainSubject] = useState<string>("");
   const [editedChainBody, setEditedChainBody] = useState<string>("");
+  // Constraint management
+  const [constraintEditing, setConstraintEditing] = useState(false);
+  const [addConstraintOpen, setAddConstraintOpen] = useState(false);
+  const [newConstraintType, setNewConstraintType] = useState("FEE_REQUIRED");
+  const [newConstraintDesc, setNewConstraintDesc] = useState("");
   // View management
   const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency" | "intel">("thread");
   const [bottomDrawer, setBottomDrawer] = useState<"runs" | "agent-log" | null>(null);
@@ -895,6 +903,38 @@ function DetailV2Content() {
       toast.error("Failed to withdraw request");
     } finally {
       setIsResolving(false);
+    }
+  };
+
+  const handleRemoveConstraint = async (index: number) => {
+    if (!id) return;
+    try {
+      await fetchAPI(`/requests/${id}/constraints/remove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index }),
+      });
+      mutate();
+      toast.success("Constraint removed");
+    } catch {
+      toast.error("Failed to remove constraint");
+    }
+  };
+
+  const handleAddConstraint = async () => {
+    if (!id || !newConstraintDesc.trim()) return;
+    try {
+      await fetchAPI(`/requests/${id}/constraints/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: newConstraintType, description: newConstraintDesc.trim() }),
+      });
+      mutate();
+      setAddConstraintOpen(false);
+      setNewConstraintDesc("");
+      toast.success("Constraint added");
+    } catch {
+      toast.error("Failed to add constraint");
     }
   };
 
@@ -2079,11 +2119,25 @@ function DetailV2Content() {
                   <DeadlineCalculator milestones={deadline_milestones} stateDeadline={state_deadline} compact />
                 </CollapsibleSection>
               )}
-              {request.constraints && request.constraints.length > 0 && (
-                <CollapsibleSection title="CONSTRAINTS" count={request.constraints.length}>
-                  <ConstraintsDisplay constraints={request.constraints} />
-                </CollapsibleSection>
-              )}
+              <CollapsibleSection
+                title="CONSTRAINTS"
+                count={request.constraints?.length || 0}
+                action={
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setConstraintEditing(!constraintEditing); }}
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {constraintEditing ? "Done" : "Edit"}
+                  </button>
+                }
+              >
+                <ConstraintsDisplay
+                  constraints={request.constraints || []}
+                  editable={constraintEditing}
+                  onRemove={handleRemoveConstraint}
+                  onAdd={() => setAddConstraintOpen(true)}
+                />
+              </CollapsibleSection>
               {request.constraints && request.constraints.some((c: any) => c.type === "EXEMPTION") && (
                 <CollapsibleSection title="EXEMPTION CLAIMS" defaultOpen={false}>
                   <ExemptionClaimsList
@@ -2215,11 +2269,25 @@ function DetailV2Content() {
               )}
 
               {/* CONSTRAINTS */}
-              {request.constraints && request.constraints.length > 0 && (
-                <CollapsibleSection title="CONSTRAINTS" count={request.constraints.length}>
-                  <ConstraintsDisplay constraints={request.constraints} />
-                </CollapsibleSection>
-              )}
+              <CollapsibleSection
+                title="CONSTRAINTS"
+                count={request.constraints?.length || 0}
+                action={
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setConstraintEditing(!constraintEditing); }}
+                    className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    {constraintEditing ? "Done" : "Edit"}
+                  </button>
+                }
+              >
+                <ConstraintsDisplay
+                  constraints={request.constraints || []}
+                  editable={constraintEditing}
+                  onRemove={handleRemoveConstraint}
+                  onAdd={() => setAddConstraintOpen(true)}
+                />
+              </CollapsibleSection>
 
               {/* EXEMPTION CLAIMS */}
               {request.constraints && request.constraints.some((c: any) => c.type === "EXEMPTION") && (
@@ -2392,6 +2460,55 @@ function DetailV2Content() {
         onOpenChange={setSnoozeModalOpen}
         onSnooze={async (snoozeUntil) => { mutate(); }}
       />
+
+      {/* Add Constraint dialog */}
+      <Dialog open={addConstraintOpen} onOpenChange={setAddConstraintOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Constraint</DialogTitle>
+            <DialogDescription>Add a new constraint or requirement to this case.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Type</label>
+              <Select value={newConstraintType} onValueChange={setNewConstraintType}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="FEE_REQUIRED">Fee Required</SelectItem>
+                  <SelectItem value="PREPAYMENT_REQUIRED">Prepayment Required</SelectItem>
+                  <SelectItem value="ID_REQUIRED">ID Required</SelectItem>
+                  <SelectItem value="CERTIFICATION_REQUIRED">Certification Required</SelectItem>
+                  <SelectItem value="REDACTION_REQUIRED">Redaction Required</SelectItem>
+                  <SelectItem value="EXEMPTION">Exemption</SelectItem>
+                  <SelectItem value="NOT_HELD">Not Held</SelectItem>
+                  <SelectItem value="PARTIAL_DENIAL">Partial Denial</SelectItem>
+                  <SelectItem value="DENIAL_RECEIVED">Denial Received</SelectItem>
+                  <SelectItem value="WRONG_AGENCY_REFERRAL">Wrong Agency Referral</SelectItem>
+                  <SelectItem value="INVESTIGATION_ACTIVE">Investigation Active</SelectItem>
+                  <SelectItem value="SCOPE_NARROWING_SUGGESTED">Scope Narrowing Suggested</SelectItem>
+                  <SelectItem value="WITHDRAWAL_IF_NO_RESPONSE_10_BUSINESS_DAYS">Withdrawal if No Response</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Description</label>
+              <Textarea
+                value={newConstraintDesc}
+                onChange={(e) => setNewConstraintDesc(e.target.value)}
+                placeholder="Describe the constraint..."
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddConstraintOpen(false)}>Cancel</Button>
+            <Button onClick={handleAddConstraint} disabled={!newConstraintDesc.trim()}>Add Constraint</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {showPasteInboundDialog && (
         <PasteInboundDialog
           caseId={parseInt(id)}

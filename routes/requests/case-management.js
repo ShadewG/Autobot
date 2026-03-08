@@ -626,4 +626,96 @@ router.post('/:id/resolve-review', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/requests/:id/constraints
+ * Get parsed constraints for a case
+ */
+router.get('/:id/constraints', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
+
+        const constraints = parseConstraints(caseData);
+        res.json({ success: true, constraints });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/requests/:id/constraints/remove
+ * Remove a constraint by index
+ * Body: { index: number, reason?: string }
+ */
+router.post('/:id/constraints/remove', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const { index, reason } = req.body || {};
+        const userId = req.headers['x-user-id'] || null;
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
+
+        const current = Array.isArray(caseData.constraints_jsonb) ? [...caseData.constraints_jsonb] : [];
+        if (index < 0 || index >= current.length) {
+            return res.status(400).json({ success: false, error: 'Invalid constraint index' });
+        }
+
+        const removed = current.splice(index, 1)[0];
+        await db.updateCase(caseId, { constraints_jsonb: current });
+
+        await db.logActivity(caseId, 'constraint_removed', {
+            removed_constraint: removed,
+            reason: reason || null,
+            user_id: userId,
+        });
+
+        res.json({ success: true, removed, constraints: current });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/requests/:id/constraints/add
+ * Add a new constraint
+ * Body: { type: string, description: string, source?: string }
+ */
+router.post('/:id/constraints/add', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id);
+        const { type, description, source } = req.body || {};
+        const userId = req.headers['x-user-id'] || null;
+
+        if (!type || !description) {
+            return res.status(400).json({ success: false, error: 'type and description are required' });
+        }
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) return res.status(404).json({ success: false, error: 'Case not found' });
+
+        const constraint = {
+            type,
+            description,
+            source: source || 'Manual override',
+            confidence: 1.0,
+            affected_items: [],
+        };
+
+        const current = Array.isArray(caseData.constraints_jsonb) ? [...caseData.constraints_jsonb] : [];
+        current.push(constraint);
+        await db.updateCase(caseId, { constraints_jsonb: current });
+
+        await db.logActivity(caseId, 'constraint_added', {
+            added_constraint: constraint,
+            user_id: userId,
+        });
+
+        res.json({ success: true, constraint, constraints: current });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

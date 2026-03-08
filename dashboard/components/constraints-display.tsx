@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Constraint } from "@/lib/types";
-import { AlertTriangle, Ban, FileX, DollarSign, Shield, Clock, Eye, Minimize2, Info, ArrowRightLeft } from "lucide-react";
+import { AlertTriangle, Ban, FileX, DollarSign, Shield, Clock, Eye, Minimize2, Info, ArrowRightLeft, X, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const CONSTRAINT_CONFIG: Record<string, {
@@ -126,10 +126,13 @@ function normalizeConstraints(constraints: Constraint[]): NormalizedConstraint[]
 interface ConstraintsDisplayProps {
   constraints: Constraint[];
   compact?: boolean;
+  editable?: boolean;
+  onRemove?: (index: number) => void;
+  onAdd?: () => void;
   className?: string;
 }
 
-export function ConstraintsDisplay({ constraints, compact = false, className }: ConstraintsDisplayProps) {
+export function ConstraintsDisplay({ constraints, compact = false, editable = false, onRemove, onAdd, className }: ConstraintsDisplayProps) {
   if (!constraints || constraints.length === 0) {
     return null;
   }
@@ -167,10 +170,18 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
     );
   }
 
+  // In editable mode, show raw constraints (no merging) for accurate index-based removal
+  const displayItems = editable ? constraints.map((c, i) => ({
+    ...c,
+    canonicalKey: `raw-${i}`,
+    normalizedLabel: c.description || c.type || "Requirement",
+    rawIndex: i,
+  })) : normalized.map((c) => ({ ...c, rawIndex: -1 }));
+
   return (
     <div className={cn("space-y-2", className)}>
       <div className="space-y-1.5">
-        {normalized.map((constraint, index) => {
+        {displayItems.map((constraint, index) => {
           const config = CONSTRAINT_CONFIG[constraint.canonicalKey] || CONSTRAINT_CONFIG[constraint.type] || FALLBACK_CONSTRAINT_CONFIG;
           const Icon = config.icon;
 
@@ -186,14 +197,14 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
                 <Icon className={cn("h-3.5 w-3.5 mt-0.5 flex-shrink-0", config.color)} />
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-medium">{constraint.normalizedLabel}</p>
-                  {constraint.rawDescriptions[0] && (
+                  {(editable ? constraint.description : (constraint as any).rawDescriptions?.[0]) && (
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {constraint.rawDescriptions[0]}
+                      {editable ? constraint.description : (constraint as any).rawDescriptions?.[0]}
                     </p>
                   )}
                   {constraint.affected_items?.length > 0 && (
                     <div className="flex items-center gap-1 mt-1 flex-wrap">
-                      {constraint.affected_items.map((item, i) => (
+                      {constraint.affected_items.map((item: string, i: number) => (
                         <Badge key={i} variant="outline" className="text-[10px]">
                           {item}
                         </Badge>
@@ -201,11 +212,29 @@ export function ConstraintsDisplay({ constraints, compact = false, className }: 
                     </div>
                   )}
                 </div>
+                {editable && onRemove && (
+                  <button
+                    onClick={() => onRemove(constraint.rawIndex)}
+                    className="flex-shrink-0 p-1 rounded hover:bg-red-500/20 text-muted-foreground hover:text-red-400 transition-colors"
+                    title="Remove constraint"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           );
         })}
       </div>
+      {editable && onAdd && (
+        <button
+          onClick={onAdd}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5"
+        >
+          <Plus className="h-3 w-3" />
+          Add constraint
+        </button>
+      )}
     </div>
   );
 }
