@@ -207,6 +207,25 @@ class DatabaseService {
             await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_message_id ON email_events(message_id)');
             await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_provider_message_id ON email_events(provider_message_id)');
             await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_type ON email_events(event_type)');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS source_action_type VARCHAR(50)');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS capture_source VARCHAR(50)');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_action VARCHAR(50)');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_instruction TEXT');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_reason TEXT');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_decided_by VARCHAR(100)');
+            await this.query(`
+                DO $$
+                BEGIN
+                    IF to_regclass('public.eval_cases') IS NOT NULL THEN
+                        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_eval_cases_case_id ON eval_cases(case_id)';
+                        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_eval_cases_active_created ON eval_cases(created_at DESC) WHERE is_active = true';
+                        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_eval_cases_feedback_action_active ON eval_cases(feedback_action, created_at DESC) WHERE is_active = true';
+                    END IF;
+                    IF to_regclass('public.eval_runs') IS NOT NULL THEN
+                        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_eval_runs_eval_case_id_ran_at ON eval_runs(eval_case_id, ran_at DESC)';
+                    END IF;
+                END $$;
+            `);
 
             // Feature 2: Fee History table
             await this.query(`

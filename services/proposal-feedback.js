@@ -1,28 +1,72 @@
 const db = require('./database');
 
-async function autoCaptureEvalCase(proposal, { action, instruction = null, reason = null, decidedBy = null } = {}) {
+function normalizeExpectedAction(proposal, action, expectedAction) {
+  if (expectedAction) return expectedAction;
+  if (action === 'DISMISS') return 'DISMISSED';
+  return proposal?.action_type || 'NONE';
+}
+
+function buildNotes({ action, instruction = null, reason = null, decidedBy = null } = {}) {
+  return [
+    `Auto-captured from monitor decision: ${action}`,
+    instruction ? `Instruction: ${instruction}` : null,
+    reason ? `Reason: ${reason}` : null,
+    decidedBy ? `Decided by: ${decidedBy}` : null,
+  ].filter(Boolean);
+}
+
+async function autoCaptureEvalCase(
+  proposal,
+  {
+    action,
+    instruction = null,
+    reason = null,
+    decidedBy = null,
+    expectedAction = null,
+    captureSource = 'human_review',
+  } = {}
+) {
   try {
     if (!proposal?.id) return;
-    const expectedAction = action === 'DISMISS' ? 'DISMISSED' : proposal.action_type;
-    const notesParts = [
-      `Auto-captured from monitor decision: ${action}`,
-      instruction ? `Instruction: ${instruction}` : null,
-      reason ? `Reason: ${reason}` : null,
-      decidedBy ? `Decided by: ${decidedBy}` : null,
-    ].filter(Boolean);
+    const normalizedExpectedAction = normalizeExpectedAction(proposal, action, expectedAction);
+    const notesParts = buildNotes({ action, instruction, reason, decidedBy });
 
     await db.query(
-      `INSERT INTO eval_cases (proposal_id, case_id, trigger_message_id, expected_action, notes)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO eval_cases (
+          proposal_id,
+          case_id,
+          trigger_message_id,
+          expected_action,
+          source_action_type,
+          capture_source,
+          feedback_action,
+          feedback_instruction,
+          feedback_reason,
+          feedback_decided_by,
+          notes
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (proposal_id) DO UPDATE
          SET expected_action = EXCLUDED.expected_action,
+             source_action_type = EXCLUDED.source_action_type,
+             capture_source = EXCLUDED.capture_source,
+             feedback_action = EXCLUDED.feedback_action,
+             feedback_instruction = EXCLUDED.feedback_instruction,
+             feedback_reason = EXCLUDED.feedback_reason,
+             feedback_decided_by = EXCLUDED.feedback_decided_by,
              notes = EXCLUDED.notes,
              is_active = true`,
       [
         proposal.id,
         proposal.case_id || null,
         proposal.trigger_message_id || null,
-        expectedAction,
+        normalizedExpectedAction,
+        proposal.action_type || null,
+        captureSource,
+        action || null,
+        instruction || null,
+        reason || null,
+        decidedBy || null,
         notesParts.join(' | ') || null,
       ]
     );
@@ -62,4 +106,6 @@ module.exports = {
   autoCaptureEvalCase,
   learnFromDismiss,
   captureDismissFeedback,
+  normalizeExpectedAction,
+  buildNotes,
 };

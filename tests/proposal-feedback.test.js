@@ -33,10 +33,47 @@ describe('Proposal feedback helpers', function () {
     assert.strictEqual(params[1], 902);
     assert.strictEqual(params[2], 903);
     assert.strictEqual(params[3], 'DISMISSED');
-    assert.match(params[4], /Auto-captured from monitor decision: DISMISS/);
-    assert.match(params[4], /Instruction: Do not send this/);
-    assert.match(params[4], /Reason: Wrong agency/);
-    assert.match(params[4], /Decided by: qa-user/);
+    assert.strictEqual(params[4], 'SEND_REBUTTAL');
+    assert.strictEqual(params[5], 'human_review');
+    assert.strictEqual(params[6], 'DISMISS');
+    assert.strictEqual(params[7], 'Do not send this');
+    assert.strictEqual(params[8], 'Wrong agency');
+    assert.strictEqual(params[9], 'qa-user');
+    assert.match(params[10], /Auto-captured from monitor decision: DISMISS/);
+    assert.match(params[10], /Instruction: Do not send this/);
+    assert.match(params[10], /Reason: Wrong agency/);
+    assert.match(params[10], /Decided by: qa-user/);
+  });
+
+  it('captures adjust eval cases with structured feedback fields', async function () {
+    const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
+
+    await proposalFeedback.autoCaptureEvalCase({
+      id: 911,
+      case_id: 912,
+      trigger_message_id: 913,
+      action_type: 'SEND_INITIAL_REQUEST',
+    }, {
+      action: 'ADJUST',
+      instruction: 'Keep the action but shorten the draft and remove the fee paragraph',
+      reason: 'Too long',
+      decidedBy: 'qa-user',
+    });
+
+    const evalInsertCall = queryStub.getCalls().find((call) => String(call.args[0]).includes('INSERT INTO eval_cases'));
+    assert.ok(evalInsertCall, 'expected eval case insert query');
+    const [, params] = evalInsertCall.args;
+    assert.strictEqual(params[0], 911);
+    assert.strictEqual(params[1], 912);
+    assert.strictEqual(params[2], 913);
+    assert.strictEqual(params[3], 'SEND_INITIAL_REQUEST');
+    assert.strictEqual(params[4], 'SEND_INITIAL_REQUEST');
+    assert.strictEqual(params[5], 'human_review');
+    assert.strictEqual(params[6], 'ADJUST');
+    assert.strictEqual(params[7], 'Keep the action but shorten the draft and remove the fee paragraph');
+    assert.strictEqual(params[8], 'Too long');
+    assert.strictEqual(params[9], 'qa-user');
+    assert.match(params[10], /Auto-captured from monitor decision: ADJUST/);
   });
 
   it('learns from dismiss outcomes without throwing when the DB case exists', async function () {

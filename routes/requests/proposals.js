@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db, logger, triggerDispatch } = require('./_helpers');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
-const { captureDismissFeedback } = require('../../services/proposal-feedback');
+const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/proposal-feedback');
 const { buildHumanDecision } = proposalLifecycle;
 
 async function completeProposalWaitpoint(proposal, data, log) {
@@ -278,6 +278,12 @@ router.post('/:id/proposals/:proposalId/adjust', async (req, res) => {
                 adjustments: adjustments || null,
             }),
             adjustmentCount: (proposal.adjustment_count || 0) + 1,
+        });
+        await autoCaptureEvalCase(proposal, {
+            action: 'ADJUST',
+            instruction: instruction || null,
+            reason: null,
+            decidedBy: req.body?.decidedBy || 'human',
         });
 
         // Complete the Trigger.dev waitpoint token or handle legacy proposal

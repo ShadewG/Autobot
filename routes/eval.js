@@ -57,6 +57,45 @@ const KNOWN_ACTION_TYPES = new Set([
     'DISMISSED', // Special value meaning "AI should not have proposed anything"
 ]);
 
+const FEEDBACK_METRICS_WINDOW_DAYS = 30;
+const FEEDBACK_METRICS_CTE = `
+    WITH reviewed_proposals AS (
+        SELECT
+            p.id AS proposal_id,
+            COALESCE(NULLIF(p.action_type, ''), 'UNKNOWN') AS proposal_action_type,
+            COALESCE(NULLIF(c.agency_name, ''), 'Unknown agency') AS agency_name,
+            COALESCE(NULLIF(ra.intent, ''), 'UNCLASSIFIED') AS classification,
+            UPPER(COALESCE(NULLIF(p.human_decision->>'action', ''), '')) AS human_action
+        FROM proposals p
+        LEFT JOIN cases c ON c.id = p.case_id
+        LEFT JOIN response_analysis ra ON ra.message_id = p.trigger_message_id
+        WHERE p.human_decided_at > NOW() - INTERVAL '${FEEDBACK_METRICS_WINDOW_DAYS} days'
+    )
+`;
+
+function rate(count, total) {
+    return total > 0 ? Number((count / total).toFixed(4)) : null;
+}
+
+function normalizeFeedbackBreakdown(rows, labelKey) {
+    return rows.map((row) => {
+        const total = Number(row.total_reviews) || 0;
+        const approve = Number(row.approve_count) || 0;
+        const adjust = Number(row.adjust_count) || 0;
+        const dismiss = Number(row.dismiss_count) || 0;
+        return {
+            [labelKey]: row[labelKey],
+            total_reviews: total,
+            approve_count: approve,
+            adjust_count: adjust,
+            dismiss_count: dismiss,
+            approval_rate: rate(approve, total),
+            adjust_rate: rate(adjust, total),
+            dismiss_rate: rate(dismiss, total),
+        };
+    });
+}
+
 function parseId(val) {
     const id = parseInt(val, 10);
     return Number.isFinite(id) ? id : null;
@@ -76,6 +115,12 @@ router.get('/cases', async (req, res) => {
                 ec.case_id,
                 ec.trigger_message_id,
                 ec.expected_action,
+                ec.source_action_type,
+                ec.capture_source,
+                ec.feedback_action,
+                ec.feedback_instruction,
+                ec.feedback_reason,
+                ec.feedback_decided_by,
                 ec.notes,
                 ec.created_at,
                 ec.simulated_subject,
@@ -302,8 +347,67 @@ router.get('/summary', async (req, res) => {
             ORDER BY count DESC
         `);
 
+        const feedbackOverviewResult = await db.query(`
+            ${FEEDBACK_METRICS_CTE}
+            SELECT
+                COUNT(*) FILTER (WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
+                COUNT(*) FILTER (WHERE human_action = 'APPROVE')::int AS approve_count,
+                COUNT(*) FILTER (WHERE human_action = 'ADJUST')::int AS adjust_count,
+                COUNT(*) FILTER (WHERE human_action = 'DISMISS')::int AS dismiss_count
+            FROM reviewed_proposals
+        `);
+
+        const feedbackByActionTypeResult = await db.query(`
+            ${FEEDBACK_METRICS_CTE}
+            SELECT
+                proposal_action_type,
+                COUNT(*) FILTER (WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
+                COUNT(*) FILTER (WHERE human_action = 'APPROVE')::int AS approve_count,
+                COUNT(*) FILTER (WHERE human_action = 'ADJUST')::int AS adjust_count,
+                COUNT(*) FILTER (WHERE human_action = 'DISMISS')::int AS dismiss_count
+            FROM reviewed_proposals
+            WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS')
+            GROUP BY proposal_action_type
+            ORDER BY total_reviews DESC, proposal_action_type ASC
+        `);
+
+        const feedbackByAgencyResult = await db.query(`
+            ${FEEDBACK_METRICS_CTE}
+            SELECT
+                agency_name,
+                COUNT(*) FILTER (WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
+                COUNT(*) FILTER (WHERE human_action = 'APPROVE')::int AS approve_count,
+                COUNT(*) FILTER (WHERE human_action = 'ADJUST')::int AS adjust_count,
+                COUNT(*) FILTER (WHERE human_action = 'DISMISS')::int AS dismiss_count
+            FROM reviewed_proposals
+            WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS')
+            GROUP BY agency_name
+            HAVING COUNT(*) FILTER (WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS')) > 0
+            ORDER BY total_reviews DESC, agency_name ASC
+            LIMIT 20
+        `);
+
+        const feedbackByClassificationResult = await db.query(`
+            ${FEEDBACK_METRICS_CTE}
+            SELECT
+                classification,
+                COUNT(*) FILTER (WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
+                COUNT(*) FILTER (WHERE human_action = 'APPROVE')::int AS approve_count,
+                COUNT(*) FILTER (WHERE human_action = 'ADJUST')::int AS adjust_count,
+                COUNT(*) FILTER (WHERE human_action = 'DISMISS')::int AS dismiss_count
+            FROM reviewed_proposals
+            WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS')
+            GROUP BY classification
+            ORDER BY total_reviews DESC, classification ASC
+        `);
+
         const s = result.rows[0];
         const passRate7d = s.total_7d > 0 ? s.correct_7d / s.total_7d : null;
+        const feedbackOverview = feedbackOverviewResult.rows[0] || {};
+        const totalReviews = Number(feedbackOverview.total_reviews) || 0;
+        const approveCount = Number(feedbackOverview.approve_count) || 0;
+        const adjustCount = Number(feedbackOverview.adjust_count) || 0;
+        const dismissCount = Number(feedbackOverview.dismiss_count) || 0;
 
         res.json({
             success: true,
@@ -314,6 +418,21 @@ router.get('/summary', async (req, res) => {
                 pass_rate_7d: passRate7d,
             },
             failure_breakdown: failuresResult.rows,
+            feedback_metrics: {
+                window_days: FEEDBACK_METRICS_WINDOW_DAYS,
+                overview: {
+                    total_reviews: totalReviews,
+                    approve_count: approveCount,
+                    adjust_count: adjustCount,
+                    dismiss_count: dismissCount,
+                    approval_rate: rate(approveCount, totalReviews),
+                    adjust_rate: rate(adjustCount, totalReviews),
+                    dismiss_rate: rate(dismissCount, totalReviews),
+                },
+                by_action_type: normalizeFeedbackBreakdown(feedbackByActionTypeResult.rows, 'proposal_action_type'),
+                by_agency: normalizeFeedbackBreakdown(feedbackByAgencyResult.rows, 'agency_name'),
+                by_classification: normalizeFeedbackBreakdown(feedbackByClassificationResult.rows, 'classification'),
+            },
         });
     } catch (error) {
         console.error('Error fetching eval summary:', error);
@@ -354,6 +473,12 @@ router.get('/export', async (req, res) => {
                 ec.proposal_id,
                 ec.case_id,
                 ec.expected_action,
+                ec.source_action_type,
+                ec.capture_source,
+                ec.feedback_action,
+                ec.feedback_instruction,
+                ec.feedback_reason,
+                ec.feedback_decided_by,
                 ec.notes,
                 ec.created_at,
                 p.action_type      AS ai_proposed_action,
