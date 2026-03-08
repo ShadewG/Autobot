@@ -9,6 +9,7 @@ const agencyNotionSync = require('./agency-notion-sync');
 const pdContactService = require('./pd-contact-service');
 const triggerDispatch = require('./trigger-dispatch-service');
 const discordService = require('./discord-service');
+const qualityReportService = require('./quality-report-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 
 function normalizePortalTimeoutError(rawError) {
@@ -123,6 +124,15 @@ class CronService {
                 await this.checkOperationalAlerts();
             } catch (error) {
                 console.error('Error in operational alert check:', error);
+            }
+        }, null, true, 'America/New_York');
+
+        this.jobs.weeklyQualityReport = new CronJob('0 9 * * 1', async () => {
+            try {
+                console.log('Running weekly quality report...');
+                await this.sendWeeklyQualityReport();
+            } catch (error) {
+                console.error('Error in weekly quality report cron:', error);
             }
         }, null, true, 'America/New_York');
 
@@ -1670,9 +1680,51 @@ class CronService {
             cleanup: this.jobs.cleanup?.running || false,
             healthCheck: this.jobs.healthCheck?.running || false,
             operationalAlerts: this.jobs.operationalAlerts?.running || false,
+            weeklyQualityReport: this.jobs.weeklyQualityReport?.running || false,
             stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false,
             deadlineEscalationSweep: this.jobs.deadlineEscalationSweep?.running || false
         };
+    }
+
+    async sendWeeklyQualityReport() {
+        const report = await qualityReportService.buildWeeklyQualityReport({ windowDays: 7 });
+        const confusion = await qualityReportService.buildClassificationConfusionMatrix({ windowDays: 30 });
+
+        const topAdjustment = report.common_adjustments[0]?.adjustment || 'None';
+        const topFailure = report.common_failures[0]
+            ? `${report.common_failures[0].failure_category} (${report.common_failures[0].count})`
+            : 'None';
+        const topConfusion = confusion.top_confusions[0]
+            ? `${confusion.top_confusions[0].predicted_classification} -> ${confusion.top_confusions[0].actual_classification} (${confusion.top_confusions[0].count})`
+            : 'None';
+
+        await db.logActivity('weekly_quality_report', 'Generated weekly quality report', {
+            report_window_days: report.window_days,
+            confusion_window_days: confusion.window_days,
+            cases_processed: report.overview.cases_processed,
+            cases_resolved: report.overview.cases_resolved,
+            approval_rate: report.overview.approval_rate,
+            top_adjustment: topAdjustment,
+            top_failure: topFailure,
+            top_confusion: topConfusion,
+        });
+
+        await discordService.notify({
+            title: 'Weekly Quality Report',
+            description: `Last ${report.window_days} days: ${report.overview.cases_processed} cases processed, ${report.overview.cases_resolved} resolved.`,
+            color: 0x3182ce,
+            fields: [
+                { name: 'Approval Rate', value: report.overview.approval_rate != null ? `${Math.round(report.overview.approval_rate * 100)}%` : 'N/A', inline: true },
+                { name: 'Adjust Rate', value: report.overview.adjust_rate != null ? `${Math.round(report.overview.adjust_rate * 100)}%` : 'N/A', inline: true },
+                { name: 'Dismiss Rate', value: report.overview.dismiss_rate != null ? `${Math.round(report.overview.dismiss_rate * 100)}%` : 'N/A', inline: true },
+                { name: 'Avg Resolution Days', value: report.overview.avg_resolution_days != null ? `${report.overview.avg_resolution_days}` : 'N/A', inline: true },
+                { name: 'Top Adjustment', value: topAdjustment, inline: false },
+                { name: 'Top Failure', value: topFailure, inline: false },
+                { name: 'Top Confusion', value: topConfusion, inline: false },
+            ],
+        });
+
+        return { report, confusion };
     }
 
     /**

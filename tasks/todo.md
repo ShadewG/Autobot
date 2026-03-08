@@ -301,8 +301,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
 
 #### Quality Reporting
-- [ ] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution `(IN PROGRESS - Codex)`
-- [ ] Classification confusion matrix: AI classified vs actual (from human corrections) `(IN PROGRESS - Codex)`
+- [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
+- [x] Classification confusion matrix: AI classified vs actual (from human corrections)
 - [ ] Draft quality scoring: eval judge rates sent drafts after case resolves
 
 #### Regression Testing
@@ -420,7 +420,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 ### Production → Scale
 - [x] Auto-captured eval cases from ADJUST/DISMISS flowing
-- [ ] Weekly quality report generating automatically
+- [x] Weekly quality report generating automatically
 - [ ] Regression eval suite blocking deploys
 - [ ] Agency validation catching bad imports before first send
 - [ ] Per-agency intelligence informing AI decisions

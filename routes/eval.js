@@ -10,6 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const qualityReportService = require('../services/quality-report-service');
 const { tasks } = require('@trigger.dev/sdk');
 
 const AUTO_CAPTURE_NOTES_PREFIX = 'Auto-captured from monitor decision:%';
@@ -436,6 +437,36 @@ router.get('/summary', async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching eval summary:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/eval/quality-report?windowDays=7
+ * Build the backend weekly quality report used by cron/reporting.
+ */
+router.get('/quality-report', async (req, res) => {
+    try {
+        const windowDays = parseId(req.query.windowDays) || 7;
+        const report = await qualityReportService.buildWeeklyQualityReport({ windowDays });
+        res.json({ success: true, report });
+    } catch (error) {
+        console.error('Error building quality report:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/eval/classification-confusion?windowDays=30
+ * Confusion matrix using classifier output vs inferred actual class from human-corrected actions.
+ */
+router.get('/classification-confusion', async (req, res) => {
+    try {
+        const windowDays = parseId(req.query.windowDays) || 30;
+        const confusion_matrix = await qualityReportService.buildClassificationConfusionMatrix({ windowDays });
+        res.json({ success: true, confusion_matrix });
+    } catch (error) {
+        console.error('Error building classification confusion matrix:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
