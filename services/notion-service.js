@@ -2,6 +2,7 @@ const { Client } = require('@notionhq/client');
 const db = require('./database');
 const aiService = require('./ai-service');
 const pdContactService = require('./pd-contact-service');
+const errorTrackingService = require('./error-tracking-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { detectCaseMetadataAgencyMismatch } = require('../utils/request-normalization');
@@ -1671,6 +1672,15 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             }
             return null;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'update_page',
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    pageId,
+                    updateKeys: Object.keys(updates || {}),
+                },
+            });
             console.error('Error updating Notion page:', error);
             throw error;
         }
@@ -1698,9 +1708,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             ]);
 
             for (const notionCase of notionCases) {
+                let existing = null;
                 try {
                     // Check if case already exists in our database
-                    const existing = await db.getCaseByNotionId(notionCase.notion_page_id);
+                    existing = await db.getCaseByNotionId(notionCase.notion_page_id);
 
                     if (existing) {
                         if (protectedStatuses.has(existing.status)) {
@@ -1794,12 +1805,31 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         case_id: newCase.id
                     });
                 } catch (error) {
+                    await errorTrackingService.captureException(error, {
+                        sourceService: 'notion_service',
+                        operation: 'sync_case_from_notion',
+                        caseId: existing?.id || null,
+                        retryable: isRetryableNotionError(error),
+                        metadata: {
+                            notionPageId: notionCase.notion_page_id,
+                            caseName: notionCase.case_name,
+                            statusKey,
+                        },
+                    });
                     console.error(`Error syncing case ${notionCase.case_name}:`, error);
                 }
             }
 
             return syncedCases;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'sync_cases_from_notion',
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    status,
+                },
+            });
             console.error('Error syncing cases from Notion:', error);
             throw error;
         }
@@ -1967,6 +1997,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1', [caseId]);
             console.log(`Updated Notion page for case: ${caseData.case_name}`);
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'sync_status_to_notion',
+                caseId,
+                retryable: isRetryableNotionError(error),
+                metadata: {
+                    notionPageId: caseData?.notion_page_id || null,
+                    caseStatus: caseData?.status || null,
+                },
+            });
             console.error('Error syncing status to Notion:', error);
             // Log to activity_log so sync failures are visible in dashboard
             try {

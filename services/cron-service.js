@@ -11,6 +11,7 @@ const triggerDispatch = require('./trigger-dispatch-service');
 const discordService = require('./discord-service');
 const draftQualityEvalService = require('./draft-quality-eval-service');
 const qualityReportService = require('./quality-report-service');
+const errorTrackingService = require('./error-tracking-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const { tasks } = require('@trigger.dev/sdk');
 
@@ -53,6 +54,10 @@ class CronService {
                     await db.logActivity('notion_sync', `Synced ${cases.length} cases from Notion`);
                 }
             } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'notion_sync_cron',
+                });
                 console.error('Error in Notion sync cron:', error);
             }
         }, null, true, 'America/New_York');
@@ -116,6 +121,10 @@ class CronService {
                     console.error('Database health check failed:', health.error);
                 }
             } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'health_check_cron',
+                });
                 console.error('Error in health check cron:', error);
             }
         }, null, true, 'America/New_York');
@@ -125,6 +134,10 @@ class CronService {
             try {
                 await this.checkOperationalAlerts();
             } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'operational_alert_check',
+                });
                 console.error('Error in operational alert check:', error);
             }
         }, null, true, 'America/New_York');
@@ -134,6 +147,10 @@ class CronService {
                 console.log('Running weekly quality report...');
                 await this.sendWeeklyQualityReport();
             } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'weekly_quality_report_cron',
+                });
                 console.error('Error in weekly quality report cron:', error);
             }
         }, null, true, 'America/New_York');
@@ -143,6 +160,10 @@ class CronService {
                 console.log('Running resolved draft quality eval sweep...');
                 await this.runResolvedDraftQualityEvalSweep();
             } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'draft_quality_eval_cron',
+                });
                 console.error('Error in resolved draft quality eval cron:', error);
             }
         }, null, true, 'America/New_York');
@@ -153,6 +174,10 @@ class CronService {
                 console.log('Running daily operator digest...');
                 await this.sendDailyOperatorDigest();
             } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'daily_operator_digest_cron',
+                });
                 console.error('Error in daily operator digest cron:', error);
             }
         }, null, true, 'America/New_York');

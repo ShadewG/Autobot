@@ -81,6 +81,34 @@ class DatabaseService {
         }
     }
 
+    _inferSourceServiceFromStack() {
+        const stack = new Error().stack || '';
+        const lines = stack.split('\n').slice(2);
+        const repoRoot = path.join(__dirname, '..');
+
+        for (const line of lines) {
+            const match = line.match(/\((.+):\d+:\d+\)$/) || line.match(/at (.+):\d+:\d+$/);
+            const filePath = match?.[1];
+            if (!filePath || !path.isAbsolute(filePath)) continue;
+            if (filePath === __filename) continue;
+
+            const relative = path.relative(repoRoot, filePath).replace(/\\/g, '/');
+            if (relative.startsWith('node_modules/')) continue;
+
+            if (relative.startsWith('routes/')) {
+                return relative.replace(/^routes\//, '').replace(/\.[^.]+$/, '');
+            }
+            if (relative.startsWith('services/')) {
+                return relative.replace(/^services\//, '').replace(/\.[^.]+$/, '');
+            }
+            if (relative.startsWith('trigger/')) {
+                return relative.replace(/^trigger\//, '').replace(/\.[^.]+$/, '');
+            }
+        }
+
+        return 'database';
+    }
+
     async query(text, params, options = {}) {
         const maxAttempts = Number.isFinite(options.maxAttempts) ? options.maxAttempts : 3;
 
@@ -208,6 +236,46 @@ class DatabaseService {
             await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_message_id ON email_events(message_id)');
             await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_provider_message_id ON email_events(provider_message_id)');
             await this.query('CREATE INDEX IF NOT EXISTS idx_email_events_type ON email_events(event_type)');
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS error_events (
+                    id SERIAL PRIMARY KEY,
+                    source_service VARCHAR(100) NOT NULL,
+                    operation VARCHAR(120),
+                    case_id INTEGER REFERENCES cases(id) ON DELETE SET NULL,
+                    proposal_id INTEGER REFERENCES proposals(id) ON DELETE SET NULL,
+                    message_id INTEGER REFERENCES messages(id) ON DELETE SET NULL,
+                    run_id INTEGER REFERENCES agent_runs(id) ON DELETE SET NULL,
+                    error_name VARCHAR(100) NOT NULL,
+                    error_code VARCHAR(100),
+                    error_message TEXT NOT NULL,
+                    stack TEXT,
+                    retryable BOOLEAN,
+                    retry_attempt INTEGER,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            `);
+            await this.query('CREATE INDEX IF NOT EXISTS idx_error_events_created_at ON error_events(created_at DESC)');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_error_events_source_service ON error_events(source_service, created_at DESC)');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_error_events_case_id ON error_events(case_id, created_at DESC) WHERE case_id IS NOT NULL');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_error_events_operation ON error_events(operation, created_at DESC) WHERE operation IS NOT NULL');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_error_events_error_code ON error_events(error_code, created_at DESC) WHERE error_code IS NOT NULL');
+            await this.query(`
+                CREATE TABLE IF NOT EXISTS proposal_content_versions (
+                    id SERIAL PRIMARY KEY,
+                    proposal_id INTEGER NOT NULL REFERENCES proposals(id) ON DELETE CASCADE,
+                    version_number INTEGER NOT NULL,
+                    change_source VARCHAR(50) NOT NULL,
+                    actor_id TEXT,
+                    draft_subject TEXT,
+                    draft_body_text TEXT,
+                    draft_body_html TEXT,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(proposal_id, version_number)
+                )
+            `);
+            await this.query('CREATE INDEX IF NOT EXISTS idx_proposal_content_versions_proposal_id ON proposal_content_versions(proposal_id, version_number DESC)');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS source_action_type VARCHAR(50)');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS capture_source VARCHAR(50)');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_action VARCHAR(50)');
@@ -1158,6 +1226,8 @@ class DatabaseService {
 
     // Activity Log
     async logActivity(eventType, description, metadata = {}) {
+        const actorType = metadata.actor_type || (metadata.actor_id || metadata.user_id ? 'human' : 'system');
+        const sourceService = metadata.source_service || this._inferSourceServiceFromStack();
         const query = `
             INSERT INTO activity_log (event_type, case_id, message_id, description, metadata, user_id, actor_type, actor_id, source_service)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -1170,9 +1240,9 @@ class DatabaseService {
             description,
             metadata,
             metadata.user_id || null,
-            metadata.actor_type || null,
+            actorType,
             metadata.actor_id || metadata.user_id || null,
-            metadata.source_service || null,
+            sourceService,
         ];
         const result = await this.query(query, values);
         const row = result.rows[0];
@@ -2332,6 +2402,9 @@ class DatabaseService {
             }
 
             if (proposal) {
+                await this._ensureProposalContentVersion(proposal, {
+                    changeSource: 'created',
+                });
                 if (proposal.case_id && ACTIVE_PROPOSAL_STATUSES.includes(proposal.status)) {
                     const caseRow = await this.getCaseById(proposal.case_id);
                     if (caseRow
@@ -2385,6 +2458,121 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    _proposalDraftSnapshot(proposal) {
+        if (!proposal) return null;
+        return {
+            draft_subject: proposal.draft_subject ?? null,
+            draft_body_text: proposal.draft_body_text ?? null,
+            draft_body_html: proposal.draft_body_html ?? null,
+        };
+    }
+
+    _proposalDraftChanged(beforeProposal, afterProposal) {
+        const before = this._proposalDraftSnapshot(beforeProposal);
+        const after = this._proposalDraftSnapshot(afterProposal);
+        if (!before || !after) return false;
+        return before.draft_subject !== after.draft_subject
+            || before.draft_body_text !== after.draft_body_text
+            || before.draft_body_html !== after.draft_body_html;
+    }
+
+    _inferProposalVersionSource(updates = {}) {
+        if (updates.__versionSource) return updates.__versionSource;
+        if (updates.humanDecision || updates.human_decision || updates.humanDecidedBy || updates.human_decided_by) {
+            return 'approval_edit';
+        }
+        if (updates.adjustmentCount || updates.adjustment_count) {
+            return 'adjustment';
+        }
+        return 'draft_update';
+    }
+
+    async _insertProposalContentVersion(proposal, { changeSource = 'draft_update', actorId = null, metadata = {} } = {}) {
+        if (!proposal?.id) return null;
+        const result = await this.query(
+            `INSERT INTO proposal_content_versions (
+                proposal_id,
+                version_number,
+                change_source,
+                actor_id,
+                draft_subject,
+                draft_body_text,
+                draft_body_html,
+                metadata
+             )
+             SELECT
+                $1,
+                COALESCE(MAX(version_number), 0) + 1,
+                $2,
+                $3,
+                $4,
+                $5,
+                $6,
+                $7
+             FROM proposal_content_versions
+             WHERE proposal_id = $1
+             RETURNING *`,
+            [
+                proposal.id,
+                changeSource,
+                actorId,
+                proposal.draft_subject ?? null,
+                proposal.draft_body_text ?? null,
+                proposal.draft_body_html ?? null,
+                metadata || {},
+            ]
+        );
+        return result.rows[0] || null;
+    }
+
+    async _ensureProposalContentVersion(proposal, options = {}) {
+        if (!proposal?.id) return null;
+        const existing = await this.query(
+            'SELECT id FROM proposal_content_versions WHERE proposal_id = $1 LIMIT 1',
+            [proposal.id]
+        );
+        if (existing.rows[0]) return null;
+        return this._insertProposalContentVersion(proposal, {
+            changeSource: options.changeSource || 'created',
+            actorId: options.actorId || null,
+            metadata: options.metadata || {},
+        });
+    }
+
+    async _recordProposalContentVersionIfChanged(beforeProposal, afterProposal, options = {}) {
+        if (!this._proposalDraftChanged(beforeProposal, afterProposal)) {
+            return null;
+        }
+
+        await this._ensureProposalContentVersion(beforeProposal, {
+            changeSource: 'created',
+        });
+
+        const changedFields = [];
+        if ((beforeProposal?.draft_subject ?? null) !== (afterProposal?.draft_subject ?? null)) changedFields.push('draft_subject');
+        if ((beforeProposal?.draft_body_text ?? null) !== (afterProposal?.draft_body_text ?? null)) changedFields.push('draft_body_text');
+        if ((beforeProposal?.draft_body_html ?? null) !== (afterProposal?.draft_body_html ?? null)) changedFields.push('draft_body_html');
+
+        return this._insertProposalContentVersion(afterProposal, {
+            changeSource: options.changeSource || 'draft_update',
+            actorId: options.actorId || null,
+            metadata: {
+                changed_fields: changedFields,
+                ...(options.metadata || {}),
+            },
+        });
+    }
+
+    async getProposalContentVersions(proposalId) {
+        const result = await this.query(
+            `SELECT * FROM proposal_content_versions
+             WHERE proposal_id = $1
+             ORDER BY version_number ASC`,
+            [proposalId]
+        );
+        return result.rows;
+    }
+
     /**
      * Get all proposals in an action chain, ordered by step.
      */
@@ -2432,6 +2620,11 @@ class DatabaseService {
         }
         const isTriggerCall = this._isTriggerCallsite();
         const allowLegacyCaseMutation = updates.__allowLegacyCaseMutation === true;
+        const draftFields = new Set(['draft_subject', 'draft_body_text', 'draft_body_html', 'draftSubject', 'draftBodyText', 'draftBodyHtml']);
+        const draftVersioningNeeded = Object.keys(updates).some((key) => draftFields.has(key));
+        const currentProposal = draftVersioningNeeded
+            ? await this.getProposalById(proposalId)
+            : null;
 
         // Convert camelCase to snake_case for DB
         const fieldMap = {
@@ -2506,6 +2699,13 @@ class DatabaseService {
                     proposalStatus: proposal.status
                 });
             }
+        }
+        if (proposal && draftVersioningNeeded) {
+            await this._recordProposalContentVersionIfChanged(currentProposal, proposal, {
+                changeSource: this._inferProposalVersionSource(updates),
+                actorId: updates.__versionActor || updates.humanDecidedBy || updates.human_decided_by || null,
+                metadata: updates.__versionMetadata || {},
+            });
         }
         if (proposal) {
             emitDataUpdate('proposal_update', {

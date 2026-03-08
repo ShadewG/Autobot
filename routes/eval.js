@@ -12,6 +12,7 @@ const router = express.Router();
 const db = require('../services/database');
 const draftQualityEvalService = require('../services/draft-quality-eval-service');
 const qualityReportService = require('../services/quality-report-service');
+const errorTrackingService = require('../services/error-tracking-service');
 const { tasks } = require('@trigger.dev/sdk');
 
 const AUTO_CAPTURE_NOTES_PREFIX = 'Auto-captured from monitor decision:%';
@@ -553,6 +554,13 @@ router.get('/quality-report', async (req, res) => {
         const report = await qualityReportService.buildWeeklyQualityReport({ windowDays });
         res.json({ success: true, report });
     } catch (error) {
+        await errorTrackingService.captureException(error, {
+            sourceService: 'eval_api',
+            operation: 'quality_report',
+            metadata: {
+                windowDays: req.query.windowDays || null,
+            },
+        });
         console.error('Error building quality report:', error);
         res.status(500).json({ success: false, error: error.message });
     }
@@ -568,6 +576,13 @@ router.get('/classification-confusion', async (req, res) => {
         const confusion_matrix = await qualityReportService.buildClassificationConfusionMatrix({ windowDays });
         res.json({ success: true, confusion_matrix });
     } catch (error) {
+        await errorTrackingService.captureException(error, {
+            sourceService: 'eval_api',
+            operation: 'classification_confusion',
+            metadata: {
+                windowDays: req.query.windowDays || null,
+            },
+        });
         console.error('Error building classification confusion matrix:', error);
         res.status(500).json({ success: false, error: error.message });
     }
@@ -582,7 +597,40 @@ router.get('/reconciliation', async (req, res) => {
         const report = await qualityReportService.buildReconciliationReport();
         res.json({ success: true, report });
     } catch (error) {
+        await errorTrackingService.captureException(error, {
+            sourceService: 'eval_api',
+            operation: 'reconciliation_report',
+        });
         console.error('Error building reconciliation report:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+router.get('/errors', async (req, res) => {
+    try {
+        const rows = await errorTrackingService.searchErrorEvents({
+            sourceService: req.query.sourceService || null,
+            caseId: parseId(req.query.caseId) || null,
+            operation: req.query.operation || null,
+            errorCode: req.query.errorCode || null,
+            sinceHours: parseId(req.query.sinceHours) || null,
+            search: req.query.search || null,
+            limit: parseId(req.query.limit) || 50,
+        });
+        res.json({ success: true, errors: rows });
+    } catch (error) {
+        await errorTrackingService.captureException(error, {
+            sourceService: 'eval_api',
+            operation: 'list_error_events',
+            metadata: {
+                sourceService: req.query.sourceService || null,
+                caseId: req.query.caseId || null,
+                operationFilter: req.query.operation || null,
+                sinceHours: req.query.sinceHours || null,
+                limit: req.query.limit || null,
+            },
+        });
+        console.error('Error fetching tracked errors:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
