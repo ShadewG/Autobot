@@ -26,17 +26,17 @@ These files are imported by both AI pipeline code and route/service code:
 All schema changes must be coordinated. Run migrations in order.
 
 ### For Codex 1 work:
-- [ ] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` to `response_analysis` table
-- [ ] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` to `proposals` table
-- [ ] Create `successful_examples` table (if Codex 1 builds few-shot, Codex 2 writes on APPROVE)
+- [x] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` to `response_analysis` table
+- [x] Add AI metadata columns to `proposals` table for decide + draft steps
+- [x] Create `successful_examples` table (if Codex 1 builds few-shot, Codex 2 writes on APPROVE)
 
 ### For Codex 2 work:
-- [ ] Add `original_draft_body_text`, `original_draft_subject`, `human_edited` to `proposals`
-- [ ] Create `email_events` table
-- [ ] Add `delivered_at`, `bounced_at` to `messages`
-- [ ] Create `portal_submissions` table
-- [ ] Add `last_synced_at` to `cases`
-- [ ] Add `agency_warnings` JSONB field to `cases`
+- [x] Add `original_draft_body_text`, `original_draft_subject`, `human_edited` to `proposals`
+- [x] Create `email_events` table
+- [x] Add `delivered_at`, `bounced_at` to `messages`
+- [x] Create `portal_submissions` table
+- [x] Add `last_notion_synced_at` to `cases`
+- [x] Add `import_warnings` JSONB field to `cases`
 
 ### For both:
 - [ ] Make `constraints_jsonb` sole source of truth (Codex 2 backfills + updates writes, Codex 1 updates reads in Trigger tasks)

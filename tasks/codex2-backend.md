@@ -32,26 +32,26 @@ migrations/*.sql
 ### Phase 1 P0
 
 #### Proposal Lifecycle Hardening
-- [ ] Centralize proposal human-review updates into one helper in `services/database.js`: approve, dismiss, withdraw, adjust all go through same path
-- [ ] Ensure every human review writes `human_decision`, `human_decided_at`, `human_decided_by`
-- [ ] Ensure every executed proposal writes `executed_at`
-- [ ] Ensure every terminal execution writes `completed_at`
-- [ ] Audit all direct `updateProposal()` callers in `routes/run-engine.js`, `routes/requests/proposals.js` and route through lifecycle helper
-- [ ] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
+- [x] Centralize proposal human-review updates into one helper in `services/database.js`: approve, dismiss, withdraw, adjust all go through same path
+- [x] Ensure every human review writes `human_decision`, `human_decided_at`, `human_decided_by`
+- [x] Ensure every executed proposal writes `executed_at`
+- [x] Ensure every terminal execution writes `completed_at`
+- [x] Audit all direct `updateProposal()` callers in `routes/run-engine.js`, `routes/requests/proposals.js` and route through lifecycle helper
+- [x] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
 
 #### Execution Completeness
-- [ ] Centralize execution terminal-state writes into one helper
-- [ ] Ensure every `SENT`, `FAILED`, `CANCELLED`, `PENDING_HUMAN` transition updates `updated_at`
-- [ ] Ensure email executions always write `provider_message_id`
-- [ ] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions
-- [ ] Verify email worker always calls final execution update path after success
+- [x] Centralize execution terminal-state writes into one helper
+- [x] Ensure every `SENT`, `FAILED`, `CANCELLED`, `PENDING_HUMAN` transition updates `updated_at`
+- [x] Ensure email executions always write `provider_message_id`
+- [x] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions
+- [x] Verify email worker always calls final execution update path after success
 
 #### Agency Validation at Import
-- [ ] On Notion import, validate agency email (format check + MX record lookup) in `services/notion-sync-service.js`
-- [ ] Check if agency exists in directory — flag if not found
-- [ ] Verify state matches agency state — flag mismatches
-- [ ] Run `detectCaseMetadataAgencyMismatch` at import time
-- [ ] Store validation warnings as `agency_warnings` array on case (new column or JSONB field)
+- [x] On Notion import, validate agency email (format check + MX record lookup) in `services/notion-sync-service.js`
+- [x] Check if agency exists in directory — flag if not found
+- [x] Verify state matches agency state — flag mismatches
+- [x] Run `detectCaseMetadataAgencyMismatch` at import time
+- [x] Store validation warnings as `import_warnings` JSONB on case
 
 #### Notion Sync Data Quality
 - [ ] Fix "value too long" errors: truncate agency name to 255 chars, normalize state to 2-char code
@@ -78,8 +78,8 @@ migrations/*.sql
 
 #### Notion Sync Reliability
 - [ ] Root-cause recurring sync failures
-- [ ] Add `POST /api/notion/sync` endpoint for "Sync Now" button
-- [ ] Add `last_synced_at` field to cases table, updated on each sync
+- [x] Add `POST /api/notion/sync` endpoint for "Sync Now" button
+- [x] Add `last_notion_synced_at` field to cases table, updated on each sync
 
 #### New API Endpoints (for Claude 1 & 2 frontend work)
 - [ ] `GET /api/health/summary` — system health metrics
@@ -95,33 +95,33 @@ migrations/*.sql
 ### Phase 2 P0
 
 #### Fix `learnFromOutcome` coverage gap
-- [ ] Call `decisionMemory.learnFromOutcome()` from ALL dismiss paths: `run-engine.js`, `routes/requests/proposals.js` (currently only fires from `monitor/_helpers.js`)
-- [ ] Verify eval case auto-capture fires from all three dismiss paths
+- [x] Call `decisionMemory.learnFromOutcome()` from ALL dismiss paths: `run-engine.js`, `routes/requests/proposals.js` (currently only fires from `monitor/_helpers.js`)
+- [x] Verify eval case auto-capture fires from all three dismiss paths
 
 #### Capture draft history before overwrite
-- [ ] Migration: add `original_draft_body_text`, `original_draft_subject`, `human_edited` columns to `proposals`
-- [ ] In `run-engine.js` approve handler: snapshot current draft before overwriting with human edits
+- [x] Migration: add `original_draft_body_text`, `original_draft_subject`, `human_edited` columns to `proposals`
+- [x] In `run-engine.js` approve handler: snapshot current draft before overwriting with human edits
 
 #### Capture email delivery events
-- [ ] Migration: create `email_events` table
-- [ ] Store SendGrid webhook events as rows (currently processed but discarded)
-- [ ] Migration: add `delivered_at`, `bounced_at` to `messages` table
-- [ ] Update webhook handler to write event rows
+- [x] Migration: create `email_events` table
+- [x] Store SendGrid webhook events as rows (currently processed but discarded)
+- [x] Migration: add `delivered_at`, `bounced_at` to `messages` table
+- [x] Update webhook handler to write event rows
 
 #### Preserve portal submission history
-- [ ] Migration: create `portal_submissions` table
-- [ ] Write a row on every portal attempt in `portal-agent-service-skyvern.js`
+- [x] Migration: create `portal_submissions` table
+- [x] Write a row on every portal attempt in `portal-agent-service-skyvern.js`
 
 ### Phase 2 P1
 
 #### Auto-Capture AI Quality Signals
-- [ ] On every ADJUST: auto-create eval case (original AI action as predicted, human correction as ground truth) in `run-engine.js`
-- [ ] On every DISMISS: auto-create eval case tagged "dismissed"
-- [ ] Track metrics: adjust rate, dismiss rate, approval rate by action type/agency/classification
+- [x] On every ADJUST: auto-create eval case (original AI action as predicted, human correction as ground truth) in `run-engine.js`
+- [x] On every DISMISS: auto-create eval case tagged "dismissed"
+- [x] Track metrics: adjust rate, dismiss rate, approval rate by action type/agency/classification
 
 #### Successful Examples Table
-- [ ] Migration: create `successful_examples` table
-- [ ] On every APPROVE in `run-engine.js`, store case context + draft as successful example
+- [x] Migration: create `successful_examples` table
+- [x] On every APPROVE in `run-engine.js`, store case context + draft as successful example
 
 ### Phase 2 P2
 

@@ -255,6 +255,9 @@ const emailExecutor = {
 
     // LIVE MODE: Actually queue the email
     try {
+      // Lazy load email queue to avoid circular deps.
+      const { emailQueue } = require('../queues/email-queue');
+
       // Create QUEUED execution record first
       const execution = await createExecutionRecord({
         caseId,
@@ -272,21 +275,22 @@ const emailExecutor = {
         })
       });
 
-      // Lazy load email queue to avoid circular deps
-      const { emailQueue } = require('../queues/email-queue');
-
       // If Redis/queue is available, queue the email (supports delayed send)
       if (emailQueue) {
+        const normalizedMessageType = actionType?.toLowerCase().replace('send_', '').replace('approve_', '') || 'reply';
         const job = await emailQueue.add('send-email', {
           caseId,
           proposalId,
           executionKey,
           executionId: execution.id,
+          type: normalizedMessageType,
+          messageType: normalizedMessageType,
           to,
+          toEmail: to,
           subject,
+          content: bodyText,
           bodyText,
           bodyHtml,
-          messageType: actionType?.toLowerCase().replace('send_', '').replace('approve_', '') || 'reply',
           originalMessageId,
           threadId,
           headers,

@@ -516,6 +516,40 @@ function generateSummary(results) {
     };
 }
 
+function allPassStandardsMet(summary) {
+    return (
+        summary.jsonValidRate === 100 &&
+        summary.portalCorrectRate === 100 &&
+        summary.noEmailValidityRate === 100 &&
+        summary.noStatuteCitationsRate === 100
+    );
+}
+
+function evaluateGate(summary, { minPassRate = null, requirePassStandards = false } = {}) {
+    const issues = [];
+    const passStandardsMet = allPassStandardsMet(summary);
+
+    if (Number.isFinite(minPassRate) && summary.passRate < minPassRate) {
+        issues.push(`Pass rate ${summary.passRate}% is below required ${minPassRate}%`);
+    }
+
+    if (requirePassStandards && !passStandardsMet) {
+        issues.push(
+            `Pass standards not met (json=${summary.jsonValidRate}%, portal=${summary.portalCorrectRate}%, noEmailValidity=${summary.noEmailValidityRate}%, noStatuteCitations=${summary.noStatuteCitationsRate}%)`
+        );
+    }
+
+    if (!Number.isFinite(minPassRate) && !requirePassStandards && summary.failed > 0) {
+        issues.push(`${summary.failed} fixture(s) failed`);
+    }
+
+    return {
+        passed: issues.length === 0,
+        issues,
+        passStandardsMet,
+    };
+}
+
 /**
  * Print results to console
  */
@@ -574,11 +608,7 @@ function printResults(results, summary, verbose) {
     console.log(`No Email Validity:    ${summary.noEmailValidityRate}% (target: 100%)`);
     console.log(`No Statute Citations: ${summary.noStatuteCitationsRate}% (target: 100%)`);
 
-    const allStandardsMet =
-        summary.jsonValidRate === 100 &&
-        summary.portalCorrectRate === 100 &&
-        summary.noEmailValidityRate === 100 &&
-        summary.noStatuteCitationsRate === 100;
+    const allStandardsMet = allPassStandardsMet(summary);
 
     console.log('\n' + (allStandardsMet ? '✅ ALL PASS STANDARDS MET' : '❌ SOME PASS STANDARDS NOT MET'));
 }
@@ -622,6 +652,9 @@ async function main() {
     const categoryFilter = args.find(a => a.startsWith('--category='))?.split('=')[1];
     const verbose = args.includes('--verbose') || args.includes('-v');
     const dryRun = args.includes('--dry-run');
+    const minPassRateArg = args.find(a => a.startsWith('--min-pass-rate='))?.split('=')[1];
+    const minPassRate = minPassRateArg == null ? null : Number(minPassRateArg);
+    const requirePassStandards = args.includes('--require-pass-standards');
 
     console.log('='.repeat(80));
     console.log('PROMPT SIMULATION TEST SUITE');
@@ -630,6 +663,8 @@ async function main() {
     console.log(`Mode: ${dryRun ? 'DRY RUN (no AI calls)' : 'LIVE (calling AI)'}`);
     if (fixtureFilter) console.log(`Filter: fixture="${fixtureFilter}"`);
     if (categoryFilter) console.log(`Filter: category="${categoryFilter}"`);
+    if (Number.isFinite(minPassRate)) console.log(`Gate: min pass rate ${minPassRate}%`);
+    if (requirePassStandards) console.log('Gate: require all pass standards');
     console.log('');
 
     // Filter fixtures
@@ -667,11 +702,36 @@ async function main() {
     printResults(results, summary, verbose);
     writeReport(results, summary);
 
-    // Exit with error if any failed
-    process.exit(summary.failed > 0 ? 1 : 0);
+    const gate = evaluateGate(summary, { minPassRate, requirePassStandards });
+    if (Number.isFinite(minPassRate) || requirePassStandards) {
+        console.log('\n--- DEPLOY GATE ---');
+        if (gate.passed) {
+            console.log('✅ Deploy gate passed');
+        } else {
+            console.log('❌ Deploy gate failed');
+            for (const issue of gate.issues) {
+                console.log(`   - ${issue}`);
+            }
+        }
+    }
+
+    process.exit(gate.passed ? 0 : 1);
 }
 
-main().catch(err => {
-    console.error('Fatal error:', err);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch(err => {
+        console.error('Fatal error:', err);
+        process.exit(1);
+    });
+}
+
+module.exports = {
+    validateJsonStructure,
+    validatePortalRedirect,
+    validateNoResponseIntent,
+    validateDraft,
+    validateExpected,
+    generateSummary,
+    allPassStandardsMet,
+    evaluateGate,
+};

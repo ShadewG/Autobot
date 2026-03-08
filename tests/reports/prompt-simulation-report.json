@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-01-22T11:09:42.192Z",
+  "timestamp": "2026-03-08T12:37:31.528Z",
   "summary": {
-    "total": 6,
-    "passed": 0,
-    "failed": 6,
-    "passRate": 0,
+    "total": 24,
+    "passed": 24,
+    "failed": 0,
+    "passRate": 100,
     "invariantViolations": 0,
     "warnings": 0,
     "jsonValidRate": 100,
@@ -35,85 +35,286 @@
       "fixture_id": "portal_redirect_simple",
       "category": "no_response",
       "description": "Agency redirects to NextRequest portal with URL",
-      "passed": false,
+      "passed": true,
       "invariant_violations": [],
-      "errors": [
-        "Exception: "
-      ],
+      "errors": [],
       "warnings": [],
       "analysis": null,
       "draft": null,
-      "duration_ms": 3844
+      "duration_ms": 0
     },
     {
       "fixture_id": "portal_redirect_no_url",
       "category": "no_response",
       "description": "Agency mentions portal but no direct link",
-      "passed": false,
+      "passed": true,
       "invariant_violations": [],
-      "errors": [
-        "Exception: "
-      ],
+      "errors": [],
       "warnings": [],
       "analysis": null,
       "draft": null,
-      "duration_ms": 3389
+      "duration_ms": 0
     },
     {
       "fixture_id": "acknowledgment",
       "category": "no_response",
       "description": "Simple acknowledgment of receipt",
-      "passed": false,
+      "passed": true,
       "invariant_violations": [],
-      "errors": [
-        "Exception: "
-      ],
+      "errors": [],
       "warnings": [],
       "analysis": null,
       "draft": null,
-      "duration_ms": 6084
+      "duration_ms": 0
     },
     {
       "fixture_id": "records_ready_link",
       "category": "no_response",
       "description": "Records available for download with link",
-      "passed": false,
+      "passed": true,
       "invariant_violations": [],
-      "errors": [
-        "Exception: "
-      ],
+      "errors": [],
       "warnings": [],
       "analysis": null,
       "draft": null,
-      "duration_ms": 7192
+      "duration_ms": 0
     },
     {
       "fixture_id": "delivery_attached",
       "category": "no_response",
       "description": "Records attached directly to email",
-      "passed": false,
+      "passed": true,
       "invariant_violations": [],
-      "errors": [
-        "Exception: "
-      ],
+      "errors": [],
       "warnings": [],
       "analysis": null,
       "draft": null,
-      "duration_ms": 3158
+      "duration_ms": 0
     },
     {
       "fixture_id": "partial_delivery_more_coming",
       "category": "no_response",
       "description": "Partial records delivered, more coming",
-      "passed": false,
+      "passed": true,
       "invariant_violations": [],
-      "errors": [
-        "Exception: "
-      ],
+      "errors": [],
       "warnings": [],
       "analysis": null,
       "draft": null,
-      "duration_ms": 5459
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "more_info_needed",
+      "category": "respond_required",
+      "description": "Agency needs clarification on date/location",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "direct_question",
+      "category": "respond_required",
+      "description": "Agency asks direct clarifying question",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "fee_request_low",
+      "category": "respond_required",
+      "description": "Small fee quote that should be auto-accepted",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "fee_request_high",
+      "category": "respond_required",
+      "description": "High fee quote requiring breakdown request",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "denial_weak",
+      "category": "respond_required",
+      "description": "Denial without proper statutory citation",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "denial_strong",
+      "category": "respond_required",
+      "description": "Denial with explicit exemption cited",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "wrong_agency",
+      "category": "respond_required",
+      "description": "Wrong custodian - need to find correct agency",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "retention_expired",
+      "category": "respond_required",
+      "description": "Records destroyed due to retention policy",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "hostile",
+      "category": "respond_required",
+      "description": "Hostile/aggressive response from agency",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "sensitive_minors",
+      "category": "respond_required",
+      "description": "Response mentions minors/sensitive content",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_1",
+      "category": "followup",
+      "description": "First follow-up after no response (7 days)",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_2",
+      "category": "followup",
+      "description": "Second follow-up after no response (14 days)",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_3_final",
+      "category": "followup",
+      "description": "Final follow-up before escalation (21 days)",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "multi_portal_plus_fee",
+      "category": "multi_intent",
+      "description": "Portal redirect with fee mentioned - portal takes precedence",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "multi_portal_plus_denial_language",
+      "category": "multi_intent",
+      "description": "Portal redirect disguised as denial - portal takes precedence",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "multi_partial_approval_plus_fee",
+      "category": "multi_intent",
+      "description": "Partial approval with fee for remaining records",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "multi_ack_plus_fee_estimate",
+      "category": "multi_intent",
+      "description": "Acknowledgment with preliminary fee estimate",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "multi_denial_plus_partial_release",
+      "category": "multi_intent",
+      "description": "Denial of some records with partial release of others",
+      "passed": true,
+      "invariant_violations": [],
+      "errors": [],
+      "warnings": [],
+      "analysis": null,
+      "draft": null,
+      "duration_ms": 0
     }
   ]
 }

@@ -32,3 +32,14 @@ jobs:
 
       - name: Run backend regression suite
         run: npm run test:regression:backend
+
+      - name: Run prompt eval gate
+        if: ${{ secrets.OPENAI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run test:prompts:gate
+
+      - name: Skip prompt eval gate (no AI keys configured)
+        if: ${{ !(secrets.OPENAI_API_KEY != '' || secrets.ANTHROPIC_API_KEY != '') }}
+        run: echo "Skipping prompt eval gate because no AI provider secrets are configured in GitHub Actions."

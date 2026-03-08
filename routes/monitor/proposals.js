@@ -14,6 +14,19 @@ router.post('/proposals/:id/approve', express.json(), async (req, res) => {
     try {
         const proposalId = parseInt(req.params.id);
         const userId = req.headers['x-user-id'] || null;
+        const proposal = await db.getProposalById(proposalId);
+        if (proposal?.waitpoint_token?.startsWith('local-')) {
+            const forwardResp = await fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/proposals/${proposalId}/decision`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(userId ? { 'x-user-id': String(userId) } : {}),
+                },
+                body: JSON.stringify({ action: 'APPROVE' }),
+            });
+            const payload = await forwardResp.json();
+            return res.status(forwardResp.status).json(payload);
+        }
         const result = await processProposalDecision(proposalId, 'APPROVE', { userId });
         res.status(202).json(result);
     } catch (error) {
@@ -39,6 +52,26 @@ router.post('/proposals/:id/decision', express.json(), async (req, res) => {
             draft_subject = undefined,
         } = req.body || {};
         const userId = req.headers['x-user-id'] || null;
+        const proposal = await db.getProposalById(proposalId);
+        if (proposal?.waitpoint_token?.startsWith('local-')) {
+            const forwardResp = await fetch(`http://127.0.0.1:${process.env.PORT || 3000}/api/proposals/${proposalId}/decision`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(userId ? { 'x-user-id': String(userId) } : {}),
+                },
+                body: JSON.stringify({
+                    action,
+                    instruction,
+                    reason: reason || dismiss_reason,
+                    route_mode,
+                    draft_body_text,
+                    draft_subject,
+                }),
+            });
+            const payload = await forwardResp.json();
+            return res.status(forwardResp.status).json(payload);
+        }
         const result = await processProposalDecision(proposalId, action, {
             instruction,
             reason: reason || dismiss_reason,

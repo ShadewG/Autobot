@@ -144,11 +144,30 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
         // Get or create thread for this case (CRITICAL for messages to show in conversation)
         let thread = await db.getThreadByCaseId(caseId);
         if (!thread) {
+            const syntheticMessageId = `sim-thread-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const threadIdentifier = `<${syntheticMessageId}@autobot.local>`;
             const threadResult = await db.query(`
-                INSERT INTO email_threads (case_id, subject, created_at, updated_at)
-                VALUES ($1, $2, NOW(), NOW())
+                INSERT INTO email_threads (
+                    case_id,
+                    thread_id,
+                    subject,
+                    agency_email,
+                    initial_message_id,
+                    status,
+                    message_count,
+                    last_message_at,
+                    created_at,
+                    updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, 'active', 0, NOW(), NOW(), NOW())
                 RETURNING *
-            `, [caseId, `Thread for case ${caseId}`]);
+            `, [
+                caseId,
+                threadIdentifier,
+                `Thread for case ${caseId}`,
+                from_email || caseData.agency_email || 'records@agency.gov',
+                threadIdentifier,
+            ]);
             thread = threadResult.rows[0];
             console.log(`[simulate-response] Created thread ${thread.id} for case ${caseId}`);
         }

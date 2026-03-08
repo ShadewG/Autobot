@@ -15,6 +15,7 @@
     "test:golden:update": "mocha tests/golden-cases/golden.test.js --timeout 60000 -- --update-snapshots",
     "test:load": "node tests/load/staging-load-test.js",
     "test:prompts": "node scripts/test-prompt-suite.js",
+    "test:prompts:gate": "node scripts/test-prompt-suite.js --min-pass-rate=90 --require-pass-standards",
     "test:prompts:verbose": "node scripts/test-prompt-suite.js --verbose",
     "test:prompts:dry": "node scripts/test-prompt-suite.js --dry-run",
     "test:e2e:prompts": "node tests/e2e/api-prompt-e2e.test.js",
