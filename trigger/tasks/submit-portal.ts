@@ -757,6 +757,7 @@ export const submitPortal = task({
         proposalId: linkedProposalId,
         sendDate: caseData.send_date || new Date().toISOString(),
         confirmationNumber: result.confirmationNumber,
+        completedBy: engineUsed,
         portalMetadata: {
           last_portal_status: `Submission completed (${statusText})`,
           last_portal_status_at: new Date(),

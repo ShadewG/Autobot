@@ -112,8 +112,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Review `proposals.langgraph_checkpoint_id` for removal — dropped: 0 rows had data, 0 code references
 
 #### Portal Data Quality
-- [ ] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number`
-- [ ] Sync portal task completion back to `executions` and `proposals`
+- [x] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — added `completedBy` and `confirmationNumber` passthrough in case-reducer PORTAL_COMPLETED handler + submit-portal.ts context; backfilled 13 completed_by and 3 confirmation_number values from cases table
+- [x] Sync portal task completion back to `executions` and `proposals` — case-reducer already updates proposals to EXECUTED on PORTAL_COMPLETED; backfilled 29 orphan portal_tasks with proposal_id from SUBMIT_PORTAL proposals
 - [ ] Improve `portal_request_number` capture from submissions and inbound notifications
 - [ ] Add validation so portal cases without a request number are identifiable
 
