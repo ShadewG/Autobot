@@ -462,6 +462,7 @@ router.get('/live-overview', async (req, res) => {
                 c.substatus AS case_substatus,
                 c.portal_url,
                 c.agency_email,
+                c.deadline_date,
                 c.contact_research_notes,
                 COALESCE(
                     c.agency_email,
@@ -567,6 +568,23 @@ router.get('/live-overview', async (req, res) => {
             `, [caseIdsForReasoning]);
             primaryCaseAgencyByCase = caseAgencyCtx.rows.reduce((acc, row) => {
                 acc.set(Number(row.case_id), row);
+                return acc;
+            }, new Map());
+        }
+
+        let triggerMessageById = new Map();
+        if (triggerMessageIds.length > 0) {
+            const triggerMsgResult = await db.query(`
+                SELECT
+                    m.id,
+                    m.from_email,
+                    m.subject,
+                    LEFT(m.body_text, 200) AS body_preview
+                FROM messages m
+                WHERE m.id = ANY($1::int[])
+            `, [triggerMessageIds]);
+            triggerMessageById = triggerMsgResult.rows.reduce((acc, row) => {
+                acc.set(Number(row.id), row);
                 return acc;
             }, new Map());
         }
@@ -679,6 +697,7 @@ router.get('/live-overview', async (req, res) => {
                 },
                 activeRun: null,
             });
+            const triggerMsg = triggerMessageById.get(messageId) || null;
             return {
                 ...row,
                 agency_name: suppressPlaceholderDisplay
@@ -690,6 +709,11 @@ router.get('/live-overview', async (req, res) => {
                     reviewAction: reviewCtx.review_action,
                     reviewInstruction: reviewCtx.review_instruction,
                 }),
+                trigger_message: triggerMsg ? {
+                    from_email: triggerMsg.from_email,
+                    subject: triggerMsg.subject,
+                    body_preview: triggerMsg.body_preview,
+                } : null,
                 attachments,
                 attachment_insights: extractAttachmentInsights(attachments)
             };

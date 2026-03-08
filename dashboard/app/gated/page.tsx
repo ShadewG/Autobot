@@ -110,6 +110,11 @@ interface PendingProposal {
   last_inbound_subject: string | null;
   inbound_count: number;
   trigger_message_id: number | null;
+  trigger_message?: {
+    from_email: string | null;
+    subject: string | null;
+    body_preview: string | null;
+  } | null;
   portal_url?: string | null;
   agency_email?: string | null;
   effective_agency_email?: string | null;
@@ -913,6 +918,8 @@ function MonitorPageContent() {
     description: string;
     onConfirm: () => void;
   } | null>(null);
+  const [showDismissDialog, setShowDismissDialog] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const initialCaseApplied = useRef(false);
   const reviewInstructionRef = useRef<HTMLTextAreaElement | null>(null);
   const adjustInstructionRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2233,6 +2240,38 @@ function MonitorPageContent() {
               </Badge>
             )}
           </div>
+
+          {/* Trigger message preview — what email triggered this proposal */}
+          {selectedItem.data.trigger_message && (
+            <div className="border border-border bg-muted/30 p-2.5 space-y-1">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                <Mail className="h-3 w-3" /> Trigger Email
+              </p>
+              <div className="text-xs space-y-0.5">
+                {selectedItem.data.trigger_message.from_email && (
+                  <p className="text-muted-foreground truncate">
+                    <span className="text-muted-foreground/70">From:</span>{" "}
+                    {selectedItem.data.trigger_message.from_email}
+                  </p>
+                )}
+                {selectedItem.data.trigger_message.subject && (
+                  <p className="text-muted-foreground truncate">
+                    <span className="text-muted-foreground/70">Subj:</span>{" "}
+                    {selectedItem.data.trigger_message.subject.length > 60
+                      ? selectedItem.data.trigger_message.subject.slice(0, 60) + "..."
+                      : selectedItem.data.trigger_message.subject}
+                  </p>
+                )}
+                {selectedItem.data.trigger_message.body_preview && (
+                  <p className="text-muted-foreground/60 truncate">
+                    {selectedItem.data.trigger_message.body_preview.length > 100
+                      ? selectedItem.data.trigger_message.body_preview.slice(0, 100) + "..."
+                      : selectedItem.data.trigger_message.body_preview}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Delivery method — show for non-email actionable proposals (portal/close/escalate) */}
           {selectedItem.data.action_type && !selectedItem.data.action_type.startsWith("SEND") && (
