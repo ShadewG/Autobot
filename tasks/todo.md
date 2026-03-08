@@ -217,7 +217,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify AI model metadata is actually being written on new analyses — code wired in classify-inbound.ts and gate-or-execute.ts, deployed v20260308.32
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
-- [ ] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` (found in live UI on 2026-03-08)
+- [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 
 ---
 
@@ -338,7 +338,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Case templates for common types (bodycam, 911 calls, arrest records) `(New case form — 2026-03-08)`
 
 #### Operational Speed
-- [ ] Reduce Notion polling to 5 minutes
+- [x] Reduce Notion polling to 5 minutes `(cron */5 — 2026-03-08)`
 - [ ] Proactive contact research at import (before first send, not at escalation time)
 
 ---

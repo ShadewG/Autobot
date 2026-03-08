@@ -43,7 +43,7 @@ class CronService {
         // Sync from Notion every 15 minutes
         // Notion sync still runs on cron (Notion has no webhooks), but generation
         // queuing is now reactive — db.createCase() and db.updateCaseStatus() auto-dispatch.
-        this.jobs.notionSync = new CronJob('*/15 * * * *', async () => {
+        this.jobs.notionSync = new CronJob('*/5 * * * *', async () => {
             try {
                 console.log('Running Notion sync...');
                 const cases = await notionService.syncCasesFromNotion('Ready To Send');

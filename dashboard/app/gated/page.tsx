@@ -1284,6 +1284,11 @@ function MonitorPageContent() {
 
   const handleBulkAction = async () => {
     if (!showBulkConfirm || bulkSelected.size === 0) return;
+    if (showBulkConfirm.action === "DISMISS" && !showBulkConfirm.reason) {
+      showToast("Please select a dismiss reason", "error");
+      setShowBulkConfirm(null);
+      return;
+    }
     setBulkSubmitting(true);
     try {
       const res = await fetch("/api/monitor/proposals/bulk-decision", {
@@ -3776,7 +3781,7 @@ function MonitorPageContent() {
             <DialogDescription className="text-xs">
               {showBulkConfirm?.action === "APPROVE"
                 ? `This will approve ${bulkSelected.size} proposal${bulkSelected.size !== 1 ? "s" : ""} and execute them immediately. Each will be sent as-is (no draft edits).`
-                : `This will dismiss ${bulkSelected.size} proposal${bulkSelected.size !== 1 ? "s" : ""} with reason: "${showBulkConfirm?.reason}".`}
+                : `This will dismiss ${bulkSelected.size} proposal${bulkSelected.size !== 1 ? "s" : ""} with reason: "${showBulkConfirm?.reason || "not specified"}".`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
