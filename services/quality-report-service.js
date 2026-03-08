@@ -104,6 +104,46 @@ function inferActualClassificationFromExpectedAction(expectedAction) {
   }
 }
 
+/**
+ * Map raw classifier intent values (from response_analysis.intent) to the same
+ * canonical label space used by inferActualClassificationFromExpectedAction().
+ *
+ * This ensures both sides of the confusion matrix use the same vocabulary.
+ */
+function normalizeIntentToCanonicalClass(intent) {
+  switch (String(intent || '').toLowerCase()) {
+    case 'fee_request':
+      return 'fee_notice';
+    case 'question':
+    case 'more_info_needed':
+      return 'clarification';
+    case 'denial':
+      return 'denial';
+    case 'partial_denial':
+    case 'partial_approval':
+    case 'partial_release':
+    case 'partial_delivery':
+      return 'partial_approval';
+    case 'portal_redirect':
+      return 'initial_request'; // portal redirect typically means "resubmit via portal"
+    case 'acknowledgment':
+      return 'acknowledgment';
+    case 'records_ready':
+    case 'delivery':
+      return 'records_delivered';
+    case 'wrong_agency':
+      return 'wrong_agency';
+    case 'hostile':
+      return 'hostile';
+    case 'none':
+      return 'none';
+    case 'other':
+      return 'other';
+    default:
+      return 'unknown';
+  }
+}
+
 async function buildWeeklyQualityReport({ windowDays = 7 } = {}) {
   const days = clampWindowDays(windowDays, 7);
 
@@ -242,13 +282,23 @@ async function buildWeeklyQualityReport({ windowDays = 7 } = {}) {
 
 async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
   const days = clampWindowDays(windowDays, 30);
+
+  // Pull all available prediction sources:
+  // 1. ra.intent — from response_analysis (classifier output for real cases)
+  // 2. ec.simulated_predicted_action — for simulation-sourced eval cases
+  // 3. ec.source_action_type — the AI-proposed action when captured from feedback
+  // 4. p.action_type — the proposal's action type (fallback for proposal-linked cases)
   const result = await db.query(
     `${DEDUPED_EVAL_CASES_CTE}
      SELECT
-       COALESCE(NULLIF(LOWER(ra.intent), ''), 'unknown') AS predicted_classification,
-       ec.expected_action
+       LOWER(ra.intent) AS raw_intent,
+       ec.expected_action,
+       ec.simulated_predicted_action,
+       ec.source_action_type,
+       p.action_type AS proposal_action_type
      FROM deduped_eval_cases ec
      LEFT JOIN response_analysis ra ON ra.message_id = ec.trigger_message_id
+     LEFT JOIN proposals p ON p.id = ec.proposal_id
      WHERE ec.expected_action IS NOT NULL
        AND ec.created_at > NOW() - make_interval(days => $1)`,
     [days]
@@ -259,8 +309,27 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
   const predictedTotals = new Map();
 
   for (const row of result.rows) {
-    const predicted = row.predicted_classification || 'unknown';
     const actual = inferActualClassificationFromExpectedAction(row.expected_action);
+
+    // Determine the predicted classification from the best available source.
+    // Priority: raw classifier intent > simulated action > source action > proposal action
+    let predicted;
+    if (row.raw_intent) {
+      // Normalize the raw intent to the same canonical label space as the actual side
+      predicted = normalizeIntentToCanonicalClass(row.raw_intent);
+    } else if (row.simulated_predicted_action) {
+      // Simulation cases store the AI's predicted action type directly
+      predicted = inferActualClassificationFromExpectedAction(row.simulated_predicted_action);
+    } else if (row.source_action_type) {
+      // Feedback-captured cases store the original AI action type
+      predicted = inferActualClassificationFromExpectedAction(row.source_action_type);
+    } else if (row.proposal_action_type) {
+      // Fall back to the linked proposal's action type
+      predicted = inferActualClassificationFromExpectedAction(row.proposal_action_type);
+    } else {
+      predicted = 'unknown';
+    }
+
     const key = `${actual}::${predicted}`;
     cells.set(key, (cells.get(key) || 0) + 1);
     actualTotals.set(actual, (actualTotals.get(actual) || 0) + 1);
@@ -286,6 +355,7 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
     generated_at: new Date().toISOString(),
     window_days: days,
     actual_source: 'expected_action_inference',
+    predicted_source: 'intent_or_action_type_inference',
     totals: {
       samples: result.rows.length,
       distinct_actual_classifications: actualTotals.size,
@@ -492,5 +562,6 @@ module.exports = {
   buildWeeklyQualityReport,
   buildClassificationConfusionMatrix,
   inferActualClassificationFromExpectedAction,
+  normalizeIntentToCanonicalClass,
   buildReconciliationReport,
 };
