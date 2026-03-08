@@ -109,6 +109,49 @@ describe('Eval backend dedupe', function () {
             rows: [{ failure_category: 'WRONG_ROUTING', count: 3 }],
           };
         }
+        if (sql.includes('GROUP BY proposal_action_type')) {
+          return {
+            rows: [{
+              proposal_action_type: 'SEND_CLARIFICATION',
+              total_reviews: 3,
+              approve_count: 2,
+              adjust_count: 1,
+              dismiss_count: 0,
+            }],
+          };
+        }
+        if (sql.includes('GROUP BY agency_name')) {
+          return {
+            rows: [{
+              agency_name: 'Porter County',
+              total_reviews: 3,
+              approve_count: 2,
+              adjust_count: 1,
+              dismiss_count: 0,
+            }],
+          };
+        }
+        if (sql.includes('GROUP BY classification')) {
+          return {
+            rows: [{
+              classification: 'DENIAL',
+              total_reviews: 3,
+              approve_count: 2,
+              adjust_count: 1,
+              dismiss_count: 0,
+            }],
+          };
+        }
+        if (sql.includes('FROM reviewed_proposals') && sql.includes('total_reviews')) {
+          return {
+            rows: [{
+              total_reviews: 4,
+              approve_count: 2,
+              adjust_count: 1,
+              dismiss_count: 1,
+            }],
+          };
+        }
         throw new Error(`Unexpected summary SQL: ${sql}`);
       },
     };
@@ -129,9 +172,14 @@ describe('Eval backend dedupe', function () {
       assert.deepStrictEqual(response.body.failure_breakdown, [
         { failure_category: 'WRONG_ROUTING', count: 3 },
       ]);
-      assert.strictEqual(sqlCalls.length, 2);
+      assert.strictEqual(response.body.feedback_metrics.overview.total_reviews, 4);
+      assert.strictEqual(response.body.feedback_metrics.by_action_type[0].proposal_action_type, 'SEND_CLARIFICATION');
+      assert.strictEqual(response.body.feedback_metrics.by_agency[0].agency_name, 'Porter County');
+      assert.strictEqual(response.body.feedback_metrics.by_classification[0].classification, 'DENIAL');
+      assert.strictEqual(sqlCalls.length, 6);
       assert.match(sqlCalls[0], /FROM deduped_eval_cases ec/i);
       assert.match(sqlCalls[1], /JOIN deduped_eval_cases ec/i);
+      assert.match(sqlCalls[2], /FROM reviewed_proposals/i);
     } finally {
       restore();
     }

@@ -91,6 +91,24 @@ function getTriggerRunId(run) {
   return run.trigger_run_id || metadata.triggerRunId || metadata.trigger_run_id || null;
 }
 
+async function ensureCaseThread(caseId, subject, agencyEmail = null) {
+  let thread = await db.getThreadByCaseId(caseId);
+  if (thread) return thread;
+
+  try {
+    return await db.createEmailThread({
+      case_id: caseId,
+      subject,
+      agency_email: agencyEmail || `case-${caseId}@local.invalid`,
+    });
+  } catch (error) {
+    if (error?.code === '23505') {
+      return db.getThreadByCaseId(caseId);
+    }
+    throw error;
+  }
+}
+
 function isOrphanedWaitingRun(run) {
   if (!run) return false;
   if (!['waiting', 'paused'].includes(String(run.status || '').toLowerCase())) return false;
@@ -600,7 +618,7 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
   const thread = message?.thread_id ? await db.getThreadById(message.thread_id) : null;
   let resolvedCaseAgencyId = thread?.case_agency_id ? Number(thread.case_agency_id) : null;
   if (!resolvedCaseAgencyId && message?.from_email) {
-    const caseAgencies = await db.getCaseAgenciesByCaseId(caseData.id);
+    const caseAgencies = await db.getCaseAgencies(caseData.id, false);
     const inboundFrom = String(message.from_email || '').trim().toLowerCase();
     const matchedAgency = caseAgencies.find((agency) =>
       String(agency.agency_email || '').trim().toLowerCase() === inboundFrom
@@ -3216,16 +3234,11 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
     }
 
     // === CREATE THREAD IF NEEDED ===
-    let thread = await db.getThreadByCaseId(caseId);
-    if (!thread) {
-      const threadResult = await db.query(`
-        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
-        VALUES ($1, $2, NOW(), NOW())
-        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
-        RETURNING *
-      `, [caseId, subject || `Manual ingestion for case ${caseId}`]);
-      thread = threadResult.rows[0];
-    }
+    const thread = await ensureCaseThread(
+      caseId,
+      subject || `Manual ingestion for case ${caseId}`,
+      from_email || caseData.agency_email || caseData.alternate_agency_email || null
+    );
 
     // === CREATE MESSAGE ===
     const messageResult = await db.query(`
@@ -3450,16 +3463,11 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
     }
 
     // === CREATE THREAD IF NEEDED ===
-    let thread = await db.getThreadByCaseId(caseId);
-    if (!thread) {
-      const threadResult = await db.query(`
-        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
-        VALUES ($1, $2, NOW(), NOW())
-        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
-        RETURNING *
-      `, [caseId, `Correspondence for case ${caseId}`]);
-      thread = threadResult.rows[0];
-    }
+    const thread = await ensureCaseThread(
+      caseId,
+      `Correspondence for case ${caseId}`,
+      caseData.agency_email || caseData.alternate_agency_email || null
+    );
 
     // === CREATE MESSAGE ===
     const fromLabel = direction === 'inbound' ? (contact_name || 'Agency Contact') : 'Our Team';
@@ -3641,16 +3649,11 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
     }
 
     // Get or create thread for the case
-    let thread = await db.getThreadByCaseId(caseId);
-    if (!thread) {
-      const threadResult = await db.query(`
-        INSERT INTO email_threads (case_id, subject, created_at, updated_at)
-        VALUES ($1, $2, NOW(), NOW())
-        ON CONFLICT (case_id) DO UPDATE SET updated_at = NOW()
-        RETURNING *
-      `, [caseId, subject || `Inbound for case ${caseId}`]);
-      thread = threadResult.rows[0];
-    }
+    const thread = await ensureCaseThread(
+      caseId,
+      subject || `Inbound for case ${caseId}`,
+      from_email || caseData.agency_email || caseData.alternate_agency_email || null
+    );
 
     // Create the inbound message
     const messageResult = await db.query(`

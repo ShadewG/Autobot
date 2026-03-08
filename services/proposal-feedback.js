@@ -192,10 +192,11 @@ async function learnFromAdjust(proposal, { instruction = null, reason = null } =
     const caseData = await db.getCaseById(proposal.case_id);
     const lesson = deriveAdjustLesson(proposal, caseData, normalizedInstruction, reason);
     if (!lesson) return;
+    const agencyType = inferAgencyType(caseData?.agency_name);
 
     await decisionMemory.learnFromOutcome({
       category: deriveAdjustCategory(proposal, normalizedInstruction),
-      triggerPattern: `adjusted ${proposal.action_type} for ${caseData?.agency_name || 'unknown agency'}`,
+      triggerPattern: `adjusted ${proposal.action_type} for ${agencyType}`,
       lesson,
       sourceCaseId: proposal.case_id,
       priority: 7,

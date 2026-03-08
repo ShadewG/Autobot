@@ -65,30 +65,30 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures `(TESTED VIA SERVER STARTUP - Codex 2026-03-08 - clean backend localhost:3020 booted cron services and confirmed operational alerts scheduler is active; Discord transport is env-gated and currently disabled locally with no DISCORD_TOKEN)`
 - [x] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions `(TESTED VIA API+DB - Codex 2026-03-08 - /api/eval/errors on localhost:3020 returns searchable persisted rows; DB has 24 error_events with live cron_service saturation traces)`
-- [x] Fix `stuck_cases` health logic so cases with active `phone_call_queue`, active portal work, or other durable human work items are not counted as "stuck" — added NOT EXISTS checks for `phone_call_queue` (pending/claimed) and `portal_tasks` (PENDING/IN_PROGRESS) in both count and details queries; all 7 listed false positives had `needs_phone_call` with pending phone queue entries
-- [x] Split system-health reporting into true orphaned cases vs pending phone calls vs stale research handoffs vs stale proposals so operators can see what is actually broken `(stuck_cases now returns stuck_breakdown grouped by status + pause_reason; dashboard shows subcategories when issues exist — 2026-03-08)`
-- [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(summary uses grouped query, total is sum of all subcategories — 2026-03-08)`
+- [x] Fix `stuck_cases` health logic so cases with active `phone_call_queue`, active portal work, or other durable human work items are not counted as "stuck" — added NOT EXISTS checks for `phone_call_queue` (pending/claimed) and `portal_tasks` (PENDING/IN_PROGRESS) in both count and details queries; all 7 listed false positives had `needs_phone_call` with pending phone queue entries `(TESTED VIA API - Codex 2026-03-08 - /api/monitor/system-health and /details?metric=stuck_cases on localhost:3020 return stuck_cases=0 with empty items)`
+- [x] Split system-health reporting into true orphaned cases vs pending phone calls vs stale research handoffs vs stale proposals so operators can see what is actually broken `(TESTED VIA API - Codex 2026-03-08 - system-health returns structured stuck_breakdown object with per-subcategory counts)`
+- [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(TESTED VIA API - Codex 2026-03-08 - summary now reports total_issues=20 while stuck_cases remains 0 and details are empty)`
 - [x] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case `(createPhoneCallTask now checks for recently-skipped entries within 7 days and returns existing instead of creating new — 2026-03-08)`
 - [x] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF` `(execute-action.ts now uses PHONE_ESCALATION for needs_phone_call transitions; followup-scheduler updated to recognize both — 2026-03-08)`
 - [x] System health metric drill-down: UI wiring confirmed working — clickable metrics expand detail tables via `HealthMetricDetail` component with SWR data fetching (Codex report was stale)
 
 #### Agency Validation at Import ✅ DONE
-- [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
-- [x] On import, check if agency exists in directory — flag if not found
+- [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx) `(TESTED VIA LIVE DATA - Codex 2026-03-08 - import_warnings currently include 7 NO_MX_RECORD cases, proving the MX lookup path is active)`
+- [x] On import, check if agency exists in directory — flag if not found `(TESTED VIA LIVE DATA - Codex 2026-03-08 - 169 cases currently carry AGENCY_NOT_IN_DIRECTORY warnings)`
 - [x] On import, verify state matches agency state — flag mismatches
 - [x] Surface validation warnings in dashboard (yellow banner on case detail) `(TESTED IN UI - Codex 2026-03-08)`
-- [x] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time
+- [x] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time `(TESTED VIA REGRESSION+LIVE DATA - Codex 2026-03-08 - request-normalization.test.js covers mismatch detection; current live import_warnings show 0 metadata-mismatch rows in sampled data)`
 
 #### Proposal Lifecycle Hardening
-- [x] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path)
+- [x] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path) `(TESTED VIA REGRESSION - Codex 2026-03-08 - proposal-lifecycle.test.js + legacy-actions-proposal-bridge.test.js)`
 - [x] FIXED — human-review audit completeness: fresh DB retest now shows `0` proposals missing `human_decided_at` and `0` proposals with `human_decision` missing `human_decided_by` `(TESTED VIA DB - Codex 2026-03-08)`
-- [x] Ensure every executed proposal writes `executed_at`
+- [x] Ensure every executed proposal writes `executed_at` `(TESTED VIA REGRESSION+DB - Codex 2026-03-08 - proposal-lifecycle.test.js verifies executed_at writes; live DB missing count is 0)`
 - [x] FIXED — backfilled `completed_at` on 252 terminal executions using `updated_at` as fallback. Live DB now shows 0 terminal executions without `completed_at` `(2026-03-08)`
-- [x] Audit all direct `updateProposal()` callers and route through the lifecycle helper
-- [x] Stress-test waitpoint fallback paths (direct email, direct PDF email) — verify rollback on failure
+- [x] Audit all direct `updateProposal()` callers and route through the lifecycle helper `(TESTED VIA REGRESSION - Codex 2026-03-08 - proposal-lifecycle.test.js + legacy-actions-proposal-bridge.test.js cover approval/revise/dismiss paths through the helper layer)`
+- [ ] Reopen waitpoint fallback rollback coverage: helper-level lifecycle paths are green, but `tests/waitpoint-fallback.test.js` is currently failing in both direct-email and direct-PDF rollback scenarios (`waitpoint unavailable` short-circuit and `db.getThreadByCaseId is not a function`), so rollback-on-failure is not presently proven `(verified via mocha on 2026-03-08)`
 
 #### Execution Completeness
-- [x] Centralize execution terminal-state writes into one helper
+- [x] Centralize execution terminal-state writes into one helper `(TESTED VIA REGRESSION - Codex 2026-03-08 - execution-lifecycle.test.js)`
 - [x] Ensure every `SENT`, `FAILED`, `CANCELLED`, `PENDING_HUMAN` transition updates `updated_at` `(TESTED VIA DB - Codex 2026-03-08 - 0 executions in terminal/human states have updated_at IS NULL)`
 - [x] FIXED — backfilled `provider_message_id` on 65 SENT email executions from `provider_payload` JSONB. Remaining 189 without are non-email actions (177 RESEARCH_AGENCY, 4 SUBMIT_PORTAL, etc.) that don't have SendGrid message IDs — expected behavior `(2026-03-08)`
 - [x] Normalize `provider_payload` across direct-send, queued email, portal, and no-op executions `(TESTED VIA DB - Codex 2026-03-08 - 0 SENT executions have provider_payload IS NULL)`
@@ -106,6 +106,17 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08 - detail page and mobile timeline verified at 390px; full page sweep not complete)`
 - [x] Add a simple operator onboarding flow — first-run checklist for queue review, case detail, sync, constraints, and issue reporting `(TESTED IN UI - Codex 2026-03-08 - welcome tour modal appears on /gated and dedicated /onboarding guide page renders with workflow walkthrough, quick links, Notion notes, and issue-reporting guidance)`
 - [x] Add a lightweight changelog / release notes surface in the dashboard so operators can see what changed without reading commits `(TESTED IN UI - Codex 2026-03-08 - “What’s New” modal appears on /gated and dedicated /changelog page renders versioned release notes)`
+
+#### Dashboard UI Enhancements (2026-03-08)
+- [x] Add Inbox and Portal Tasks to main nav with live count badges `(nav-links.tsx — INBOX uses existing pending_approvals_total, PORTALS fetches /portal-tasks count)`
+- [x] Show wait time, confidence badge, and urgency indicator on gated queue proposal cards `(green/yellow/red confidence %, URGENT/OVERDUE deadline badges, Clock icon wait time)`
+- [x] Show trigger email preview on gated queue proposal cards `(from_email, subject truncated to 60 chars, body preview truncated to 100 chars — backend JOINs messages table)`
+- [x] Add keyboard shortcuts for approve/dismiss workflow on gated queue `(A=approve, D=dismiss with reason picker, J/K=navigate, ?=help overlay, Escape=close modals)`
+- [x] Add Event Ledger section to case detail — timeline-style state transition log with color-coded events, context summary, lazy-load on expand
+- [x] Add Portal Submissions section to case detail — table of all portal attempts with status badges, engine, result/error, lazy-load
+- [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load
+- [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate)
+- [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day
 
 ### P1 — Important for confidence
 
@@ -267,8 +278,8 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 
 #### Capture draft history before overwrite
 - [x] Add `original_draft_body_text` and `original_draft_subject` columns to `proposals` table — populated once on creation, never overwritten `(TESTED VIA DB - Codex 2026-03-08 - 441 proposals have original_draft_subject and 447 have original_draft_body_text)`
-- [x] When inline human edits arrive at APPROVE time (`run-engine.js` lines 597-604), snapshot the current draft into `original_*` columns before overwriting `(TESTED VIA DB - Codex 2026-03-08 - original_* snapshot columns are populated on historical proposal rows)`
-- [x] Add `human_edited: boolean` flag on proposals — set true when draft differs from original at approval time `(TESTED VIA DB - Codex 2026-03-08 - column exists; current live count is 0 true rows, so the flag is present but not yet exercised in sampled data)`
+- [x] When inline human edits arrive at APPROVE time (`run-engine.js` lines 597-604), snapshot the current draft into `original_*` columns before overwriting `(TESTED VIA DB+REGRESSION - Codex 2026-03-08 - original_* snapshot columns are populated and proposal-draft-history.test.js passes)`
+- [x] Add `human_edited: boolean` flag on proposals — set true when draft differs from original at approval time `(TESTED VIA DB+REGRESSION - Codex 2026-03-08 - column exists and proposal-draft-history.test.js verifies human_edited flip behavior; current live count is 0 true rows in sampled data)`
 
 #### Capture AI model metadata
 - [x] Add `model_id`, `prompt_tokens`, `completion_tokens`, `latency_ms` columns to `response_analysis` table (for classify step) `(TESTED VIA SCHEMA+REGRESSION - Codex 2026-03-08 - columns exist and ai-model-metadata.test.js verifies response_analysis persistence)`
@@ -279,18 +290,18 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 #### Wire up `decision_traces` (table exists, never written to)
 - [x] `decision_traces` table has columns for `classification`, `router_output`, `node_trace`, `gate_decision` — the DB helpers `createDecisionTrace` / `completeDecisionTrace` exist but are never called `(TESTED VIA REGRESSION - Codex 2026-03-08 - decision-trace-service.test.js + decision-trace-backfill.test.js)`
 - [x] Call `createDecisionTrace` at Trigger.dev task start, `completeDecisionTrace` at end, for all task types (inbound, initial, followup, portal) `(TESTED VIA REGRESSION - Codex 2026-03-08 - decision-trace-service.test.js + decision-trace-backfill.test.js)`
-- [x] This gives us the full decision audit trail we're missing
+- [x] This gives us the full decision audit trail we're missing `(TESTED VIA DB+REGRESSION - Codex 2026-03-08 - decision_traces has 992 live rows and decision-trace-service/backfill regressions pass)`
 
 #### Capture email delivery events
-- [x] Create `email_events` table: `message_id`, `event_type` (delivered/opened/bounced/dropped), `timestamp`, `raw_payload`
-- [x] Store SendGrid webhook events (delivery, open, bounce, drop) as rows — currently these events are processed for case matching but the event data itself is discarded
-- [x] Add `delivered_at`, `bounced_at` columns to `messages` table, updated from webhook events
+- [x] Create `email_events` table: `message_id`, `event_type` (delivered/opened/bounced/dropped), `timestamp`, `raw_payload` `(TESTED VIA SCHEMA - Codex 2026-03-08 - live schema includes email_events table; current row count is 0 pending live webhook traffic)`
+- [x] Store SendGrid webhook events (delivery, open, bounce, drop) as rows — currently these events are processed for case matching but the event data itself is discarded `(TESTED VIA SCHEMA+REGRESSION; NEEDS LIVE VERIFICATION - Codex 2026-03-08 - email_events table exists and provider-payload-capture / execution-lifecycle regressions pass, but live row count remains 0)`
+- [x] Add `delivered_at`, `bounced_at` columns to `messages` table, updated from webhook events `(TESTED VIA SCHEMA - Codex 2026-03-08 - messages has delivered_at, bounced_at, and provider_payload columns; live delivered/bounced counts remain 0 pending webhook traffic)`
 - [x] This enables: "was the email actually delivered?" and "which agencies never open our emails?"
 
 #### Preserve portal submission history
-- [x] Create `portal_submissions` table: `case_id`, `run_id`, `skyvern_task_id`, `status`, `engine`, `account_email`, `screenshot_url`, `recording_url`, `extracted_data` (JSONB), `error_message`, `started_at`, `completed_at`
+- [x] Create `portal_submissions` table: `case_id`, `run_id`, `skyvern_task_id`, `status`, `engine`, `account_email`, `screenshot_url`, `recording_url`, `extracted_data` (JSONB), `error_message`, `started_at`, `completed_at` `(TESTED VIA SCHEMA - Codex 2026-03-08 - live schema includes portal_submissions table; current row count is 0 pending Trigger.dev portal traffic)`
 - [x] Currently only the latest attempt is stored on `cases.last_portal_*` — previous attempts are overwritten
-- [x] Write a row on every portal attempt, not just the successful one — failure patterns are training data
+- [x] Write a row on every portal attempt, not just the successful one — failure patterns are training data `(TESTED VIA SCHEMA; NEEDS LIVE VERIFICATION - Codex 2026-03-08 - portal_submissions table exists but still has 0 live rows)`
 
 ### P0 — Feedback capture
 
@@ -367,8 +378,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis` `(added skipDbWrite option to analyzeResponse, test-prompt-suite passes it — 2026-03-08)`
 - [x] Stabilize `npm run test:prompts:gate` live runtime and fixture quality `(2026-03-08: Fixed DB pool exhaustion via PG_POOL_MAX=2 in test + graceful pool close on exit. Fixed array-intent comparison bug in validateExpected (5 fixtures always failed). Fixed validateJsonStructure: removed false-positive portal_url error, corrected fee_amount→extracted_fee_amount field name. Updated fixtures: hostile/wrong_agency accept denial intent since prompt doesn't offer these as intents, denial fixtures accept both requires_response values, delivery_attached/sensitive_minors/multi_ack accept multiple intents.)`
 - [x] FIXED — `npm run test:e2e:prompts` harness now auto-discovers a healthy local API (`/health` or `/api/health`) instead of assuming stale `localhost:3001`, so it runs against the clean backend stack reliably `(TESTED LOCALLY - Codex 2026-03-08)`
-- [ ] Reopen `npm run test:e2e:prompts` fixture setup: the health autodiscovery fix landed, but the suite still posts to deprecated runtime endpoints (`POST /api/requests`, `POST /api/requests/:id/ingest-email`, `POST /api/requests/:id/run-inbound`) that now return Express HTML 404s on the clean backend, so 21/24 prompt fixtures still fail before pipeline execution `(verified on localhost:3020 — Codex 2026-03-08)`
-- [ ] Fix stale `tests/eval-dedupe.test.js` summary stub: the current `/api/eval/summary` path uses the `reviewed_proposals` CTE, but the regression still expects an older SQL shape and now fails `500 !== 200` on the summary metrics assertion `(verified via mocha on 2026-03-08)`
+- [ ] Reopen `npm run test:e2e:prompts` fixture setup: the current tree still posts to deprecated runtime endpoints (`POST /api/requests`, `POST /api/requests/:id/ingest-email`, `POST /api/requests/:id/run-inbound`) and fails 21/24 fixtures on localhost:3020 before pipeline execution `(retested on 2026-03-08)`
+- [ ] Reopen `tests/eval-dedupe.test.js`: current local run still fails against the `/api/eval/summary` path with `500 !== 200`, so the deduped summary regression is not actually green in this checkout `(retested on 2026-03-08)`
+- [ ] Fix `tests/resolve-review-active-run.test.js`: current local run still returns `500` before it can prove active-run supersession on `/api/requests/:id/resolve-review`, so that recovery path is not yet verified in this checkout `(retested on 2026-03-08)`
 - [x] RETIRED — stale `tests/denial-subtype-routing.test.js` is replaced by current Trigger-era coverage (`tests/denial-wrong-agency-research.test.js` plus the inbound pipeline/materialization suites) and is now part of the backend regression pack `(TESTED VIA REGRESSION - Codex 2026-03-08)`
 - [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3013 renders pass-rate KPIs, trend chart, eval case list, and failure categories)`
 

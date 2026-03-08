@@ -9,7 +9,7 @@
  *   - API server running (local or staging)
  *   - Database with test cases
  *   - Set environment variables:
- *     - API_BASE_URL (default: http://localhost:3001)
+ *     - API_BASE_URL (optional; auto-discovered locally if omitted)
  *     - API_KEY (optional, for staging)
  *
  * Usage:
@@ -21,12 +21,14 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const { resolveApiBaseUrl } = require('./resolve-api-base-url');
 
-// Configuration
-const API_BASE_URL = process.env.API_BASE_URL || process.env.STAGING_API_URL || 'http://localhost:3001';
+// Configuration (auto-discovers a healthy local API if API_BASE_URL is unset)
+let API_BASE_URL = process.env.API_BASE_URL || process.env.STAGING_API_URL || null;
 const API_KEY = process.env.API_KEY || process.env.STAGING_API_KEY;
 const POLL_INTERVAL_MS = 1000;
-const POLL_TIMEOUT_MS = 60000;
+const POLL_TIMEOUT_MS = 120000;
+const ACTIVE_RUN_STATUSES = new Set(['created', 'queued', 'running', 'processing']);
 
 // Load fixtures
 const fixturesPath = path.join(__dirname, '../fixtures/inbound/golden-fixtures.json');
@@ -45,6 +47,9 @@ async function apiRequest(method, endpoint, body = null) {
     if (API_KEY) {
         headers['Authorization'] = `Bearer ${API_KEY}`;
     }
+    if (process.env.FOIA_SERVICE_KEY) {
+        headers['X-Service-Key'] = process.env.FOIA_SERVICE_KEY;
+    }
 
     const options = {
         method,
@@ -56,7 +61,13 @@ async function apiRequest(method, endpoint, body = null) {
     }
 
     const response = await fetch(url, options);
-    const data = await response.json();
+    const raw = await response.text();
+    let data;
+    try {
+        data = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+        data = { raw };
+    }
 
     if (!response.ok) {
         throw new Error(`API error ${response.status}: ${JSON.stringify(data)}`);
@@ -86,8 +97,9 @@ async function pollRunStatus(runId, timeoutMs = POLL_TIMEOUT_MS) {
     while (Date.now() - startTime < timeoutMs) {
         try {
             const run = await get(`/api/agent-runs/${runId}`);
+            const runStatus = String(run.status || '').trim().toLowerCase();
 
-            if (run.status !== 'running') {
+            if (run && !ACTIVE_RUN_STATUSES.has(runStatus)) {
                 return run;
             }
         } catch (error) {
@@ -113,7 +125,8 @@ async function pollCaseRuns(caseId, timeoutMs = POLL_TIMEOUT_MS) {
 
             if (runs.length > 0) {
                 const latestRun = runs[0];
-                if (latestRun.status !== 'running') {
+                const latestStatus = String(latestRun.status || '').trim().toLowerCase();
+                if (!ACTIVE_RUN_STATUSES.has(latestStatus)) {
                     return latestRun;
                 }
             }
@@ -131,27 +144,20 @@ async function pollCaseRuns(caseId, timeoutMs = POLL_TIMEOUT_MS) {
  * Get or create test case for fixture
  */
 async function getOrCreateTestCase(fixture) {
-    // Try to find existing test case
-    try {
-        const response = await get(`/api/requests?agency_name=E2E_${fixture.fixture_id}&limit=1`);
-        if (response.requests?.length > 0) {
-            return response.requests[0];
-        }
-    } catch (error) {
-        // Not found, create new
-    }
-
-    // Create new test case
     const caseData = fixture.case_data || {};
-    const newCase = await post('/api/requests', {
-        agency_name: `E2E_${fixture.fixture_id}`,
+    const runSuffix = `${fixture.fixture_id}_${Date.now()}`;
+    const newCase = await post('/api/cases', {
+        case_name: `E2E ${runSuffix}`,
+        subject_name: caseData.subject_name || `E2E subject ${fixture.fixture_id}`,
+        agency_name: `E2E_${runSuffix}`,
+        agency_email: caseData.agency_email || 'test@agency.gov',
         state: caseData.state || 'NC',
-        request_summary: caseData.request_summary || `E2E test for ${fixture.fixture_id}`,
+        requested_records: caseData.requested_records || [caseData.request_summary || `E2E test for ${fixture.fixture_id}`],
         incident_date: caseData.incident_date || '2024-01-01',
-        autopilot_mode: 'SUPERVISED'
+        status: caseData.status || 'draft'
     });
 
-    return newCase;
+    return newCase.case || newCase;
 }
 
 /**
@@ -160,11 +166,12 @@ async function getOrCreateTestCase(fixture) {
 async function ingestEmail(caseId, fixture) {
     const message = fixture.message;
 
-    return post(`/api/requests/${caseId}/ingest-email`, {
+    return post(`/api/cases/${caseId}/ingest-email`, {
         subject: message.subject || 'Re: FOIA Request',
         body_text: message.body_text,
-        from_address: message.from_address || 'test@agency.gov',
-        message_type: 'inbound'
+        from_email: message.from_email || message.from_address || 'test@agency.gov',
+        message_type: 'inbound',
+        trigger_run: false
     });
 }
 
@@ -172,7 +179,7 @@ async function ingestEmail(caseId, fixture) {
  * Trigger inbound handler
  */
 async function triggerInbound(caseId, messageId) {
-    return post(`/api/requests/${caseId}/run-inbound`, {
+    return post(`/api/cases/${caseId}/run-inbound`, {
         messageId,
         autopilotMode: 'SUPERVISED'
     });
@@ -254,7 +261,7 @@ async function runFixtureE2E(fixture, options = {}) {
         // Step 2: Ingest email
         console.log(`  Ingesting email...`);
         const ingestResult = await ingestEmail(testCase.id, fixture);
-        result.message_id = ingestResult.messageId || ingestResult.message_id;
+        result.message_id = ingestResult.inbound_message_id || ingestResult.messageId || ingestResult.message_id;
 
         // Step 3: Trigger inbound handler
         console.log(`  Triggering inbound handler...`);
@@ -414,14 +421,17 @@ async function main() {
     // Test API connectivity
     try {
         console.log('Testing API connectivity...');
-        await get('/health');
-        console.log('✅ API is reachable\n');
+        const resolved = await resolveApiBaseUrl(API_BASE_URL);
+        API_BASE_URL = resolved.baseUrl;
+        console.log(`✅ API is reachable via ${resolved.healthPath}\n`);
     } catch (error) {
-        console.error(`❌ Cannot reach API at ${API_BASE_URL}`);
+        console.error(`❌ Cannot reach API`);
         console.error(`   Error: ${error.message}`);
         console.error(`   Make sure the server is running or set API_BASE_URL`);
         process.exit(1);
     }
+
+    console.log(`Resolved API URL: ${API_BASE_URL}`);
 
     // Filter fixtures
     let testFixtures = fixtures.fixtures;

@@ -100,6 +100,56 @@ describe('Local inbound materialization', function () {
     };
   }
 
+  it('ingest-email creates a thread without relying on a removed case_id conflict constraint', async function () {
+    const dbStub = {
+      getCaseById: sinon.stub().resolves({
+        id: 30001,
+        our_email: 'sam@foib-request.com',
+        agency_email: 'agency@example.gov',
+      }),
+      getThreadByCaseId: sinon.stub().resolves(null),
+      createEmailThread: sinon.stub().resolves({
+        id: 7001,
+        case_id: 30001,
+        subject: 'RE: Request',
+        agency_email: 'agency@example.gov',
+      }),
+      updateCase: sinon.stub().resolves(),
+      logActivity: sinon.stub().resolves(),
+      query: sinon.stub(),
+    };
+
+    dbStub.query.onCall(0).resolves({ rows: [] });
+    dbStub.query.onCall(1).resolves({ rows: [{ id: 8001, thread_id: 7001, received_at: new Date().toISOString() }] });
+
+    const aiServiceStub = {};
+    const triggerDispatchStub = { triggerTask: sinon.stub().resolves({ handle: { id: 'unused' } }) };
+    const { router, restore } = loadRunEngineRouter({ dbStub, aiServiceStub, triggerDispatchStub });
+
+    try {
+      const app = express();
+      app.use(express.json());
+      app.use('/api', router);
+
+      const response = await supertest(app)
+        .post('/api/cases/30001/ingest-email')
+        .send({
+          from_email: 'agency@example.gov',
+          subject: 'RE: Request',
+          body_text: 'This is a valid inbound body for ingestion.',
+          trigger_run: false,
+        });
+
+      assert.strictEqual(response.status, 201);
+      assert.strictEqual(response.body.success, true);
+      sinon.assert.calledOnce(dbStub.getThreadByCaseId);
+      sinon.assert.calledOnce(dbStub.createEmailThread);
+      assert.strictEqual(dbStub.createEmailThread.firstCall.args[0].agency_email, 'agency@example.gov');
+    } finally {
+      restore();
+    }
+  });
+
   it('materializes clarification proposals locally when Trigger credentials are absent', async function () {
     const originalNodeEnv = process.env.NODE_ENV;
     const originalTriggerSecret = process.env.TRIGGER_SECRET_KEY;

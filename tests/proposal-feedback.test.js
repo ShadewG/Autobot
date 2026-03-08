@@ -105,7 +105,7 @@ describe('Proposal feedback helpers', function () {
     sinon.assert.calledOnce(learnStub);
     sinon.assert.calledWithMatch(learnStub, {
       category: 'general',
-      triggerPattern: 'adjusted SEND_INITIAL_REQUEST for Synthetic Records Unit',
+      triggerPattern: 'adjusted SEND_INITIAL_REQUEST for records agency',
       lesson: 'Use a collaborative, non-aggressive tone unless the agency has clearly denied the request with cited authority.',
       sourceCaseId: 912,
       priority: 7,

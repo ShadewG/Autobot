@@ -71,6 +71,8 @@ describe('Legacy request actions bridge to proposals', function () {
         getPendingProposalsByCaseId: sinon.stub().resolves([]),
         getCaseById: sinon.stub().resolves(null),
         getMessageById: sinon.stub().resolves(null),
+        getLatestInboundMessage: sinon.stub().resolves(null),
+        createProposal: sinon.stub().resolves(null),
         updateProposal: sinon.stub().resolves(null),
         query: sinon.stub().resolves({ rows: [] }),
         ...dbOverrides,
@@ -194,7 +196,65 @@ describe('Legacy request actions bridge to proposals', function () {
       assert.strictEqual(helpersStub.db.updateProposal.calledOnce, true);
       assert.strictEqual(helpersStub.db.updateProposal.firstCall.args[0], 88);
       assert.strictEqual(helpersStub.db.updateProposal.firstCall.args[1].draftBodyText, 'Revised body from AI');
-      assert.strictEqual(helpersStub.db.query.called, false);
+      const wroteLegacyQueue = helpersStub.db.query.args.some(([sql]) => /INSERT INTO auto_reply_queue/i.test(String(sql)));
+      assert.strictEqual(wroteLegacyQueue, false);
+      assert.strictEqual(processProposalDecisionStub.called, false);
+    } finally {
+      loaded.restore();
+    }
+  });
+
+  it('creates a modern pending proposal when revising without an active proposal', async function () {
+    const helpersStub = createHelpersStub({
+      getCaseById: sinon.stub().resolves({
+        id: 25169,
+        agency_name: 'Agency',
+        state: 'TX',
+        status: 'awaiting_response',
+        pause_reason: null,
+      }),
+      getLatestInboundMessage: sinon.stub().resolves({
+        id: 501,
+        subject: 'Agency reply',
+      }),
+      createProposal: sinon.stub().resolves({
+        id: 101,
+        case_id: 25169,
+        action_type: 'SEND_CLARIFICATION',
+        requires_human: true,
+        confidence: 0.75,
+        warnings: [],
+        constraints_applied: [],
+        reasoning: ['Generated based on a legacy revise instruction', 'Shorten it'],
+        draft_body_text: 'Fresh body from AI',
+        draft_subject: 'Agency reply',
+        proposal_short: 'Custom: Shorten it...',
+      }),
+    });
+    const processProposalDecisionStub = sinon.stub().resolves();
+    const openAIStub = sinon.stub().resolves({
+      choices: [{ message: { content: 'Fresh body from AI' } }],
+    });
+
+    const loaded = loadLegacyActionsRouter({ helpersStub, processProposalDecisionStub, openAIStub });
+    try {
+      const app = express();
+      app.use(express.json());
+      app.use('/api/requests', loaded.router);
+
+      const response = await supertest(app)
+        .post('/api/requests/25169/actions/revise')
+        .send({ instruction: 'Shorten it' });
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.success, true);
+      assert.strictEqual(response.body.next_action_proposal.id, '101');
+      assert.strictEqual(response.body.next_action_proposal.draft_content, 'Fresh body from AI');
+      assert.strictEqual(helpersStub.db.getLatestInboundMessage.calledOnceWithExactly(25169), true);
+      assert.strictEqual(helpersStub.db.createProposal.calledOnce, true);
+      assert.strictEqual(helpersStub.db.createProposal.firstCall.args[0].actionType, 'SEND_CLARIFICATION');
+      const wroteLegacyQueue = helpersStub.db.query.args.some(([sql]) => /INSERT INTO auto_reply_queue/i.test(String(sql)));
+      assert.strictEqual(wroteLegacyQueue, false);
       assert.strictEqual(processProposalDecisionStub.called, false);
     } finally {
       loaded.restore();

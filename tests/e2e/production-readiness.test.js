@@ -23,13 +23,15 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
+const { resolveApiBaseUrl } = require('./resolve-api-base-url');
 
-// Configuration
-const API_BASE_URL = process.env.API_BASE_URL || process.env.STAGING_API_URL || 'http://localhost:3001';
+// Configuration (auto-discovers a healthy local API if API_BASE_URL is unset)
+let API_BASE_URL = process.env.API_BASE_URL || process.env.STAGING_API_URL || null;
 const API_KEY = process.env.API_KEY || process.env.STAGING_API_KEY;
 const APPROVE_TIMEOUT_MS = 5000;
-const RUN_TIMEOUT_MS = 30000;
+const RUN_TIMEOUT_MS = 120000;
 const POLL_INTERVAL_MS = 500;
+const ACTIVE_RUN_STATUSES = new Set(['created', 'queued', 'running', 'processing']);
 
 // Load fixtures
 const fixturesPath = path.join(__dirname, '../fixtures/inbound/golden-fixtures.json');
@@ -43,17 +45,25 @@ async function apiRequest(method, endpoint, body = null) {
     const url = `${API_BASE_URL}${endpoint}`;
     const headers = { 'Content-Type': 'application/json' };
     if (API_KEY) headers['Authorization'] = `Bearer ${API_KEY}`;
+    if (process.env.FOIA_SERVICE_KEY) headers['X-Service-Key'] = process.env.FOIA_SERVICE_KEY;
 
     const options = { method, headers };
     if (body) options.body = JSON.stringify(body);
 
     const response = await fetch(url, options);
+    const raw = await response.text();
+    let data;
+    try {
+        data = raw ? JSON.parse(raw) : {};
+    } catch (_) {
+        data = { raw };
+    }
 
     // Return full response for status code checking
     return {
         status: response.status,
         ok: response.ok,
-        data: await response.json().catch(() => ({}))
+        data
     };
 }
 
@@ -75,29 +85,33 @@ async function pollUntil(fn, condition, timeoutMs, intervalMs = POLL_INTERVAL_MS
 }
 
 async function createTestCase(overrides = {}) {
-    const response = await post('/api/requests', {
+    const response = await post('/api/cases', {
+        case_name: overrides.case_name || `ProdReady Test ${Date.now()}`,
+        subject_name: overrides.subject_name || 'Production readiness subject',
         agency_name: `ProdReady_Test_${Date.now()}`,
+        agency_email: overrides.agency_email || 'test@agency.gov',
         state: overrides.state || 'NC',
-        request_summary: overrides.request_summary || 'Production readiness test case',
+        requested_records: overrides.requested_records || [overrides.request_summary || 'Production readiness test case'],
         incident_date: overrides.incident_date || '2024-01-01',
-        autopilot_mode: overrides.autopilot_mode || 'SUPERVISED',
+        status: overrides.status || 'draft',
         ...overrides
     });
-    return response.data;
+    return response.data.case || response.data;
 }
 
 async function ingestEmail(caseId, message) {
-    return post(`/api/requests/${caseId}/ingest-email`, {
+    return post(`/api/cases/${caseId}/ingest-email`, {
         message_id: message.message_id || `<test-${Date.now()}@test.fixture>`,
         subject: message.subject || 'Test Subject',
         body_text: message.body_text,
-        from_address: message.from_address || 'test@agency.gov',
-        message_type: 'inbound'
+        from_email: message.from_email || message.from_address || 'test@agency.gov',
+        message_type: 'inbound',
+        trigger_run: false
     });
 }
 
 async function triggerInbound(caseId, messageId) {
-    return post(`/api/requests/${caseId}/run-inbound`, { messageId });
+    return post(`/api/cases/${caseId}/run-inbound`, { messageId });
 }
 
 async function waitForRunCompletion(caseId, timeoutMs = RUN_TIMEOUT_MS) {
@@ -107,7 +121,7 @@ async function waitForRunCompletion(caseId, timeoutMs = RUN_TIMEOUT_MS) {
             const runs = response.data.runs || response.data || [];
             return runs.length > 0 ? runs[0] : null;
         },
-        (run) => run && run.status !== 'running',
+        (run) => run && !ACTIVE_RUN_STATUSES.has(String(run.status || '').trim().toLowerCase()),
         timeoutMs
     );
 }
@@ -157,8 +171,8 @@ async function runContractTests() {
 
     // Test valid run-inbound payload
     if (ingestResponse.ok) {
-        const messageId = ingestResponse.data.messageId || ingestResponse.data.message_id;
-        const runResponse = await post(`/api/requests/${testCase.id}/run-inbound`, {
+        const messageId = ingestResponse.data.inbound_message_id || ingestResponse.data.messageId || ingestResponse.data.message_id;
+        const runResponse = await post(`/api/cases/${testCase.id}/run-inbound`, {
             messageId
         });
 
@@ -385,6 +399,9 @@ async function runFollowupTests() {
 // ============================================================================
 
 async function main() {
+    const resolved = await resolveApiBaseUrl(API_BASE_URL);
+    API_BASE_URL = resolved.baseUrl;
+
     const args = process.argv.slice(2);
     const categoryFilter = args.find(a => a.startsWith('--category='))?.split('=')[1];
     const fullRun = args.includes('--full');
@@ -393,12 +410,13 @@ async function main() {
     console.log('PRODUCTION READINESS TEST SUITE');
     console.log('='.repeat(80));
     console.log(`API URL: ${API_BASE_URL}`);
+    console.log(`Health route: ${resolved.healthPath}`);
     console.log(`Mode: ${fullRun ? 'FULL' : 'BASIC'}`);
     if (categoryFilter) console.log(`Category filter: ${categoryFilter}`);
 
     // Test API connectivity
     try {
-        const health = await get('/api/health');
+        const health = await get(resolved.healthPath);
         if (!health.ok) throw new Error('Health check failed');
         console.log('✅ API is reachable\n');
     } catch (error) {

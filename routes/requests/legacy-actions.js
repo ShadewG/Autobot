@@ -101,6 +101,63 @@ Please provide the revised response body text only. Do not include explanations 
     return updatedProposal;
 }
 
+async function createLegacyProposalDraft(caseData, latestInbound, instruction) {
+    const OpenAI = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const generatePrompt = `You are helping draft a FOIA request response.
+
+Context:
+- Agency: ${caseData.agency_name}
+- State: ${caseData.state}
+- Current status: ${caseData.status}
+- Pause reason: ${caseData.pause_reason || 'N/A'}
+${latestInbound ? `- Last message from agency: ${latestInbound.subject}` : ''}
+
+User instruction:
+${instruction}
+
+Please draft a professional email to send to the agency. Only output the email body text, no explanations.`;
+
+    const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
+        messages: [
+            {
+                role: 'system',
+                content: 'You are a professional FOIA request assistant helping draft correspondence with government agencies.'
+            },
+            {
+                role: 'user',
+                content: generatePrompt
+            }
+        ],
+        max_tokens: 1000
+    });
+
+    const draftContent = completion.choices[0]?.message?.content?.trim();
+    if (!draftContent) {
+        throw new Error('AI returned an empty draft');
+    }
+
+    const inferredActionType = latestInbound ? 'SEND_CLARIFICATION' : 'SEND_INITIAL_REQUEST';
+    return db.createProposal({
+        proposalKey: `${caseData.id}:legacy-custom:${latestInbound?.id || 'none'}:${Date.now()}`,
+        caseId: caseData.id,
+        triggerMessageId: latestInbound?.id || null,
+        actionType: inferredActionType,
+        draftSubject: latestInbound?.subject || `FOIA request follow-up for case ${caseData.id}`,
+        draftBodyText: draftContent,
+        reasoning: ['Generated based on a legacy revise instruction', instruction],
+        confidence: 0.75,
+        warnings: [],
+        canAutoExecute: false,
+        requiresHuman: true,
+        proposalShort: `Custom: ${instruction.substring(0, 50)}...`,
+        status: 'PENDING_APPROVAL',
+        adjustmentCount: 0,
+    });
+}
+
 /**
  * POST /api/requests/:id/actions/approve
  * Approve a pending action (legacy)
@@ -292,70 +349,15 @@ router.post('/:id/actions/revise', async (req, res) => {
         let reply = replyResult.rows[0];
         let message = reply ? await db.getMessageById(reply.message_id) : null;
 
-        // If no pending action, generate a new draft based on the instruction
+        // If no pending action, generate a new proposal based on the instruction
         if (!reply) {
-            // Get the latest inbound message for context
-            const thread = await db.getThreadByCaseId(requestId);
-            let latestInbound = null;
-            if (thread) {
-                const messagesResult = await db.query(
-                    `SELECT * FROM messages WHERE thread_id = $1 AND direction = 'inbound' ORDER BY received_at DESC LIMIT 1`,
-                    [thread.id]
-                );
-                latestInbound = messagesResult.rows[0];
-            }
+            const latestInbound = await db.getLatestInboundMessage(requestId);
+            const newProposal = await createLegacyProposalDraft(caseData, latestInbound, instruction);
 
-            // Generate a new draft using the instruction
-            const OpenAI = require('openai');
-            const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-            const generatePrompt = `You are helping draft a FOIA request response.
-
-Context:
-- Agency: ${caseData.agency_name}
-- State: ${caseData.state}
-- Current status: ${caseData.status}
-- Pause reason: ${caseData.pause_reason || 'N/A'}
-${latestInbound ? `- Last message from agency: ${latestInbound.subject}` : ''}
-
-User instruction:
-${instruction}
-
-Please draft a professional email to send to the agency. Only output the email body text, no explanations.`;
-
-            const completion = await openai.chat.completions.create({
-                model: process.env.OPENAI_MODEL || 'gpt-5.2-2025-12-11',
-                messages: [
-                    {
-                        role: 'system',
-                        content: 'You are a professional FOIA request assistant helping draft correspondence with government agencies.'
-                    },
-                    {
-                        role: 'user',
-                        content: generatePrompt
-                    }
-                ],
-                max_tokens: 1000
+            return res.json({
+                success: true,
+                next_action_proposal: formatLegacyNextActionFromProposal(newProposal, instruction)
             });
-
-            const draftContent = completion.choices[0].message.content;
-
-            // Create a new pending reply entry
-            const newReplyResult = await db.query(
-                `INSERT INTO auto_reply_queue (case_id, message_id, generated_reply, response_type, status, requires_approval, created_at, proposal_short, reasoning_jsonb)
-                 VALUES ($1, $2, $3, 'custom', 'pending', true, NOW(), $4, $5)
-                 RETURNING *`,
-                [
-                    requestId,
-                    latestInbound?.id || null,
-                    draftContent,
-                    `Custom: ${instruction.substring(0, 50)}...`,
-                    JSON.stringify(['Generated based on your instruction', instruction])
-                ]
-            );
-
-            reply = newReplyResult.rows[0];
-            message = latestInbound;
         } else {
             // Existing pending action - revise it
             const OpenAI = require('openai');
