@@ -21,6 +21,7 @@ describe('Phone call auto-call routes', function () {
       isConfigured: twilioVoiceService.isConfigured,
       startStatusCheckCall: twilioVoiceService.startStatusCheckCall,
       summarizePhoneCallForConversation: aiService.summarizePhoneCallForConversation,
+      suggestNextStepAfterCall: aiService.suggestNextStepAfterCall,
     };
 
     db.logActivity = async () => ({ id: 1 });
@@ -38,6 +39,7 @@ describe('Phone call auto-call routes', function () {
     twilioVoiceService.isConfigured = originals.isConfigured;
     twilioVoiceService.startStatusCheckCall = originals.startStatusCheckCall;
     aiService.summarizePhoneCallForConversation = originals.summarizePhoneCallForConversation;
+    aiService.suggestNextStepAfterCall = originals.suggestNextStepAfterCall;
   });
 
   function createApp() {
@@ -87,7 +89,15 @@ describe('Phone call auto-call routes', function () {
         };
       }
       assert.match(sql, /UPDATE phone_call_queue/);
-      assert.deepStrictEqual(params, [7, 'Concise summary']);
+      assert.deepStrictEqual(params, [
+        7,
+        'Concise summary',
+        JSON.stringify({
+          next_action: 'WAIT_FOR_RESPONSE',
+          explanation: 'They said it is under review.',
+          draft_notes: ''
+        })
+      ]);
       return { rows: [] };
     };
     db.getCaseById = async () => ({ id: 88, case_name: 'Case 88', agency_name: 'Example PD' });
@@ -96,6 +106,11 @@ describe('Phone call auto-call routes', function () {
     aiService.summarizePhoneCallForConversation = async () => ({
       summary: 'Concise summary',
       recommended_follow_up: 'Wait for the promised update tomorrow.',
+    });
+    aiService.suggestNextStepAfterCall = async () => ({
+      next_action: 'WAIT_FOR_RESPONSE',
+      explanation: 'They said it is under review.',
+      draft_notes: '',
     });
 
     const response = await supertest(createApp())

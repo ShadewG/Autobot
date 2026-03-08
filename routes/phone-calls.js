@@ -55,6 +55,7 @@ async function appendAutomatedCallTranscript({ task, transcriptText, transcriptS
     const aiService = require('../services/ai-service');
 
     let summary = null;
+    let nextStep = null;
     try {
         summary = await aiService.summarizePhoneCallForConversation({
             outcome: 'automated_status_check',
@@ -67,6 +68,19 @@ async function appendAutomatedCallTranscript({ task, transcriptText, transcriptS
         console.warn('Failed to summarize automated phone transcript:', error.message);
     }
 
+    try {
+        nextStep = await aiService.suggestNextStepAfterCall({
+            outcome: 'automated_status_check',
+            notes: transcriptText || '',
+            checked_points: ['automated_status_check'],
+            case_name: caseData?.case_name,
+            agency_name: task.agency_name || caseData?.agency_name,
+            case_status: caseData?.status,
+        });
+    } catch (error) {
+        console.warn('Failed to suggest next step for automated phone transcript:', error.message);
+    }
+
     const thread = await ensureCaseThread(task.case_id);
     const bodyLines = [
         'Automated status check call transcript received.',
@@ -74,6 +88,7 @@ async function appendAutomatedCallTranscript({ task, transcriptText, transcriptS
         transcriptText ? `Transcript: ${transcriptText}` : 'Transcript unavailable.',
         recordingUrl ? `Recording: ${recordingUrl}` : null,
         summary?.recommended_follow_up ? `Recommended follow-up: ${summary.recommended_follow_up}` : null,
+        nextStep?.explanation ? `AI next step: ${nextStep.explanation}` : null,
     ].filter(Boolean);
 
     const message = await db.createMessage({
@@ -100,17 +115,23 @@ async function appendAutomatedCallTranscript({ task, transcriptText, transcriptS
             recording_url: recordingUrl || null,
             transcript: transcriptText || null,
             ai_summary: summary || null,
+            next_step: nextStep || null,
         },
     });
 
     await db.query(`
         UPDATE phone_call_queue
-        SET twilio_transcript_summary = $2,
+        SET status = 'completed',
+            completed_at = NOW(),
+            completed_by = 'twilio_voice_agent',
+            call_outcome = 'automated_status_check',
+            twilio_transcript_summary = $2,
+            twilio_next_step = $3,
             updated_at = NOW()
         WHERE id = $1
-    `, [task.id, summary?.summary || transcriptText || null]);
+    `, [task.id, summary?.summary || transcriptText || null, nextStep ? JSON.stringify(nextStep) : null]);
 
-    return { message, summary };
+    return { message, summary, nextStep };
 }
 
 /**
@@ -490,6 +511,7 @@ router.post('/twilio/transcription', async (req, res) => {
             twilio_call_sid: CallSid,
             transcript_status: TranscriptionStatus || 'completed',
             conversation_message_id: transcriptResult.message?.id || null,
+            next_action: transcriptResult.nextStep?.next_action || null,
         });
 
         return res.status(200).send('ok');
