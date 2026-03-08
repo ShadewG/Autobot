@@ -163,6 +163,7 @@ async function buildWeeklyQualityReport({ windowDays = 7 } = {}) {
       `SELECT failure_category, COUNT(*)::int AS count
        FROM eval_runs
        WHERE failure_category IS NOT NULL
+         AND COALESCE(evaluation_type, 'decision_quality') = 'decision_quality'
          AND ran_at > NOW() - make_interval(days => $1)
        GROUP BY failure_category
        ORDER BY count DESC, failure_category ASC

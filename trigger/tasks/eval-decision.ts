@@ -71,7 +71,8 @@ async function runJudge(
   proposal: any,
   caseData: any,
   triggerMessage: any,
-  latestAnalysis: any
+  latestAnalysis: any,
+  evaluationType: "decision_quality" | "draft_quality"
 ): Promise<{ score: number; reasoning: string; failure_category: string | null }> {
   const requestedRecords = caseData
     ? Array.isArray(caseData.requested_records)
@@ -91,7 +92,58 @@ async function runJudge(
     ? proposal.reasoning.join("\n")
     : JSON.stringify(proposal.reasoning || []);
 
-  const prompt = `You are an expert FOIA case manager evaluating an AI decision.
+  const outcomeContext = caseData
+    ? `Outcome type: ${caseData.outcome_type || "Unknown"}\nOutcome summary: ${caseData.outcome_summary || "Not recorded"}\nClosed at: ${caseData.closed_at || "Not closed"}`
+    : "Outcome context not available";
+  const prompt = evaluationType === "draft_quality"
+    ? `You are an expert FOIA editor evaluating a sent FOIA draft after the case outcome is known.
+
+## Case Context
+Agency: ${caseData?.agency_name || "Unknown"} (${caseData?.state || "Unknown"})
+Records requested: ${requestedRecords}
+${outcomeContext}
+
+## Trigger Message
+${messageSnippet}
+
+## AI Classification
+${classification}
+
+## Sent Draft
+Action chosen: **${proposal.action_type}**
+AI Reasoning:
+${reasoning}
+
+Subject:
+${proposal.draft_subject || "(no subject)"}
+
+Body:
+${proposal.draft_body_text || "(no draft)"}
+
+## Evaluation Goal
+Score the quality of the sent draft itself. Focus on whether it was:
+- factually aligned with the conversation
+- professional and usable
+- legally and procedurally appropriate
+- complete enough to move the case forward
+- consistent with the final outcome
+
+Use the score scale:
+- **5**: Excellent draft, ready to send as-is
+- **4**: Good draft, minor issues only
+- **3**: Usable but noticeably weak, incomplete, or awkward
+- **2**: Poor draft that likely needed substantial human edits
+- **1**: Dangerous or unusable draft
+
+If there is a meaningful issue, set failure_category:
+- **DRAFT_QUALITY**: awkward, incomplete, missing key facts, poor structure, wrong tone
+- **POLICY_VIOLATION**: violates FOIA or product policy / promises unsupported actions
+- **CONTEXT_MISSED**: ignores important thread or case history
+- **WRONG_ROUTING**: wrong action even though the draft may be fluent
+- **WRONG_CLASSIFICATION**: classifier set the case on the wrong path
+
+If the draft is good, failure_category should be null.`
+    : `You are an expert FOIA case manager evaluating an AI decision.
 
 ## Case Context
 Agency: ${caseData?.agency_name || "Unknown"} (${caseData?.state || "Unknown"})
@@ -153,7 +205,8 @@ export const evalDecision = task({
   maxDuration: 300,
   retry: { maxAttempts: 1 },
 
-  run: async (payload: { evalCaseId?: number; runAll?: boolean }) => {
+  run: async (payload: { evalCaseId?: number; runAll?: boolean; evaluationType?: "decision_quality" | "draft_quality" }) => {
+    const evaluationType = payload.evaluationType === "draft_quality" ? "draft_quality" : "decision_quality";
     // Load eval cases to run
     let evalCases: any[];
     if (payload.evalCaseId) {
@@ -237,10 +290,14 @@ export const evalDecision = task({
         let failureCategory: string | null = null;
 
         try {
-          const judgment = await runJudge(evalCase, proposal, caseData, triggerMessage, latestAnalysis);
+          const judgment = await runJudge(evalCase, proposal, caseData, triggerMessage, latestAnalysis, evaluationType);
           judgeScore = judgment.score;
           judgeReasoning = judgment.reasoning;
-          failureCategory = actionCorrect ? null : (judgment.failure_category || "WRONG_ROUTING");
+          if (evaluationType === "draft_quality") {
+            failureCategory = judgment.failure_category || (judgeScore != null && judgeScore <= 3 ? "DRAFT_QUALITY" : null);
+          } else {
+            failureCategory = actionCorrect ? null : (judgment.failure_category || "WRONG_ROUTING");
+          }
         } catch (judgeErr: any) {
           logger.warn("LLM judge failed", { evalCaseId: evalCase.id, error: judgeErr.message });
           // Still record the result — but flag wrong decisions so they're visible in dashboard
@@ -252,8 +309,8 @@ export const evalDecision = task({
         // Save eval run result
         await db.query(
           `INSERT INTO eval_runs
-             (eval_case_id, predicted_action, action_correct, judge_score, judge_reasoning, failure_category, pipeline_output)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+             (eval_case_id, predicted_action, action_correct, judge_score, judge_reasoning, failure_category, pipeline_output, evaluation_type)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [
             evalCase.id,
             predictedAction,
@@ -264,6 +321,7 @@ export const evalDecision = task({
             JSON.stringify(evalCase.proposal_id
               ? { proposal_id: evalCase.proposal_id, reasoning: proposal.reasoning }
               : { source: "simulation", reasoning: proposal.reasoning }),
+            evaluationType,
           ]
         );
 
@@ -274,6 +332,7 @@ export const evalDecision = task({
           actionCorrect,
           judgeScore,
           failureCategory,
+          evaluationType,
         });
 
         results.push({
@@ -283,6 +342,7 @@ export const evalDecision = task({
           actionCorrect,
           judgeScore,
           failureCategory,
+          evaluationType,
         });
       } catch (err: any) {
         logger.error("Eval case failed", { evalCaseId: evalCase.id, error: err.message });

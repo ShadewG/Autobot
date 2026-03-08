@@ -10,6 +10,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
+const draftQualityEvalService = require('../services/draft-quality-eval-service');
 const qualityReportService = require('../services/quality-report-service');
 const { tasks } = require('@trigger.dev/sdk');
 
@@ -102,6 +103,10 @@ function parseId(val) {
     return Number.isFinite(id) ? id : null;
 }
 
+function normalizeEvaluationType(value) {
+    return value === 'draft_quality' ? 'draft_quality' : 'decision_quality';
+}
+
 /**
  * GET /api/eval/cases
  * List all eval cases with their latest eval run result.
@@ -141,6 +146,7 @@ router.get('/cases', async (req, res) => {
             LEFT JOIN LATERAL (
                 SELECT * FROM eval_runs
                 WHERE eval_case_id = ec.id
+                  AND COALESCE(evaluation_type, 'decision_quality') = 'decision_quality'
                 ORDER BY ran_at DESC
                 LIMIT 1
             ) er ON true
@@ -296,18 +302,59 @@ router.delete('/cases/:id', async (req, res) => {
  */
 router.post('/run', async (req, res) => {
     try {
-        const { evalCaseId } = req.body;
+        const { evalCaseId, evaluationType } = req.body;
         const parsedId = evalCaseId ? parseId(evalCaseId) : null;
         if (evalCaseId && !parsedId) {
             return res.status(400).json({ success: false, error: 'Invalid evalCaseId' });
         }
-        const payload = parsedId ? { evalCaseId: parsedId } : { runAll: true };
+        const normalizedEvaluationType = normalizeEvaluationType(evaluationType);
+        const payload = parsedId
+            ? { evalCaseId: parsedId, evaluationType: normalizedEvaluationType }
+            : { runAll: true, evaluationType: normalizedEvaluationType };
 
         const handle = await tasks.trigger('eval-decision', payload);
 
         res.json({ success: true, trigger_run_id: handle.id, payload });
     } catch (error) {
         console.error('Error triggering eval run:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * POST /api/eval/capture-draft-quality
+ * Capture newly resolved sent drafts into eval_cases and optionally trigger judge runs.
+ * Body: { windowDays?, triggerRuns? }
+ */
+router.post('/capture-draft-quality', async (req, res) => {
+    try {
+        const parsedWindowDays = parseId(req.body?.windowDays);
+        const windowDays = parsedWindowDays || 30;
+        const triggerRuns = req.body?.triggerRuns !== false;
+
+        const capture = await draftQualityEvalService.captureResolvedDraftQualityEvalCases({ windowDays });
+        const triggered = [];
+
+        if (triggerRuns && capture.captured.length > 0) {
+            for (const item of capture.captured) {
+                const handle = await tasks.trigger('eval-decision', {
+                    evalCaseId: item.eval_case_id,
+                    evaluationType: 'draft_quality',
+                });
+                triggered.push({
+                    eval_case_id: item.eval_case_id,
+                    trigger_run_id: handle.id,
+                });
+            }
+        }
+
+        res.json({
+            success: true,
+            capture,
+            triggered,
+        });
+    } catch (error) {
+        console.error('Error capturing resolved draft quality eval cases:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -333,7 +380,9 @@ router.get('/summary', async (req, res) => {
                     WHERE er.ran_at > NOW() - INTERVAL '7 days'
                 )::int                                                                          AS total_7d
             FROM deduped_eval_cases ec
-            LEFT JOIN eval_runs er ON er.eval_case_id = ec.id
+            LEFT JOIN eval_runs er
+              ON er.eval_case_id = ec.id
+             AND COALESCE(er.evaluation_type, 'decision_quality') = 'decision_quality'
         `);
 
         const failuresResult = await db.query(`
@@ -342,6 +391,7 @@ router.get('/summary', async (req, res) => {
             FROM eval_runs er
             JOIN deduped_eval_cases ec ON ec.id = er.eval_case_id
             WHERE true
+              AND COALESCE(er.evaluation_type, 'decision_quality') = 'decision_quality'
               AND er.failure_category IS NOT NULL
               AND er.ran_at > NOW() - INTERVAL '30 days'
             GROUP BY failure_category
@@ -529,6 +579,7 @@ router.get('/export', async (req, res) => {
             LEFT JOIN LATERAL (
                 SELECT * FROM eval_runs
                 WHERE eval_case_id = ec.id
+                  AND COALESCE(evaluation_type, 'decision_quality') = 'decision_quality'
                 ORDER BY ran_at DESC
                 LIMIT 1
             ) er ON true

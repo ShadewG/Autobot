@@ -303,10 +303,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Quality Reporting
 - [x] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
 - [x] Classification confusion matrix: AI classified vs actual (from human corrections)
-- [ ] Draft quality scoring: eval judge rates sent drafts after case resolves `(IN PROGRESS - Codex)`
+- [x] Draft quality scoring: eval judge rates sent drafts after case resolves
 
 #### Regression Testing
-- [ ] Eval suite runs automatically on every deploy (CI step)
+- [ ] Eval suite runs automatically on every deploy (CI step) `(IN PROGRESS - Codex)`
 - [ ] Block deploy if accuracy drops below 90%
 - [ ] Track eval results over time in `/eval` dashboard
 

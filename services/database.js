@@ -213,6 +213,7 @@ class DatabaseService {
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_instruction TEXT');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_reason TEXT');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_decided_by VARCHAR(100)');
+            await this.query("ALTER TABLE IF EXISTS eval_runs ADD COLUMN IF NOT EXISTS evaluation_type VARCHAR(50) NOT NULL DEFAULT 'decision_quality'");
             await this.query(`
                 DO $$
                 BEGIN
@@ -223,6 +224,7 @@ class DatabaseService {
                     END IF;
                     IF to_regclass('public.eval_runs') IS NOT NULL THEN
                         EXECUTE 'CREATE INDEX IF NOT EXISTS idx_eval_runs_eval_case_id_ran_at ON eval_runs(eval_case_id, ran_at DESC)';
+                        EXECUTE 'CREATE INDEX IF NOT EXISTS idx_eval_runs_eval_case_type_ran_at ON eval_runs(eval_case_id, evaluation_type, ran_at DESC)';
                     END IF;
                 END $$;
             `);

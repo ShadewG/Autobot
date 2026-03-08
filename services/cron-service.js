@@ -9,8 +9,10 @@ const agencyNotionSync = require('./agency-notion-sync');
 const pdContactService = require('./pd-contact-service');
 const triggerDispatch = require('./trigger-dispatch-service');
 const discordService = require('./discord-service');
+const draftQualityEvalService = require('./draft-quality-eval-service');
 const qualityReportService = require('./quality-report-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
+const { tasks } = require('@trigger.dev/sdk');
 
 function normalizePortalTimeoutError(rawError) {
     const value = String(rawError || '').trim();
@@ -133,6 +135,15 @@ class CronService {
                 await this.sendWeeklyQualityReport();
             } catch (error) {
                 console.error('Error in weekly quality report cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
+        this.jobs.draftQualityEval = new CronJob('30 9 * * *', async () => {
+            try {
+                console.log('Running resolved draft quality eval sweep...');
+                await this.runResolvedDraftQualityEvalSweep();
+            } catch (error) {
+                console.error('Error in resolved draft quality eval cron:', error);
             }
         }, null, true, 'America/New_York');
 
@@ -1681,9 +1692,37 @@ class CronService {
             healthCheck: this.jobs.healthCheck?.running || false,
             operationalAlerts: this.jobs.operationalAlerts?.running || false,
             weeklyQualityReport: this.jobs.weeklyQualityReport?.running || false,
+            draftQualityEval: this.jobs.draftQualityEval?.running || false,
             stuckResponseCheck: this.jobs.stuckResponseCheck?.running || false,
             deadlineEscalationSweep: this.jobs.deadlineEscalationSweep?.running || false
         };
+    }
+
+    async runResolvedDraftQualityEvalSweep() {
+        const capture = await draftQualityEvalService.captureResolvedDraftQualityEvalCases({ windowDays: 30 });
+        const triggered = [];
+
+        for (const item of capture.captured) {
+            const handle = await tasks.trigger('eval-decision', {
+                evalCaseId: item.eval_case_id,
+                evaluationType: 'draft_quality',
+            });
+            triggered.push({
+                eval_case_id: item.eval_case_id,
+                trigger_run_id: handle.id,
+            });
+        }
+
+        if (capture.captured_count > 0) {
+            await db.logActivity('draft_quality_eval_capture', 'Captured resolved drafts for quality scoring', {
+                window_days: capture.window_days,
+                captured_count: capture.captured_count,
+                triggered_count: triggered.length,
+                eval_case_ids: capture.captured.map((item) => item.eval_case_id),
+            });
+        }
+
+        return { capture, triggered };
     }
 
     async sendWeeklyQualityReport() {
