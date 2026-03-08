@@ -146,10 +146,10 @@ class DecisionMemoryService {
      */
     async learnFromOutcome({ category, triggerPattern, lesson, sourceCaseId, priority = 5 }) {
         try {
-            // Check for duplicate (same category + similar trigger)
+            // Check for duplicate (same trigger pattern, any category)
             const existing = await db.query(
-                `SELECT id FROM ai_decision_lessons WHERE category = $1 AND trigger_pattern = $2 AND active = true`,
-                [category, triggerPattern]
+                `SELECT id FROM ai_decision_lessons WHERE trigger_pattern = $1 AND active = true LIMIT 1`,
+                [triggerPattern]
             );
             if (existing.rows.length > 0) {
                 // Boost priority of existing lesson
