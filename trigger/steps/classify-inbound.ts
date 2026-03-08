@@ -351,10 +351,49 @@ export async function classifyInbound(
     throw new Error(`Message ${messageId} not found`);
   }
 
-  // Pre-check: detect automated portal system emails
+  // Pre-check: detect internal/synthetic messages that shouldn't be classified
   const fromAddr = (message.from_email || message.sender_email || "").toLowerCase();
   const subjectLower = (message.subject || "").toLowerCase();
   const bodySnippet = ((message.body_text || message.body_html || "").substring(0, 500)).toLowerCase();
+
+  // Phone call updates and manual notes are internal records, not agency responses
+  const isInternalNote =
+    (message as any).message_type === "phone_call" ||
+    /phone\s*call\s*(update|log|note)/i.test(message.subject || "") ||
+    /manual\s*phone\s*call/i.test(message.subject || "");
+
+  if (isInternalNote) {
+    logger.info("Auto-classified as internal note (phone call/manual entry)", {
+      caseId: context.caseId,
+      subject: message.subject,
+    });
+    await db.saveResponseAnalysis({
+      messageId,
+      caseId: context.caseId,
+      intent: "none",
+      confidenceScore: 0.99,
+      sentiment: "neutral",
+      keyPoints: ["Internal phone call/manual note - not an agency response"],
+      requiresAction: false,
+      suggestedAction: null,
+      fullAnalysisJson: { auto_classified: true, reason: "internal_note" },
+    });
+    return {
+      classification: "NO_RESPONSE",
+      confidence: 0.99,
+      sentiment: "neutral",
+      extractedFeeAmount: null,
+      extractedDeadline: null,
+      denialSubtype: null,
+      requiresResponse: false,
+      portalUrl: null,
+      suggestedAction: null,
+      reasonNoResponse: "Internal phone call/manual note",
+      unansweredAgencyQuestion: null,
+    };
+  }
+
+  // Pre-check: detect automated portal system emails
   const portalSystems = ["justfoia", "nextrequest", "govqa", "civicplus", "jotform", "smartsheet"];
   const isPortalSystem = portalSystems.some((p: string) => fromAddr.includes(p) || subjectLower.includes(p));
   const isNoReply = /no.?reply|do.?not.?reply/.test(fromAddr);

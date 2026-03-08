@@ -179,7 +179,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [ ] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting
 - [ ] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context
 - [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages
-- [ ] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path
+- [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
 - [ ] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases
 - [ ] Add explicit guidance for “closure after we did not answer” portal messages so they are not treated like generic denials or generic acknowledgments
 - [ ] Add explicit guidance for request-form and mailing-address workflows so they classify as clarification/process blockers rather than delivery
@@ -204,7 +204,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [ ] Review portal-closure and duplicate-request messages that are currently being classified as denials or rebuttal candidates
 - [ ] Review wrong-agency outputs where the suggested action is `respond` instead of reroute or research
 - [x] Add explicit handling for portal/system messages seen in production: password reset, unlock account, welcome, submission confirmation, duplicate closure, and portal closed — added `detectPortalSystemEmail()` in portal-utils.js, wired into webhooks.js to skip analysis queue for portal system emails; backfilled 3 existing orphans
-- [ ] Exclude manual notes, synthetic QA replies, and phone-call update messages from the normal inbound classifier pipeline
+- [x] Exclude manual notes, synthetic QA replies, and phone-call update messages from the normal inbound classifier pipeline — phone call updates auto-classified in classify-inbound.ts; [TEST] mode already handled in webhooks.js; no synthetic QA messages found in production data
 - [ ] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately
 
 #### Verification Follow-Ups (live checks, 2026-03-08)
