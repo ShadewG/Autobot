@@ -139,6 +139,13 @@ export interface RequestDetail extends RequestListItem {
     outcome?: string | null;
     suggested_agency?: string | null;
   } | null;
+  import_warnings?: Array<{
+    type: string;
+    message: string;
+    field?: string;
+    expected?: string;
+    expectedState?: string;
+  }> | null;
 }
 
 // Timeline Event for the timeline column

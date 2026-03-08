@@ -64,12 +64,12 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures
 - [ ] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions
 
-#### Agency Validation at Import 🔧 IN PROGRESS (Claude-main)
-- [ ] On Notion import, validate agency email (format check + MX record lookup)
-- [ ] On import, check if agency exists in directory — flag if not found
-- [ ] On import, verify state matches agency state — flag mismatches
-- [ ] Surface validation warnings in dashboard (yellow banner on case detail)
-- [ ] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time
+#### Agency Validation at Import ✅ DONE
+- [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
+- [x] On import, check if agency exists in directory — flag if not found
+- [x] On import, verify state matches agency state — flag mismatches
+- [x] Surface validation warnings in dashboard (yellow banner on case detail)
+- [x] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time
 
 #### Proposal Lifecycle Hardening
 - [x] Centralize proposal human-review updates into one helper (approve, dismiss, withdraw, adjust all go through the same path)

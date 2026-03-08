@@ -4,6 +4,81 @@ const aiService = require('./ai-service');
 const pdContactService = require('./pd-contact-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
+const { detectCaseMetadataAgencyMismatch } = require('../utils/request-normalization');
+const dns = require('dns').promises;
+
+/**
+ * Validate a newly imported case and return any warnings.
+ * Runs email format + MX check, agency directory lookup, state match, and metadata mismatch detection.
+ */
+async function validateImportedCase(caseData) {
+    const warnings = [];
+
+    // 1. Email format validation
+    if (caseData.agency_email) {
+        if (!isValidEmail(caseData.agency_email)) {
+            warnings.push({
+                type: 'INVALID_EMAIL_FORMAT',
+                message: `Agency email "${caseData.agency_email}" has invalid format`,
+                field: 'agency_email',
+            });
+        } else {
+            // 2. MX record lookup
+            try {
+                const domain = caseData.agency_email.split('@')[1];
+                await dns.resolveMx(domain);
+            } catch (err) {
+                warnings.push({
+                    type: 'NO_MX_RECORD',
+                    message: `No MX records found for domain "${caseData.agency_email.split('@')[1]}" — email may not be deliverable`,
+                    field: 'agency_email',
+                });
+            }
+        }
+    } else if (!caseData.portal_url) {
+        warnings.push({
+            type: 'MISSING_EMAIL',
+            message: 'No agency email and no portal URL — case cannot be sent',
+            field: 'agency_email',
+        });
+    }
+
+    // 3. Agency directory lookup
+    if (caseData.agency_name) {
+        const agency = await db.findAgencyByName(caseData.agency_name, caseData.state);
+        if (!agency) {
+            warnings.push({
+                type: 'AGENCY_NOT_IN_DIRECTORY',
+                message: `Agency "${caseData.agency_name}" not found in directory`,
+                field: 'agency_name',
+            });
+        } else if (caseData.state && agency.state && agency.state !== '{}' && agency.state !== caseData.state) {
+            // 4. State mismatch
+            warnings.push({
+                type: 'STATE_MISMATCH',
+                message: `Case state "${caseData.state}" does not match agency state "${agency.state}" for "${agency.name}"`,
+                field: 'state',
+            });
+        }
+    }
+
+    // 5. Metadata agency mismatch detection
+    const mismatch = detectCaseMetadataAgencyMismatch({
+        currentAgencyName: caseData.agency_name,
+        additionalDetails: caseData.additional_details,
+    });
+    if (mismatch) {
+        warnings.push({
+            type: 'AGENCY_METADATA_MISMATCH',
+            message: `Agency name "${mismatch.currentAgencyName}" may not match case details which reference "${mismatch.expectedAgencyName}"`,
+            field: 'agency_name',
+            expected: mismatch.expectedAgencyName,
+            expectedState: mismatch.expectedState,
+        });
+    }
+
+    return warnings.length > 0 ? warnings : null;
+}
 
 // Lazy-load dispatch helper to avoid circular dependency
 let _dispatchReadyToSend = null;
@@ -1695,6 +1770,20 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     const newCase = await db.createCase(notionCase);
                     console.log(`Created new case: ${newCase.case_name}`);
                     syncedCases.push(newCase);
+
+                    // Validate imported case and store warnings
+                    try {
+                        const importWarnings = await validateImportedCase(notionCase);
+                        if (importWarnings) {
+                            await db.query(
+                                'UPDATE cases SET import_warnings = $1 WHERE id = $2',
+                                [JSON.stringify(importWarnings), newCase.id]
+                            );
+                            console.warn(`Import warnings for case ${newCase.id}:`, importWarnings.map(w => w.type).join(', '));
+                        }
+                    } catch (valErr) {
+                        console.warn(`Failed to validate imported case ${newCase.id}:`, valErr.message);
+                    }
 
                     // Log activity
                     await db.logActivity('case_imported', `Imported case from Notion: ${newCase.case_name}`, {
