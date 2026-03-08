@@ -19,6 +19,11 @@ const nextConfig = {
         async rewrites() {
           return [
             {
+              // Strip trailing slash before proxying to backend
+              source: '/api/:path*/',
+              destination: `${apiOrigin}/api/:path*`,
+            },
+            {
               source: '/api/:path*',
               destination: `${apiOrigin}/api/:path*`,
             },

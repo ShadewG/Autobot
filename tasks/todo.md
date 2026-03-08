@@ -110,19 +110,19 @@ Ordered by priority within each phase. Check items off as completed.
 #### Dashboard UI Enhancements (2026-03-08)
 - [x] Add Inbox and Portal Tasks to main nav with live count badges `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - nav shows INBOX 1, PORTALS 2/4 with live badge counts across all tested pages)`
 - [x] Show wait time, confidence badge, and urgency indicator on gated queue proposal cards `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - gated queue cards show 82% conf badge, SENSITIVE gate type, 53m wait time, SEND REBUTTAL action label)`
-- [x] Show trigger email preview on gated queue proposal cards `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 pending_approvals[0].trigger_message includes from_email, subject, and body_preview for the gated-card preview block)`
-- [x] Add keyboard shortcuts for approve/dismiss workflow on gated queue `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3026 opens the keyboard-shortcuts overlay from ? and closes it with Esc; overlay documents A/D/J/K bindings on the live queue)`
-- [x] Add Event Ledger section to case detail — timeline-style state transition log with color-coded events, context summary, lazy-load on expand `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - /api/requests/25164/event-ledger returns 200 with 5 events and request-audit-routes.test.js passes)`
-- [x] Add Portal Submissions section to case detail — table of all portal attempts with status badges, engine, result/error, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - /api/requests/25164/portal-submissions returns 200 and request-audit-routes.test.js covers the case route)`
-- [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - /api/requests/25164/provider-payloads returns 200 and request-audit-routes.test.js/provider-payload-capture.test.js pass)`
-- [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate) `(TESTED VIA UI+API - Codex 2026-03-08 - analytics surface previously verified in UI and fresh backend endpoints remain live on localhost:3025)`
-- [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day `(TESTED VIA UI+API - Codex 2026-03-08 - analytics surface previously verified in UI and fresh backend endpoints remain live on localhost:3025)`
-- [x] Add Error Events dashboard page — filterable table with KPI cards, source/operation filters, expandable stack traces, auto-refresh `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 /api/eval/errors returns 200 with live persisted error rows)`
-- [x] Add AI Decision Lessons dashboard page — CRUD, AI parse button, active toggle, text search, source/status filters `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 /api/monitor/lessons returns 200 with live lesson rows)`
-- [x] Add Reconciliation Report dashboard page — system diagnostic cards with green/red status, 9 expandable sections, case ID links `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 /api/eval/reconciliation returns 200 with the full report payload)`
-- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 /api/eval/examples?limit=3 returns 200 with live successful_examples rows and filter metadata)`
-- [x] Add Proposal History section to case detail — expandable cards showing all proposals (not just pending), human_decided_by audit, original vs edited draft comparison, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - fresh backend localhost:3025 /api/requests/25175/proposals returns proposal history fields and proposal route/lifecycle regressions pass)`
-- [x] Add Decision Traces section to case detail — AI classification/routing/gate decision visualization with node trace flow, confidence coloring, run links, lazy-load from audit-stream `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 /api/requests/25175/audit-stream?limit=20 returns decision_traces entries in the unified feed)`
+- [x] Show trigger email preview on gated queue proposal cards `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - gated cards show From: records@atlanta.gov, subject, body preview in thread view)`
+- [x] Add keyboard shortcuts for approve/dismiss workflow on gated queue `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - "Keyboard shortcuts: ?" button visible on queue; A/D shortcuts labeled on action buttons)`
+- [x] Add Event Ledger section to case detail — timeline-style state transition log with color-coded events, context summary, lazy-load on expand `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows 49 entries with RUN_WAITING/PROPOSAL_GATED/RUN_COMPLETED/CASE_ESCALATED/PROPOSAL_EXECUTED/CASE_RECONCILED event types)`
+- [x] Add Portal Submissions section to case detail — table of all portal attempts with status badges, engine, result/error, lazy-load `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "0" with empty state message)`
+- [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "0 msg, 12 exec" with table of 12 RESEARCH_AGENCY SENT rows)`
+- [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate) `(BUG: /api/dashboard/message-volume returns 500 — Message Activity chart broken on localhost:3013/analytics. Other analytics sections render fine)`
+- [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - Hourly Activity chart renders with 24-hour bar chart on /analytics/)`
+- [x] Add Error Events dashboard page — filterable table with KPI cards, source/operation filters, expandable stack traces, auto-refresh `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /errors/ renders "Error Events" heading with "Recent Errors (92 shown)" table)`
+- [x] Add AI Decision Lessons dashboard page — CRUD, AI parse button, active toggle, text search, source/status filters `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /lessons/ renders "AI Decision Lessons" heading with lesson list)`
+- [x] Add Reconciliation Report dashboard page — system diagnostic cards with green/red status, 9 expandable sections, case ID links `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /reconciliation/ shows 120 Total Issues, 7 Categories With Issues, 2 Clean, 9 expandable sections: Dropped Actions 20, Dead End Cases 0, Unanalyzed Inbound 20, Processing Errors 0, Runs Without Traces 1, Portal Missing Request Number 7, Attachment Extraction 7, Stale Proposals 2, Orphaned Inbound 63)`
+- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /examples/ renders filters (Classification, Action Type, State, Agency Type) and empty state. NOTE: /api/eval/examples/ returns 500)`
+- [x] Add Proposal History section to case detail — expandable cards showing all proposals (not just pending), human_decided_by audit, original vs edited draft comparison, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08)`
+- [x] Add Decision Traces section to case detail — AI classification/routing/gate decision visualization with node trace flow, confidence coloring, run links, lazy-load from audit-stream `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "Decision Traces 0" with "No decision traces recorded" empty state)`
 - [x] Add decision_traces to audit-stream endpoint — backend now includes decision traces in unified event feed alongside ledger, activity, portal, email, and error events `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 audit-stream summary includes decision_traces alongside activity_log and case_event_ledger)`
 - [x] Expose human_decided_by, original_draft_*, human_edited on proposal API responses — workspace query and proposals endpoint now return audit/diff fields `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - fresh backend localhost:3025 /api/requests/25175/proposals returns human_decided_by, human_edited, and original_draft_* fields; request-proposals-adjust-feedback/proposal-lifecycle regressions pass)`
 
@@ -509,3 +509,37 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Regression eval suite blocking deploys `(TESTED LIVE - Codex 2026-03-08 - npm run test:prompts:gate passes at 23/24 and the deploy gate is wired in Railway/GitHub)`
 - [x] Agency validation catching bad imports before first send `(TESTED VIA DB+UI - Codex 2026-03-08 - 169 live cases have import_warnings and the dashboard banner renders on case detail)`
 - [x] FIXED — `getAgencyIntelligence` Postgres 42P08: replaced static `$1::int IS NOT NULL` with dynamically-built WHERE clause that only includes non-null params. Tested all 3 param combos (name-only, id-only, both) successfully `(2026-03-08)`
+
+---
+
+## Playwright UI Test Results (2026-03-09)
+
+Full browser-based UI verification of all dashboard pages at `localhost:3013` (backend `localhost:3020`).
+
+### Pages Tested (all PASS unless noted)
+| Page | URL | Status | Notes |
+|------|-----|--------|-------|
+| Gated Queue | `/gated/` | PASS | KPIs, proposal cards, bulk button, keyboard shortcuts, system health drill-down |
+| Case Detail | `/requests/detail-v2/?id=25148` | PASS | Thread, agency panel, deadline, constraints, timeline (50), Decision Traces, Event Ledger (49), Portal Submissions, Provider Payloads (12 exec) |
+| Analytics | `/analytics/` | PARTIAL | Outcomes, Cost, Compliance, Hourly Activity all render. **BUG**: `/api/dashboard/message-volume` returns 500 |
+| Eval | `/eval/` | PASS | Pass Rate KPIs, Decision Quality chart, eval cases table, failure categories |
+| Errors | `/errors/` | PASS | Error Events heading, 92 recent errors shown |
+| Lessons | `/lessons/` | PASS | AI Decision Lessons with lesson list |
+| Examples | `/examples/` | PARTIAL | Filters render (Classification, Action Type, State, Agency Type). **BUG**: `/api/eval/examples/` returns 500 |
+| Reconciliation | `/reconciliation/` | PASS | 120 issues, 9 expandable sections, KPI cards |
+| Agencies | `/agencies/` | PASS | 95 total, 42 portal, 30 email-only, search, table |
+| Cases | `/requests/` | PASS | Search, filters, New Case + Batch buttons, grouped status sections |
+| Inbox | `/inbox/` | PASS | 50 pending proposals, list/detail layout, confidence %, action types |
+| Runs | `/runs/` | PASS | KPI cards (Running, Completed, Failed, Gated), runs table |
+| Portal Tasks | `/portal-tasks/` | PASS | Status KPIs (Pending, In Progress, Completed, Failed, Cancelled) |
+| Onboarding | `/onboarding/` | PASS | 6-step workflow, Key Features, Notion Integration, Reporting Issues |
+| Changelog | `/changelog/` | PASS | Versioned notes (0.9.2, 0.9.1, 0.9.0, 0.8.9) |
+| Settings | `/settings/` | PASS | Profile, autopilot mode, Notion mapping, signature, address, preview |
+| Feedback | `/feedback/` | PASS | Submit/History tabs, Bug Report/Feature Request forms |
+| Admin | `/admin/` | PASS | Overview (5 users, 220 cases), status breakdown, alerts, activity log |
+| New Case | `/requests/new/` | PASS | 5 templates, case details form, agency fields, state dropdown, requested records |
+| Mobile 390px | gated + detail | PASS | Both pages fully usable at 390×844 viewport |
+
+### Bugs Found
+1. **`/api/dashboard/message-volume`** — returns 500, breaks Message Activity chart on `/analytics/`
+2. **`/api/eval/examples/`** — returns 500, Examples page shows empty state instead of data
