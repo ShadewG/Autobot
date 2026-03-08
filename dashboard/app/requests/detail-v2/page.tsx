@@ -356,8 +356,12 @@ function CollapsibleSection({ title, defaultOpen = true, count, action, children
         <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90 shrink-0" />
         {title}
         {count != null && <span className="ml-auto text-muted-foreground">{count}</span>}
-        {action && <span className="ml-auto">{action}</span>}
       </summary>
+      {action && (
+        <div className="px-3 -mt-1 mb-1 flex justify-end" onClick={(e) => e.stopPropagation()}>
+          {action}
+        </div>
+      )}
       <div className="px-3 pb-2">{children}</div>
     </details>
   );
@@ -2712,9 +2716,9 @@ function DetailV2Content() {
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Type</label>
+              <label htmlFor="constraint-type" className="text-sm font-medium">Type</label>
               <Select value={newConstraintType} onValueChange={setNewConstraintType}>
-                <SelectTrigger>
+                <SelectTrigger id="constraint-type" name="constraint-type">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2735,8 +2739,10 @@ function DetailV2Content() {
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
+              <label htmlFor="constraint-description" className="text-sm font-medium">Description</label>
               <Textarea
+                id="constraint-description"
+                name="constraint-description"
                 value={newConstraintDesc}
                 onChange={(e) => setNewConstraintDesc(e.target.value)}
                 placeholder="Describe the constraint..."
