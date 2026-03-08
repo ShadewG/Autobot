@@ -32,6 +32,7 @@ export function NavLinks() {
     { href: "/analytics", label: "ANALYTICS" },
     { href: "/simulate", label: "SIM" },
     { href: "/settings", label: "SETTINGS" },
+    { href: "/feedback", label: "FEEDBACK" },
     ...(isAdmin ? [{ href: "/admin", label: "ADMIN" }] : []),
   ];
 
@@ -87,6 +88,24 @@ export function NavLinks() {
             {viewAll ? "ALL USERS" : "MY CASES"}
           </button>
         )}
+        <Link
+          href="/onboarding"
+          className={cn(
+            "uppercase tracking-wider transition-colors",
+            pathname === "/onboarding" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Guide
+        </Link>
+        <Link
+          href="/changelog"
+          className={cn(
+            "uppercase tracking-wider transition-colors",
+            pathname === "/changelog" ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          Changelog
+        </Link>
         {user && (
           <>
             <span className="max-w-[160px] truncate text-muted-foreground">{user.email}</span>

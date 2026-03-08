@@ -96,6 +96,7 @@ import {
   X,
   Plus,
   Download,
+  Bug,
 } from "lucide-react";
 import { ProposalStatus, type ProposalState } from "@/components/proposal-status";
 import { AttachmentPicker } from "@/components/attachment-picker";
@@ -385,6 +386,8 @@ function DetailV2Content() {
   const [isApproving, setIsApproving] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
+  const [bugDialogOpen, setBugDialogOpen] = useState(false);
+  const [bugDescription, setBugDescription] = useState("");
   const [scheduledSendAt, setScheduledSendAt] = useState<string | null>(null);
   const [editedBody, setEditedBody] = useState<string>("");
   const [editedSubject, setEditedSubject] = useState<string>("");
@@ -964,6 +967,26 @@ function DetailV2Content() {
       router.push("/requests");
     } catch (error) {
       toast.error("Failed to withdraw request");
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
+  const handleMarkBugged = async () => {
+    if (!id) return;
+    setIsResolving(true);
+    try {
+      await fetchAPI(`/requests/${id}/mark-bugged`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: bugDescription || "Marked as bugged from dashboard" }),
+      });
+      setBugDialogOpen(false);
+      setBugDescription("");
+      mutate();
+      toast.success("Case marked as bugged");
+    } catch (error) {
+      toast.error("Failed to mark case as bugged");
     } finally {
       setIsResolving(false);
     }
@@ -1604,6 +1627,9 @@ function DetailV2Content() {
                 window.open(`https://github.com/ShadewG/Autobot/issues/new?title=${title}&body=${body}&labels=bug,operator-report`, '_blank');
               }}>
                 <AlertTriangle className="h-3.5 w-3.5 mr-1.5" />Report Issue
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setBugDialogOpen(true)}>
+                <Bug className="h-3.5 w-3.5 mr-1.5" />Mark as Bugged
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => {
                 const url = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/requests/${id}/export?format=download`;
@@ -2815,6 +2841,31 @@ function DetailV2Content() {
             <Button variant="destructive" onClick={handleWithdraw} disabled={isResolving}>
               {isResolving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
               Withdraw
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mark as Bugged dialog */}
+      <Dialog open={bugDialogOpen} onOpenChange={setBugDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark as Bugged</DialogTitle>
+            <DialogDescription>
+              This flags the case for investigation. Describe what looks wrong so we can fix it.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            placeholder="What's wrong with this case? (e.g., email sent to wrong agency, stuck in loop, incorrect draft...)"
+            value={bugDescription}
+            onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setBugDescription(e.target.value)}
+            rows={3}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBugDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleMarkBugged} disabled={isResolving}>
+              {isResolving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Bug className="h-4 w-4 mr-2" />}
+              Mark as Bugged
             </Button>
           </DialogFooter>
         </DialogContent>

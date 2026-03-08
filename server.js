@@ -102,6 +102,7 @@ app.use('/api/cases', caseAgenciesRoutes);  // Case Agencies: multi-agency suppo
 app.use('/api/eval', evalRoutes);  // Eval: AI decision quality tracking
 app.use('/api/simulate', simulateRoutes);  // Simulator: dry-run decision pipeline
 app.use('/api/admin', require('./routes/admin'));  // Admin: user management, global activity
+app.use('/api/feedback', require('./routes/feedback'));  // Feedback: bug reports, feature requests, changelog
 
 // SSE endpoint for real-time dashboard updates
 const { eventBus } = require('./services/event-bus');

@@ -156,4 +156,54 @@ router.patch('/:id/scope-items/:itemIndex', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/requests/:id/mark-bugged
+ * Mark a case as bugged so the team can investigate later
+ */
+router.post('/:id/mark-bugged', async (req, res) => {
+    try {
+        const requestId = parseInt(req.params.id);
+        const { description } = req.body;
+
+        const caseData = await db.getCaseById(requestId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Request not found' });
+        }
+
+        const previousStatus = caseData.status;
+
+        await db.updateCaseStatus(requestId, 'bugged', {
+            pause_reason: 'BUG_REPORTED',
+        });
+
+        await db.logActivity('case_marked_bugged', `Case marked as bugged: ${description || 'No description'}`, {
+            case_id: requestId,
+            previous_status: previousStatus,
+            description: description || null,
+            actor_type: 'human',
+            source_service: 'dashboard',
+        });
+
+        // Also create a feedback entry linked to this case
+        if (description) {
+            await db.query(
+                `INSERT INTO user_feedback (type, title, description, case_id, created_by, created_by_email, priority)
+                 VALUES ('bug_report', $1, $2, $3, $4, $5, 'high')`,
+                [
+                    `Case #${requestId} bugged: ${caseData.agency_name || 'Unknown'}`.slice(0, 200),
+                    description,
+                    requestId,
+                    req.user?.id || null,
+                    req.user?.email || null,
+                ]
+            );
+        }
+
+        res.json({ success: true, message: 'Case marked as bugged' });
+    } catch (error) {
+        console.error('Error marking case as bugged:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;
