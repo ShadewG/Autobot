@@ -427,4 +427,42 @@ router.post('/message/:id/trigger-ai', express.json(), async (req, res) => {
     }
 });
 
+/**
+ * GET /api/monitor/messages/:messageId/delivery-events
+ * Email delivery event timeline for a message
+ */
+router.get('/messages/:messageId/delivery-events', async (req, res) => {
+    try {
+        const messageId = parseInt(req.params.messageId);
+        const events = await db.query(
+            `SELECT id, event_type, event_timestamp, provider_message_id,
+                    raw_payload->>'reason' as reason,
+                    raw_payload->>'bounce_classification' as bounce_classification,
+                    raw_payload->>'type' as bounce_type,
+                    raw_payload->>'ip' as ip,
+                    raw_payload->>'useragent' as user_agent
+             FROM email_events
+             WHERE message_id = $1
+             ORDER BY event_timestamp ASC`,
+            [messageId]
+        );
+
+        const message = await db.query(
+            `SELECT id, delivered_at, bounced_at, direction, from_email, to_email
+             FROM messages WHERE id = $1`,
+            [messageId]
+        );
+
+        res.json({
+            success: true,
+            message_id: messageId,
+            delivery_status: message.rows[0]?.delivered_at ? 'delivered'
+                : message.rows[0]?.bounced_at ? 'bounced' : 'pending',
+            events: events.rows,
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

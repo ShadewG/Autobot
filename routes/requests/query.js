@@ -1538,6 +1538,9 @@ router.get('/:id/workspace', async (req, res) => {
             size_bytes: att.size_bytes,
             download_url: `/api/monitor/attachments/${att.id}/download`,
             direction: att.message_id ? 'inbound' : 'outbound',
+            message_id: att.message_id || null,
+            extracted_text: att.extracted_text || null,
+            has_extracted_text: !!att.extracted_text,
         }));
 
         // Keep workspace request fields aligned with derived state to prevent

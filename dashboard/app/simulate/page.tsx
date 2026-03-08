@@ -21,6 +21,7 @@ import {
   FileText,
   ClipboardList,
   BookmarkPlus,
+  Paperclip,
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -199,6 +200,7 @@ export default function SimulatePage() {
   const [fromEmail, setFromEmail] = useState("");
   const [subject, setSubject] = useState("");
   const [caseId, setCaseId] = useState<string>("");
+  const [includeAttachments, setIncludeAttachments] = useState(false);
   const [cases, setCases] = useState<SimCase[]>([]);
   const [casesLoaded, setCasesLoaded] = useState(false);
 
@@ -289,6 +291,7 @@ export default function SimulatePage() {
             fromEmail: fromEmail.trim(),
             subject: subject.trim(),
             caseId: caseId || undefined,
+            hasAttachments: includeAttachments && caseId ? true : undefined,
           }),
         }
       );
@@ -407,6 +410,19 @@ export default function SimulatePage() {
               </option>
             ))}
           </select>
+          {caseId && (
+            <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeAttachments}
+                onChange={(e) => setIncludeAttachments(e.target.checked)}
+                className="rounded border-border"
+              />
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Paperclip className="h-3 w-3" /> Include case attachments (OCR text)
+              </span>
+            </label>
+          )}
         </div>
 
         {/* Message Body */}

@@ -299,41 +299,68 @@ const PhoneCallBubble = memo(function PhoneCallBubble({ message }: { message: Th
 // ── Attachments ─────────────────────────────────────────────────────────────
 
 function AttachmentList({ attachments }: { attachments: ThreadMessage["attachments"] }) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   if (!attachments || attachments.length === 0) return null;
 
   return (
     <div className="mt-2 space-y-1">
       {attachments.map((att, i) => {
         const isPdf = att.content_type === "application/pdf" || att.filename?.toLowerCase().endsWith(".pdf");
+        const isImage = att.content_type?.startsWith("image/");
         const downloadUrl = `/api/monitor/attachments/${att.id}/download`;
         const sizeLabel = att.size_bytes
           ? att.size_bytes > 1024 * 1024
             ? `${(att.size_bytes / (1024 * 1024)).toFixed(1)} MB`
             : `${Math.round(att.size_bytes / 1024)} KB`
           : null;
+        const hasText = att.has_extracted_text || !!att.extracted_text;
+        const isExpanded = expandedId === att.id;
 
         return (
-          <div key={i} className="flex items-center gap-2 rounded border border-border/60 bg-muted/30 px-2.5 py-1.5">
-            <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-            <span className="text-xs font-medium truncate flex-1 min-w-0">{att.filename}</span>
-            {sizeLabel && <span className="text-[10px] text-muted-foreground shrink-0">{sizeLabel}</span>}
-            {isPdf && (
+          <div key={i}>
+            <div className="flex items-center gap-2 rounded border border-border/60 bg-muted/30 px-2.5 py-1.5">
+              <Paperclip className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-xs font-medium truncate flex-1 min-w-0">{att.filename}</span>
+              {hasText && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-green-500/10 text-green-400 border-green-500/30 shrink-0">
+                  {isImage ? "OCR" : "Extracted"}
+                </Badge>
+              )}
+              {sizeLabel && <span className="text-[10px] text-muted-foreground shrink-0">{sizeLabel}</span>}
+              {hasText && (
+                <button
+                  onClick={() => setExpandedId(isExpanded ? null : att.id)}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5 shrink-0"
+                >
+                  <FileText className="h-3 w-3" /> {isExpanded ? "Hide" : "Text"}
+                </button>
+              )}
+              {isPdf && (
+                <a
+                  href={downloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+                >
+                  <ExternalLink className="h-3 w-3" /> View
+                </a>
+              )}
               <a
                 href={downloadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+                download={att.filename}
                 className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
               >
-                <ExternalLink className="h-3 w-3" /> View
+                <Download className="h-3 w-3" /> Download
               </a>
+            </div>
+            {isExpanded && att.extracted_text && (
+              <div className="ml-6 mt-1 rounded border border-border/40 bg-muted/20 p-2 max-h-48 overflow-y-auto">
+                <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap font-mono leading-relaxed">
+                  {att.extracted_text}
+                </pre>
+              </div>
             )}
-            <a
-              href={downloadUrl}
-              download={att.filename}
-              className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
-            >
-              <Download className="h-3 w-3" /> Download
-            </a>
           </div>
         );
       })}

@@ -314,6 +314,10 @@ export interface Attachment {
   content_type: string;
   size_bytes: number;
   url?: string;
+  message_id?: number | null;
+  extracted_text?: string | null;
+  has_extracted_text?: boolean;
+  direction?: string;
 }
 
 // Request Workspace - Combined data for detail page
