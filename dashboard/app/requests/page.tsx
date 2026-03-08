@@ -3,12 +3,14 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import useSWR from "swr";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { InboxSections } from "@/components/inbox-sections";
 import { NotionImport } from "@/components/notion-import";
 import { useUserFilter } from "@/components/user-filter";
 import { requestsAPI, fetcher } from "@/lib/api";
 import type { RequestsListResponse, RequestListItem, PauseReason } from "@/lib/types";
-import { Search, Loader2 } from "lucide-react";
+import { Search, Loader2, Plus } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 
 // Pause reason priority for sorting (lower = higher priority)
@@ -271,6 +273,11 @@ export default function RequestsPage() {
               className="pl-8"
             />
           </div>
+          <Link href="/requests/new">
+            <Button variant="outline" size="sm">
+              <Plus className="h-4 w-4 mr-1" /> New Case
+            </Button>
+          </Link>
           <NotionImport onImported={() => mutate()} />
         </div>
       </div>

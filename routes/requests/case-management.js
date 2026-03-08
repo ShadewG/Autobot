@@ -786,4 +786,76 @@ router.put('/:id/tags', async (req, res) => {
     }
 });
 
+/**
+ * POST /api/requests/create
+ * Create a new case from the dashboard form (cookie-auth).
+ */
+router.post('/create', async (req, res) => {
+    try {
+        const {
+            case_name, subject_name, agency_name, agency_email,
+            portal_url, state, incident_date, incident_location,
+            additional_details, requested_records,
+        } = req.body || {};
+
+        if (!case_name?.trim()) return res.status(400).json({ success: false, error: 'Case name is required' });
+        if (!subject_name?.trim()) return res.status(400).json({ success: false, error: 'Subject name is required' });
+        if (!agency_name?.trim()) return res.status(400).json({ success: false, error: 'Agency name is required' });
+        if (!agency_email?.trim() && !portal_url?.trim()) {
+            return res.status(400).json({ success: false, error: 'Agency email or portal URL is required' });
+        }
+
+        const { normalizeStateCode, parseStateFromAgencyName } = require('../../utils/state-utils');
+        const normalizedState = normalizeStateCode(state) || parseStateFromAgencyName(agency_name) || null;
+
+        let parsedDate = null;
+        if (incident_date) {
+            const d = new Date(incident_date);
+            if (!isNaN(d.getTime())) parsedDate = d.toISOString().split('T')[0];
+        }
+
+        const recordsArray = Array.isArray(requested_records)
+            ? requested_records.filter(Boolean)
+            : requested_records ? [requested_records] : null;
+
+        const syntheticNotionId = `manual-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+        const newCase = await db.createCase({
+            notion_page_id: syntheticNotionId,
+            case_name: case_name.trim(),
+            subject_name: subject_name.trim(),
+            agency_name: agency_name.trim(),
+            agency_email: agency_email?.trim() || null,
+            state: normalizedState,
+            incident_date: parsedDate,
+            incident_location: incident_location?.trim() || null,
+            requested_records: recordsArray,
+            additional_details: additional_details?.trim() || null,
+            status: 'ready_to_send',
+            portal_url: portal_url?.trim() || null,
+            tags: ['manual-entry'],
+        });
+
+        await db.addCaseAgency(newCase.id, {
+            agency_name: agency_name.trim(),
+            agency_email: agency_email?.trim() || null,
+            portal_url: portal_url?.trim() || null,
+            is_primary: true,
+            added_source: 'dashboard',
+            status: 'pending',
+        });
+
+        const userId = req.signedCookies?.autobot_uid || 'dashboard';
+        await db.logActivity('case_created_manual', `Case "${case_name}" created from dashboard`, {
+            case_id: newCase.id,
+            user_id: userId,
+        });
+
+        res.status(201).json({ success: true, case_id: newCase.id, case_name: newCase.case_name });
+    } catch (error) {
+        logger.error('Error creating case:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;

@@ -370,8 +370,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Case completion report: requested vs received
 
 #### Case Intake Beyond Notion
-- [ ] API endpoint for programmatic case creation (`POST /api/cases`)
-- [ ] Web form in dashboard for manual case creation
+- [x] API endpoint for programmatic case creation (`POST /api/cases`)
+- [x] Web form in dashboard for manual case creation
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
 #### Priority System
