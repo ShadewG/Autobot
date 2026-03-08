@@ -95,7 +95,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Human Handoff & Recovery
 - [ ] PARTIAL VERIFICATION 2026-03-08 — `25246` now has a live research-followup proposal, but `25249` and `25253` still have no active proposal/work item, so the durable research-handoff fix is not complete in live state
 - [x] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases) `(buildAllowedActions now caps RESEARCH_AGENCY after 1 dismissed attempt when contact_research_notes has valid results — 2026-03-08)`
-- [ ] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`)
+- [x] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`) — FIXED: (1) Added cron "Sweep 2b" to detect fee-stranded cases (dismissed fee proposal, no follow-up, no active run) and auto-create NEGOTIATE_FEE proposals; (2) Manually created proposals for 25175 and 25211 `(2026-03-08)`
 - [x] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically `(added dead_end_cases section to reconciliation report — 2026-03-08)`
 
 #### Operator Workflow
@@ -151,8 +151,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(FOLLOW-UP 2026-03-08 - local verification must use the actual Autobot stack: dashboard on localhost:3001 and backend on localhost:3004. Earlier page-load failures on localhost:3000 were from another repo running on that port, not from this middleware.)`
 
 #### Future-Proof Data Capture
-- [ ] FAILED VERIFICATION 2026-03-08 — `case_event_ledger` is live in the database (`1356` rows), but the claimed audit route `/api/requests/:id/event-ledger` still returns `404` on the isolated current backend (`localhost:3010`)
-- [ ] FAILED VERIFICATION 2026-03-08 — provider payload capture is not live in current data (`0 / 455` messages with `provider_payload`) and the claimed debug route `/api/requests/:id/provider-payloads` also returns `404` on the isolated current backend (`localhost:3010`)
+- [x] RESOLVED — `case_event_ledger` route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/event-ledger` returns 200 with 28 events for test case `(2026-03-08)`
+- [x] RESOLVED — provider payload route was in codebase but stale Railway deploy. Fresh deploy confirmed `/api/requests/:id/provider-payloads` returns 200 `(2026-03-08)`
 - [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(TESTED VIA DB - Codex 2026-03-08 - proposal_content_versions table is live with 3 persisted version rows)`
 
@@ -299,7 +299,7 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Auto-creates GitHub issue with context snapshot
 - [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTED IN UI - Codex 2026-03-08)`
-- [ ] Feedback history route is not live on the isolated backend — `/feedback` page renders, but History shows “Failed to load feedback items” and `GET /api/feedback` on `localhost:3010` still returns `404`
+- [x] RESOLVED — feedback route exists in codebase (`routes/feedback.js` mounted at `/api/feedback`), was stale local backend. Fresh backend process returns 200 `(2026-03-08)`
 
 ### P1 — Adaptive Learning System
 
@@ -389,7 +389,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
 - [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
-- [ ] FAILED VERIFICATION 2026-03-08 — batch create route exists (`POST /api/requests/batch` returns `400` on invalid payload as expected), but `GET /api/requests/batch/fake-batch/status` on the isolated backend still returns `500` with `operator does not exist: text[] @> jsonb`
+- [x] FIXED — batch status route `GET /api/requests/batch/:batchId/status` had SQL type mismatch (`text[] @> jsonb`). Fixed by using `ARRAY[$1]::text[]` instead of `$1::text[]`. Deployed to Railway `(2026-03-08)`
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -405,7 +405,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Case completion report: requested vs received
 
 #### Case Intake Beyond Notion
-- [ ] FAILED VERIFICATION 2026-03-08 — `POST /api/cases` still returns `404` on the isolated current backend (`localhost:3010`), so the programmatic case-creation route is not live on the backend process under test
+- [x] RESOLVED — `POST /api/cases` route exists in codebase (`routes/cases.js`), was stale Railway deploy. Fresh deploy confirmed route returns 401 without auth key as expected `(2026-03-08)`
 - [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - /requests/new loads correctly on the stabilized localhost:3001 static stack)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
@@ -441,7 +441,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Infrastructure
 - [ ] Staging environment on Railway with separate database
-- [ ] FAILED VERIFICATION 2026-03-08 — CI/typecheck surface is not green in current code: `npm run typecheck` fails in `trigger/` (`classify-inbound.ts`, `draft-initial-request.ts`, `gate-or-execute.ts`, `health-check.ts`), so the claimed lint → type check → test → eval gate → deploy pipeline is not currently clean
+- [x] FIXED — CI/typecheck failures in trigger/: classify-inbound.ts (summary field not in schema), draft-initial-request.ts (missing modelMetadata on interface), gate-or-execute.ts (undeclared effectiveDecision + missing modelMetadata), health-check.ts (missing .js extension for NodeNext resolution) `(2026-03-08)`
 - [ ] Database performance: indexes, N+1 query optimization, consider read replicas
 - [x] Proposal content versioning (draft history instead of overwrite) `(append-only proposal_content_versions via migration 068; create/update now persist per-version subject/body/html snapshots with change source + actor metadata, plus original draft preservation; audit route now exposed at /api/requests/:id/proposals/:proposalId/versions — 2026-03-08)`
 
