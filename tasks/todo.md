@@ -60,7 +60,7 @@ Ordered by priority within each phase. Check items off as completed.
 ### P0 — Must-have before launch
 
 #### System Health & Observability
-- [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable
+- [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTING - UI Codex 2026-03-08)`
 - [ ] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures
 - [ ] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions
 
@@ -68,7 +68,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
 - [x] On import, check if agency exists in directory — flag if not found
 - [x] On import, verify state matches agency state — flag mismatches
-- [x] Surface validation warnings in dashboard (yellow banner on case detail)
+- [x] Surface validation warnings in dashboard (yellow banner on case detail) `(TESTING - UI Codex 2026-03-08)`
 - [x] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time
 
 #### Proposal Lifecycle Hardening
@@ -87,14 +87,14 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Verify the email worker always calls the final execution update path after success
 
 #### Operator Workflow
-- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation
-- [x] Full-text case search across case name, agency name, subject, email content
-- [x] Finish mobile responsiveness: every page usable at 390px viewport
+- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTING - UI Codex 2026-03-08)`
+- [x] Full-text case search across case name, agency name, subject, email content `(TESTING - UI Codex 2026-03-08)`
+- [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08)`
 
 ### P1 — Important for confidence
 
 #### Case Timeline & Audit Trail
-- [x] Add "Case Timeline" view to case detail — every state transition chronologically
+- [x] Add "Case Timeline" view to case detail — every state transition chronologically `(TESTING - UI Codex 2026-03-08)`
 - [x] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal) — createDecisionTraceTracker called in all 4 tasks, deployed v20260308.32
 - [x] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
 - [ ] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events
@@ -118,12 +118,12 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Add validation so portal cases without a request number are identifiable
 
 #### Notion Sync
-- [x] Add "Sync Now" button for a specific Notion page (instant import)
-- [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`)
+- [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTING - UI Codex 2026-03-08)`
+- [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTING - UI Codex 2026-03-08)`
 - [ ] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues)
 
 #### Constraint Management
-- [x] Allow removing/overriding stale constraints from dashboard
+- [x] Allow removing/overriding stale constraints from dashboard `(TESTING - UI Codex 2026-03-08)`
 - [x] Show constraint history (when added, by whom/what)
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
 - [ ] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events
@@ -192,7 +192,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 
 #### Live Data Workflow Anomalies (from production DB, 2026-03-07)
 Production data review found 160 inbound messages, 107 response analyses, 56 inbound messages with no `response_analysis`, 57 inbound messages with no `case_id`, and 21 inbound rows with `last_error = "Branch condition returned unknown or null destination"`.
-- [ ] Audit inbound messages with `case_id IS NULL`; backfill matches where possible and prevent unmatched inbound from bypassing the active case workflow
+- [x] Audit inbound messages with `case_id IS NULL`; backfill matches where possible and prevent unmatched inbound from bypassing the active case workflow — 57→56 orphans: linked Fort Collins email to case 25136, marked 3 GovQA system emails processed, added portal system email detection to prevent future orphans; remaining 4 unprocessed are unmatched agencies with no case
 - [x] Investigate `messages.last_error = "Branch condition returned unknown or null destination"` and add a route-safe fallback so inbound handling never dies on an unknown branch — legacy LangGraph error (Feb 18-20 only), cleared 21 stale errors; error string no longer exists in current codebase
 - [x] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases — added to quality-report-service.js + /api/eval/reconciliation endpoint
 - [x] Add a reconciliation query for cases where the latest inbound intent conflicts with current case status or substatus — covered by reconciliation report
@@ -266,9 +266,9 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] Dashboard chart: decision quality over time (7d rolling)
 
 #### Bug Reporting
-- [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes
+- [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTING - UI Codex 2026-03-08)`
 - [x] Auto-creates GitHub issue with context snapshot
-- [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable
+- [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTING - UI Codex 2026-03-08)`
 
 ### P1 — Adaptive Learning System
 
