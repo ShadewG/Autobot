@@ -2061,6 +2061,12 @@ router.post('/proposals/:id/decision', async (req, res) => {
         );
         const portalTaskId = ptResult.rows[0]?.id || null;
 
+        // Transition proposal to PENDING_PORTAL so the portal service approval gate recognizes it
+        await proposalLifecycle.markProposalPendingPortal(proposalId, {
+          humanDecision,
+          runId: run.id,
+        });
+
         // Update run trigger_type for clarity
         await db.updateAgentRun(run.id, { trigger_type: 'submit_portal' });
 
