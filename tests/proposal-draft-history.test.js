@@ -59,8 +59,13 @@ describe('Proposal draft history', function () {
         case_id: 123,
         status: 'PENDING_APPROVAL',
         action_type: 'SEND_CLARIFICATION',
+        draft_subject: 'Original subject',
+        draft_body_text: 'Original body',
+        draft_body_html: null,
       }],
     });
+    queryStub.onCall(2).resolves({ rows: [] });
+    queryStub.onCall(3).resolves({ rows: [{ id: 1, version_number: 1 }] });
 
     await db.upsertProposal({
       proposalKey: '123:msg-1:SEND_CLARIFICATION:0',

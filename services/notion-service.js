@@ -140,6 +140,11 @@ function isRetryableNotionError(error) {
     return /(rate limit|temporar|timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN)/i.test(message);
 }
 
+function hasValidNotionPageId(pageId) {
+    const normalized = db.normalizeNotionPageId(pageId);
+    return Boolean(normalized && /^[0-9a-f]{32}$/i.test(normalized));
+}
+
 const POLICE_DEPARTMENT_FIELD_SPECS = [
     { name: 'Department Name' },
     { name: 'Address' },
@@ -1548,6 +1553,9 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
      */
     async updatePage(pageId, updates) {
         try {
+            if (!hasValidNotionPageId(pageId)) {
+                throw new Error(`Invalid Notion page ID: ${pageId}`);
+            }
             const availableProperties = await this.getPagePropertyNames(pageId);
             const propSet = new Set(availableProperties);
             const properties = {};
@@ -1906,15 +1914,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
     }
 
     async _syncStatusToNotion(caseId) {
+        let caseData = null;
         try {
-            const caseData = await db.getCaseById(caseId);
+            caseData = await db.getCaseById(caseId);
             if (!caseData) {
                 console.error(`Case ${caseId} not found`);
                 return;
             }
 
-            // Skip test cases (they have fake notion_page_ids)
-            if (caseData.notion_page_id?.startsWith('test-')) {
+            // Skip test/synthetic cases or malformed page IDs.
+            if (!hasValidNotionPageId(caseData.notion_page_id)) {
                 console.log(`Skipping Notion sync for test case ${caseId}`);
                 return;
             }
@@ -2042,8 +2051,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             const caseData = await db.getCaseById(caseId);
             if (!caseData) return;
 
-            // Skip test cases (they have fake notion_page_ids)
-            if (caseData.notion_page_id?.startsWith('test-')) {
+            if (!hasValidNotionPageId(caseData.notion_page_id)) {
                 console.log(`Skipping AI summary sync for test case ${caseId}`);
                 return;
             }
@@ -2062,7 +2070,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
      */
     async addSubmissionComment(caseId, submissionInfo) {
         const caseData = await db.getCaseById(caseId).catch(() => null);
-        const hasValidCasePage = caseData?.notion_page_id && !caseData.notion_page_id.startsWith('test-');
+        const hasValidCasePage = hasValidNotionPageId(caseData?.notion_page_id);
         const sanitizeNotes = (n) => n ? String(n).replace(/[\r\n]+/g, ' | ') : null;
 
         const date = new Date().toISOString().split('T')[0];
@@ -2091,7 +2099,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         }
 
         // Comment on the PD's Notion page if linked (separate try so case failure doesn't block this)
-        if (submissionInfo.agency_notion_page_id) {
+        if (hasValidNotionPageId(submissionInfo.agency_notion_page_id)) {
             try {
                 const pdLines = [
                     `[BOT:SUBMISSION] ${date} — Case #${caseId} (${caseData?.case_name || ''})`,
@@ -2120,7 +2128,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
      * Returns structured info about previous submissions to the same department.
      */
     async getSubmissionMemory(agencyNotionPageId) {
-        if (!agencyNotionPageId) return [];
+        if (!hasValidNotionPageId(agencyNotionPageId)) return [];
 
         // Check cache (5 min TTL)
         const cached = this.submissionMemoryCache.get(agencyNotionPageId);
@@ -2216,6 +2224,9 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
     }
 
     async getPagePropertyNames(pageId) {
+        if (!hasValidNotionPageId(pageId)) {
+            throw new Error(`Invalid Notion page ID: ${pageId}`);
+        }
         const cacheEntry = this.pagePropertyCache.get(pageId);
         const now = Date.now();
         if (cacheEntry && (now - cacheEntry.cachedAt) < 5 * 60 * 1000) {
@@ -2388,6 +2399,9 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
     async processSinglePage(pageId) {
         try {
+            if (!hasValidNotionPageId(pageId)) {
+                throw new Error(`Invalid Notion page ID: ${pageId}`);
+            }
             console.log(`[import] Fetching Notion page: ${pageId}`);
 
             // Step 1: Fetch case page + blocks

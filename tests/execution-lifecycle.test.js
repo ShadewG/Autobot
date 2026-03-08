@@ -72,7 +72,7 @@ describe('Execution lifecycle helpers', function () {
 
     sinon.assert.calledOnce(queryStub);
     const [, params] = queryStub.firstCall.args;
-    assert.strictEqual(params[9], completedAt);
+    assert.strictEqual(params[13], completedAt);
   });
 
   it('marks queued email executions as sent with merged provider payload', async function () {
@@ -83,6 +83,10 @@ describe('Execution lifecycle helpers', function () {
         subject: 'Queued reply',
         jobId: 'job-99',
       },
+      failure_stage: 'email_queue',
+      failure_code: 'ETIMEDOUT',
+      retryable: true,
+      retry_attempt: 2,
       provider_message_id: null,
     });
     const updateStub = sinon.stub(db, 'updateExecution').resolves({ id: 601 });
@@ -98,6 +102,10 @@ describe('Execution lifecycle helpers', function () {
     assert.strictEqual(executionId, 601);
     assert.strictEqual(updates.status, 'SENT');
     assert.strictEqual(updates.provider_message_id, 'msg-601');
+    assert.strictEqual(updates.failure_stage, null);
+    assert.strictEqual(updates.failure_code, null);
+    assert.strictEqual(updates.retryable, null);
+    assert.strictEqual(updates.retry_attempt, null);
     assert.ok(updates.completed_at instanceof Date);
     assert.deepStrictEqual(updates.provider_payload, {
       to: 'qa@example.com',
@@ -109,6 +117,38 @@ describe('Execution lifecycle helpers', function () {
       sendgridMessageId: 'sg-601',
       sentAt: '2026-03-07T14:10:00.000Z',
     });
+  });
+
+  it('records normalized failure metadata for queued email failures', async function () {
+    sinon.stub(db, 'getExecutionByKey').resolves({
+      id: 611,
+      provider_payload: {
+        to: 'qa@example.com',
+        subject: 'Queued reply',
+        jobId: 'job-100',
+      },
+      provider_message_id: null,
+    });
+    const updateStub = sinon.stub(db, 'updateExecution').resolves({ id: 611 });
+
+    await emailExecutor.markFailed('exec:611', {
+      message: 'Connection timed out',
+      code: 'ETIMEDOUT',
+      failureStage: 'email_queue',
+      retryAttempt: 2,
+      retryable: true,
+    });
+
+    sinon.assert.calledOnce(updateStub);
+    const [executionId, updates] = updateStub.firstCall.args;
+    assert.strictEqual(executionId, 611);
+    assert.strictEqual(updates.status, 'FAILED');
+    assert.strictEqual(updates.error_message, 'Connection timed out');
+    assert.strictEqual(updates.failure_stage, 'email_queue');
+    assert.strictEqual(updates.failure_code, 'ETIMEDOUT');
+    assert.strictEqual(updates.retryable, true);
+    assert.strictEqual(updates.retry_attempt, 2);
+    assert.ok(updates.completed_at instanceof Date);
   });
 
   it('marks manual portal completion as SENT with merged payload', async function () {

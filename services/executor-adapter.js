@@ -43,8 +43,9 @@ async function createExecutionRecord(data) {
   const query = `
     INSERT INTO executions (
       case_id, proposal_id, run_id, execution_key,
-      action_type, status, provider, provider_payload, error_message, completed_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      action_type, status, provider, provider_payload, error_message,
+      failure_stage, failure_code, retryable, retry_attempt, completed_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
     ON CONFLICT (execution_key) DO UPDATE
       SET updated_at = NOW()
     RETURNING *
@@ -60,6 +61,10 @@ async function createExecutionRecord(data) {
     data.provider || null,
     data.providerPayload ? JSON.stringify(data.providerPayload) : null,
     data.errorMessage || null,
+    data.failureStage || null,
+    data.failureCode || null,
+    data.retryable === undefined ? null : Boolean(data.retryable),
+    Number.isFinite(data.retryAttempt) ? data.retryAttempt : null,
     data.completedAt || null,
   ];
 
@@ -90,6 +95,22 @@ async function updateExecutionRecord(executionKey, updates) {
   if (updates.errorMessage !== undefined) {
     setParts.push(`error_message = $${paramIndex++}`);
     values.push(updates.errorMessage);
+  }
+  if (updates.failureStage !== undefined) {
+    setParts.push(`failure_stage = $${paramIndex++}`);
+    values.push(updates.failureStage);
+  }
+  if (updates.failureCode !== undefined) {
+    setParts.push(`failure_code = $${paramIndex++}`);
+    values.push(updates.failureCode);
+  }
+  if (updates.retryable !== undefined) {
+    setParts.push(`retryable = $${paramIndex++}`);
+    values.push(updates.retryable === null ? null : Boolean(updates.retryable));
+  }
+  if (updates.retryAttempt !== undefined) {
+    setParts.push(`retry_attempt = $${paramIndex++}`);
+    values.push(updates.retryAttempt);
   }
   if (updates.completedAt) {
     setParts.push(`completed_at = $${paramIndex++}`);
@@ -144,6 +165,45 @@ function deriveProviderMessageId(providerMessageId, providerPayload) {
     || null;
 }
 
+function inferFailureCode(error, fallbackCode = null) {
+  if (fallbackCode) return String(fallbackCode);
+  if (error?.code) return String(error.code);
+  if (Number.isFinite(error?.statusCode)) return `HTTP_${error.statusCode}`;
+  if (Number.isFinite(error?.status)) return `HTTP_${error.status}`;
+  if (error?.response?.status) return `HTTP_${error.response.status}`;
+  if (error?.name && error.name !== 'Error') return String(error.name).toUpperCase();
+  return null;
+}
+
+function inferRetryable(error, fallbackRetryable = undefined) {
+  if (fallbackRetryable !== undefined) return Boolean(fallbackRetryable);
+
+  const code = String(error?.code || '').toUpperCase();
+  const status = Number(error?.statusCode || error?.status || error?.response?.status || 0);
+  const message = String(error?.message || '').toLowerCase();
+
+  if (status === 429 || status >= 500) return true;
+  if (['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND'].includes(code)) return true;
+  if (message.includes('timeout') || message.includes('rate limit') || message.includes('socket hang up')) return true;
+  return false;
+}
+
+function normalizeFailureDetails(errorOrMessage, context = {}) {
+  const error = typeof errorOrMessage === 'string'
+    ? { message: errorOrMessage }
+    : (errorOrMessage || {});
+
+  return {
+    errorMessage: String(context.errorMessage || error.message || errorOrMessage || 'Unknown execution failure'),
+    failureStage: context.failureStage || error.failureStage || error.failure_stage || null,
+    failureCode: inferFailureCode(error, context.failureCode || error.failureCode || error.failure_code || null),
+    retryable: inferRetryable(error, context.retryable),
+    retryAttempt: Number.isFinite(context.retryAttempt)
+      ? context.retryAttempt
+      : (Number.isFinite(error.retryAttempt) ? error.retryAttempt : null),
+  };
+}
+
 async function transitionExecutionRecord({ executionKey = null, executionId = null, updates = {} }) {
   const existing = executionId
     ? await db.getExecutionById(executionId)
@@ -153,6 +213,10 @@ async function transitionExecutionRecord({ executionKey = null, executionId = nu
   const nextUpdates = {};
   if (updates.status !== undefined) nextUpdates.status = updates.status;
   if (updates.errorMessage !== undefined) nextUpdates.error_message = updates.errorMessage;
+  if (updates.failureStage !== undefined) nextUpdates.failure_stage = updates.failureStage;
+  if (updates.failureCode !== undefined) nextUpdates.failure_code = updates.failureCode;
+  if (updates.retryable !== undefined) nextUpdates.retryable = updates.retryable;
+  if (updates.retryAttempt !== undefined) nextUpdates.retry_attempt = updates.retryAttempt;
   if (updates.completedAt !== undefined) nextUpdates.completed_at = updates.completedAt;
   if (updates.providerPayload !== undefined) {
     nextUpdates.provider_payload = mergeProviderPayload(existing.provider_payload, updates.providerPayload);
@@ -163,6 +227,19 @@ async function transitionExecutionRecord({ executionKey = null, executionId = nu
   );
   if (resolvedProviderMessageId !== undefined && resolvedProviderMessageId !== null) {
     nextUpdates.provider_message_id = resolvedProviderMessageId;
+  }
+  if (updates.status === 'SENT' || updates.status === 'SKIPPED' || updates.status === 'PENDING_HUMAN') {
+    nextUpdates.error_message = null;
+    nextUpdates.failure_stage = null;
+    nextUpdates.failure_code = null;
+    nextUpdates.retryable = null;
+    nextUpdates.retry_attempt = null;
+  }
+  if (updates.status === 'CANCELLED') {
+    nextUpdates.failure_stage = null;
+    nextUpdates.failure_code = null;
+    nextUpdates.retryable = null;
+    nextUpdates.retry_attempt = null;
   }
 
   return db.updateExecution(existing.id, nextUpdates);
@@ -373,10 +450,17 @@ const emailExecutor = {
       };
 
     } catch (error) {
+      const failure = normalizeFailureDetails(error, {
+        failureStage: 'email_send',
+        retryAttempt: 1,
+        retryable: false,
+      });
+
       logger.error('Email execution failed', {
         executionKey,
         caseId,
-        error: error.message
+        error: failure.errorMessage,
+        failureCode: failure.failureCode,
       });
 
       // Update execution record with error
@@ -384,7 +468,11 @@ const emailExecutor = {
         executionKey,
         updates: {
           status: 'FAILED',
-          errorMessage: error.message,
+          errorMessage: failure.errorMessage,
+          failureStage: failure.failureStage,
+          failureCode: failure.failureCode,
+          retryable: failure.retryable,
+          retryAttempt: failure.retryAttempt,
           completedAt: new Date()
         }
       });
@@ -394,7 +482,7 @@ const emailExecutor = {
         dryRun: false,
         executionKey,
         status: 'FAILED',
-        error: error.message
+        error: failure.errorMessage
       };
     }
   },
@@ -421,12 +509,19 @@ const emailExecutor = {
   /**
    * Mark email as failed
    */
-  async markFailed(executionKey, errorMessage) {
+  async markFailed(executionKey, errorDetails) {
+    const failure = normalizeFailureDetails(errorDetails, {
+      failureStage: 'email_queue',
+    });
     return transitionExecutionRecord({
       executionKey,
       updates: {
         status: 'FAILED',
-        errorMessage,
+        errorMessage: failure.errorMessage,
+        failureStage: failure.failureStage,
+        failureCode: failure.failureCode,
+        retryable: failure.retryable,
+        retryAttempt: failure.retryAttempt,
         completedAt: new Date()
       }
     });

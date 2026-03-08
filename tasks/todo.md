@@ -120,7 +120,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Notion Sync
 - [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTED IN UI - Codex 2026-03-08 - control and last-synced date render correctly in the case actions menu on localhost:3001; sync action itself was not fired to avoid mutating live state)`
 - [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTED IN UI - Codex 2026-03-08)`
-- [x] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues) — **ROOT CAUSED & FIXED**: (1) Status map casing bug: `mapStatusToNotion()` had duplicate inline map with "Ready To Send" (uppercase T) vs `NOTION_STATUS_MAP` "Ready to Send" (lowercase t) — consolidated to single `NOTION_STATUS_MAP`; (2) Missing `closed` status mapping — added; (3) Silent error swallowing in `_syncStatusToNotion` — now logs to `activity_log` as `notion_sync_error`; (4) `last_notion_synced_at` never updated on outbound sync — now set after successful `updatePage`
+- [x] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues) — **ROOT CAUSED & FIXED**: (1) Status map casing bug: `mapStatusToNotion()` had duplicate inline map with "Ready To Send" (uppercase T) vs `NOTION_STATUS_MAP` "Ready to Send" (lowercase t) — consolidated to single `NOTION_STATUS_MAP`; (2) Missing `closed` status mapping — added; (3) Silent error swallowing in `_syncStatusToNotion` — now logs to `activity_log` as `notion_sync_error`; (4) `last_notion_synced_at` never updated on outbound sync — now set after successful `updatePage`; (5) malformed synthetic/QA page IDs now fail fast or skip cleanly across `updatePage`, status sync, submission memory/comments, and single-page import paths — 2026-03-08)
 
 #### Constraint Management
 - [x] Allow removing/overriding stale constraints from dashboard `(TESTED IN UI - Codex 2026-03-08 - edit mode, remove controls, history, and Add Constraint dialog verified on localhost:3001; destructive remove/add submissions were not executed)`
@@ -137,7 +137,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Future-Proof Data Capture
 - [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change — 2026-03-08)`
 - [ ] Capture raw inbound/outbound provider payloads
-- [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table (migration 067): operation (=failure_stage), error_code, retryable, retry_attempt columns + error-tracking-service.js captureException() normalizes all fields — 2026-03-08)`
+- [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
 
 #### Decision AI Failures (from Braintrust eval analysis, 2026-03-07)
@@ -363,7 +363,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
 - [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
-- [x] Batch status view: sent / responded / denied counts `(GET /api/requests/batch/:batchId/status returns summary + per-case status; dashboard at /requests/batch — 2026-03-08; UI shell verified on localhost:3001, but result/count state was not exercised to avoid creating new batch cases during verification)`
+- [ ] Batch status view: sent / responded / denied counts — UI shell exists at `/requests/batch`, but isolated backend check on 2026-03-08 shows `/api/requests/batch/:batchId/status` currently fails with `operator does not exist: text[] @> jsonb`
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -416,7 +416,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Staging environment on Railway with separate database
 - [x] CI/CD pipeline: lint → type check → test → eval gate → deploy `(GitHub Actions: typecheck job (tsc trigger + dashboard + build) + regression job (backend tests + prompt eval gate). Added npm run typecheck/typecheck:dashboard scripts — 2026-03-08)`
 - [ ] Database performance: indexes, N+1 query optimization, consider read replicas
-- [x] Proposal content versioning (draft history instead of overwrite) `(migration 058: original_draft_subject/body_text preserved on first insert, human_edited flag tracks modifications, COALESCE in upsert ensures originals never overwritten — 2026-03-08)`
+- [x] Proposal content versioning (draft history instead of overwrite) `(append-only proposal_content_versions via migration 068; create/update now persist per-version subject/body/html snapshots with change source + actor metadata, plus original draft preservation — 2026-03-08)`
 
 ---
 

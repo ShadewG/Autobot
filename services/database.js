@@ -276,6 +276,12 @@ class DatabaseService {
                 )
             `);
             await this.query('CREATE INDEX IF NOT EXISTS idx_proposal_content_versions_proposal_id ON proposal_content_versions(proposal_id, version_number DESC)');
+            await this.query('ALTER TABLE IF EXISTS executions ADD COLUMN IF NOT EXISTS failure_stage VARCHAR(100)');
+            await this.query('ALTER TABLE IF EXISTS executions ADD COLUMN IF NOT EXISTS failure_code VARCHAR(100)');
+            await this.query('ALTER TABLE IF EXISTS executions ADD COLUMN IF NOT EXISTS retryable BOOLEAN');
+            await this.query('ALTER TABLE IF EXISTS executions ADD COLUMN IF NOT EXISTS retry_attempt INTEGER');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_executions_failure_stage ON executions(failure_stage, created_at DESC) WHERE failure_stage IS NOT NULL');
+            await this.query('CREATE INDEX IF NOT EXISTS idx_executions_failure_code ON executions(failure_code, created_at DESC) WHERE failure_code IS NOT NULL');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS source_action_type VARCHAR(50)');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS capture_source VARCHAR(50)');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_action VARCHAR(50)');
@@ -3705,8 +3711,9 @@ class DatabaseService {
         const result = await this.query(`
             INSERT INTO executions (
                 case_id, proposal_id, run_id, execution_key, action_type,
-                status, provider, provider_payload
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                status, provider, provider_payload, failure_stage, failure_code,
+                retryable, retry_attempt
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             ON CONFLICT (execution_key) DO NOTHING
             RETURNING *
         `, [
@@ -3717,7 +3724,11 @@ class DatabaseService {
             data.action_type,
             data.status || 'QUEUED',
             data.provider,
-            data.provider_payload ? JSON.stringify(data.provider_payload) : null
+            data.provider_payload ? JSON.stringify(data.provider_payload) : null,
+            data.failure_stage || null,
+            data.failure_code || null,
+            data.retryable === undefined ? null : Boolean(data.retryable),
+            Number.isFinite(data.retry_attempt) ? data.retry_attempt : null
         ]);
         return result.rows[0];
     }
@@ -3783,6 +3794,11 @@ class DatabaseService {
             SET status = 'SENT',
                 provider_payload = $2,
                 provider_message_id = $3,
+                error_message = NULL,
+                failure_stage = NULL,
+                failure_code = NULL,
+                retryable = NULL,
+                retry_attempt = NULL,
                 completed_at = NOW(),
                 updated_at = NOW()
             WHERE execution_key = $1
@@ -3798,17 +3814,28 @@ class DatabaseService {
     /**
      * Mark execution as failed
      */
-    async markExecutionFailed(executionKey, errorMessage) {
+    async markExecutionFailed(executionKey, errorMessage, metadata = {}) {
         const result = await this.query(`
             UPDATE executions
             SET status = 'FAILED',
                 error_message = $2,
+                failure_stage = $3,
+                failure_code = $4,
+                retryable = $5,
+                retry_attempt = COALESCE($6, retry_attempt),
                 retry_count = retry_count + 1,
                 completed_at = NOW(),
                 updated_at = NOW()
             WHERE execution_key = $1
             RETURNING *
-        `, [executionKey, errorMessage]);
+        `, [
+            executionKey,
+            errorMessage,
+            metadata.failure_stage || null,
+            metadata.failure_code || null,
+            metadata.retryable === undefined ? null : Boolean(metadata.retryable),
+            Number.isFinite(metadata.retry_attempt) ? metadata.retry_attempt : null
+        ]);
         return result.rows[0];
     }
 
