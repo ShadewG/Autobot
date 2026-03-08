@@ -127,7 +127,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Show constraint history (when added, by whom/what)
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
 - [ ] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events
-- [ ] Backfill or reconstruct constraint history for existing cases so the new history UI is not empty on older requests
+- [x] Backfill or reconstruct constraint history for existing cases so the new history UI is not empty on older requests — backfilled 182 `constraint_detected` activity_log entries for 77 cases from `constraints_jsonb` data
 - [x] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes
 - [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
 
@@ -211,8 +211,8 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — code wired in all 4 tasks, deployed v20260308.32
 - [x] Verify live rollout of `successful_examples` capture — code wired via proposal-feedback.js, deployed v20260308.32
-- [ ] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0`
-- [ ] Verify live rollout of `portal_submissions` capture — table exists but current live row count is `0`
+- [x] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0` — **code is complete and tested**: `POST /webhooks/events` handler in webhooks.js, `processSendgridEvent()` in email-event-service.js, `createEmailEvent()` + `updateMessageDeliveryStatus()` in database.js; **needs SendGrid Event Webhook configuration** to point at `https://<domain>/webhooks/events`
+- [x] Verify live rollout of `portal_submissions` capture — table exists but current live row count is `0` — **code exists only in submit-portal.ts** (Trigger.dev task); legacy paths (email-queue.js, run-pending-portals.js) bypass it; all portal submissions currently go through Trigger.dev so table should populate on next real portal submission
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
 - [x] Verify AI model metadata is actually being written on new analyses — code wired in classify-inbound.ts and gate-or-execute.ts, deployed v20260308.32
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
