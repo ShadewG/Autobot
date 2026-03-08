@@ -108,8 +108,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Decide on `case_agencies` as long-term model — if yes, propagate `case_agency_id` across proposals, executions, portal tasks
 - [x] Backfill `case_agency_id` on historical proposals where derivable — 533 proposals updated from primary case_agency
 - [ ] Agency directory dedup: normalize names on insert, merge duplicates, verify emails
-- [ ] Remove `agent_runs.proposal_id` once all readers migrated to `proposals.run_id`
-- [ ] Review `proposals.langgraph_checkpoint_id` for removal
+- [x] Remove `agent_runs.proposal_id` once all readers migrated to `proposals.run_id` — verified: 0 active code references, canonical link is proposals.run_id (585/647 populated)
+- [x] Review `proposals.langgraph_checkpoint_id` for removal — dropped: 0 rows had data, 0 code references
 
 #### Portal Data Quality
 - [ ] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number`
@@ -194,8 +194,8 @@ AI sometimes wants to research before responding (when it should just respond) o
 Production data review found 160 inbound messages, 107 response analyses, 56 inbound messages with no `response_analysis`, 57 inbound messages with no `case_id`, and 21 inbound rows with `last_error = "Branch condition returned unknown or null destination"`.
 - [ ] Audit inbound messages with `case_id IS NULL`; backfill matches where possible and prevent unmatched inbound from bypassing the active case workflow
 - [ ] Investigate `messages.last_error = "Branch condition returned unknown or null destination"` and add a route-safe fallback so inbound handling never dies on an unknown branch
-- [ ] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases
-- [ ] Add a reconciliation query for cases where the latest inbound intent conflicts with current case status or substatus
+- [x] Add a reconciliation query for latest `requires_action = true` analyses that have no active proposal or work item on non-terminal cases — added to quality-report-service.js + /api/eval/reconciliation endpoint
+- [x] Add a reconciliation query for cases where the latest inbound intent conflicts with current case status or substatus — covered by reconciliation report
 - [ ] Create a repair queue for concrete dropped-action cases observed in production: `25268`, `25265`, `25167`, `25140`
 - [ ] Create a repair queue for concrete classifier/handling mismatch cases observed in production: `25211`, `25171`, `25175`
 - [ ] Monitor inbound messages with no `response_analysis`, especially non-portal rows with `processed_at IS NULL`

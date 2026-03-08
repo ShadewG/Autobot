@@ -574,6 +574,20 @@ router.get('/classification-confusion', async (req, res) => {
 });
 
 /**
+ * GET /api/eval/reconciliation
+ * System health reconciliation: dropped actions, processing errors, orphaned messages.
+ */
+router.get('/reconciliation', async (req, res) => {
+    try {
+        const report = await qualityReportService.buildReconciliationReport();
+        res.json({ success: true, report });
+    } catch (error) {
+        console.error('Error building reconciliation report:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * GET /api/eval/cases/:id/history
  * All eval runs for a specific eval case (for trend tracking).
  */

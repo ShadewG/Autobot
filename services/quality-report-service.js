@@ -296,8 +296,77 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
   };
 }
 
+async function buildReconciliationReport() {
+  const [droppedActions, branchErrors, orphanedInbound, staleProposals] = await Promise.all([
+    db.query(`
+      WITH latest_analysis AS (
+        SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
+        FROM response_analysis
+        WHERE case_id IS NOT NULL
+        ORDER BY case_id, created_at DESC
+      )
+      SELECT la.case_id, la.suggested_action, la.created_at as analysis_at, c.status, c.agency_name
+      FROM latest_analysis la
+      JOIN cases c ON c.id = la.case_id
+      LEFT JOIN proposals p ON p.case_id = la.case_id
+        AND p.status IN ('PENDING_APPROVAL', 'BLOCKED')
+      WHERE la.requires_action = true
+        AND p.id IS NULL
+        AND c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled', 'records_received', 'case_completed')
+      ORDER BY la.created_at DESC
+      LIMIT 20
+    `),
+    db.query(`
+      SELECT m.id as message_id, m.case_id, m.from_email, m.subject, m.last_error, m.created_at
+      FROM messages m
+      LEFT JOIN cases c ON c.id = m.case_id
+      WHERE m.last_error IS NOT NULL AND m.last_error != ''
+        AND (c.status IS NULL OR c.status NOT IN ('completed', 'closed', 'withdrawn', 'cancelled'))
+      ORDER BY m.created_at DESC
+      LIMIT 20
+    `),
+    db.query(`
+      SELECT COUNT(*) as count FROM messages
+      WHERE direction = 'inbound' AND case_id IS NULL
+    `),
+    db.query(`
+      SELECT COUNT(*) as count FROM proposals
+      WHERE status = 'PENDING_APPROVAL'
+        AND created_at < NOW() - INTERVAL '48 hours'
+    `),
+  ]);
+
+  return {
+    generated_at: new Date().toISOString(),
+    dropped_actions: {
+      count: droppedActions.rows.length,
+      cases: droppedActions.rows.map(r => ({
+        case_id: r.case_id,
+        suggested_action: r.suggested_action,
+        analysis_at: r.analysis_at,
+        status: r.status,
+        agency_name: r.agency_name,
+      })),
+    },
+    processing_errors: {
+      count: branchErrors.rows.length,
+      messages: branchErrors.rows.map(r => ({
+        message_id: r.message_id,
+        case_id: r.case_id,
+        from_email: r.from_email,
+        subject: (r.subject || '').substring(0, 80),
+        error: (r.last_error || '').substring(0, 120),
+        created_at: r.created_at,
+      })),
+    },
+    orphaned_inbound: Number(orphanedInbound.rows[0]?.count) || 0,
+    stale_proposals: Number(staleProposals.rows[0]?.count) || 0,
+  };
+}
+
 module.exports = {
   buildWeeklyQualityReport,
   buildClassificationConfusionMatrix,
   inferActualClassificationFromExpectedAction,
+  buildReconciliationReport,
 };
