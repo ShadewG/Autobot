@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Constraint } from "@/lib/types";
 import { AlertTriangle, Ban, FileX, DollarSign, Shield, Clock, Eye, Minimize2, Info, ArrowRightLeft, X, Plus } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime } from "@/lib/utils";
 
 const CONSTRAINT_CONFIG: Record<string, {
   icon: React.ComponentType<{ className?: string }>;
@@ -123,16 +123,24 @@ function normalizeConstraints(constraints: Constraint[]): NormalizedConstraint[]
   return Array.from(merged.values()).sort((a, b) => b.priority - a.priority);
 }
 
+interface ConstraintHistoryEntry {
+  timestamp: string;
+  action: "added" | "removed" | "detected";
+  description: string;
+  actor?: string;
+}
+
 interface ConstraintsDisplayProps {
   constraints: Constraint[];
   compact?: boolean;
   editable?: boolean;
   onRemove?: (index: number) => void;
   onAdd?: () => void;
+  history?: ConstraintHistoryEntry[];
   className?: string;
 }
 
-export function ConstraintsDisplay({ constraints, compact = false, editable = false, onRemove, onAdd, className }: ConstraintsDisplayProps) {
+export function ConstraintsDisplay({ constraints, compact = false, editable = false, onRemove, onAdd, history, className }: ConstraintsDisplayProps) {
   if (!constraints || constraints.length === 0) {
     return null;
   }
@@ -234,6 +242,26 @@ export function ConstraintsDisplay({ constraints, compact = false, editable = fa
           <Plus className="h-3 w-3" />
           Add constraint
         </button>
+      )}
+      {history && history.length > 0 && (
+        <div className="border-t border-border/50 pt-2 mt-1">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1 px-1">History</p>
+          <div className="space-y-0.5">
+            {history.map((entry, i) => (
+              <div key={i} className="flex items-center gap-2 text-[11px] text-muted-foreground px-1">
+                <span className={cn(
+                  "w-1.5 h-1.5 rounded-full flex-shrink-0",
+                  entry.action === "added" ? "bg-green-500" : entry.action === "removed" ? "bg-red-500" : "bg-yellow-500"
+                )} />
+                <span className="flex-1 truncate">{entry.description}</span>
+                <span className="flex-shrink-0 text-[10px]">
+                  {entry.actor && <span className="mr-1">{entry.actor}</span>}
+                  {formatRelativeTime(entry.timestamp)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

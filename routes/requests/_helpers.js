@@ -1060,6 +1060,8 @@ const EVENT_CATEGORY_MAP = {
 
     // Research / discovery / enrichment
     'constraint_detected': 'RESEARCH',
+    'constraint_added': 'RESEARCH',
+    'constraint_removed': 'RESEARCH',
     'exemption_researched': 'RESEARCH',
     'contact_research_completed': 'RESEARCH',
     'pd_contact_lookup': 'RESEARCH',
@@ -1172,6 +1174,8 @@ function mapTimelineType(eventType, meta = {}) {
         'action_blocked': 'RUN_GATED',
         // Constraint/scope/research
         'constraint_detected': 'CONSTRAINT_DETECTED',
+        'constraint_added': 'CONSTRAINT_DETECTED',
+        'constraint_removed': 'CONSTRAINT_DETECTED',
         'scope_updated': 'SCOPE_UPDATED',
         'scope_item_updated': 'SCOPE_UPDATED',
         // Portal

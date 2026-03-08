@@ -1235,6 +1235,22 @@ function DetailV2Content() {
     setTimeout(() => setCopiedField(null), 1500);
   };
 
+  const constraintHistory = useMemo(() => {
+    const events = (data as any)?.timeline_events || [];
+    const eventTypes = new Set(["constraint_added", "constraint_removed", "constraint_detected"]);
+    return events
+      .filter((e: any) => eventTypes.has(e.metadata?.event_type))
+      .map((e: any) => ({
+        timestamp: e.timestamp,
+        action: e.metadata?.event_type === "constraint_removed" ? "removed" as const
+          : e.metadata?.event_type === "constraint_added" ? "added" as const
+          : "detected" as const,
+        description: e.summary,
+        actor: e.metadata?.user_id || (e.metadata?.event_type === "constraint_detected" ? "AI" : undefined),
+      }))
+      .slice(0, 10);
+  }, [data]);
+
   // ── Early returns ──────────────────────────────────────────────────────────
 
   if (!id) {
@@ -2136,6 +2152,7 @@ function DetailV2Content() {
                   editable={constraintEditing}
                   onRemove={handleRemoveConstraint}
                   onAdd={() => setAddConstraintOpen(true)}
+                  history={constraintHistory}
                 />
               </CollapsibleSection>
               {request.constraints && request.constraints.some((c: any) => c.type === "EXEMPTION") && (
@@ -2286,6 +2303,7 @@ function DetailV2Content() {
                   editable={constraintEditing}
                   onRemove={handleRemoveConstraint}
                   onAdd={() => setAddConstraintOpen(true)}
+                  history={constraintHistory}
                 />
               </CollapsibleSection>
 

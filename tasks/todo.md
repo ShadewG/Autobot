@@ -21,9 +21,9 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Prefer moving low-risk one-off files first and compatibility-heavy files last
 
 #### Root Directory Cleanup
-- [ ] Move loose root `test-*`, `check-*`, `fix-*`, `reset-*`, `regen-*`, `resend-*`, and similar one-off scripts into `scripts/` or `.old/root-scripts`
-- [ ] Move root JSON dumps, screenshots, `.command` wrappers, and ad hoc reports into `.old/test-artifacts` unless they are still part of an active workflow `(IN PROGRESS - artifact/report batch moved; portal wrappers still referenced)`
-- [ ] Keep the root focused on runtime entrypoints, config, package files, and primary docs only
+- [ ] Move loose root `test-*`, `check-*`, `fix-*`, `reset-*`, `regen-*`, `resend-*`, and similar one-off scripts into `scripts/` or `.old/root-scripts` `(IN PROGRESS - large unreferenced batch moved; referenced portal helpers remain)`
+- [ ] Move root JSON dumps, screenshots, `.command` wrappers, and ad hoc reports into `.old/test-artifacts` unless they are still part of an active workflow `(IN PROGRESS - reports and generated screenshot/log batches moved; referenced portal wrappers remain)`
+- [ ] Keep the root focused on runtime entrypoints, config, package files, and primary docs only `(IN PROGRESS - root greatly reduced; portal helper files and referenced artifacts still remain)`
 
 ### P1 — Reduce redundancy safely
 
@@ -37,7 +37,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Review `routes/api.js`, `routes/requests/legacy-actions.js`, and other compatibility-heavy routes; document whether they are still required
 - [ ] Review `services/foia-case-agent.js` and older orchestration helpers; archive them if the Trigger.dev flow fully replaced them
 - [ ] Compare portal service variants and identify the single active provider path; move inactive variants to `.old/legacy-services` after validation
-- [ ] Review unused or empty directories such as `workers/` and either wire them up properly or archive/remove them
+- [ ] Review unused or empty directories such as `workers/` and either wire them up properly or archive/remove them `(REVIEWED - directory is empty, but legacy refs to workers/agent-worker.js still exist)`
 
 #### Naming & Structure
 - [ ] Standardize where operational scripts live (`scripts/`), where docs live (`docs/` or `tasks/`), and where archived files live (`.old/`)
@@ -48,7 +48,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Safe rollout order
 - [ ] Phase A: inventory and classify files without moving anything
-- [ ] Phase B: move obvious one-off root scripts and artifacts into `.old/` `(IN PROGRESS - Codex)`
+- [ ] Phase B: move obvious one-off root scripts and artifacts into `.old/` `(IN PROGRESS - docs/reports, screenshots, and two root-script batches moved; referenced portal helpers remain)`
 - [ ] Phase C: consolidate active tests and document canonical test commands
 - [ ] Phase D: retire compatibility routes/services only after import checks, route checks, and smoke tests pass
 - [ ] Phase E: update `guide.md` after each cleanup batch so the map stays accurate
@@ -89,7 +89,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Operator Workflow
 - [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation
 - [x] Full-text case search across case name, agency name, subject, email content
-- [ ] Finish mobile responsiveness: every page usable at 390px viewport
+- [x] Finish mobile responsiveness: every page usable at 390px viewport
 
 ### P1 — Important for confidence
 
@@ -123,7 +123,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues)
 
 #### Constraint Management
-- [ ] Allow removing/overriding stale constraints from dashboard
+- [x] Allow removing/overriding stale constraints from dashboard
 - [ ] Show constraint history (when added, by whom/what)
 
 #### Future-Proof Data Capture
