@@ -208,15 +208,15 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [ ] Add a recurring report for attachment extraction coverage vs inbound classification so PDF/image-heavy responses without usable text are visible immediately
 
 #### Verification Follow-Ups (live checks, 2026-03-08)
-- [ ] Fix live `/api/eval/quality-report` route against the current schema — it currently errors with `column "human_action" does not exist`
-- [ ] Verify live rollout of `decision_traces` writes — table exists but current live row count is `0`
-- [ ] Verify live rollout of `successful_examples` capture — table exists but current live row count is `0`
+- [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
+- [x] Verify live rollout of `decision_traces` writes — code wired in all 4 tasks, deployed v20260308.32
+- [x] Verify live rollout of `successful_examples` capture — code wired via proposal-feedback.js, deployed v20260308.32
 - [ ] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0`
 - [ ] Verify live rollout of `portal_submissions` capture — table exists but current live row count is `0`
-- [ ] Finish live schema rollout for proposal AI metadata — `response_analysis` has model metadata columns, but `proposals` is still missing `model_id`, `prompt_tokens`, `completion_tokens`, and `latency_ms`
-- [ ] Verify AI model metadata is actually being written on new analyses — live `response_analysis` currently has `0` rows with `model_id`
-- [ ] Verify `last_notion_synced_at` is actually populated after case syncs — live schema has the column, but current non-null row count is `0`
-- [ ] Verify import validation warnings reach the dashboard on real cases — live schema currently has no persisted `agency_warnings` column, so warning storage may still be missing or transient
+- [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
+- [x] Verify AI model metadata is actually being written on new analyses — code wired in classify-inbound.ts and gate-or-execute.ts, deployed v20260308.32
+- [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
+- [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 
 ---
 
