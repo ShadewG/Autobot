@@ -250,7 +250,7 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 #### Bug Reporting
 - [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes
 - [x] Auto-creates GitHub issue with context snapshot
-- [ ] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable
+- [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable
 
 ### P1 — Adaptive Learning System
 

@@ -773,7 +773,8 @@ router.put('/:id/tags', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Case not found' });
         }
 
-        await db.logActivity(caseId, 'tags_updated', `Tags updated to: ${cleaned.join(', ') || '(none)'}`, {
+        await db.logActivity('tags_updated', `Tags updated to: ${cleaned.join(', ') || '(none)'}`, {
+            case_id: caseId,
             tags: cleaned,
             user_id: req.body?.userId || 'dashboard',
         });
