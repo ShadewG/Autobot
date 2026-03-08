@@ -25,12 +25,54 @@ const getCaseRuntime = lazy(() => require("../../services/case-runtime"));
 const getSkyvern = lazy(() => require("../../services/portal-agent-service-skyvern"));
 const getNotion = lazy(() => require("../../services/notion-service"));
 const getDiscord = lazy(() => require("../../services/discord-service"));
+const getDecisionMemory = lazy(() => require("../../services/decision-memory-service"));
 
 const MAX_RECENT_FAILURES = 2;
 const FAILURE_WINDOW_HOURS = 24;
 const MAX_PORTAL_RUNS_PER_DAY = 3;
 const MAX_PORTAL_RUNS_TOTAL = 8;
 const STALE_CREDENTIAL_DAYS = 30;
+
+export function getPortalFailureSignature(errorText: any): string {
+  const text = String(errorText || "").toLowerCase();
+  if (!text.trim()) return "generic_failure";
+  if (/blocked-words|blocked words|spam filter|spam-filter/.test(text)) return "blocked_words";
+  if (/timeout|timed out|max duration|deadline exceeded|exceeded/.test(text)) return "timeout";
+  if (/captcha/.test(text)) return "captcha";
+  if (/login|sign in|authentication|credential|password/.test(text)) return "login_failure";
+  if (/duplicate|already submitted|already exists|previously submitted/.test(text)) return "duplicate_request";
+  if (/required field|validation|required/.test(text)) return "validation_error";
+  return "generic_failure";
+}
+
+export function buildPortalFailureLesson(caseData: any, provider: string | null, errorText: any) {
+  const agencyName = caseData?.agency_name || "unknown agency";
+  const providerLabel = String(provider || caseData?.portal_provider || "unknown portal").trim();
+  const signature = getPortalFailureSignature(errorText);
+  const hasEmailFallback = Boolean(caseData?.agency_email || caseData?.alternate_agency_email);
+  const lesson = hasEmailFallback
+    ? `Portal submission failed for ${agencyName} via ${providerLabel} (${signature}). Prefer email instead of retrying the same portal path when this failure recurs.`
+    : `Portal submission failed for ${agencyName} via ${providerLabel} (${signature}). Prefer manual portal handling instead of retrying the same portal path when this failure recurs.`;
+
+  return {
+    category: "portal",
+    triggerPattern: `portal failed for ${agencyName} via ${providerLabel} (${signature})`,
+    lesson,
+    priority: 8,
+  };
+}
+
+async function learnFromPortalFailure(caseData: any, provider: string | null, errorText: any) {
+  try {
+    if (!caseData?.id) return;
+    const decisionMemory = getDecisionMemory();
+    const lesson = buildPortalFailureLesson(caseData, provider, errorText);
+    await decisionMemory.learnFromOutcome({
+      ...lesson,
+      sourceCaseId: caseData.id,
+    });
+  } catch {}
+}
 
 export const submitPortal = task({
   id: "submit-portal",
@@ -47,6 +89,10 @@ export const submitPortal = task({
       const errorText = String(error || "");
       const looksLikeTimeout =
         /timeout|timed out|max duration|deadline exceeded|exceeded/i.test(errorText);
+      const failedCase = await db.getCaseById(caseId).catch(() => null);
+      if (failedCase) {
+        await learnFromPortalFailure(failedCase, failedCase.portal_provider || null, errorText);
+      }
 
       // Cancel the orphaned Skyvern workflow so it doesn't keep running
       const caseRow = await db.query(
@@ -773,6 +819,7 @@ export const submitPortal = task({
     } catch (error: any) {
       trace.markOutcome("failed", { error: error.message });
       logger.error("Portal submission failed", { caseId, error: error.message });
+      await learnFromPortalFailure(caseData, provider, error.message);
 
       // Update portal submission history row
       if (submissionRow?.id) {

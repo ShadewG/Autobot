@@ -89,7 +89,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Operator Workflow
 - [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation
 - [x] Full-text case search across case name, agency name, subject, email content
-- [ ] Finish mobile responsiveness: every page usable at 390px viewport
+- [x] Finish mobile responsiveness: every page usable at 390px viewport
 
 ### P1 — Important for confidence
 
@@ -136,31 +136,25 @@ Ordered by priority within each phase. Check items off as completed.
 
 Eval run scored 61 cases: 36 correct (59%), 25 wrong (41%). All failures are WRONG_ROUTING (23) or CONTEXT_MISSED (2). Five root causes identified below, with fixes.
 
-**Root Cause 1: ESCALATE overuse (10 failures)** 🔧 IN PROGRESS (Claude-main)
-The AI escalates to human review when it has enough info to act. Examples: agency says "Request denied" → AI escalates instead of sending rebuttal. Agency says "narrow to 3 years" → AI escalates instead of sending clarification. Agency says "contact State Police" → AI escalates instead of researching agency.
-- [ ] Add decision prompt rule: "ESCALATE is a last resort. If the trigger message contains a clear agency request, denial, fee notice, or referral, take the corresponding action (SEND_REBUTTAL, SEND_CLARIFICATION, RESEARCH_AGENCY, NEGOTIATE_FEE). Only ESCALATE when the situation is genuinely ambiguous or dangerous."
-- [ ] Add examples to decision prompt: terse denial → SEND_REBUTTAL, scope narrowing → SEND_CLARIFICATION, wrong agency with referral → RESEARCH_AGENCY, identity verification → SEND_CLARIFICATION
+**Root Cause 1: ESCALATE overuse (10 failures)** ✅ DONE
+- [x] Add decision prompt rule: ESCALATE last resort with concrete examples
+- [x] Add examples to decision prompt: terse denial → SEND_REBUTTAL, scope narrowing → SEND_CLARIFICATION, wrong agency with referral → RESEARCH_AGENCY, identity verification → SEND_CLARIFICATION
 
-**Root Cause 2: SEND_REBUTTAL vs SEND_APPEAL confusion (3 failures)** 🔧 IN PROGRESS (Claude-main)
-When agency cites privilege or provides Vaughn index (formal adverse determination), AI sends informal rebuttal instead of formal appeal. Risk: missed appeal deadlines.
-- [ ] Add decision prompt rule: "When agency issues a formal denial citing specific exemptions, provides a Vaughn index, or asserts categorical withholding under privilege, the next step is SEND_APPEAL (not SEND_REBUTTAL). Rebuttals are for vague/informal denials. Appeals are for formal exemption-based denials with cited statutes."
-- [ ] Add lesson: "Attorney-client privilege / work product assertions = formal denial → SEND_APPEAL"
+**Root Cause 2: SEND_REBUTTAL vs SEND_APPEAL confusion (3 failures)** ✅ DONE
+- [x] Add decision prompt rule: formal exemption-based denials → SEND_APPEAL, vague/informal → SEND_REBUTTAL
+- [x] Add lesson: attorney-client privilege / work product assertions = formal denial → SEND_APPEAL
 
-**Root Cause 3: Missing action types RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE (5 failures)** 🔧 IN PROGRESS (Claude-main)
-AI doesn't know how to handle partial approvals (some records released, some withheld) or fee warnings without dollar amounts. Defaults to NONE or ESCALATE.
-- [ ] Verify RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE are in the allowed actions list in `decide-next-action.ts`
-- [ ] If not present, add them with clear descriptions: RESPOND_PARTIAL_APPROVAL = "acknowledge receipt, request exemption citations for withheld records, ask about segregability and appeal rights"; NEGOTIATE_FEE = "request written estimate, set not-to-exceed cap, ask to be contacted before charges incurred"
-- [ ] Add decision prompt rule: "When agency releases some records but withholds others, use RESPOND_PARTIAL_APPROVAL. When agency mentions fees but hasn't given a dollar amount, use NEGOTIATE_FEE (never ACCEPT_FEE without a specific amount)."
+**Root Cause 3: Missing action types RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE (5 failures)** ✅ DONE
+- [x] Verified RESPOND_PARTIAL_APPROVAL and NEGOTIATE_FEE in allowed actions list, updated descriptions
+- [x] Add decision prompt rule: partial approval → RESPOND_PARTIAL_APPROVAL, fees without amount → NEGOTIATE_FEE
 
-**Root Cause 4: Monitor-dismissed cases getting actions (7 failures, all score 1)** 🔧 IN PROGRESS (Claude-main)
-Cases with no trigger message that should be DISMISSED (stale proposals, wrong agency, synthetic QA). AI invents actions instead of recognizing there's nothing to do. 4 of these specifically route to wrong jurisdiction (Lubbock TX portal for FL/GA/IL cases).
-- [ ] Add decision prompt rule: "If there is no trigger message (no new inbound email or event), strongly prefer DISMISS or NONE. Do not fabricate actions without a clear trigger."
-- [ ] Add guard in `decide-next-action.ts`: if no trigger message AND case status is not actively awaiting action, default to DISMISS without AI call
-- [ ] Investigate why Lubbock TX portal is being selected for unrelated jurisdictions — likely a stale/default portal_url on cases or a bug in portal URL resolution
+**Root Cause 4: Monitor-dismissed cases getting actions (7 failures, all score 1)** ✅ DONE
+- [x] Add decision prompt rule: "If there is no trigger message, strongly prefer DISMISS or NONE"
+- [x] Add guard in `decide-next-action.ts`: NO_RESPONSE + terminal/idle case status → return NONE without AI call
+- [x] Investigate Lubbock TX portal: agency #19 had wrong portal_url (fixed), all agencies had `state='{}'` preventing state filter (fixed with NULLIF), generic names like "Police Department" skip fuzzy match to prevent false positives. Cleaned 3 affected cases.
 
-**Root Cause 5: RESEARCH_AGENCY vs direct response confusion (3 failures)** 🔧 IN PROGRESS (Claude-main)
-AI sometimes wants to research before responding (when it should just respond) or responds (when it should research first). Pattern: vague "policy" denial → should rebut, but AI researches. "No duty to create" → should research what records exist, but AI reformulates.
-- [ ] Add decision prompt rule: "For vague denials citing 'policy' without statutory authority, SEND_REBUTTAL requesting the specific legal basis. For 'no duty to create' responses, RESEARCH_AGENCY to find what records the agency actually maintains before reformulating."
+**Root Cause 5: RESEARCH_AGENCY vs direct response confusion (3 failures)** ✅ DONE
+- [x] Add decision prompt rule: vague "policy" denial → SEND_REBUTTAL, "no duty to create" → RESEARCH_AGENCY
 
 #### Prompt & Classifier Alignment
 - [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract

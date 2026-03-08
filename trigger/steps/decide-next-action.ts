@@ -2803,6 +2803,28 @@ export async function decideNextAction(
       }
     }
 
+    // === NO_RESPONSE guard: no trigger message + terminal/idle case → skip AI ===
+    // Prevents AI from inventing actions for stale/dismissed/synthetic cases
+    if (classification === "NO_RESPONSE" && !isFollowupTrigger) {
+      const caseData = await db.getCaseById(caseId);
+      const caseStatus = String(caseData?.status || "").toLowerCase();
+      const terminalStatuses = [
+        "completed", "closed", "withdrawn", "cancelled",
+        "records_received", "case_completed",
+      ];
+      const idleStatuses = [
+        "new", "draft", "not_started",
+      ];
+      if (terminalStatuses.includes(caseStatus) || idleStatuses.includes(caseStatus)) {
+        logger.info("NO_RESPONSE guard: case is terminal/idle, returning NONE", {
+          caseId, caseStatus, classification,
+        });
+        return noAction([
+          `No trigger message and case is in ${caseStatus} status — no action needed`,
+        ]);
+      }
+    }
+
     // === AI Router v2 vs Legacy routing ===
     if (useAIRouter(caseId)) {
       logger.info("AI Router v2 active", { caseId, classification });

@@ -3328,14 +3328,17 @@ class DatabaseService {
         if (!agencyName) return null;
 
         try {
+            // Normalize '{}' state to NULL (legacy Notion import artifact)
+            const effectiveState = (state && state !== '{}') ? state : null;
+
             // First try exact match (state-specific if state provided)
             let result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
                 WHERE name = $1
-                  AND ($2::text IS NULL OR state = $2)
+                  AND ($2::text IS NULL OR NULLIF(state, '{}') = $2)
                 LIMIT 1
-            `, [agencyName, state]);
+            `, [agencyName, effectiveState]);
 
             if (result.rows.length > 0) {
                 return result.rows[0];
@@ -3347,13 +3350,13 @@ class DatabaseService {
             result = await this.query(`
                 SELECT id, name, state, portal_url, email_main, default_autopilot_mode
                 FROM agencies
-                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
-                  AND ($2::text IS NULL OR state IS NULL OR state = $2)
+                WHERE ($2::text IS NULL OR NULLIF(state, '{}') = $2 OR NULLIF(state, '{}') IS NULL)
+                  AND ($2::text IS NULL OR NULLIF(state, '{}') IS NULL OR NULLIF(state, '{}') = $2)
                   AND LOWER(REGEXP_REPLACE(name, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
                     = LOWER(REGEXP_REPLACE($1, '\\s*(Police\\s*Dep(ar)?t(ment)?|PD|Sheriff.s?\\s*(Office|Dep(ar)?t(ment)?)?|Law\\s*Enforcement|LEA)\\s*$', '', 'i'))
-                ORDER BY (state = $2)::int DESC
+                ORDER BY (NULLIF(state, '{}') = $2)::int DESC
                 LIMIT 1
-            `, [agencyName, state]);
+            `, [agencyName, effectiveState]);
 
             if (result.rows.length > 0) {
                 return result.rows[0];
@@ -3361,18 +3364,23 @@ class DatabaseService {
 
             // Try case-insensitive contains match as last resort
             // Same state or null-state only — never cross-state fuzzy matches
-            result = await this.query(`
-                SELECT id, name, state, portal_url, email_main, default_autopilot_mode
-                FROM agencies
-                WHERE ($2::text IS NULL OR state = $2 OR state IS NULL)
-                  AND ($2::text IS NULL OR state IS NULL OR state = $2)
-                  AND (
-                    LOWER(name) LIKE LOWER('%' || $1 || '%')
-                    OR LOWER($1) LIKE LOWER('%' || name || '%')
-                  )
-                ORDER BY (state = $2)::int DESC, LENGTH(name) ASC
-                LIMIT 1
-            `, [agencyName, state]);
+            // Skip fuzzy match for very generic names (e.g. "Police Department") to avoid false positives
+            const genericNames = ['police department', 'sheriff', "sheriff's office", 'city clerk', 'county clerk'];
+            const isGenericName = genericNames.includes(agencyName.toLowerCase().trim());
+            if (!isGenericName) {
+                result = await this.query(`
+                    SELECT id, name, state, portal_url, email_main, default_autopilot_mode
+                    FROM agencies
+                    WHERE ($2::text IS NULL OR NULLIF(state, '{}') = $2 OR NULLIF(state, '{}') IS NULL)
+                      AND ($2::text IS NULL OR NULLIF(state, '{}') IS NULL OR NULLIF(state, '{}') = $2)
+                      AND (
+                        LOWER(name) LIKE LOWER('%' || $1 || '%')
+                        OR LOWER($1) LIKE LOWER('%' || name || '%')
+                      )
+                    ORDER BY (NULLIF(state, '{}') = $2)::int DESC, LENGTH(name) ASC
+                    LIMIT 1
+                `, [agencyName, effectiveState]);
+            }
 
             return result.rows[0] || null;
 
