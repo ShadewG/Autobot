@@ -421,9 +421,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] FIXED — batch status route `GET /api/requests/batch/:batchId/status` had SQL type mismatch (`text[] @> jsonb`). Fixed by using `ARRAY[$1]::text[]` instead of `$1::text[]`. Deployed to Railway `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 no longer throws SQL error; nonexistent batch now returns 404 Batch not found)`
 
 #### Portal Status Monitoring
-- [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
-- [ ] Auto-update case status when portal shows "completed" or "records ready"
-- [ ] Alert operator when portal shows "denied" or "more info needed"
+- [x] Scheduled Skyvern scrape of portal status pages for submitted cases `(IMPLEMENTED - Codex 2026-03-08: cron-service now runs portal-status monitoring every 6 hours via portal-status-monitor-service.monitorSubmittedPortalCases)`
+- [x] Auto-update case status when portal shows "completed" or "records ready" `(TESTED VIA REGRESSION - Codex 2026-03-08: portal-status-monitor-service.test.js marks portal-monitored cases completed with outcome_type=records_ready)`
+- [x] Alert operator when portal shows "denied" or "more info needed" `(TESTED VIA REGRESSION - Codex 2026-03-08: portal-status-monitor-service.test.js creates ESCALATE proposals and moves cases to needs_human_review)`
 
 ### P1 — Scale features
 

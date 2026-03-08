@@ -12,6 +12,7 @@ const discordService = require('./discord-service');
 const draftQualityEvalService = require('./draft-quality-eval-service');
 const qualityReportService = require('./quality-report-service');
 const errorTrackingService = require('./error-tracking-service');
+const portalStatusMonitorService = require('./portal-status-monitor-service');
 const { transitionCaseRuntime, CaseLockContention } = require('./case-runtime');
 const { tasks } = require('@trigger.dev/sdk');
 
@@ -540,6 +541,21 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        this.jobs.portalStatusMonitoring = new CronJob('13 */6 * * *', async () => {
+            try {
+                const result = await portalStatusMonitorService.monitorSubmittedPortalCases({ limit: 5 });
+                if (result.checked > 0 || result.failures > 0) {
+                    console.log(`Portal status monitoring: checked ${result.checked}, records_ready ${result.recordsReady}, alerts ${result.alerts}, failures ${result.failures}`);
+                }
+            } catch (error) {
+                await errorTrackingService.captureException(error, {
+                    sourceService: 'cron_service',
+                    operation: 'portal_status_monitor_cron',
+                });
+                console.error('Error in portal status monitoring cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         console.log('✓ Notion sync: Every 5 minutes');
         console.log('✓ Cleanup: Daily at midnight');
         console.log('✓ Health check: Every 5 minutes');
@@ -554,6 +570,7 @@ class CronService {
         console.log('✓ Trigger dispatch recovery: Every 5 minutes');
         console.log('✓ Orphan review recovery: Every 5 minutes');
         console.log('✓ Portal submission dispatch: Every 2 minutes');
+        console.log('✓ Portal status monitoring: Every 6 hours');
     }
 
     /**
