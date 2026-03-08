@@ -1005,6 +1005,50 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async getCaseEmailEvents(caseId, { limit = 50, eventType = null } = {}) {
+        const params = [caseId];
+        let eventTypeClause = '';
+
+        if (eventType) {
+            params.push(eventType);
+            eventTypeClause = `AND ee.event_type = $${params.length}`;
+        }
+
+        params.push(limit);
+
+        const result = await this.query(`
+            SELECT
+                ee.id,
+                ee.message_id,
+                ee.provider_message_id,
+                ee.event_type,
+                ee.event_timestamp,
+                ee.raw_payload,
+                m.direction,
+                m.message_type,
+                m.subject,
+                m.from_email,
+                m.to_email
+            FROM email_events ee
+            LEFT JOIN messages m ON m.id = ee.message_id
+            WHERE (
+                m.case_id = $1
+                OR EXISTS (
+                    SELECT 1
+                    FROM messages m2
+                    WHERE m2.case_id = $1
+                      AND m2.sendgrid_message_id IS NOT NULL
+                      AND m2.sendgrid_message_id = ee.provider_message_id
+                )
+            )
+              ${eventTypeClause}
+            ORDER BY ee.event_timestamp DESC, ee.id DESC
+            LIMIT $${params.length}
+        `, params);
+
+        return result.rows;
+    }
+
     async markMessagePortalNotification(messageId, notificationData = {}) {
         const query = `
             UPDATE messages

@@ -4,7 +4,64 @@ const { db, logger, triggerDispatch, parseConstraints, generateOutcomeSummary } 
 const sendgridService = require('../../services/sendgrid-service');
 const { transitionCaseRuntime } = require('../../services/case-runtime');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
+const { sanitizeValue } = require('../../services/decision-trace-service');
 const { buildHumanDecision } = proposalLifecycle;
+
+const SENSITIVE_PAYLOAD_KEY_PATTERNS = [
+    /authorization/i,
+    /cookie/i,
+    /password/i,
+    /secret/i,
+    /token/i,
+    /^api[_-]?key$/i,
+    /refresh[_-]?token/i,
+    /access[_-]?token/i,
+];
+
+function parseIsoTimestamp(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseCsvParam(value) {
+    if (!value) return [];
+    return String(value)
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
+function isSensitivePayloadKey(key) {
+    return SENSITIVE_PAYLOAD_KEY_PATTERNS.some((pattern) => pattern.test(String(key || '')));
+}
+
+function redactSensitiveDebugFields(value, parentKey = null, depth = 0) {
+    if (value == null) return value;
+    if (depth > 6) return '[max-depth]';
+
+    if (parentKey && isSensitivePayloadKey(parentKey)) {
+        return '[redacted]';
+    }
+
+    if (Array.isArray(value)) {
+        return value.map((entry) => redactSensitiveDebugFields(entry, parentKey, depth + 1));
+    }
+
+    if (typeof value !== 'object') {
+        return value;
+    }
+
+    const output = {};
+    for (const [key, entry] of Object.entries(value)) {
+        output[key] = redactSensitiveDebugFields(entry, key, depth + 1);
+    }
+    return output;
+}
+
+function sanitizeDebugPayload(value) {
+    return redactSensitiveDebugFields(sanitizeValue(value));
+}
 
 /**
  * POST /api/requests/:id/research-exemption
@@ -1258,40 +1315,385 @@ router.get('/:id/provider-payloads', async (req, res) => {
     try {
         const caseId = parseInt(req.params.id, 10);
         const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 200));
+        const messageId = Number.isFinite(parseInt(req.query.messageId, 10)) ? parseInt(req.query.messageId, 10) : null;
+        const executionId = Number.isFinite(parseInt(req.query.executionId, 10)) ? parseInt(req.query.executionId, 10) : null;
         const caseData = await db.getCaseById(caseId);
         if (!caseData) {
             return res.status(404).json({ success: false, error: 'Case not found' });
         }
 
-        const [messageResult, executionResult] = await Promise.all([
+        const [messageResult, executionResult, emailEvents] = await Promise.all([
             db.query(
-                `SELECT id, direction, message_type, subject, from_email, to_email, provider_payload, created_at
+                `SELECT id, direction, message_type, subject, from_email, to_email, provider_payload, created_at,
+                        delivered_at, bounced_at, sendgrid_message_id
                  FROM messages
                  WHERE case_id = $1
                    AND provider_payload IS NOT NULL
+                   AND ($3::int IS NULL OR id = $3)
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT $2`,
+                [caseId, limit, messageId]
+            ),
+            db.query(
+                `SELECT id, proposal_id, action_type, status, provider, provider_payload, created_at, completed_at,
+                        provider_message_id, failure_stage, failure_code
+                 FROM executions
+                 WHERE case_id = $1
+                   AND provider_payload IS NOT NULL
+                   AND ($3::int IS NULL OR id = $3)
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT $2`,
+                [caseId, limit, executionId]
+            ),
+            db.getCaseEmailEvents(caseId, { limit }),
+        ]);
+
+        const relevantMessageIds = new Set(messageResult.rows.map((row) => row.id));
+        const relevantProviderMessageIds = new Set(
+            messageResult.rows.map((row) => row.sendgrid_message_id).filter(Boolean)
+        );
+        executionResult.rows.forEach((row) => {
+            if (row.provider_message_id) {
+                relevantProviderMessageIds.add(row.provider_message_id);
+            }
+        });
+
+        const correlatedEmailEvents = emailEvents.filter((event) => (
+            relevantMessageIds.has(event.message_id) ||
+            (event.provider_message_id && relevantProviderMessageIds.has(event.provider_message_id))
+        ));
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            messages: messageResult.rows.map((row) => ({
+                ...row,
+                provider_payload: sanitizeDebugPayload(row.provider_payload),
+            })),
+            executions: executionResult.rows.map((row) => ({
+                ...row,
+                provider_payload: sanitizeDebugPayload(row.provider_payload),
+            })),
+            email_events: correlatedEmailEvents.map((row) => ({
+                ...row,
+                raw_payload: sanitizeDebugPayload(row.raw_payload),
+            })),
+            filters: {
+                message_id: messageId,
+                execution_id: executionId,
+            },
+            summary: {
+                message_payload_count: messageResult.rows.length,
+                execution_payload_count: executionResult.rows.length,
+                email_event_count: correlatedEmailEvents.length,
+            },
+        });
+    } catch (error) {
+        logger.error('Error fetching provider payloads:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/:id/provider-payloads/:surface/:recordId
+ * Return a single payload/event with correlated records for deeper debugging.
+ */
+router.get('/:id/provider-payloads/:surface/:recordId', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const recordId = parseInt(req.params.recordId, 10);
+        const surface = String(req.params.surface || '').toLowerCase();
+
+        if (!Number.isFinite(recordId)) {
+            return res.status(400).json({ success: false, error: 'Invalid record ID' });
+        }
+
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        let entry = null;
+        let relatedMessages = [];
+        let relatedExecutions = [];
+        let relatedEmailEvents = [];
+
+        if (surface === 'messages') {
+            const messageResult = await db.query(
+                `SELECT id, case_id, direction, message_type, subject, from_email, to_email, created_at,
+                        delivered_at, bounced_at, sendgrid_message_id, provider_payload
+                 FROM messages
+                 WHERE case_id = $1
+                   AND id = $2
+                   AND provider_payload IS NOT NULL
+                 LIMIT 1`,
+                [caseId, recordId]
+            );
+            entry = messageResult.rows[0] || null;
+
+            if (entry) {
+                relatedMessages = [entry];
+                relatedEmailEvents = (await db.getCaseEmailEvents(caseId, { limit: 200 }))
+                    .filter((event) => event.message_id === entry.id || (entry.sendgrid_message_id && event.provider_message_id === entry.sendgrid_message_id));
+                relatedExecutions = entry.sendgrid_message_id
+                    ? (await db.query(
+                        `SELECT id, case_id, proposal_id, action_type, status, provider, provider_message_id, provider_payload,
+                                created_at, completed_at, failure_stage, failure_code
+                         FROM executions
+                         WHERE case_id = $1
+                           AND provider_message_id = $2
+                         ORDER BY created_at DESC, id DESC
+                         LIMIT 25`,
+                        [caseId, entry.sendgrid_message_id]
+                    )).rows
+                    : [];
+            }
+        } else if (surface === 'executions') {
+            const executionResult = await db.query(
+                `SELECT id, case_id, proposal_id, action_type, status, provider, provider_message_id, provider_payload,
+                        created_at, completed_at, failure_stage, failure_code
+                 FROM executions
+                 WHERE case_id = $1
+                   AND id = $2
+                   AND provider_payload IS NOT NULL
+                 LIMIT 1`,
+                [caseId, recordId]
+            );
+            entry = executionResult.rows[0] || null;
+
+            if (entry) {
+                relatedExecutions = [entry];
+                if (entry.provider_message_id) {
+                    relatedMessages = (await db.query(
+                        `SELECT id, case_id, direction, message_type, subject, from_email, to_email, created_at,
+                                delivered_at, bounced_at, sendgrid_message_id, provider_payload
+                         FROM messages
+                         WHERE case_id = $1
+                           AND sendgrid_message_id = $2
+                         ORDER BY created_at DESC, id DESC
+                         LIMIT 25`,
+                        [caseId, entry.provider_message_id]
+                    )).rows;
+                }
+                relatedEmailEvents = (await db.getCaseEmailEvents(caseId, { limit: 200 }))
+                    .filter((event) => entry.provider_message_id && event.provider_message_id === entry.provider_message_id);
+            }
+        } else if (surface === 'email-events') {
+            const emailEventResult = await db.query(
+                `SELECT
+                    ee.id,
+                    ee.message_id,
+                    ee.provider_message_id,
+                    ee.event_type,
+                    ee.event_timestamp,
+                    ee.raw_payload,
+                    m.case_id,
+                    m.direction,
+                    m.message_type,
+                    m.subject,
+                    m.from_email,
+                    m.to_email
+                 FROM email_events ee
+                 LEFT JOIN messages m ON m.id = ee.message_id
+                 WHERE ee.id = $2
+                   AND (
+                     m.case_id = $1
+                     OR EXISTS (
+                        SELECT 1
+                        FROM messages m2
+                        WHERE m2.case_id = $1
+                          AND m2.sendgrid_message_id IS NOT NULL
+                          AND m2.sendgrid_message_id = ee.provider_message_id
+                     )
+                   )
+                 LIMIT 1`,
+                [caseId, recordId]
+            );
+            entry = emailEventResult.rows[0] || null;
+
+            if (entry) {
+                relatedEmailEvents = [entry];
+                relatedMessages = (await db.query(
+                    `SELECT id, case_id, direction, message_type, subject, from_email, to_email, created_at,
+                            delivered_at, bounced_at, sendgrid_message_id, provider_payload
+                     FROM messages
+                     WHERE case_id = $1
+                       AND (
+                         ($2::int IS NOT NULL AND id = $2)
+                         OR ($3::text IS NOT NULL AND sendgrid_message_id = $3)
+                       )
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT 25`,
+                    [caseId, entry.message_id || null, entry.provider_message_id || null]
+                )).rows;
+                relatedExecutions = entry.provider_message_id
+                    ? (await db.query(
+                        `SELECT id, case_id, proposal_id, action_type, status, provider, provider_message_id, provider_payload,
+                                created_at, completed_at, failure_stage, failure_code
+                         FROM executions
+                         WHERE case_id = $1
+                           AND provider_message_id = $2
+                         ORDER BY created_at DESC, id DESC
+                         LIMIT 25`,
+                        [caseId, entry.provider_message_id]
+                    )).rows
+                    : [];
+            }
+        } else {
+            return res.status(400).json({ success: false, error: 'Unsupported payload surface' });
+        }
+
+        if (!entry) {
+            return res.status(404).json({ success: false, error: 'Payload record not found for case' });
+        }
+
+        const sanitizeMessageRow = (row) => ({
+            ...row,
+            provider_payload: sanitizeDebugPayload(row.provider_payload),
+        });
+        const sanitizeExecutionRow = (row) => ({
+            ...row,
+            provider_payload: sanitizeDebugPayload(row.provider_payload),
+        });
+        const sanitizeEmailEventRow = (row) => ({
+            ...row,
+            raw_payload: sanitizeDebugPayload(row.raw_payload),
+        });
+
+        const sanitizedEntry = surface === 'messages'
+            ? sanitizeMessageRow(entry)
+            : surface === 'executions'
+                ? sanitizeExecutionRow(entry)
+                : sanitizeEmailEventRow(entry);
+
+        res.json({
+            success: true,
+            case_id: caseId,
+            source: surface,
+            record_id: recordId,
+            entry: sanitizedEntry,
+            related: {
+                messages: relatedMessages.map(sanitizeMessageRow),
+                executions: relatedExecutions.map(sanitizeExecutionRow),
+                email_events: relatedEmailEvents.map(sanitizeEmailEventRow),
+            },
+        });
+    } catch (error) {
+        logger.error('Error fetching provider payload detail:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/:id/audit-stream
+ * Return a unified append-only case audit stream across ledger, activity, email events, and portal attempts.
+ */
+router.get('/:id/audit-stream', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 100, 300));
+        const sourceFilters = new Set(parseCsvParam(req.query.source).map((value) => value.toLowerCase()));
+        const before = parseIsoTimestamp(req.query.before);
+        const after = parseIsoTimestamp(req.query.after);
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const [ledgerResult, activityResult, portalSubmissions, emailEvents, errorEventsResult] = await Promise.all([
+            db.query(
+                `SELECT id, event, transition_key, context, mutations_applied, projection, created_at
+                 FROM case_event_ledger
+                 WHERE case_id = $1
                  ORDER BY created_at DESC, id DESC
                  LIMIT $2`,
                 [caseId, limit]
             ),
             db.query(
-                `SELECT id, proposal_id, action_type, status, provider, provider_payload, created_at, completed_at
-                 FROM executions
+                `SELECT id, event_type, description, metadata, actor_type, actor_id, source_service, created_at
+                 FROM activity_log
                  WHERE case_id = $1
-                   AND provider_payload IS NOT NULL
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT $2`,
+                [caseId, limit]
+            ),
+            db.getPortalSubmissions(caseId, { limit }),
+            db.getCaseEmailEvents(caseId, { limit }),
+            db.query(
+                `SELECT id, source_service, operation, error_name, error_code, error_message, retryable, retry_attempt, metadata, created_at
+                 FROM error_events
+                 WHERE case_id = $1
                  ORDER BY created_at DESC, id DESC
                  LIMIT $2`,
                 [caseId, limit]
             ),
         ]);
 
+        const allEntries = [
+            ...ledgerResult.rows.map((row) => ({
+                source: 'case_event_ledger',
+                timestamp: row.created_at,
+                sort_key: row.id,
+                payload: row,
+            })),
+            ...activityResult.rows.map((row) => ({
+                source: 'activity_log',
+                timestamp: row.created_at,
+                sort_key: row.id,
+                payload: row,
+            })),
+            ...portalSubmissions.map((row) => ({
+                source: 'portal_submissions',
+                timestamp: row.started_at || row.created_at || row.completed_at,
+                sort_key: row.id,
+                payload: row,
+            })),
+            ...emailEvents.map((row) => ({
+                source: 'email_events',
+                timestamp: row.event_timestamp || row.created_at,
+                sort_key: row.id,
+                payload: row,
+            })),
+            ...errorEventsResult.rows.map((row) => ({
+                source: 'error_events',
+                timestamp: row.created_at,
+                sort_key: row.id,
+                payload: row,
+            })),
+        ]
+            .filter((row) => row.timestamp)
+            .filter((row) => sourceFilters.size === 0 || sourceFilters.has(row.source))
+            .filter((row) => !before || new Date(row.timestamp).getTime() < before.getTime())
+            .filter((row) => !after || new Date(row.timestamp).getTime() > after.getTime())
+            .sort((a, b) => {
+                const tsDiff = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+                if (tsDiff !== 0) return tsDiff;
+                return Number(b.sort_key || 0) - Number(a.sort_key || 0);
+            });
+
+        const summary = allEntries.reduce((acc, entry) => {
+            acc.total += 1;
+            acc.by_source[entry.source] = (acc.by_source[entry.source] || 0) + 1;
+            return acc;
+        }, { total: 0, by_source: {} });
+
+        const entries = allEntries.slice(0, limit);
+
         res.json({
             success: true,
             case_id: caseId,
-            messages: messageResult.rows,
-            executions: executionResult.rows,
+            count: entries.length,
+            summary,
+            filters: {
+                sources: Array.from(sourceFilters),
+                before: before ? before.toISOString() : null,
+                after: after ? after.toISOString() : null,
+            },
+            next_before: entries.length === limit ? entries[entries.length - 1]?.timestamp || null : null,
+            entries,
         });
     } catch (error) {
-        logger.error('Error fetching provider payloads:', error);
+        logger.error('Error fetching audit stream:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

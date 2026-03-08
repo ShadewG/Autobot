@@ -94,6 +94,33 @@ describe('Notion sync guards', function () {
     assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678-1234-1234-1234-123456789012');
   });
 
+  it('tracks page-property lookup failures with page context', async function () {
+    sinon.stub(notionService.notion.pages, 'retrieve').rejects(Object.assign(new Error('property fetch failed'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await assert.rejects(
+      () => notionService.getPagePropertyNames('12345678-1234-1234-1234-123456789012'),
+      /property fetch failed/
+    );
+
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'get_page_property_names');
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678-1234-1234-1234-123456789012');
+  });
+
+  it('tracks database schema lookup failures with database context', async function () {
+    notionService.databaseSchema = null;
+    notionService.databaseSchemaFetchedAt = 0;
+    sinon.stub(notionService.notion.databases, 'retrieve').rejects(Object.assign(new Error('schema unavailable'), { status: 503 }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    const result = await notionService.getDatabaseSchemaProperties();
+
+    assert.strictEqual(result, null);
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].operation, 'get_database_schema_properties');
+  });
+
   it('tracks AI summary sync failures with case context', async function () {
     sinon.stub(db, 'getCaseById').resolves({
       id: 11,

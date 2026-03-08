@@ -2276,13 +2276,23 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             return cacheEntry.properties;
         }
 
-        const page = await this.notion.pages.retrieve({ page_id: pageId });
-        const properties = Object.keys(page.properties || {});
-        this.pagePropertyCache.set(pageId, {
-            properties,
-            cachedAt: now
-        });
-        return properties;
+        try {
+            const page = await this.notion.pages.retrieve({ page_id: pageId });
+            const properties = Object.keys(page.properties || {});
+            this.pagePropertyCache.set(pageId, {
+                properties,
+                cachedAt: now
+            });
+            return properties;
+        } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'get_page_property_names',
+                retryable: isRetryableNotionError(error),
+                metadata: { pageId },
+            });
+            throw error;
+        }
     }
 
     async getDatabaseSchemaProperties() {
@@ -2299,6 +2309,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             this.databaseSchemaFetchedAt = now;
             return this.databaseSchema;
         } catch (error) {
+            await errorTrackingService.captureException(error, {
+                sourceService: 'notion_service',
+                operation: 'get_database_schema_properties',
+                retryable: isRetryableNotionError(error),
+                metadata: { databaseId: this.databaseId },
+            });
             console.error('Failed to retrieve Notion database schema:', error.message);
             return null;
         }

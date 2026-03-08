@@ -2184,46 +2184,82 @@ class SendGridService {
     }
 
     async queueFeeResponseDraft({ caseData, feeQuote, messageId, recommendedAction = 'negotiate', instructions = null }) {
+        const metadata = {
+            fee_amount: feeQuote.amount,
+            fee_currency: feeQuote.currency,
+            recommended_action: recommendedAction,
+            instructions,
+            generated_at: new Date().toISOString(),
+            source: 'legacy_fee_bridge'
+        };
+
+        const feeActionMap = {
+            accept: 'ACCEPT_FEE',
+            negotiate: 'NEGOTIATE_FEE',
+            decline: 'DECLINE_FEE',
+            waiver: 'SEND_FEE_WAIVER_REQUEST'
+        };
+
         try {
-            const draft = await aiService.generateFeeResponse(caseData, {
-                feeAmount: feeQuote.amount,
-                currency: feeQuote.currency,
-                recommendedAction,
-                instructions
+            const actionType = feeActionMap[recommendedAction] || 'ESCALATE';
+            let draftSubject = null;
+            let draftBodyText = null;
+            let reasoning = [];
+
+            if (actionType === 'ESCALATE') {
+                draftSubject = `Manual fee review needed for case ${caseData.id}`;
+                draftBodyText = [
+                    `Agency issued a fee quote of $${Number(feeQuote.amount || 0).toFixed(2)}${feeQuote.currency ? ` ${feeQuote.currency}` : ''}.`,
+                    'Legacy fee auto-draft path was retired. Review the inbound fee notice and choose the next action manually.'
+                ].join(' ');
+                reasoning = [
+                    { step: 'Fee quote detected', detail: `Legacy fee path received quote for $${Number(feeQuote.amount || 0).toFixed(2)}.` },
+                    { step: 'Fallback', detail: 'Creating manual escalation instead of writing to auto_reply_queue.' }
+                ];
+            } else {
+                const draft = await aiService.generateFeeResponse(caseData, {
+                    feeAmount: feeQuote.amount,
+                    currency: feeQuote.currency,
+                    recommendedAction,
+                    instructions
+                });
+                draftSubject = draft.subject || `Re: Fee estimate for case ${caseData.id}`;
+                draftBodyText = draft.reply_text || draft.body || '';
+                reasoning = [
+                    { step: 'Fee quote detected', detail: `Prepared ${actionType} proposal for $${Number(feeQuote.amount || 0).toFixed(2)}.` },
+                    { step: 'Compatibility bridge', detail: 'Legacy fee path now writes proposals, not auto_reply_queue.' }
+                ];
+            }
+
+            const proposal = await db.upsertProposal({
+                proposalKey: `${caseData.id}:${messageId || 'no-msg'}:legacy_fee:${actionType}`,
+                caseId: caseData.id,
+                triggerMessageId: messageId,
+                actionType,
+                draftSubject,
+                draftBodyText,
+                reasoning,
+                confidence: actionType === 'ESCALATE' ? 0 : 0.9,
+                requiresHuman: true,
+                canAutoExecute: false,
+                status: 'PENDING_APPROVAL',
+                warnings: ['legacy_fee_auto_reply_queue_retired']
             });
 
-            const metadata = {
-                fee_amount: feeQuote.amount,
-                fee_currency: feeQuote.currency,
-                recommended_action: recommendedAction,
-                instructions: instructions,
-                generated_at: new Date().toISOString()
-            };
-
-            const entry = await db.createAutoReplyQueueEntry({
-                message_id: messageId,
-                case_id: caseData.id,
-                generated_reply: draft.reply_text,
-                confidence_score: 0.9,
-                requires_approval: true,
-                response_type: 'fee_negotiation',
-                metadata: metadata,
-                last_regenerated_at: new Date()
-            });
-
-            await db.logActivity('fee_response_prepared', `Fee response draft queued (${recommendedAction})`, {
+            await db.logActivity('fee_response_prepared', `Fee response proposal queued (${recommendedAction})`, {
                 case_id: caseData.id,
                 message_id: messageId,
-                auto_reply_queue_id: entry.id,
+                proposal_id: proposal.id,
                 metadata
             });
 
-            return entry;
+            return proposal;
         } catch (error) {
             console.error('Error queueing fee response draft:', error);
             await db.logActivity('fee_response_failed', `Failed to draft fee response: ${error.message}`, {
                 case_id: caseData.id,
-                message_id: messageId
+                message_id: messageId,
+                metadata
             });
             throw error;
         }

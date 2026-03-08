@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-03-08T18:09:13.398Z",
+  "timestamp": "2026-03-08T21:24:08.176Z",
   "summary": {
     "total": 24,
-    "passed": 24,
-    "failed": 0,
-    "passRate": 100,
+    "passed": 23,
+    "failed": 1,
+    "passRate": 96,
     "invariantViolations": 0,
-    "warnings": 0,
+    "warnings": 13,
     "jsonValidRate": 100,
     "portalCorrectRate": 100,
     "noEmailValidityRate": 100,
@@ -39,9 +39,27 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.98,
+        "sentiment": "neutral",
+        "portal_url": "https://raleighnc.nextrequest.com",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": "They instruct submission through the NextRequest portal; no email reply is needed.",
+        "denial_subtype": null,
+        "key_points": [
+          "Raleigh PD uses NextRequest for all public records requests",
+          "Submit the request via the online portal",
+          "Portal allows tracking and faster processing"
+        ],
+        "summary": "Raleigh Police Department requires public records requests to be submitted through its NextRequest portal. Submit the request at the provided portal URL to proceed.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 4414
     },
     {
       "fixture_id": "portal_redirect_no_url",
@@ -51,9 +69,27 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.94,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": "Agency requires submission via GovQA portal and will not process email requests.",
+        "denial_subtype": null,
+        "key_points": [
+          "CMPD requires public records requests via GovQA portal",
+          "They cannot process requests submitted by email",
+          "They suggest searching 'Charlotte CMPD records request' to find portal"
+        ],
+        "summary": "CMPD will not process the request by email and instructs submitting the public records request through their GovQA portal.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 5479
     },
     {
       "fixture_id": "acknowledgment",
@@ -63,9 +99,27 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "acknowledgment",
+        "confidence": 0.95,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "wait",
+        "reason_no_response": "This is a receipt/processing acknowledgment with no questions or required actions.",
+        "denial_subtype": null,
+        "key_points": [
+          "Request received by Chicago Police Department FOIA Office",
+          "Tracking number assigned: 2024-001234",
+          "Agency states response within 5 business days"
+        ],
+        "summary": "CPD acknowledged receipt of the FOIA request and assigned tracking number 2024-001234, stating they will respond within 5 business days.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 5228
     },
     {
       "fixture_id": "records_ready_link",
@@ -75,9 +129,29 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "records_ready",
+        "confidence": 0.95,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "download",
+        "reason_no_response": "Records are available for download and no confirmation or payment is requested.",
+        "denial_subtype": null,
+        "key_points": [
+          "Records are ready for download",
+          "Download link provided",
+          "Link expires in 30 days",
+          "3 files total",
+          "Total size 245 MB"
+        ],
+        "summary": "Seattle Police Department provided a download link for the requested records. The link will expire in 30 days.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 4593
     },
     {
       "fixture_id": "delivery_attached",
@@ -87,9 +161,29 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "records_ready",
+        "confidence": 0.96,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "download",
+        "reason_no_response": "Records were provided as attachments and the agency states the request is complete.",
+        "denial_subtype": null,
+        "key_points": [
+          "Requested records provided as email attachments",
+          "Incident report PDF included",
+          "911 call audio MP3 included",
+          "Agency states this completes the request",
+          "Reply only if there are questions"
+        ],
+        "summary": "Denver Police Department provided the requested records as attachments (incident report and 911 audio) and indicated the request is complete.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 4908
     },
     {
       "fixture_id": "partial_delivery_more_coming",
@@ -99,21 +193,75 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "partial_delivery",
+        "confidence": 0.93,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "download",
+        "reason_no_response": "They delivered records and will send remaining footage after redactions.",
+        "denial_subtype": null,
+        "key_points": [
+          "Partial release of responsive records provided",
+          "Incident report attached",
+          "911 audio attached",
+          "Body-worn camera footage pending redactions",
+          "BWC expected within 10 business days"
+        ],
+        "summary": "Phoenix PD provided a partial release with the incident report and 911 audio attached. Body-worn camera footage is still being processed for redactions and is expected within 10 business days.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 5586
     },
     {
       "fixture_id": "more_info_needed",
       "category": "respond_required",
       "description": "Agency needs clarification on date/location",
-      "passed": true,
+      "passed": false,
       "invariant_violations": [],
-      "errors": [],
-      "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "errors": [
+        "Word count 103 exceeds limit 100 for more_info_needed"
+      ],
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "analysis": {
+        "intent": "more_info_needed",
+        "confidence": 0.94,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "respond",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Agency requests exact incident date",
+          "Agency asks for DR/case number if known",
+          "Agency requests specific address or intersection",
+          "They will proceed after receiving details"
+        ],
+        "summary": "LAPD Records Division needs additional details (incident date, DR/case number, and location) to locate responsive records and proceed.",
+        "requires_action": true
+      },
+      "draft": {
+        "subject": "RE: RE: Records Request - Clarification Needed",
+        "body_text": "Hello LAPD Records Division,\n\nHere are the details you requested:\n\n1. Incident date: March 15, 2024\n2. DR/case number: I do not have the DR number or case number at this time.\n3. Location: 500 N Main St, Los Angeles, CA (near the intersection of N Main St and W Temple St)\n\nIf it helps to narrow the search, please start with any incident/arrest report and associated CAD/dispatch records for this location on 3/15/2024 involving David Lee. If multiple incidents match, please let me know what additional details (time of day, type of incident, etc.) would help narrow it further.\n\nThank you.\n\nRequester",
+        "body_html": "<p>Hello LAPD Records Division,</p><p>Here are the details you requested:</p><p>1. Incident date: March 15, 2024<br>2. DR/case number: I do not have the DR number or case number at this time.<br>3. Location: 500 N Main St, Los Angeles, CA (near the intersection of N Main St and W Temple St)</p><p>If it helps to narrow the search, please start with any incident/arrest report and associated CAD/dispatch records for this location on 3/15/2024 involving David Lee. If multiple incidents match, please let me know what additional details (time of day, type of incident, etc.) would help narrow it further.</p><p>Thank you.</p><p>Requester</p>",
+        "model": "gpt-5.2-2025-12-11",
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 731,
+          "completionTokens": 447,
+          "latencyMs": 8678
+        }
+      },
+      "duration_ms": 13104
     },
     {
       "fixture_id": "direct_question",
@@ -122,10 +270,41 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "analysis": {
+        "intent": "question",
+        "confidence": 0.93,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "respond",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Agency asks to confirm requested footage type",
+          "They have both body-worn camera and dashcam available",
+          "They will proceed after our confirmation"
+        ],
+        "summary": "Houston PD asks whether you want only body-worn camera footage or dashcam footage as well, and will proceed once you confirm.",
+        "requires_action": true
+      },
+      "draft": {
+        "subject": "RE: RE: FOIA Request - Quick Question",
+        "body_text": "Thanks for checking. Please include both the body-worn camera footage and any available dashcam footage for the incident(s) involving Eva Martinez.\n\nIf pulling both will significantly delay processing, please proceed with the body-worn camera footage first and let me know the estimated timeframe (or any added cost) to provide the dashcam footage as well.\n\nThank you.\n\nRequester",
+        "body_html": "<p>Thanks for checking. Please include both the body-worn camera footage and any available dashcam footage for the incident(s) involving Eva Martinez.</p><p>If pulling both will significantly delay processing, please proceed with the body-worn camera footage first and let me know the estimated timeframe (or any added cost) to provide the dashcam footage as well.</p><p>Thank you.</p><p>Requester</p>",
+        "model": "gpt-5.2-2025-12-11",
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 692,
+          "completionTokens": 225,
+          "latencyMs": 5274
+        }
+      },
+      "duration_ms": 9830
     },
     {
       "fixture_id": "fee_request_low",
@@ -134,10 +313,36 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 0.93,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 35,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "pay_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Agency located responsive records",
+          "Fee is $35.00 for copying and processing",
+          "They require confirmation to proceed with payment",
+          "Payment instructions will be provided after confirmation"
+        ],
+        "summary": "San Diego PD located responsive records and requires a $35.00 payment; they ask you to confirm you want to proceed so they can send payment instructions.",
+        "requires_action": true
+      },
+      "draft": {
+        "subject": "RE: Fee Acceptance - Frank Wilson",
+        "body_text": "Hello,\n\nThanks for the estimate. I confirm I accept the $35.00 fee to proceed with this request.\n\nWhat payment methods do you accept (check, money order, or credit card)? If payment must be mailed, please send an invoice and the correct mailing address and any details needed to ensure it’s credited to my request.\n\nI appreciate your help.\n\nThank you,\n\nRequester",
+        "body_html": "<p>Hello,</p><p>Thanks for the estimate. I confirm I accept the $35.00 fee to proceed with this request.</p><p>What payment methods do you accept (check, money order, or credit card)? If payment must be mailed, please send an invoice and the correct mailing address and any details needed to ensure it’s credited to my request.</p><p>I appreciate your help.</p><p>Thank you,</p><p>Requester</p>",
+        "model": "gpt-5.2-2025-12-11"
+      },
+      "duration_ms": 7787
     },
     {
       "fixture_id": "fee_request_high",
@@ -146,10 +351,44 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 0.95,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 750,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "negotiate_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Estimated total cost is $750.00",
+          "Hourly rate quoted: $75/hr",
+          "Estimated hours: 9 total (search, review, redaction)",
+          "Includes $75 media copying charge",
+          "Agency asks to confirm whether to proceed"
+        ],
+        "summary": "NYPD provided a $750 cost estimate with a detailed breakdown and requests confirmation to proceed before continuing.",
+        "requires_action": true
+      },
+      "draft": {
+        "subject": "RE: Fee Response - Grace Kim",
+        "body_text": "Thanks for the update on case “Grace Kim” and the quoted $750. To help reduce the cost and turnaround time, we’re happy to narrow the request to just the most critical footage:\n\n- Video from the primary responding officer(s) and the arresting officer(s) only (no other units)\n- A tighter time window: 30 minutes before through 60 minutes after the incident/arrest (or whatever minimum window you recommend)\n\nIf an incident number, arrest number, complaint number, or related report number would help you identify the correct officers and videos, please let us know what you need and we’ll provide it.\n\nWe’re also requesting a waiver or reduction of fees in the public interest as a documentary/news media project, under New York FOIL (Public Officers Law, Article 6).\n\nThank you,\n\nRequester",
+        "body_html": null,
+        "model": "gpt-5.2-2025-12-11",
+        "recommended_action": "negotiate",
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 719,
+          "completionTokens": 495,
+          "latencyMs": 9089
+        }
+      },
+      "duration_ms": 13313
     },
     {
       "fixture_id": "denial_weak",
@@ -159,9 +398,27 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "denial",
+        "confidence": 0.93,
+        "sentiment": "negative",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "send_rebuttal",
+        "reason_no_response": "The agency denied the request; a reply is optional unless you want to appeal or seek a partial release.",
+        "denial_subtype": "other",
+        "key_points": [
+          "Request for records is denied",
+          "Records not available for release at this time",
+          "Response sent by Atlanta Police Department"
+        ],
+        "summary": "Atlanta Police Department denied the records request, stating the records are not available for release at this time.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 4719
     },
     {
       "fixture_id": "denial_strong",
@@ -171,9 +428,29 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "denial",
+        "confidence": 0.94,
+        "sentiment": "negative",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "send_rebuttal",
+        "reason_no_response": "Agency denied due to active criminal investigation; a reply is optional only if challenging or requesting segregable/redacted portions.",
+        "denial_subtype": "ongoing_investigation",
+        "key_points": [
+          "Request denied for January 10, 2024 incident records",
+          "Cited active criminal investigation as basis for denial",
+          "Release would interfere and compromise witness safety",
+          "Cited Florida Statute 119.071(2)(c)",
+          "Suggests resubmitting after investigation closes"
+        ],
+        "summary": "Miami Police Department denied the request because the matter involves an active criminal investigation under Fla. Stat. 119.071(2)(c). They advise resubmitting once the investigation is closed.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 5487
     },
     {
       "fixture_id": "wrong_agency",
@@ -183,9 +460,28 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "wrong_agency",
+        "confidence": 0.92,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "find_correct_agency",
+        "reason_no_response": "Dallas PD states the incident is under Dallas County Sheriff's Office jurisdiction and provides contact information.",
+        "denial_subtype": null,
+        "key_points": [
+          "Incident occurred in Dallas County Sheriff's Office jurisdiction",
+          "Dallas Police Department is not the correct agency",
+          "Redirected to Dallas County Sheriff's Office Records Division",
+          "Provided alternate contact email: records@dallascounty.org"
+        ],
+        "summary": "Dallas PD indicates the requested incident falls under the Dallas County Sheriff's Office jurisdiction and directs you to submit the request to their Records Division.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 4159
     },
     {
       "fixture_id": "retention_expired",
@@ -194,10 +490,31 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
+      "warnings": [
+        "suggested_action mismatch: got \"respond\", expected \"send_rebuttal\""
+      ],
+      "analysis": {
+        "intent": "denial",
+        "confidence": 0.93,
+        "sentiment": "negative",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "respond",
+        "reason_no_response": "The agency closed the request due to retention expiration; no immediate reply is required unless you want to challenge or clarify.",
+        "denial_subtype": "retention_expired",
+        "key_points": [
+          "BWC footage requested is no longer available",
+          "Cited retention policy BWC-2019-001",
+          "BWC footage retained 180 days unless held",
+          "Incident date March 15, 2023 beyond retention"
+        ],
+        "summary": "Memphis PD states the requested body-worn camera footage is no longer available because it exceeded the 180-day retention period under policy BWC-2019-001.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 6713
     },
     {
       "fixture_id": "hostile",
@@ -207,9 +524,32 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "analysis": {
+        "intent": "hostile",
+        "confidence": 0.93,
+        "sentiment": "hostile",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "escalate",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Agency refuses to handle request via email",
+          "Calls request a fishing expedition and waste of resources",
+          "Directs requester to call during business hours",
+          "Dismissive toward out-of-state documentary company",
+          "No portal, fee, deadline, or records provided"
+        ],
+        "summary": "The officer responds in a hostile, dismissive manner and refuses to process the request as submitted, directing the requester to call the station during business hours.",
+        "requires_action": true
+      },
+      "draft": {
+        "should_auto_reply": false,
+        "reason": "Intent not suitable for auto-reply"
+      },
+      "duration_ms": 4644
     },
     {
       "fixture_id": "sensitive_minors",
@@ -218,10 +558,43 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "analysis": {
+        "intent": "question",
+        "confidence": 0.93,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "respond",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Agency located responsive records",
+          "Incident involves a 14-year-old minor victim",
+          "They must redact all juvenile identifying information",
+          "Body camera footage can be provided heavily redacted",
+          "Agency asks whether to proceed with redacted version"
+        ],
+        "summary": "Portland Police Bureau located responsive records but says juvenile-identifying information must be redacted. They ask you to confirm whether you want the heavily redacted body-camera footage.",
+        "requires_action": true
+      },
+      "draft": {
+        "subject": "RE: RE: Records Request - Sensitive Content Notice",
+        "body_text": "Yes, please proceed with the redacted version of the body-worn camera footage, with faces/voices and any identifying details about the juvenile obscured.\n\nBefore you process it, could you please confirm:\n- Any estimated cost/fees for the redactions and a rough time estimate\n- The delivery format (download link is fine)\n\nAlso, to help you locate the correct incident, please let me know what incident date, general location, or case number you have associated with the responsive records. If there are multiple related events, I’m happy to narrow the request to a specific report number or date range.\n\nThank you,\n\nRequester",
+        "body_html": "<p>Yes, please proceed with the redacted version of the body-worn camera footage, with faces/voices and any identifying details about the juvenile obscured.</p><p>Before you process it, could you please confirm:<br>- Any estimated cost/fees for the redactions and a rough time estimate<br>- The delivery format (download link is fine)</p><p>Also, to help you locate the correct incident, please let me know what incident date, general location, or case number you have associated with the responsive records. If there are multiple related events, I’m happy to narrow the request to a specific report number or date range.</p><p>Thank you,</p><p>Requester</p>",
+        "model": "gpt-5.2-2025-12-11",
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 741,
+          "completionTokens": 280,
+          "latencyMs": 5009
+        }
+      },
+      "duration_ms": 9516
     },
     {
       "fixture_id": "no_response_followup_attempt_1",
@@ -230,9 +603,21 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "draft": {
+        "subject": "Follow-up: Public Records Request - Mike Nelson",
+        "body_text": "Hello,\n\nI’m following up on my public information request sent to the Austin Police Department on 2026-01-13 regarding “Mike Nelson.” I know your team may be handling a high volume of requests, so I wanted to check in and see if there’s an update on the status and any anticipated timeline for a response.\n\nWe remain interested in obtaining the requested records. If it would help expedite processing, I’m also happy to discuss narrowing or clarifying the scope.\n\nThank you for your time, and I appreciate your help.\n\nRequester",
+        "body_html": null,
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 491,
+          "completionTokens": 220,
+          "latencyMs": 4226
+        }
+      },
+      "duration_ms": 4640
     },
     {
       "fixture_id": "no_response_followup_attempt_2",
@@ -241,9 +626,21 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "draft": {
+        "subject": "Follow-up: Public Records Request - Nancy Green",
+        "body_text": "Hello,\n\nI’m following up on my Texas Public Information Act request sent on 2026-01-06 regarding records related to Nancy Green, submitted to the San Antonio Police Department. I have not yet received an acknowledgment, determination, or estimated completion date.\n\nTexas provides a 10-business-day timeframe for an agency to respond or request an applicable extension. Given the time that has passed, please provide a status update and an ETA for when I can expect a response and any available records.\n\nI remain interested in receiving the requested records. If the request needs clarification or narrowing to facilitate processing, please let me know what adjustments would be most helpful.\n\nThank you.\n\nRequester",
+        "body_html": null,
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 508,
+          "completionTokens": 277,
+          "latencyMs": 6221
+        }
+      },
+      "duration_ms": 6262
     },
     {
       "fixture_id": "no_response_followup_attempt_3_final",
@@ -252,9 +649,21 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "Draft missing proper signature"
+      ],
+      "draft": {
+        "subject": "Follow-up: Public Records Request - Oscar Brown",
+        "body_text": "Hello Fort Worth Police Department Public Information Office,\n\nThis is my final follow-up regarding my public records request concerning Oscar Brown, originally submitted on 2025-12-31. I’m still awaiting a response.\n\nUnder the Texas Public Information Act, agencies generally have 10 business days to respond. Please provide a status update and an estimated date for when I can expect the responsive records (or a written determination regarding the request).\n\nIf any part of my request is unclear or too broad, I’m happy to discuss narrowing the scope so it can be processed more efficiently. If needed, please also share the appropriate supervisor or alternate contact who can assist in resolving the status of this request.\n\nThank you for your help, and I remain interested in receiving the requested records.\n\nRequester",
+        "body_html": null,
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 508,
+          "completionTokens": 372,
+          "latencyMs": 7379
+        }
+      },
+      "duration_ms": 7422
     },
     {
       "fixture_id": "multi_portal_plus_fee",
@@ -264,9 +673,28 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.92,
+        "sentiment": "neutral",
+        "portal_url": "https://sanfrancisco.nextrequest.com",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": "Agency instructs submitting the request via the NextRequest portal; no reply required until after submission.",
+        "denial_subtype": null,
+        "key_points": [
+          "All requests must be submitted via NextRequest portal",
+          "Portal URL provided: sanfrancisco.nextrequest.com",
+          "Fees will be estimated after portal submission",
+          "Similar requests may cost about $150-200"
+        ],
+        "summary": "SFPD says records requests must be submitted through the San Francisco NextRequest portal. After submission, they will provide a formal fee estimate (similar requests may be ~$150-200).",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 6503
     },
     {
       "fixture_id": "multi_portal_plus_denial_language",
@@ -276,9 +704,28 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "portal_redirect",
+        "confidence": 0.98,
+        "sentiment": "neutral",
+        "portal_url": "https://boston.govqa.us",
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "use_portal",
+        "reason_no_response": "Agency will not process email requests; must submit via the official portal.",
+        "denial_subtype": null,
+        "key_points": [
+          "BPD cannot accept public records requests via email",
+          "All requests must be submitted through the official portal",
+          "Provided portal link: https://boston.govqa.us",
+          "Email requests will not be processed"
+        ],
+        "summary": "Boston Police Department will not process the request submitted by email and directs submission through its GovQA portal at https://boston.govqa.us.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 2957
     },
     {
       "fixture_id": "multi_partial_approval_plus_fee",
@@ -287,10 +734,44 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
-      "draft": null,
-      "duration_ms": 0
+      "warnings": [
+        "suggested_action mismatch: got \"negotiate_fee\", expected \"pay_fee\"",
+        "Draft missing proper signature"
+      ],
+      "analysis": {
+        "intent": "fee_request",
+        "confidence": 0.92,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": 125,
+        "deadline": null,
+        "requires_response": true,
+        "suggested_action": "negotiate_fee",
+        "reason_no_response": null,
+        "denial_subtype": null,
+        "key_points": [
+          "Incident report and 911 audio attached at no charge",
+          "Body-worn camera footage available with third-party privacy redactions",
+          "Fee for redacted BWC footage is $125.00",
+          "Agency requests confirmation to proceed with BWC footage"
+        ],
+        "summary": "PPD provided some records for free but requires a $125 fee to redact and release body-worn camera footage. They need confirmation to proceed with the paid BWC footage.",
+        "requires_action": true
+      },
+      "draft": {
+        "subject": "RE: Fee Response - Robert Stone",
+        "body_text": "Thanks for the update on the Robert Stone request and the $125.00 estimate.\n\nTo help reduce the cost, can we narrow the scope to only:\n- Body-worn and/or dash camera video from the primary responding officer(s) and the arresting officer(s) only\n- A tighter time window: 30 minutes before through 30 minutes after the incident/arrest (or the shortest window you recommend)\n\nIf it would help you identify the correct footage, please let me know what details you need (for example, incident number, report number, CAD event number, exact location, and date/time). I can provide what I have.\n\nAlso, if available, please consider a fee waiver or reduction under the Pennsylvania Right-to-Know Law given the public/media interest and our documentary use. If you can share a revised estimate based on the narrowed scope, that would be great.\n\nThank you,\n\nRequester",
+        "body_html": null,
+        "model": "gpt-5.2-2025-12-11",
+        "recommended_action": "negotiate",
+        "modelMetadata": {
+          "modelId": "gpt-5.2-2025-12-11",
+          "promptTokens": 718,
+          "completionTokens": 472,
+          "latencyMs": 9526
+        }
+      },
+      "duration_ms": 14678
     },
     {
       "fixture_id": "multi_ack_plus_fee_estimate",
@@ -299,10 +780,33 @@
       "passed": true,
       "invariant_violations": [],
       "errors": [],
-      "warnings": [],
-      "analysis": null,
+      "warnings": [
+        "suggested_action mismatch: got \"wait\", expected \"pay_fee\"",
+        "Fee amount mismatch: got undefined, expected 75"
+      ],
+      "analysis": {
+        "intent": "acknowledgment",
+        "confidence": 0.86,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "wait",
+        "reason_no_response": "They acknowledged receipt and provided a tracking number; no action requested yet.",
+        "denial_subtype": null,
+        "key_points": [
+          "Request received; tracking number DPD-2024-0567 assigned",
+          "Preliminary review says responsive records exist",
+          "Estimated fees may range from $50 to $75",
+          "Formal fee letter will be sent after locating records",
+          "Expected response time is 5 business days"
+        ],
+        "summary": "Detroit Police Department acknowledged the FOIA request, assigned tracking number DPD-2024-0567, and indicated records likely exist. They anticipate fees of $50–$75 and will issue a formal fee letter after locating records.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 6238
     },
     {
       "fixture_id": "multi_denial_plus_partial_release",
@@ -312,9 +816,29 @@
       "invariant_violations": [],
       "errors": [],
       "warnings": [],
-      "analysis": null,
+      "analysis": {
+        "intent": "partial_delivery",
+        "confidence": 0.86,
+        "sentiment": "neutral",
+        "portal_url": null,
+        "fee_amount": null,
+        "deadline": null,
+        "requires_response": false,
+        "suggested_action": "download",
+        "reason_no_response": "Records were provided as attachments; denied items can be appealed separately if desired.",
+        "denial_subtype": null,
+        "key_points": [
+          "Incident report granted and attached",
+          "911 call audio granted and attached",
+          "Body-worn camera footage denied due to active investigation",
+          "Witness statements denied as investigative records",
+          "Appeal available to PIA Compliance Board"
+        ],
+        "summary": "BPD granted and provided an incident report and 911 call audio, but denied body-worn camera footage and witness statements under Maryland MPIA investigative exemptions, with appeal rights noted.",
+        "requires_action": false
+      },
       "draft": null,
-      "duration_ms": 0
+      "duration_ms": 5288
     }
   ]
 }
