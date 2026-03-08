@@ -521,14 +521,14 @@ Full browser-based UI verification of all dashboard pages at `localhost:3013` (b
 |------|-----|--------|-------|
 | Gated Queue | `/gated/` | PASS | KPIs (18 attention, 11 proposals, 7 review, 4 inbound 24h, 1 unmatched), proposal cards with draft editing, bulk button, keyboard shortcuts overlay (←→↑↓JK/A/D/?/Esc), system health drill-down (19 overdue table with clickable case links), INBOUND tab (100 messages with all/unmatched/matched filters), PHONE CALLS tab (14 pending with call purpose/phone/state), Next/Previous navigation between proposals |
 | Case Detail | `/requests/detail-v2/?id=25148` | PASS | Thread, agency panel, deadline, constraints, timeline (50), Decision Traces, Event Ledger (49), Portal Submissions, Provider Payloads (12 exec) |
-| Analytics | `/analytics/` | PARTIAL | Outcomes, Cost, Compliance, Hourly Activity all render. **BUG**: `/api/dashboard/message-volume` returns 500 |
+| Analytics | `/analytics/` | PASS | All sections render: Outcomes (277 total, 11 completed, 4%), Cost ($0.40, 41 calls), Compliance (9 overdue, 16 states), Message Activity (281 inbound, 179 outbound, 64% reply, stacked bar chart), Hourly Activity. Bug fixed via trailing-slash proxy rule. |
 | Eval | `/eval/` | PASS | Pass Rate KPIs, Decision Quality chart, eval cases table, failure categories |
 | Errors | `/errors/` | PASS | Error Events heading, 92 recent errors shown |
 | Lessons | `/lessons/` | PASS | AI Decision Lessons with lesson list |
-| Examples | `/examples/` | PARTIAL | Filters render (Classification, Action Type, State, Agency Type). **BUG**: `/api/eval/examples/` returns 500 |
+| Examples | `/examples/` | PASS | 16 examples with 4 filter dropdowns, expandable rows (Subject/Draft Body/Requested Records/Case#), filtering works (SEND_CLARIFICATION → 2 of 2). Bug fixed via trailing-slash proxy rule. |
 | Reconciliation | `/reconciliation/` | PASS | 120 issues, 9 expandable sections, KPI cards |
-| Agencies | `/agencies/` | PASS | 95 total, 42 portal, 30 email-only, search, table |
-| Cases | `/requests/` | PASS | Search, filters, New Case + Batch buttons, grouped status sections |
+| Agencies | `/agencies/` | PASS | 95 total, 43 portal, 30 email-only, search, table. Agency detail page: KPIs (requests/completed/avg response/fees), Submission Details, Fee Behavior, Denial Metrics (rate + reasons), Automation Rules, Recent Requests table |
+| Cases | `/requests/` | PASS | Full-text search works (typed "Perry" → filtered to 1 result #25148), quick filters (My urgent decisions, Overdue waiting, Unknown agency, Out of sync), Gate Type filter, New Case + Batch + Import buttons, grouped status sections with checkboxes |
 | Inbox | `/inbox/` | PASS | 50 pending proposals, list/detail layout, confidence %, action types |
 | Runs | `/runs/` | PASS | KPI cards (Running, Completed, Failed, Gated), runs table |
 | Portal Tasks | `/portal-tasks/` | PASS | Status KPIs (Pending, In Progress, Completed, Failed, Cancelled) |
@@ -540,6 +540,23 @@ Full browser-based UI verification of all dashboard pages at `localhost:3013` (b
 | New Case | `/requests/new/` | PASS | 5 templates, case details form, agency fields, state dropdown, requested records |
 | Mobile 390px | gated + detail | PASS | Both pages fully usable at 390×844 viewport |
 
-### Bugs Found
-1. **`/api/dashboard/message-volume`** — returns 500, breaks Message Activity chart on `/analytics/`
-2. **`/api/eval/examples/`** — returns 500, Examples page shows empty state instead of data
+### Bugs Found & Fixed
+1. **`/api/dashboard/message-volume`** — returned 500 through proxy. **FIXED**: Added trailing-slash rewrite rule in `dashboard/next.config.js`.
+2. **`/api/eval/examples/`** — returned 500 through proxy. **FIXED**: Same trailing-slash proxy fix.
+
+### Interactive Flows Tested (2026-03-09, session 2)
+| Flow | Status | Notes |
+|------|--------|-------|
+| Gated queue Next/Previous navigation | PASS | Navigates between proposals (1/18 → 2/18), loads different case types |
+| System health drill-down | PASS | Expands 6 metrics, clicking "Overdue deadlines" shows 19 records table with clickable case links |
+| INBOUND tab | PASS | 100 messages, all/unmatched/matched filter buttons |
+| PHONE CALLS tab | PASS | 14 pending calls with agency, state, phone number, call purpose |
+| Keyboard shortcuts overlay | PASS | Dialog shows Navigation (←→↑↓JK), Actions (A/D), General (Esc/?) |
+| Cases full-text search | PASS | Typing "Perry" filters to 1 result (#25148) with gate/deadline/action columns |
+| Cases quick filters | PASS | My urgent decisions, Overdue waiting, Unknown agency, Out of sync buttons visible |
+| Examples row expand | PASS | Click row → shows Subject, Draft Body, Requested Records, Case#, Proposal#, Approved by |
+| Examples filter dropdown | PASS | Action Type filter: All/SEND_CLARIFICATION/SEND_INITIAL_REQUEST/SEND_REBUTTAL; filtering updates count (16 → 2) |
+| Agency detail page | PASS | KPIs, Submission Details (method/forms/ID/notarization), Fee Behavior, Denial Metrics (rate+reasons), Automation Rules, Recent Requests table |
+| Simulator presets | PASS | Fee Quote preset fills From/Subject/Body fields, enables Run button |
+| Report a Bug dialog | PASS | Modal with text input, auto-captures page context and user email, Submit/Close buttons |
+| Bug dialog close | PASS | Closes cleanly without side effects |
