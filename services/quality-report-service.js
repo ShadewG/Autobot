@@ -136,10 +136,11 @@ async function buildWeeklyQualityReport({ windowDays = 7 } = {}) {
           WHERE p.human_decided_at > NOW() - make_interval(days => $1)
        )
        SELECT
-         COUNT(*) FILTER (WHERE human_action IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
-         COUNT(*) FILTER (WHERE human_action = 'APPROVE')::int AS approve_count,
-         COUNT(*) FILTER (WHERE human_action = 'ADJUST')::int AS adjust_count,
-         COUNT(*) FILTER (WHERE human_action = 'DISMISS')::int AS dismiss_count`,
+         COUNT(*) FILTER (WHERE reviewed_proposals.human_action IN ('APPROVE', 'ADJUST', 'DISMISS'))::int AS total_reviews,
+         COUNT(*) FILTER (WHERE reviewed_proposals.human_action = 'APPROVE')::int AS approve_count,
+         COUNT(*) FILTER (WHERE reviewed_proposals.human_action = 'ADJUST')::int AS adjust_count,
+         COUNT(*) FILTER (WHERE reviewed_proposals.human_action = 'DISMISS')::int AS dismiss_count
+       FROM reviewed_proposals`,
       [days]
     ),
     db.query(
