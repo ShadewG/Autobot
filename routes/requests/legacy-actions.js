@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const router = express.Router();
 const { db, actionValidator, logger } = require('./_helpers');
 const { processProposalDecision } = require('../monitor/_helpers');
+const { buildOperatorActionErrorResponse } = require('../../services/operator-action-errors');
 
 function normalizeProposalReasoning(reasoning, fallback = []) {
     if (Array.isArray(reasoning)) return reasoning;
@@ -287,10 +288,7 @@ router.post('/:id/actions/approve', async (req, res) => {
         });
     } catch (error) {
         log.error(`Error approving action: ${error.message}`);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json(buildOperatorActionErrorResponse(error, 'LEGACY_APPROVE_FAILED'));
     }
 });
 
@@ -435,10 +433,7 @@ Please provide the revised response following the user's instruction. Only outpu
         });
     } catch (error) {
         console.error('Error revising action:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json(buildOperatorActionErrorResponse(error, 'LEGACY_REVISE_FAILED'));
     }
 });
 
@@ -490,10 +485,7 @@ router.post('/:id/actions/dismiss', async (req, res) => {
         });
     } catch (error) {
         console.error('Error dismissing action:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json(buildOperatorActionErrorResponse(error, 'LEGACY_DISMISS_FAILED'));
     }
 });
 

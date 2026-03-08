@@ -29,6 +29,7 @@ const pdfFormService = require('../services/pdf-form-service');
 const proposalLifecycle = require('../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../services/proposal-feedback');
 const { buildApprovalDraftUpdates } = require('../services/proposal-draft-history');
+const { classifyOperatorActionError, buildOperatorActionErrorResponse } = require('../services/operator-action-errors');
 const { buildHumanDecision } = proposalLifecycle;
 
 async function transitionCaseRuntime(caseId, event, context = {}, options = {}) {
@@ -92,20 +93,7 @@ function getTriggerRunId(run) {
 }
 
 function getProposalDecisionErrorCode(error) {
-  const message = String(error?.message || '').toLowerCase();
-  if (error?.code === '23505' || String(error?.constraint || '').includes('one_active_per_case')) {
-    return 'ACTIVE_RUN_EXISTS';
-  }
-  if (message.includes('waitpoint')) {
-    return 'WAITPOINT_COMPLETION_FAILED';
-  }
-  if (message.includes('trigger') || message.includes('dispatch')) {
-    return 'TRIGGER_DISPATCH_FAILED';
-  }
-  if (message.includes('portal url')) {
-    return 'PORTAL_URL_MISSING';
-  }
-  return 'PROPOSAL_DECISION_FAILED';
+  return classifyOperatorActionError(error, 'PROPOSAL_DECISION_FAILED');
 }
 
 async function ensureCaseThread(caseId, subject, agencyEmail = null) {
@@ -2199,18 +2187,13 @@ router.post('/proposals/:id/decision', async (req, res) => {
 
   } catch (error) {
     if (error.code === '23505' && String(error.constraint || '').includes('one_active_per_case')) {
-      return res.status(409).json({
-        success: false,
-        error: 'Case already has an active agent run (constraint)',
-        error_code: 'ACTIVE_RUN_EXISTS',
-      });
+      return res.status(409).json(buildOperatorActionErrorResponse(
+        new Error('Case already has an active agent run (constraint)'),
+        'ACTIVE_RUN_EXISTS'
+      ));
     }
     logger.error('Error processing proposal decision', { proposalId, error: error.message });
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      error_code: getProposalDecisionErrorCode(error),
-    });
+    res.status(500).json(buildOperatorActionErrorResponse(error, getProposalDecisionErrorCode(error)));
   }
 });
 

@@ -5,6 +5,7 @@ const sendgridService = require('../../services/sendgrid-service');
 const { transitionCaseRuntime } = require('../../services/case-runtime');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { sanitizeValue } = require('../../services/decision-trace-service');
+const { buildOperatorActionErrorResponse } = require('../../services/operator-action-errors');
 const { buildHumanDecision } = proposalLifecycle;
 
 const SENSITIVE_PAYLOAD_KEY_PATTERNS = [
@@ -228,10 +229,7 @@ router.post('/:id/withdraw', async (req, res) => {
         });
     } catch (error) {
         log.error(`Error withdrawing request: ${error.message}`);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json(buildOperatorActionErrorResponse(error, 'WITHDRAW_REQUEST_FAILED'));
     }
 });
 
@@ -352,10 +350,7 @@ router.post('/:id/send-manual', async (req, res) => {
         });
     } catch (error) {
         log.error(`Error sending manual email: ${error.message}`);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
+        res.status(500).json(buildOperatorActionErrorResponse(error, 'SEND_MANUAL_FAILED'));
     }
 });
 

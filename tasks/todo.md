@@ -75,7 +75,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx) `(TESTED VIA LIVE DATA - Codex 2026-03-08 - import_warnings currently include 7 NO_MX_RECORD cases, proving the MX lookup path is active)`
 - [x] On import, check if agency exists in directory — flag if not found `(TESTED VIA LIVE DATA - Codex 2026-03-08 - 169 cases currently carry AGENCY_NOT_IN_DIRECTORY warnings)`
-- [x] On import, verify state matches agency state — flag mismatches
+- [x] On import, verify state matches agency state — flag mismatches `(TESTED VIA REGRESSION+LIVE DATA - Codex 2026-03-08 - request-normalization.test.js covers wrong-agency metadata mismatch detection and current sampled import_warnings show 0 live STATE_MISMATCH rows)`
 - [x] Surface validation warnings in dashboard (yellow banner on case detail) `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time `(TESTED VIA REGRESSION+LIVE DATA - Codex 2026-03-08 - request-normalization.test.js covers mismatch detection; current live import_warnings show 0 metadata-mismatch rows in sampled data)`
 
@@ -112,9 +112,9 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Show wait time, confidence badge, and urgency indicator on gated queue proposal cards `(green/yellow/red confidence %, URGENT/OVERDUE deadline badges, Clock icon wait time)`
 - [x] Show trigger email preview on gated queue proposal cards `(from_email, subject truncated to 60 chars, body preview truncated to 100 chars — backend JOINs messages table)`
 - [x] Add keyboard shortcuts for approve/dismiss workflow on gated queue `(A=approve, D=dismiss with reason picker, J/K=navigate, ?=help overlay, Escape=close modals)`
-- [x] Add Event Ledger section to case detail — timeline-style state transition log with color-coded events, context summary, lazy-load on expand
-- [x] Add Portal Submissions section to case detail — table of all portal attempts with status badges, engine, result/error, lazy-load
-- [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load
+- [x] Add Event Ledger section to case detail — timeline-style state transition log with color-coded events, context summary, lazy-load on expand `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - /api/requests/25164/event-ledger returns 200 with 5 events and request-audit-routes.test.js passes)`
+- [x] Add Portal Submissions section to case detail — table of all portal attempts with status badges, engine, result/error, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - /api/requests/25164/portal-submissions returns 200 and request-audit-routes.test.js covers the case route)`
+- [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08 - /api/requests/25164/provider-payloads returns 200 and request-audit-routes.test.js/provider-payload-capture.test.js pass)`
 - [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate)
 - [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day
 - [x] Add Error Events dashboard page — filterable table with KPI cards, source/operation filters, expandable stack traces, auto-refresh
@@ -302,14 +302,14 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 
 #### Capture email delivery events
 - [x] Create `email_events` table: `message_id`, `event_type` (delivered/opened/bounced/dropped), `timestamp`, `raw_payload` `(TESTED VIA SCHEMA - Codex 2026-03-08 - live schema includes email_events table; current row count is 0 pending live webhook traffic)`
-- [x] Store SendGrid webhook events (delivery, open, bounce, drop) as rows — currently these events are processed for case matching but the event data itself is discarded `(TESTED VIA SCHEMA+REGRESSION; NEEDS LIVE VERIFICATION - Codex 2026-03-08 - email_events table exists and provider-payload-capture / execution-lifecycle regressions pass, but live row count remains 0)`
+- [x] Store SendGrid webhook events (delivery, open, bounce, drop) as rows — currently these events are processed for case matching but the event data itself is discarded `(TESTED VIA LIVE WEBHOOK+REGRESSION - Codex 2026-03-08 - POST /webhooks/events on localhost:3020 returned 200 and persisted a synthetic delivered event into email_events; provider-payload-capture / execution-lifecycle regressions also pass)`
 - [x] Add `delivered_at`, `bounced_at` columns to `messages` table, updated from webhook events `(TESTED VIA SCHEMA - Codex 2026-03-08 - messages has delivered_at, bounced_at, and provider_payload columns; live delivered/bounced counts remain 0 pending webhook traffic)`
 - [x] This enables: "was the email actually delivered?" and "which agencies never open our emails?"
 
 #### Preserve portal submission history
 - [x] Create `portal_submissions` table: `case_id`, `run_id`, `skyvern_task_id`, `status`, `engine`, `account_email`, `screenshot_url`, `recording_url`, `extracted_data` (JSONB), `error_message`, `started_at`, `completed_at` `(TESTED VIA SCHEMA - Codex 2026-03-08 - live schema includes portal_submissions table; current row count is 0 pending Trigger.dev portal traffic)`
 - [x] Currently only the latest attempt is stored on `cases.last_portal_*` — previous attempts are overwritten
-- [x] Write a row on every portal attempt, not just the successful one — failure patterns are training data `(IN PROGRESS - Codex 2026-03-08 - proving end-to-end write coverage through the real submit-portal path locally)`
+- [x] Write a row on every portal attempt, not just the successful one — failure patterns are training data `(TESTED VIA DB-BACKED TASK-PATH REGRESSION - Codex 2026-03-08 - portal-submissions-task-path.test.js proves both completed and failed writes through the submit-portal persistence helpers used by the task)`
 
 ### P0 — Feedback capture
 
@@ -385,8 +385,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] TESTED LIVE 2026-03-08 — `npm run test:prompts:gate` runs end-to-end on current code, writes `tests/reports/prompt-simulation-report.json`, and currently passes the deploy gate at `23 / 24` (`96%`) with one remaining failure (`more_info_needed` exceeded the 100-word limit)
 - [x] Fix `npm run test:prompts:gate` live fixture mode so synthetic cases do not try to persist string `message_id` values into `response_analysis` `(added skipDbWrite option to analyzeResponse, test-prompt-suite passes it — 2026-03-08)`
 - [x] Stabilize `npm run test:prompts:gate` live runtime and fixture quality `(2026-03-08: Fixed DB pool exhaustion via PG_POOL_MAX=2 in test + graceful pool close on exit. Fixed array-intent comparison bug in validateExpected (5 fixtures always failed). Fixed validateJsonStructure: removed false-positive portal_url error, corrected fee_amount→extracted_fee_amount field name. Updated fixtures: hostile/wrong_agency accept denial intent since prompt doesn't offer these as intents, denial fixtures accept both requires_response values, delivery_attached/sensitive_minors/multi_ack accept multiple intents.)`
-- [x] FIXED — `npm run test:e2e:prompts` harness now auto-discovers a healthy local API (`/health` or `/api/health`) instead of assuming stale `localhost:3001`, so it runs against the clean backend stack reliably `(TESTED LOCALLY - Codex 2026-03-08)`
-- [x] VERIFIED — E2E prompt test endpoints are correct (`POST /api/cases` for creation, `POST /api/cases/:id/ingest-email` for ingestion, `POST /api/cases/:id/run-inbound` for trigger, `GET /api/requests/:id/*` for reads). Failures are because tests require a running Trigger.dev pipeline, not endpoint issues. This is an integration test that needs live infrastructure `(VERIFIED 2026-03-08)`
+- [ ] `npm run test:e2e:prompts` still needs repair beyond API autodiscovery — the harness now resolves `localhost:3020` correctly, but current runs fail 21/24 fixtures during case creation with `API error 500: there is no unique or exclusion constraint matching the ON CONFLICT specification` `(RETESTED 2026-03-08 - Codex)`
+- [ ] E2E prompt case creation path needs investigation — endpoints are now correct (`POST /api/cases`, `POST /api/cases/:id/ingest-email`, `POST /api/cases/:id/run-inbound`), but the end-to-end suite is blocked by a real DB `ON CONFLICT` error before the Trigger.dev pipeline even runs `(RETESTED 2026-03-08 - Codex)`
 - [x] VERIFIED — `tests/eval-dedupe.test.js` passes locally (both deduped scope for cases list and summary metrics tests green) `(TESTED 2026-03-08)`
 - [x] FIXED — `tests/resolve-review-active-run.test.js`: updated query stub to match new `human_decision`/`human_decided_at`/`human_decided_by` fields in the DISMISS query (added by proposal audit normalization). Test now passes `(FIXED 2026-03-08)`
 - [x] RETIRED — stale `tests/denial-subtype-routing.test.js` is replaced by current Trigger-era coverage (`tests/denial-wrong-agency-research.test.js` plus the inbound pipeline/materialization suites) and is now part of the backend regression pack `(TESTED VIA REGRESSION - Codex 2026-03-08)`

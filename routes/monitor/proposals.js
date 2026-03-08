@@ -5,6 +5,7 @@ const {
     processProposalDecision
 } = require('./_helpers');
 const { buildOriginalDraftInsertFields } = require('../../services/proposal-draft-history');
+const { buildOperatorActionErrorResponse } = require('../../services/operator-action-errors');
 
 /**
  * POST /api/monitor/proposals/:id/approve
@@ -31,7 +32,10 @@ router.post('/proposals/:id/approve', express.json(), async (req, res) => {
         res.status(202).json(result);
     } catch (error) {
         const status = error.status || 500;
-        res.status(status).json({ success: false, error: error.message, ...(error.payload || {}) });
+        res.status(status).json({
+            ...buildOperatorActionErrorResponse(error, 'MONITOR_PROPOSAL_APPROVE_FAILED'),
+            ...(error.payload || {})
+        });
     }
 });
 
@@ -83,7 +87,10 @@ router.post('/proposals/:id/decision', express.json(), async (req, res) => {
         res.status(action === 'DISMISS' ? 200 : 202).json(result);
     } catch (error) {
         const status = error.status || 500;
-        res.status(status).json({ success: false, error: error.message, ...(error.payload || {}) });
+        res.status(status).json({
+            ...buildOperatorActionErrorResponse(error, 'MONITOR_PROPOSAL_DECISION_FAILED'),
+            ...(error.payload || {})
+        });
     }
 });
 
