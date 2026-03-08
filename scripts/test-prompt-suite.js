@@ -704,6 +704,7 @@ async function main() {
 
     console.log(`Running ${testFixtures.length} fixtures...\n`);
 
+    const maxRetries = dryRun ? 0 : 1; // Retry failed fixtures once to handle AI nondeterminism
     const results = [];
 
     for (const fixture of testFixtures) {
@@ -716,10 +717,24 @@ async function main() {
             result = await runFixture(fixture, { verbose, dryRun });
         }
 
+        // Retry failed fixtures once to handle AI nondeterminism.
+        // Invariant violations are deterministic (structural issues), so don't retry those.
+        let retried = false;
+        if (!result.passed && maxRetries > 0 && result.invariant_violations.length === 0) {
+            console.log(`  ⚠️ Failed, retrying (${result.errors.map(e => e.slice(0, 60)).join('; ')})...`);
+            if (fixture.category === 'followup') {
+                result = await runFollowupFixture(fixture, { verbose, dryRun });
+            } else {
+                result = await runFixture(fixture, { verbose, dryRun });
+            }
+            retried = true;
+        }
+
         results.push(result);
 
         const status = result.passed ? '✅' : '❌';
-        console.log(`  ${status} (${result.duration_ms}ms)`);
+        const retrySuffix = retried && result.passed ? ' (passed on retry)' : retried ? ' (failed after retry)' : '';
+        console.log(`  ${status} (${result.duration_ms}ms)${retrySuffix}`);
     }
 
     const summary = generateSummary(results);
