@@ -228,7 +228,7 @@ ${attachments.filter((a: any) => a.extracted_text).map((a: any) => `
 ### Extracted text from "${a.filename}":
 ${a.extracted_text.substring(0, 4000)}${a.extracted_text.length > 4000 ? "\n[...truncated]" : ""}`).join("\n")}
 
-IMPORTANT: If attachments include PDFs or documents and the message references them as records/responses, classify as "records_ready" or "delivery", NOT as "acknowledgment" or "other". Use the extracted text from attachments to inform your classification — it may contain fee quotes, denial letters, records, or other substantive content.` : ""}
+IMPORTANT: Use the extracted text from attachments to inform your classification — the attachment content often determines the true intent. Attachments may contain fee quotes, denial letters, acknowledgments, forms, or actual records. Classify based on the CONTENT of the attachment, not merely its presence. See "Attached Letters & Documents" section below for specific patterns.` : ""}
 
 ## Intent Definitions (choose the BEST match)
 - **fee_request**: Agency quotes a cost/fee for records production. Look for dollar amounts, invoices, cost estimates, payment instructions, or conditional authorization requests (e.g., "authorize fees up to $X before we proceed"). Also includes cases where the agency asks the requester to confirm willingness to pay before sending a formal estimate, even if no dollar amount is yet specified.
@@ -273,6 +273,29 @@ IMPORTANT: If attachments include PDFs or documents and the message references t
 - **procedural**: About the process (acknowledgment, timeline, portal redirect, request for clarification)
 - **administrative**: Internal/automated (confirmation emails, ticket numbers, auto-replies)
 - **mixed**: Contains both substantive and procedural elements
+
+## Mixed Message Guidance
+When a message contains MULTIPLE actionable elements (e.g., fee + denial, partial release + withholding, portal notice + human instruction), follow these priority rules:
+1. **Fee + denial in same message**: Classify as **denial**. The fee is secondary — address the denial first.
+2. **Partial release + withholding**: Classify as **partial_denial** if records ARE delivered but others are withheld. Classify as **denial** if no records are actually delivered.
+3. **Portal notification + human instruction**: If a human officer wrote substantive content alongside an automated portal notice, classify based on the HUMAN content, not the portal automation.
+4. **Acknowledgment + conditions**: If the agency acknowledges the request but imposes conditions (fees, scope narrowing, ID requirements), classify based on the condition — e.g., fee_request, question, or denial — not acknowledgment.
+
+## Closure & Administrative Messages
+- "Your request has been closed" or "case closed" from a portal system (GovQA, NextRequest, JustFOIA) WITHOUT denial language → **other** (administrative closure), NOT denial.
+- "We did not receive a response from you, so your request has been closed" → **other** (closure due to inactivity), NOT denial.
+- If the closure message ALSO contains substantive denial language or exemption citations → **denial**.
+
+## Request Forms & Mailing Address Workflows
+- If the agency sends a blank request form, asks the requester to fill out a specific form, or asks for a mailing address to send physical records → classify as **question** / **more_info_needed** (they need info to proceed), NOT as **delivery** or **records_ready**.
+- A message saying "please complete the attached form" is a process blocker, not a record delivery.
+
+## Attached Letters & Documents
+Attached letters (PDFs, Word docs, images) may be ANY of: acknowledgments, denials, fee notices, formal responses, or actual records. Do NOT assume an attachment = records delivery. Classify based on the CONTENT of the attachment (using extracted text), not merely its presence. Key patterns:
+- Attachment is a fee schedule or cost estimate → **fee_request**
+- Attachment is a formal denial letter citing exemptions → **denial**
+- Attachment is an acknowledgment letter with a tracking number → **acknowledgment**
+- Attachment is actual responsive records (incident reports, body camera logs, dispatch records, etc.) → **delivery** or **records_ready**
 
 ## Extraction Instructions
 1. **Intent**: Choose the single best-fit intent from the definitions above.

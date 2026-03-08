@@ -172,7 +172,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 
 #### Prompt & Classifier Alignment
 - [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract
-- [ ] Remove or rewrite the PDF bias in `classify-inbound` so attachments do not implicitly force `records_ready` / `delivery`
+- [x] Remove or rewrite the PDF bias in `classify-inbound` so attachments do not implicitly force `records_ready` / `delivery` — rewrote attachment instruction to classify based on CONTENT not presence; removed "classify as records_ready or delivery" directive, replaced with reference to Attached Letters & Documents section
 - [x] Add explicit prompt handling for portal/system traffic: submission confirmations, document release notices, password/unlock emails, portal closures, and similar non-agency-human messages — added portal account management auto-classification (password reset, welcome, unlock, activate) in classify-inbound.ts, plus detectPortalSystemEmail() in portal-utils.js for webhook-level filtering
 - [ ] Decide whether `question` and `more_info_needed` should remain distinct; collapse them if downstream logic does not truly need both
 - [ ] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same
@@ -188,7 +188,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [ ] Ensure fallback constraint extraction can use attachment text, not just email body text
 - [ ] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals
 - [ ] Review low-confidence and `other` classifications regularly and feed those examples into the prompt test set
-- [ ] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text
+- [x] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text — added `attachment_extraction` section to reconciliation report with inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate metrics
 
 #### Live Data Workflow Anomalies (from production DB, 2026-03-07)
 Production data review found 160 inbound messages, 107 response analyses, 56 inbound messages with no `response_analysis`, 57 inbound messages with no `case_id`, and 21 inbound rows with `last_error = "Branch condition returned unknown or null destination"`.

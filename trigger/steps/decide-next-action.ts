@@ -791,6 +791,13 @@ If there is no trigger message (no new inbound email or event), strongly prefer 
 ### Fee Actions Without Dollar Amounts
 When fees are mentioned without a specific dollar amount, use NEGOTIATE_FEE to request a written estimate. Never use ACCEPT_FEE without a specific amount.
 
+### Mixed Messages (fee + denial, partial release + withholding, etc.)
+When the agency's message contains multiple elements:
+- **Fee + denial**: Address the denial FIRST (SEND_REBUTTAL or SEND_APPEAL). Mention fees in reasoning but don't let them override the denial response.
+- **Partial release + withholding**: Use RESPOND_PARTIAL_APPROVAL — acknowledge what was received, challenge what was withheld.
+- **Portal notice + human instruction**: Act on the human instruction, not the automated notice.
+- **Closure after inactivity**: If the agency closed the request because we didn't respond to their question, use SEND_CLARIFICATION to reopen — not CLOSE_CASE.
+
 Choose exactly one primary action from the ALLOWED ACTIONS list. Optionally set followUpAction if a chain is appropriate. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 

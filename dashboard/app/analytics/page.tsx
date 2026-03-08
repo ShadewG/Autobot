@@ -38,6 +38,24 @@ interface CostsResponse {
   }>;
 }
 
+interface ComplianceResponse {
+  success: boolean;
+  states: Array<{
+    state: string;
+    statutory_days: number | null;
+    statute_citation: string | null;
+    total_cases: number;
+    completed: number;
+    denied: number;
+    responded_on_time: number;
+    responded_late: number;
+    compliance_rate: number | null;
+    avg_response_days: number | null;
+  }>;
+  overdue_count: number;
+  missing_custodian_count: number;
+}
+
 interface OutcomesResponse {
   success: boolean;
   overall: {
@@ -90,6 +108,12 @@ export default function AnalyticsPage() {
 
   const { data: costData } = useSWR<CostsResponse>(
     "/dashboard/costs",
+    fetcher,
+    { refreshInterval: 120000 }
+  );
+
+  const { data: complianceData } = useSWR<ComplianceResponse>(
+    "/dashboard/compliance",
     fetcher,
     { refreshInterval: 120000 }
   );
@@ -454,6 +478,81 @@ export default function AnalyticsPage() {
               </CardContent>
             </Card>
           </div>
+        </>
+      )}
+
+      {/* ── Compliance Report ── */}
+      {complianceData && (
+        <>
+          <h2 className="text-lg font-semibold mt-4">Compliance Report</h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <KPICard
+              label="Currently Overdue"
+              value={complianceData.overdue_count}
+              accent={complianceData.overdue_count > 0 ? "red" : "green"}
+            />
+            <KPICard
+              label="Missing Custodian"
+              value={complianceData.missing_custodian_count}
+              accent={complianceData.missing_custodian_count > 0 ? "amber" : "green"}
+            />
+            <KPICard
+              label="States Tracked"
+              value={complianceData.states.length}
+            />
+          </div>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">State Compliance</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b text-muted-foreground">
+                    <th className="text-left py-1.5 px-2 font-medium">State</th>
+                    <th className="text-left py-1.5 px-2 font-medium">Statute</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Limit</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Avg Days</th>
+                    <th className="text-right py-1.5 px-2 font-medium">On Time</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Late</th>
+                    <th className="text-right py-1.5 px-2 font-medium">Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {complianceData.states.map((s) => (
+                    <tr key={s.state} className="border-b border-border/50">
+                      <td className="py-1.5 px-2 font-medium">{s.state}</td>
+                      <td className="py-1.5 px-2 text-muted-foreground truncate max-w-[120px]">
+                        {s.statute_citation || "—"}
+                      </td>
+                      <td className="text-right py-1.5 px-2">
+                        {s.statutory_days != null ? `${s.statutory_days}d` : "—"}
+                      </td>
+                      <td className={`text-right py-1.5 px-2 ${
+                        s.avg_response_days != null && s.statutory_days != null && s.avg_response_days > s.statutory_days
+                          ? "text-red-400 font-medium"
+                          : ""
+                      }`}>
+                        {s.avg_response_days != null ? `${s.avg_response_days}d` : "—"}
+                      </td>
+                      <td className="text-right py-1.5 px-2 text-green-400">{s.responded_on_time}</td>
+                      <td className="text-right py-1.5 px-2 text-red-400">{s.responded_late}</td>
+                      <td className={`text-right py-1.5 px-2 font-medium ${
+                        s.compliance_rate != null && s.compliance_rate < 50
+                          ? "text-red-400"
+                          : s.compliance_rate != null && s.compliance_rate >= 80
+                            ? "text-green-400"
+                            : "text-amber-400"
+                      }`}>
+                        {s.compliance_rate != null ? `${s.compliance_rate}%` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

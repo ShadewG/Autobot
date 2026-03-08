@@ -807,6 +807,91 @@ router.get('/dashboard/costs', async (req, res) => {
 });
 
 /**
+ * Compliance Report — correct statute, deadlines, and custodian per state
+ */
+router.get('/dashboard/compliance', async (req, res) => {
+    try {
+        const [byState, overdue, missingCustodian] = await Promise.all([
+            // Per-state compliance: cases sent, deadline met rate, avg days to respond vs statutory limit
+            db.query(`
+                SELECT
+                    COALESCE(c.state, 'Unknown') AS state,
+                    sd.response_days AS statutory_days,
+                    sd.statute_citation,
+                    COUNT(*)::int AS total_cases,
+                    COUNT(*) FILTER (WHERE c.status = 'completed')::int AS completed,
+                    COUNT(*) FILTER (WHERE c.status = 'denied')::int AS denied,
+                    COUNT(*) FILTER (
+                        WHERE c.last_response_date IS NOT NULL
+                          AND c.send_date IS NOT NULL
+                          AND c.deadline_date IS NOT NULL
+                          AND c.last_response_date <= c.deadline_date
+                    )::int AS responded_on_time,
+                    COUNT(*) FILTER (
+                        WHERE c.last_response_date IS NOT NULL
+                          AND c.send_date IS NOT NULL
+                          AND c.deadline_date IS NOT NULL
+                          AND c.last_response_date > c.deadline_date
+                    )::int AS responded_late,
+                    AVG(CASE WHEN c.last_response_date IS NOT NULL AND c.send_date IS NOT NULL
+                        THEN EXTRACT(EPOCH FROM (c.last_response_date - c.send_date)) / 86400
+                        END)::int AS avg_response_days
+                FROM cases c
+                LEFT JOIN state_deadlines sd ON sd.state_code = c.state
+                WHERE c.state IS NOT NULL
+                  AND c.status NOT IN ('draft', 'cancelled')
+                GROUP BY c.state, sd.response_days, sd.statute_citation
+                HAVING COUNT(*) >= 2
+                ORDER BY COUNT(*) DESC
+            `),
+            // Currently overdue cases
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM cases
+                WHERE deadline_date IS NOT NULL
+                  AND deadline_date < NOW()
+                  AND last_response_date IS NULL
+                  AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
+            `),
+            // Cases missing custodian/agency info
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM cases
+                WHERE (agency_email IS NULL OR agency_email = '')
+                  AND (portal_url IS NULL OR portal_url = '')
+                  AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
+            `),
+        ]);
+
+        const states = byState.rows.map(row => {
+            const total = row.responded_on_time + row.responded_late;
+            return {
+                state: row.state,
+                statutory_days: row.statutory_days,
+                statute_citation: row.statute_citation,
+                total_cases: row.total_cases,
+                completed: row.completed,
+                denied: row.denied,
+                responded_on_time: row.responded_on_time,
+                responded_late: row.responded_late,
+                compliance_rate: total > 0 ? Math.round((row.responded_on_time / total) * 100) : null,
+                avg_response_days: row.avg_response_days,
+            };
+        });
+
+        res.json({
+            success: true,
+            states,
+            overdue_count: overdue.rows[0]?.count || 0,
+            missing_custodian_count: missingCustodian.rows[0]?.count || 0,
+        });
+    } catch (error) {
+        console.error('Error getting compliance data:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * Case Outcomes — records received rate, avg time, denial rate by state
  */
 router.get('/dashboard/outcomes', async (req, res) => {
