@@ -75,15 +75,8 @@ router.post('/simulate-reply', async (req, res) => {
 
         let agentResult = null;
         if (isComplexCase) {
-            console.log(`🤖 Triggering agent for complex case...`);
-            const foiaCaseAgent = require('../../services/foia-case-agent');
-            agentResult = await foiaCaseAgent.handleCase(case_id, {
-                type: 'agency_reply',
-                messageId: message.id
-            });
-
-            // Mark as agent-handled
-            await db.query('UPDATE cases SET agent_handled = true WHERE id = $1', [case_id]);
+            console.log(`Legacy agent removed — complex cases now handled by Trigger.dev`);
+            // Legacy foia-case-agent archived; simulation should use Trigger.dev pipeline
         }
 
         res.json({

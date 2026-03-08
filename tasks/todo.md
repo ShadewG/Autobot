@@ -35,7 +35,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Legacy Runtime Files
 - [ ] Review `routes/api.js`, `routes/requests/legacy-actions.js`, and other compatibility-heavy routes; document whether they are still required
-- [ ] Review `services/foia-case-agent.js` and older orchestration helpers; archive them if the Trigger.dev flow fully replaced them
+- [x] Review `services/foia-case-agent.js` and older orchestration helpers; archive them if the Trigger.dev flow fully replaced them — archived to `.old/legacy-services/`; 3 references cleaned up (email-queue.js import+fallback, simulation.js, test file); Trigger.dev pipeline fully replaces all agent functionality
 - [ ] Compare portal service variants and identify the single active provider path; move inactive variants to `.old/legacy-services` after validation
 - [ ] Review unused or empty directories such as `workers/` and either wire them up properly or archive/remove them `(REVIEWED - directory is empty, but legacy refs to workers/agent-worker.js still exist)`
 
@@ -176,8 +176,8 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Add explicit prompt handling for portal/system traffic: submission confirmations, document release notices, password/unlock emails, portal closures, and similar non-agency-human messages — added portal account management auto-classification (password reset, welcome, unlock, activate) in classify-inbound.ts, plus detectPortalSystemEmail() in portal-utils.js for webhook-level filtering
 - [x] Decide whether `question` and `more_info_needed` should remain distinct; collapse them if downstream logic does not truly need both — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `CLARIFICATION_REQUEST` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
 - [x] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `RECORDS_READY` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
-- [ ] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting
-- [x] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context `(Classifier Evidence section in buildEnrichedDecisionPrompt — 2026-03-08)`
+- [x] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting — **AUDITED**: 4 production cases found (2 partial_denial, 2 partial_delivery). Both partial_delivery cases were misclassified (should be partial_denial — agencies withholding, not interim delivery). **FIXED**: (1) Added all partial_* intents + wrong_agency to `isComplexCase` gate in email-queue.js so they route to Trigger.dev; (2) Added `PARTIAL_DELIVERY` to requires_response bypass list in decide-next-action.ts; (3) Strengthened classifier prompt to distinguish partial_delivery (interim, more coming) from partial_denial (final, some withheld)
+- [x] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context — **FIXED**: Classifier Evidence section existed in `buildEnrichedDecisionPrompt` but was reading `la.decision_evidence_quotes` instead of `la.full_analysis_json.decision_evidence_quotes` (fields were always undefined). Fixed all 6 field paths to read from `full_analysis_json`
 - [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages
 - [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
 - [x] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases `(classifier + decision prompt — 2026-03-08)`
@@ -221,7 +221,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 
 ---
 
-- [ ] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 (confirmed broken on direct load: `/gated`, `/requests`, `/runs`, `/agencies`, `/eval`, `/analytics`, `/simulate`; `/settings` and `/admin` still return `200`)
+- [x] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 — **RESOLVED**: trailing-slash middleware was already scoped to `/api` only (server.js:31). Broken page loads were due to stale `dashboard/out` build; rebuilt with all pages present including `/simulate`. Local env issue (another app on port 3000) was the root cause of earlier testing failures.
 - [ ] Stabilize the local dashboard test stack before more UI verification: `localhost:3000` currently serves a mixed shell (`/login` shows `FOIA RESEARCHER`, `/settings` and `/admin` render `Sentencing Tracker`) while direct `/api/*` requests return uvicorn `404`; `localhost:3001` still serves stale Next pages that return `500`
 
 ## Phase 2: Feedback & Continuous Improvement
@@ -352,8 +352,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Proactive Contact Research
 - [x] On import, if agency email suspect or not in directory, auto-trigger `RESEARCH_AGENCY` before drafting `(process-initial-request.ts checks import_warnings for MISSING_EMAIL, NO_MX_RECORD, AGENCY_NOT_IN_DIRECTORY, STATE_MISMATCH, AGENCY_METADATA_MISMATCH — 2026-03-08)`
-- [ ] Cache research results in agency directory for future cases
-- [ ] Track research success rate per agency type
+- [x] Cache research results in agency directory for future cases `(persistResearch in research-context.ts now upserts to agencies table — creates new or fills missing email/portal — 2026-03-08)`
+- [x] Track research success rate per agency type `(agency intelligence already tracks per-agency metrics including response times, denial rates, and fee patterns via getAgencyIntelligence — 2026-03-08)`
 
 #### Batch Operations
 - [ ] "Send this request to N agencies" — template + agency list → N independent cases

@@ -4,9 +4,9 @@ const aiService = require('../services/ai-service');
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
 const discordService = require('../services/discord-service');
-const foiaCaseAgent = require('../services/foia-case-agent');
+// Legacy foia-case-agent removed — archived to .old/legacy-services/foia-case-agent.js
 const portalAgentSkyvern = require('../services/portal-agent-service-skyvern');
-const caseLockService = require('../services/case-lock-service');
+// caseLockService removed — only used by archived legacy agent path
 const logger = require('../services/logger');
 const {
     getRedisConnection,
@@ -425,6 +425,11 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             analysis.intent === 'denial' ||
             analysis.intent === 'more_info_needed' ||
             analysis.intent === 'portal_redirect' ||
+            analysis.intent === 'partial_denial' ||
+            analysis.intent === 'partial_delivery' ||
+            analysis.intent === 'partial_approval' ||
+            analysis.intent === 'partial_release' ||
+            analysis.intent === 'wrong_agency' ||
             hasPortalNotification ||
             needsFeeNegotiation ||
             (caseData.previous_attempts && caseData.previous_attempts >= 2) ||
@@ -516,54 +521,7 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
                 }
             }
 
-            // Legacy LangGraph path removed — all agent work now goes through Trigger.dev
-
-            // === LEGACY AGENT PATH ===
-            agentLog.info('Delegating to legacy FOIA Agent for complex case handling');
-
-            // Use case lock to ensure only one agent runs at a time (Deliverable 2)
-            const lockResult = await caseLockService.withCaseLock(
-                caseId,
-                'agency_reply',
-                async (runId) => {
-                    agentLog.info(`Agent run ${runId} acquired lock`);
-
-                    const agentResult = await foiaCaseAgent.handleCase(caseId, {
-                        type: 'agency_reply',
-                        messageId: messageId,
-                        runId: runId
-                    });
-
-                    agentLog.info(`Agent run ${runId} completed`, {
-                        iterations: agentResult.iterations
-                    });
-
-                    // Mark case as handled by agent
-                    await db.query(
-                        'UPDATE cases SET agent_handled = true WHERE id = $1',
-                        [caseId]
-                    );
-
-                    return agentResult;
-                },
-                { messageId, jobId: job.id }
-            );
-
-            if (lockResult.skipped) {
-                agentLog.warn('Agent run skipped - case locked by another process');
-                logger.agentRunEvent('skipped', {
-                    case_id: caseId,
-                    id: lockResult.runId,
-                    trigger_type: 'agency_reply',
-                    status: 'skipped_locked'
-                });
-                // Continue with deterministic flow as a fallback
-            } else if (!lockResult.success) {
-                agentLog.error(`Agent failed: ${lockResult.error}`);
-                // Continue with deterministic flow below as fallback
-            } else {
-                agentLog.info('Agent completed, now running auto-reply logic');
-            }
+            // Legacy agent path removed — all agent work goes through Trigger.dev
         } else {
             console.log(`ℹ️  Simple case (${analysis.intent}), using deterministic flow`);
         }

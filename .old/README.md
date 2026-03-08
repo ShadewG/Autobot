@@ -144,3 +144,15 @@ Files in this batch:
 - moved_on: `2026-03-08`
 - reason: obsolete migration for adaptive-learning tables that are no longer present in production and no longer queried by runtime code
 - restore_note: restore only if you intentionally need the legacy adaptive-learning schema for historical replay or a one-off data recovery task
+
+### services/foia-case-agent.js
+- moved_to: `.old/legacy-services/foia-case-agent.js`
+- moved_on: `2026-03-08`
+- reason: fully replaced by Trigger.dev pipeline (process-inbound.ts, process-initial-request.ts, etc.); only remaining runtime reference was dead-code fallback in email-queue.js behind USE_RUN_ENGINE=true guard
+- restore_note: restore only as emergency fallback if Trigger.dev pipeline becomes completely unavailable
+
+### tests/foia-case-agent-startup.test.js
+- moved_to: `.old/legacy-services/foia-case-agent-startup.test.js`
+- moved_on: `2026-03-08`
+- reason: test for archived foia-case-agent.js; no value without the module
+- restore_note: restore alongside foia-case-agent.js if the module is ever unarchived

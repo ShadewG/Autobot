@@ -442,4 +442,58 @@ async function persistResearch(caseId: number, result: ResearchContext, cacheKey
   } catch (e: any) {
     logger.warn("Failed to persist research context", { caseId, error: e.message });
   }
+
+  // Cache contact info back to agency directory for future cases
+  try {
+    const caseData = await db.getCaseById(caseId);
+    const agencyName = caseData?.agency_name;
+    const state = caseData?.state;
+    if (!agencyName) return;
+
+    // Extract the best email and portal from research
+    let researchEmail: string | null = null;
+    let researchPortal: string | null = null;
+    for (const method of result.official_records_submission_methods || []) {
+      if (method.startsWith("Email: ") && !researchEmail) researchEmail = method.replace("Email: ", "").trim();
+      if ((method.startsWith("Portal: ") || method.startsWith("Portal/Website: ")) && !researchPortal) {
+        researchPortal = method.replace(/^Portal(?:\/Website)?: /, "").trim();
+      }
+    }
+    if (!researchEmail && !researchPortal) return;
+
+    // Upsert: create agency if missing, or fill in missing fields on existing
+    const existing = await db.findAgencyByName(agencyName, state);
+    if (!existing) {
+      await db.query(
+        `INSERT INTO agencies (name, state, email_main, portal_url)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT DO NOTHING`,
+        [agencyName, state, researchEmail, researchPortal]
+      );
+      logger.info("Cached new agency from research", { caseId, agencyName, state, researchEmail, researchPortal });
+    } else {
+      const updates: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+      if (!existing.email_main && researchEmail) {
+        updates.push(`email_main = $${idx++}`);
+        values.push(researchEmail);
+      }
+      if (!existing.portal_url && researchPortal) {
+        updates.push(`portal_url = $${idx++}`);
+        values.push(researchPortal);
+      }
+      if (updates.length > 0) {
+        values.push(existing.id);
+        await db.query(
+          `UPDATE agencies SET ${updates.join(", ")} WHERE id = $${idx}`,
+          values
+        );
+        logger.info("Updated agency directory from research", { caseId, agencyId: existing.id, updates });
+      }
+    }
+  } catch (e: any) {
+    // Non-fatal: don't let directory caching break research flow
+    logger.warn("Failed to cache research to agency directory", { caseId, error: e.message });
+  }
 }
