@@ -769,4 +769,92 @@ router.get('/export', async (req, res) => {
     }
 });
 
+/**
+ * GET /api/eval/examples?limit=50&offset=0&classification=&action_type=&state_code=
+ * List successful examples (auto-captured approved drafts used for few-shot prompting).
+ */
+router.get('/examples', async (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseId(req.query.limit) || 50, 1), 200);
+        const offset = Math.max(parseId(req.query.offset) || 0, 0);
+        const classification = req.query.classification || null;
+        const actionType = req.query.action_type || null;
+        const stateCode = req.query.state_code || null;
+        const agencyType = req.query.agency_type || null;
+
+        const conditions = ['1=1'];
+        const params = [];
+        let paramIndex = 1;
+
+        if (classification) {
+            conditions.push(`classification = $${paramIndex++}`);
+            params.push(classification);
+        }
+        if (actionType) {
+            conditions.push(`action_type = $${paramIndex++}`);
+            params.push(actionType);
+        }
+        if (stateCode) {
+            conditions.push(`state_code = $${paramIndex++}`);
+            params.push(stateCode);
+        }
+        if (agencyType) {
+            conditions.push(`agency_type = $${paramIndex++}`);
+            params.push(agencyType);
+        }
+
+        const countResult = await db.query(
+            `SELECT COUNT(*)::int AS total FROM successful_examples WHERE outcome = 'approved' AND ${conditions.join(' AND ')}`,
+            params
+        );
+
+        const result = await db.query(
+            `SELECT
+                id,
+                proposal_id,
+                case_id,
+                action_type,
+                classification,
+                agency_name,
+                agency_type,
+                state_code,
+                requested_records,
+                draft_subject,
+                draft_body_text,
+                human_edited,
+                approved_by,
+                outcome,
+                metadata,
+                created_at,
+                updated_at
+             FROM successful_examples
+             WHERE outcome = 'approved' AND ${conditions.join(' AND ')}
+             ORDER BY created_at DESC
+             LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
+            [...params, limit, offset]
+        );
+
+        // Fetch distinct filter values for the UI
+        const filtersResult = await db.query(`
+            SELECT
+                ARRAY_AGG(DISTINCT classification ORDER BY classification) FILTER (WHERE classification IS NOT NULL) AS classifications,
+                ARRAY_AGG(DISTINCT action_type ORDER BY action_type) FILTER (WHERE action_type IS NOT NULL) AS action_types,
+                ARRAY_AGG(DISTINCT state_code ORDER BY state_code) FILTER (WHERE state_code IS NOT NULL) AS state_codes,
+                ARRAY_AGG(DISTINCT agency_type ORDER BY agency_type) FILTER (WHERE agency_type IS NOT NULL) AS agency_types
+            FROM successful_examples
+            WHERE outcome = 'approved'
+        `);
+
+        res.json({
+            success: true,
+            total: countResult.rows[0]?.total || 0,
+            examples: result.rows,
+            filters: filtersResult.rows[0] || {},
+        });
+    } catch (error) {
+        console.error('Error fetching successful examples:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;
