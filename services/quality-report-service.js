@@ -297,7 +297,7 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
 }
 
 async function buildReconciliationReport() {
-  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound] = await Promise.all([
+  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber] = await Promise.all([
     db.query(`
       WITH latest_analysis AS (
         SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
@@ -345,6 +345,17 @@ async function buildReconciliationReport() {
       ORDER BY m.created_at DESC
       LIMIT 20
     `),
+    db.query(`
+      SELECT c.id as case_id, c.case_name, c.agency_name, c.status, c.portal_url,
+             c.last_portal_engine, c.last_portal_status
+      FROM cases c
+      WHERE c.portal_url IS NOT NULL
+        AND c.portal_url != ''
+        AND (c.portal_request_number IS NULL OR c.portal_request_number = '')
+        AND c.status IN ('sent', 'awaiting_response', 'portal_in_progress')
+      ORDER BY c.created_at DESC
+      LIMIT 20
+    `),
   ]);
 
   return {
@@ -380,6 +391,18 @@ async function buildReconciliationReport() {
         from_email: r.from_email,
         subject: (r.subject || '').substring(0, 80),
         created_at: r.created_at,
+      })),
+    },
+    portal_missing_request_number: {
+      count: portalMissingRequestNumber.rows.length,
+      cases: portalMissingRequestNumber.rows.map(r => ({
+        case_id: r.case_id,
+        case_name: (r.case_name || '').substring(0, 80),
+        agency_name: r.agency_name,
+        status: r.status,
+        portal_url: r.portal_url,
+        engine: r.last_portal_engine,
+        portal_status: (r.last_portal_status || '').substring(0, 80),
       })),
     },
   };

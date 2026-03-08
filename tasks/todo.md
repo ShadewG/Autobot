@@ -60,7 +60,7 @@ Ordered by priority within each phase. Check items off as completed.
 ### P0 — Must-have before launch
 
 #### System Health & Observability
-- [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTING - UI Codex 2026-03-08)`
+- [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTED IN UI - Codex 2026-03-08)`
 - [ ] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures
 - [ ] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions
 
@@ -68,7 +68,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
 - [x] On import, check if agency exists in directory — flag if not found
 - [x] On import, verify state matches agency state — flag mismatches
-- [x] Surface validation warnings in dashboard (yellow banner on case detail) `(TESTING - UI Codex 2026-03-08)`
+- [x] Surface validation warnings in dashboard (yellow banner on case detail) `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Run `detectCaseMetadataAgencyMismatch` at import time, not just at decision time
 
 #### Proposal Lifecycle Hardening
@@ -87,14 +87,14 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Verify the email worker always calls the final execution update path after success
 
 #### Operator Workflow
-- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTING - UI Codex 2026-03-08)`
-- [x] Full-text case search across case name, agency name, subject, email content `(TESTING - UI Codex 2026-03-08)`
-- [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08)`
+- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(UI BUG FOUND 2026-03-08 - selection works, but Cancel in Bulk Approve opens Bulk Dismiss with reason "undefined")`
+- [x] Full-text case search across case name, agency name, subject, email content `(TESTED IN UI - Codex 2026-03-08)`
+- [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08 - detail page and mobile timeline verified at 390px; full page sweep not complete)`
 
 ### P1 — Important for confidence
 
 #### Case Timeline & Audit Trail
-- [x] Add "Case Timeline" view to case detail — every state transition chronologically `(TESTING - UI Codex 2026-03-08)`
+- [x] Add "Case Timeline" view to case detail — every state transition chronologically `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal) — createDecisionTraceTracker called in all 4 tasks, deployed v20260308.32
 - [x] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
 - [ ] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events
@@ -115,15 +115,15 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — added `completedBy` and `confirmationNumber` passthrough in case-reducer PORTAL_COMPLETED handler + submit-portal.ts context; backfilled 13 completed_by and 3 confirmation_number values from cases table
 - [x] Sync portal task completion back to `executions` and `proposals` — case-reducer already updates proposals to EXECUTED on PORTAL_COMPLETED; backfilled 29 orphan portal_tasks with proposal_id from SUBMIT_PORTAL proposals
 - [ ] Improve `portal_request_number` capture from submissions and inbound notifications
-- [ ] Add validation so portal cases without a request number are identifiable
+- [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers
 
 #### Notion Sync
-- [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTING - UI Codex 2026-03-08)`
-- [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTING - UI Codex 2026-03-08)`
+- [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTING - UI Codex 2026-03-08 - control confirmed in case actions menu; action not fired during live pass)`
+- [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTED IN UI - Codex 2026-03-08)`
 - [ ] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues)
 
 #### Constraint Management
-- [x] Allow removing/overriding stale constraints from dashboard `(TESTING - UI Codex 2026-03-08)`
+- [x] Allow removing/overriding stale constraints from dashboard `(TESTING - UI Codex 2026-03-08 - edit mode, remove controls, and add dialog verified; destructive actions not exercised)`
 - [x] Show constraint history (when added, by whom/what)
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
 - [ ] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events
@@ -132,7 +132,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
 
 #### Dashboard API Hygiene
-- [ ] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots`
+- [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -217,6 +217,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify AI model metadata is actually being written on new analyses — code wired in classify-inbound.ts and gate-or-execute.ts, deployed v20260308.32
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
+- [ ] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` (found in live UI on 2026-03-08)
 
 ---
 
@@ -266,9 +267,9 @@ These are cheap fixes that preserve data we're currently throwing away. Every we
 - [x] Dashboard chart: decision quality over time (7d rolling)
 
 #### Bug Reporting
-- [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTING - UI Codex 2026-03-08)`
+- [x] "Report Issue" button on case detail page — captures case ID, current state, operator notes `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Auto-creates GitHub issue with context snapshot
-- [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTING - UI Codex 2026-03-08)`
+- [x] Operator annotations: tag cases "AI wrong", "agency difficult", "unusual" — searchable/filterable `(TESTED IN UI - Codex 2026-03-08)`
 
 ### P1 — Adaptive Learning System
 
