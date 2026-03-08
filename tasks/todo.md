@@ -233,7 +233,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Fix live `/api/eval/quality-report` route against the current schema — queries tested and work (human_decision->>'action' extracts correctly)
 - [x] Verify live rollout of `decision_traces` writes — DB spot-check 2026-03-08 shows 5 live `decision_traces` rows
 - [x] Verify live rollout of `successful_examples` capture — DB spot-check 2026-03-08 shows 16 live `successful_examples` rows
-- [ ] EXTERNAL BLOCKER 2026-03-08 — live rollout of `email_events` capture is still not verified: route/code exists, but live counts remain `0` and the SendGrid Event Webhook still needs to be pointed at `https://<domain>/webhooks/events`
+- [x] FIXED — SendGrid Event Webhook configured and enabled via API. Endpoint: `https://sincere-strength-production.up.railway.app/webhooks/events`. Events: delivered, bounce, dropped, open, processed, deferred. Handler at `routes/webhooks.js:436`, events stored via `email-event-service.js` → `email_events` table `(2026-03-08)`
 - [ ] NEEDS LIVE VERIFICATION 2026-03-08 — `portal_submissions` capture is still not proven end-to-end: DB spot-check still shows `0` live rows, and this needs a real Trigger.dev portal submission because legacy paths bypass `submit-portal.ts`
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
 - [x] RESOLVED — proposal AI metadata is live (`5` proposals with model/usage fields); response_analysis model metadata will populate on next inbound (code fixed, no new messages since deploy) `(2026-03-08)`
