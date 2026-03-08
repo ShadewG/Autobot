@@ -126,6 +126,13 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Allow removing/overriding stale constraints from dashboard
 - [x] Show constraint history (when added, by whom/what)
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
+- [ ] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events
+- [ ] Backfill or reconstruct constraint history for existing cases so the new history UI is not empty on older requests
+- [ ] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes
+- [ ] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
+
+#### Dashboard API Hygiene
+- [ ] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots`
 
 #### Future-Proof Data Capture
 - [ ] Extend `case_event_ledger` or create unified append-only event stream
@@ -306,8 +313,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Draft quality scoring: eval judge rates sent drafts after case resolves
 
 #### Regression Testing
-- [ ] Eval suite runs automatically on every deploy (CI step) `(IN PROGRESS - Codex)`
-- [ ] Block deploy if accuracy drops below 90%
+- [x] Eval suite runs automatically on every deploy (CI step)
+- [ ] Block deploy if accuracy drops below 90% `(IN PROGRESS - Codex)`
 - [ ] Track eval results over time in `/eval` dashboard
 
 ### P2 — Optimization
