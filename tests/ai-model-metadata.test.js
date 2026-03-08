@@ -2,6 +2,7 @@ const assert = require('assert');
 const sinon = require('sinon');
 
 const db = require('../services/database');
+const aiService = require('../services/ai-service');
 const { buildModelMetadata } = require('../utils/ai-model-metadata');
 
 describe('AI model metadata capture', function () {
@@ -69,9 +70,57 @@ describe('AI model metadata capture', function () {
     assert.strictEqual(call.args[1][14], 678);
   });
 
+  it('persists model metadata from analyzeResponse calls', async function () {
+    sinon.stub(db, 'createResponseAnalysis').resolves({ id: 1 });
+    sinon.stub(db, 'query').resolves({ rows: [] });
+    sinon.stub(aiService, 'recordOutcomeForLearning').resolves();
+    aiService.openai = {
+      responses: {
+        create: sinon.stub().resolves({
+          model: 'gpt-5.2-2025-12-11',
+          usage: { input_tokens: 88, output_tokens: 21 },
+          output_text: JSON.stringify({
+            intent: 'question',
+            confidence_score: 0.92,
+            sentiment: 'neutral',
+            key_points: ['Needs mailing address'],
+            extracted_deadline: null,
+            extracted_fee_amount: null,
+            requires_response: true,
+            suggested_action: 'respond',
+            summary: 'Agency asked for a mailing address.',
+          }),
+        }),
+      },
+    };
+
+    await aiService.analyzeResponse(
+      {
+        id: 700,
+        subject: 'Need mailing address',
+        body_text: 'Please provide a mailing address for the CD.',
+        from_email: 'agency@example.gov',
+      },
+      {
+        id: 701,
+        case_name: 'QA case',
+        subject_name: 'QA case',
+        agency_name: 'Agency',
+        requested_records: [],
+        status: 'sent',
+      }
+    );
+
+    const payload = db.createResponseAnalysis.firstCall.args[0];
+    assert.strictEqual(payload.model_id, 'gpt-5.2-2025-12-11');
+    assert.strictEqual(payload.prompt_tokens, 88);
+    assert.strictEqual(payload.completion_tokens, 21);
+    assert.ok(payload.latency_ms >= 0);
+  });
+
   it('stores decision and draft metadata on proposal upserts', async function () {
     sinon.stub(db, 'getCaseById').resolves(null);
-    const queryStub = sinon.stub(db, 'query');
+    const queryStub = sinon.stub(db, 'query').resolves({ rows: [{ id: 901 }] });
     queryStub.onCall(0).resolves({ rows: [] });
     queryStub.onCall(1).resolves({
       rows: [{

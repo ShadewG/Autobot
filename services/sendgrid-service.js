@@ -23,6 +23,77 @@ class SendGridService {
         this.fromName = 'FOIA Request Team';
     }
 
+    truncatePayloadText(value, maxLength = 50000) {
+        if (value == null) return null;
+        const text = String(value);
+        return text.length > maxLength ? `${text.substring(0, maxLength)}\n[truncated]` : text;
+    }
+
+    sanitizeAttachmentMetadata(attachments = []) {
+        return (attachments || []).map((attachment) => ({
+            filename: attachment?.filename || null,
+            content_type: attachment?.mimetype || attachment?.type || attachment?.content_type || null,
+            size_bytes: attachment?.size || attachment?.size_bytes || (attachment?.buffer ? attachment.buffer.length : 0) || null,
+            disposition: attachment?.disposition || null,
+            content_id: attachment?.contentId || attachment?.content_id || null,
+        }));
+    }
+
+    buildInboundProviderPayload(inboundData = {}) {
+        return {
+            provider: 'sendgrid',
+            direction: 'inbound',
+            captured_at: new Date().toISOString(),
+            envelope: {
+                from: inboundData.from || inboundData.sender || null,
+                to: inboundData.to || inboundData.recipient || null,
+                subject: inboundData.subject || null,
+            },
+            headers: inboundData.headers || {},
+            text: this.truncatePayloadText(inboundData.text || inboundData.body_text || null),
+            html: this.truncatePayloadText(inboundData.html || inboundData.body_html || null),
+            raw_email: this.truncatePayloadText(inboundData.email || null, 100000),
+            attachments: this.sanitizeAttachmentMetadata(inboundData.attachments || []),
+            sendgrid_fields: {
+                sender_ip: inboundData.sender_ip || null,
+                charsets: inboundData.charsets || null,
+                dkim: inboundData.dkim || null,
+                spf: inboundData.SPF || inboundData.spf || null,
+                spam_score: inboundData.spam_score || null,
+                spam_report: this.truncatePayloadText(inboundData.spam_report || null, 20000),
+            },
+        };
+    }
+
+    buildOutboundProviderPayload(requestPayload = {}, response = null) {
+        const responseMeta = response && response[0]
+            ? {
+                status_code: response[0].statusCode || null,
+                headers: response[0].headers || {},
+                sendgrid_message_id: response[0].headers?.['x-message-id'] || null,
+            }
+            : null;
+
+        return {
+            provider: 'sendgrid',
+            direction: 'outbound',
+            captured_at: new Date().toISOString(),
+            request: {
+                to: requestPayload.to || null,
+                from: requestPayload.from?.email || requestPayload.from || null,
+                reply_to: requestPayload.replyTo || null,
+                subject: requestPayload.subject || null,
+                headers: requestPayload.headers || {},
+                custom_args: requestPayload.customArgs || {},
+                tracking_settings: requestPayload.trackingSettings || {},
+                attachments: this.sanitizeAttachmentMetadata(requestPayload.attachments || []),
+                text: this.truncatePayloadText(requestPayload.text || null),
+                html: this.truncatePayloadText(requestPayload.html || null),
+            },
+            response: responseMeta,
+        };
+    }
+
     /**
      * Resolve the FROM email for a case.
      * If the case has a user_id, use that user's email; otherwise fall back to default.
@@ -105,7 +176,8 @@ class SendGridService {
                 body_text: requestText,
                 body_html: this.formatEmailHtml(requestText),
                 message_type: 'initial_request',
-                thread_id: threadId
+                thread_id: threadId,
+                provider_payload: this.buildOutboundProviderPayload(msg, response)
             });
 
             return {
@@ -167,7 +239,8 @@ class SendGridService {
                 body_text: followUpText,
                 body_html: this.formatEmailHtml(followUpText),
                 message_type: 'follow_up',
-                thread_id: threadId
+                thread_id: threadId,
+                provider_payload: this.buildOutboundProviderPayload(msg, response)
             });
 
             return {
@@ -238,7 +311,8 @@ class SendGridService {
                 body_text: replyText,
                 body_html: this.formatEmailHtml(replyText),
                 message_type: 'auto_reply',
-                thread_id: inReplyToMessageId
+                thread_id: inReplyToMessageId,
+                provider_payload: this.buildOutboundProviderPayload(msg, response)
             });
 
             return {
@@ -818,7 +892,8 @@ class SendGridService {
                     metadata: {
                         case_agency_id: matchedCaseAgency?.id || null,
                         agency_match_method: matchedCaseAgency ? 'case_agency' : 'none'
-                    }
+                    },
+                    provider_payload: this.buildInboundProviderPayload(inboundData)
                 });
             } catch (error) {
                 if (error.code === '23505') {
@@ -828,6 +903,7 @@ class SendGridService {
                     if (!message) {
                         throw error; // Should never happen, but fail loudly if it does
                     }
+                    await db.updateMessageProviderPayload(message.id, this.buildInboundProviderPayload(inboundData));
                 } else {
                     throw error;
                 }
@@ -2212,7 +2288,8 @@ class SendGridService {
                 metadata: {
                     case_agency_id: thread.case_agency_id || null,
                     agency_match_method: thread.case_agency_id ? 'thread_case_agency' : 'none'
-                }
+                },
+                provider_payload: messageData.provider_payload || null
             });
 
             if (Array.isArray(messageData.attachments) && messageData.attachments.length > 0) {
@@ -2391,7 +2468,8 @@ class SendGridService {
                     body_html: html || this.formatEmailHtml(text),
                     message_type: messageType,
                     thread_id: inReplyTo || messageId,
-                    attachments: attachments || []
+                    attachments: attachments || [],
+                    provider_payload: this.buildOutboundProviderPayload(msg, response)
                 });
             }
 

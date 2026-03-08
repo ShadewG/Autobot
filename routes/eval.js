@@ -228,7 +228,7 @@ router.post('/cases/from-simulation', async (req, res) => {
         const {
             expectedAction, notes,
             predictedAction, reasoning, draftBody,
-            messageBody, fromEmail, subject, caseId,
+            messageBody, fromEmail, subject, caseId, attachments,
         } = req.body;
 
         if (!expectedAction || !KNOWN_ACTION_TYPES.has(expectedAction)) {
@@ -257,8 +257,9 @@ router.post('/cases/from-simulation', async (req, res) => {
             `INSERT INTO eval_cases
                (case_id, expected_action, notes,
                 simulated_message_body, simulated_from_email, simulated_subject,
-                simulated_predicted_action, simulated_reasoning, simulated_draft_body)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                simulated_predicted_action, simulated_reasoning, simulated_draft_body,
+                simulated_attachments_jsonb)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
             [
                 resolvedCaseId,
@@ -270,6 +271,7 @@ router.post('/cases/from-simulation', async (req, res) => {
                 predictedAction,
                 JSON.stringify(Array.isArray(reasoning) ? reasoning : []),
                 draftBody ? draftBody.substring(0, 5000) : null,
+                attachments ? JSON.stringify(attachments) : null,
             ]
         );
 

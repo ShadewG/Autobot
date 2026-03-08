@@ -38,6 +38,13 @@ export interface SimulationPayload {
   subject: string;
   caseId?: number;
   hasAttachments?: boolean;
+  attachments?: Array<{
+    id?: number;
+    message_id?: number | null;
+    filename?: string | null;
+    content_type?: string | null;
+    extracted_text?: string | null;
+  }>;
   isPortalNotification?: boolean;
 }
 
@@ -135,10 +142,12 @@ export const simulateDecision = task({
       body_text: payload.messageBody,
     };
 
+    const simulatedAttachments = Array.isArray(payload.attachments) ? payload.attachments : [];
     const classification = await classifyMessageContent(
       mockMessage,
       context.caseData,
-      context.messages
+      context.messages,
+      simulatedAttachments
     );
 
     log.push({
@@ -146,6 +155,13 @@ export const simulateDecision = task({
       result: `${classification.classification} (${Math.round(classification.confidence * 100)}% confidence, sentiment: ${classification.sentiment})`,
       skipped: false,
     });
+    if (simulatedAttachments.length > 0) {
+      log.push({
+        step: "attachments",
+        result: `Included ${simulatedAttachments.length} attachment(s) in simulation context`,
+        skipped: false,
+      });
+    }
 
     // Side effects that ARE skipped
     log.push({

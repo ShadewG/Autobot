@@ -72,6 +72,7 @@ async function runJudge(
   caseData: any,
   triggerMessage: any,
   latestAnalysis: any,
+  messageAttachments: any[],
   evaluationType: "decision_quality" | "draft_quality"
 ): Promise<{ score: number; reasoning: string; failure_category: string | null }> {
   const requestedRecords = caseData
@@ -83,6 +84,14 @@ async function runJudge(
   const messageSnippet = triggerMessage
     ? `Subject: ${triggerMessage.subject || "N/A"}\nBody: ${(triggerMessage.body_text || "").substring(0, 600)}`
     : "No trigger message";
+  const attachmentSnippet = (messageAttachments || []).length > 0
+    ? messageAttachments
+        .map((attachment: any) => {
+          const excerpt = String(attachment?.extracted_text || "").substring(0, 800);
+          return `Attachment: ${attachment?.filename || "unnamed"}\n${excerpt}`;
+        })
+        .join("\n\n---\n\n")
+    : "No attachment text available";
 
   const classification = latestAnalysis
     ? `${latestAnalysis.intent} (confidence: ${latestAnalysis.confidence_score}, sentiment: ${latestAnalysis.sentiment})`
@@ -105,6 +114,9 @@ ${outcomeContext}
 
 ## Trigger Message
 ${messageSnippet}
+
+## Attachment Context
+${attachmentSnippet}
 
 ## AI Classification
 ${classification}
@@ -153,6 +165,9 @@ Fee amount on file: ${caseData?.fee_amount != null ? `$${caseData.fee_amount}` :
 
 ## Trigger Message
 ${messageSnippet}
+
+## Attachment Context
+${attachmentSnippet}
 
 ## AI Classification
 ${classification}
@@ -283,6 +298,9 @@ export const evalDecision = task({
         const latestAnalysis = evalCase.trigger_message_id && triggerMessage
           ? await db.getResponseAnalysisByMessageId((triggerMessage as any).id)
           : null;
+        const messageAttachments = evalCase.trigger_message_id && triggerMessage
+          ? await db.getAttachmentsByMessageId((triggerMessage as any).id)
+          : (Array.isArray(evalCase.simulated_attachments_jsonb) ? evalCase.simulated_attachments_jsonb : []);
 
         // Run LLM-as-judge
         let judgeScore: number | null = null;
@@ -290,7 +308,7 @@ export const evalDecision = task({
         let failureCategory: string | null = null;
 
         try {
-          const judgment = await runJudge(evalCase, proposal, caseData, triggerMessage, latestAnalysis, evaluationType);
+          const judgment = await runJudge(evalCase, proposal, caseData, triggerMessage, latestAnalysis, messageAttachments, evaluationType);
           judgeScore = judgment.score;
           judgeReasoning = judgment.reasoning;
           if (evaluationType === "draft_quality") {

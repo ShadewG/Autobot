@@ -222,6 +222,7 @@ class DatabaseService {
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS summary TEXT');
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bounced_at TIMESTAMP');
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS provider_payload JSONB');
             await this.query(`
                 CREATE TABLE IF NOT EXISTS email_events (
                     id SERIAL PRIMARY KEY,
@@ -288,6 +289,7 @@ class DatabaseService {
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_instruction TEXT');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_reason TEXT');
             await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS feedback_decided_by VARCHAR(100)');
+            await this.query('ALTER TABLE IF EXISTS eval_cases ADD COLUMN IF NOT EXISTS simulated_attachments_jsonb JSONB');
             await this.query("ALTER TABLE IF EXISTS eval_runs ADD COLUMN IF NOT EXISTS evaluation_type VARCHAR(50) NOT NULL DEFAULT 'decision_quality'");
             await this.query(`
                 DO $$
@@ -856,10 +858,13 @@ class DatabaseService {
                 from_email, to_email, cc_emails, subject, body_text, body_html,
                 has_attachments, attachment_count, message_type, portal_notification,
                 portal_notification_type, portal_notification_provider, sent_at, received_at,
-                summary, metadata
+                summary, metadata, provider_payload
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
-            ON CONFLICT (message_id) DO NOTHING
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            ON CONFLICT (message_id) DO UPDATE SET
+                sendgrid_message_id = COALESCE(messages.sendgrid_message_id, EXCLUDED.sendgrid_message_id),
+                metadata = COALESCE(messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
+                provider_payload = COALESCE(messages.provider_payload, '{}'::jsonb) || COALESCE(EXCLUDED.provider_payload, '{}'::jsonb)
             RETURNING *
         `;
         const values = [
@@ -883,7 +888,8 @@ class DatabaseService {
             messageData.sent_at || null,
             messageData.received_at || null,
             messageData.summary || null,
-            messageData.metadata || null
+            messageData.metadata || null,
+            messageData.provider_payload || null
         ];
         const result = await this.query(query, values);
         if (result.rows.length > 0) {
@@ -939,6 +945,7 @@ class DatabaseService {
         const updateData = {};
         if (updates.delivered_at !== undefined) updateData.delivered_at = updates.delivered_at;
         if (updates.bounced_at !== undefined) updateData.bounced_at = updates.bounced_at;
+        if (updates.provider_payload !== undefined) updateData.provider_payload = updates.provider_payload;
         if (Object.keys(updateData).length === 0) {
             return this.getMessageById(messageId);
         }
@@ -948,6 +955,28 @@ class DatabaseService {
         const result = await this.query(
             `UPDATE messages SET ${setClause} WHERE id = $1 RETURNING *`,
             values
+        );
+        return result.rows[0] || null;
+    }
+
+    async updateMessageMetadata(messageId, metadataPatch = {}) {
+        const result = await this.query(
+            `UPDATE messages
+             SET metadata = COALESCE(metadata, '{}'::jsonb) || $2::jsonb
+             WHERE id = $1
+             RETURNING *`,
+            [messageId, metadataPatch || {}]
+        );
+        return result.rows[0] || null;
+    }
+
+    async updateMessageProviderPayload(messageId, providerPayloadPatch = {}) {
+        const result = await this.query(
+            `UPDATE messages
+             SET provider_payload = COALESCE(provider_payload, '{}'::jsonb) || $2::jsonb
+             WHERE id = $1
+             RETURNING *`,
+            [messageId, providerPayloadPatch || {}]
         );
         return result.rows[0] || null;
     }
@@ -3047,13 +3076,22 @@ class DatabaseService {
             SELECT *
             FROM phone_call_queue
             WHERE case_id = $1
-              AND status IN ('pending', 'claimed')
-            ORDER BY created_at DESC
+              AND (
+                status IN ('pending', 'claimed')
+                OR (status = 'skipped' AND updated_at > NOW() - INTERVAL '7 days')
+              )
+            ORDER BY
+              CASE WHEN status IN ('pending', 'claimed') THEN 0 ELSE 1 END,
+              created_at DESC
             LIMIT 1
         `, [data.case_id]);
 
         if (existing.rows.length > 0) {
-            return mergeIntoExistingTask(existing.rows[0]);
+            // Active entry → merge; recently-skipped → return as-is (don't recreate)
+            if (['pending', 'claimed'].includes(existing.rows[0].status)) {
+                return mergeIntoExistingTask(existing.rows[0]);
+            }
+            return existing.rows[0];
         }
 
         try {
@@ -4098,6 +4136,16 @@ class DatabaseService {
             WHERE a.case_id = $1
             ORDER BY a.created_at DESC
         `, [caseId]);
+        return result.rows;
+    }
+
+    async getAttachmentsByMessageId(messageId) {
+        const result = await this.query(`
+            SELECT *
+            FROM attachments
+            WHERE message_id = $1
+            ORDER BY created_at ASC
+        `, [messageId]);
         return result.rows;
     }
 

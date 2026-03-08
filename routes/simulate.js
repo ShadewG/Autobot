@@ -16,10 +16,10 @@ const db = require('../services/database');
 const logger = console;
 
 // POST /api/simulate
-// Body: { messageBody, fromEmail, subject, caseId?, hasAttachments? }
+// Body: { messageBody, fromEmail, subject, caseId?, hasAttachments?, attachments? }
 router.post('/', express.json({ limit: '100kb' }), async (req, res) => {
     try {
-        const { messageBody, fromEmail, subject, caseId, hasAttachments, isPortalNotification } = req.body;
+        const { messageBody, fromEmail, subject, caseId, hasAttachments, isPortalNotification, attachments } = req.body;
 
         if (!messageBody || typeof messageBody !== 'string' || messageBody.trim().length < 10) {
             return res.status(400).json({ success: false, error: 'messageBody is required (min 10 chars)' });
@@ -44,12 +44,28 @@ router.post('/', express.json({ limit: '100kb' }), async (req, res) => {
             }
         }
 
+        let resolvedAttachments = Array.isArray(attachments) ? attachments : [];
+        if (resolvedCaseId && hasAttachments && resolvedAttachments.length === 0) {
+            const caseAttachments = await db.getAttachmentsByCaseId(resolvedCaseId);
+            resolvedAttachments = caseAttachments
+                .filter((attachment) => attachment && attachment.extracted_text)
+                .slice(0, 6)
+                .map((attachment) => ({
+                    id: attachment.id,
+                    message_id: attachment.message_id,
+                    filename: attachment.filename,
+                    content_type: attachment.content_type,
+                    extracted_text: attachment.extracted_text,
+                }));
+        }
+
         const handle = await tasks.trigger('simulate-decision', {
             messageBody: messageBody.trim(),
             fromEmail: fromEmail.trim(),
             subject: subject.trim(),
             caseId: resolvedCaseId,
             hasAttachments: !!hasAttachments,
+            attachments: resolvedAttachments,
             isPortalNotification: !!isPortalNotification,
         });
 

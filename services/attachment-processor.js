@@ -31,6 +31,7 @@ const openai = process.env.OPENAI_API_KEY
 // Max text to extract per attachment (prevent DB bloat from huge docs)
 const MAX_EXTRACTED_TEXT = 50000;
 const MAX_OCR_IMAGE_BYTES = parseInt(process.env.MAX_OCR_IMAGE_BYTES || `${8 * 1024 * 1024}`, 10);
+const MAX_OCR_PDF_PAGES = parseInt(process.env.MAX_OCR_PDF_PAGES || '3', 10);
 const OCR_MODEL = process.env.ATTACHMENT_OCR_MODEL || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 
 // Content types we can extract text from
@@ -108,6 +109,83 @@ async function extractPdfText(buffer) {
         console.error('PDF text extraction failed:', err.message);
         return null;
     }
+}
+
+function shouldRunPdfOcrFallback(text) {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    return normalized.length < 80;
+}
+
+async function renderPdfPagesToImages(buffer, maxPages = MAX_OCR_PDF_PAGES) {
+    let tempDir = null;
+    try {
+        tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'autobot-pdf-ocr-'));
+        const inputPath = path.join(tempDir, 'input.pdf');
+        const outputPrefix = path.join(tempDir, 'page');
+        await fsp.writeFile(inputPath, buffer);
+
+        await execFileAsync('pdftoppm', [
+            '-png',
+            '-f', '1',
+            '-l', String(Math.max(1, maxPages)),
+            inputPath,
+            outputPrefix,
+        ], { maxBuffer: 10 * 1024 * 1024 });
+
+        const entries = await fsp.readdir(tempDir);
+        const imagePaths = entries
+            .filter((entry) => /^page-\d+\.png$/i.test(entry))
+            .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+            .map((entry) => path.join(tempDir, entry));
+
+        const pages = [];
+        for (const imagePath of imagePaths) {
+            const imageBuffer = await fsp.readFile(imagePath);
+            pages.push({ imagePath, imageBuffer, contentType: 'image/png' });
+        }
+        return pages;
+    } catch (err) {
+        console.error('PDF OCR rasterization failed:', err.message);
+        return [];
+    } finally {
+        if (tempDir) {
+            try {
+                await fsp.rm(tempDir, { recursive: true, force: true });
+            } catch (_) {}
+        }
+    }
+}
+
+async function extractPdfTextWithFallback(
+    buffer,
+    {
+        extractPdfTextImpl = extractPdfText,
+        renderPdfPagesImpl = renderPdfPagesToImages,
+        extractImageTextImpl = extractImageTextWithOCR,
+    } = {}
+) {
+    const directText = await extractPdfTextImpl(buffer);
+    if (!shouldRunPdfOcrFallback(directText)) {
+        return directText;
+    }
+
+    const renderedPages = await renderPdfPagesImpl(buffer, MAX_OCR_PDF_PAGES);
+    if (!renderedPages.length) {
+        return directText;
+    }
+
+    const ocrTexts = [];
+    for (const page of renderedPages) {
+        const text = await extractImageTextImpl(page.imageBuffer, page.contentType);
+        if (text) ocrTexts.push(text);
+    }
+
+    const combined = ocrTexts.join('\n\n--- Page Break ---\n\n').trim();
+    if (!combined) {
+        return directText;
+    }
+
+    return combined.substring(0, MAX_EXTRACTED_TEXT);
 }
 
 /**
@@ -236,7 +314,7 @@ async function processAttachment(attachmentId, buffer, contentType, filename = '
     let text = null;
 
     if (contentType?.includes('pdf')) {
-        text = await extractPdfText(buffer);
+        text = await extractPdfTextWithFallback(buffer);
     } else if (isDocx(contentType, filename)) {
         text = await extractDocxText(buffer);
     } else if (isImage(contentType, filename)) {
@@ -326,7 +404,10 @@ module.exports = {
     processAttachment,
     processAttachmentsForCase,
     extractPdfText,
+    extractPdfTextWithFallback,
     extractDocxText,
     extractImageTextWithOCR,
+    renderPdfPagesToImages,
+    shouldRunPdfOcrFallback,
     isExtractable,
 };

@@ -95,7 +95,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [ ] When research concludes "wrong agency" or "manual lookup needed," create a durable operator work item instead of leaving the case paused with bare `RESEARCH_HANDOFF` (`25246`, `25249`, `25253`)
 - [ ] Stop repeated `RESEARCH_AGENCY` / `NO_RESPONSE` loops from cycling back into research after operator dismissals when valid contact research already exists (`25155` and similar cases)
 - [ ] Regenerate a live fee decision proposal whenever inbound `fee_request` / `partial_delivery` with fee moves a case into human decision state (`25175`, `25211`)
-- [ ] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically
+- [x] Add a repair/reconciliation query for "needs human decision but no live proposal / no active work item" so fee and approval dead ends are caught automatically `(added dead_end_cases section to reconciliation report — 2026-03-08)`
 
 #### Operator Workflow
 - [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTED IN UI - Codex 2026-03-08 - bulk mode works on localhost:3001 static stack; Bulk Approve Cancel now closes cleanly without opening Bulk Dismiss)`
@@ -125,8 +125,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Review `proposals.langgraph_checkpoint_id` for removal — dropped: 0 rows had data, 0 code references
 
 #### Portal Data Quality
-- [x] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — added `completedBy` and `confirmationNumber` passthrough in case-reducer PORTAL_COMPLETED handler + submit-portal.ts context; backfilled 13 completed_by and 3 confirmation_number values from cases table
-- [x] Sync portal task completion back to `executions` and `proposals` — case-reducer already updates proposals to EXECUTED on PORTAL_COMPLETED; backfilled 29 orphan portal_tasks with proposal_id from SUBMIT_PORTAL proposals
+- [ ] Ensure completed `portal_tasks` always write `completed_by` and `confirmation_number` — FAILED VERIFICATION 2026-03-08: `completed_by` is clean, but `10` completed portal tasks still have `confirmation_number IS NULL`
+- [ ] Sync portal task completion back to `executions` and `proposals` — FAILED VERIFICATION 2026-03-08: `2` completed portal tasks still have no `proposal_id`, and `7` completed portal tasks still have no matching `SUBMIT_PORTAL` execution row
 - [x] Improve `portal_request_number` capture from submissions and inbound notifications — **AUDITED**: 3 capture paths exist: (1) Skyvern extraction in portal-agent-service-skyvern.js, (2) inbound email matching in sendgrid-service.js (primary source, captured 9 of 10 request numbers), (3) case-reducer PORTAL_COMPLETED sets from confirmationNumber. 16 portal-completed cases lack request_number because Skyvern didn't extract one and no inbound notification contained it. Backfilled case 25164 (MR-2026-6) from inbound subject. Remaining gaps are portal submissions where confirmation wasn't extractable
 - [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers
 - [ ] Fix portal approval propagation so an approved portal proposal cannot still hit `portal_submission_blocked` / "no approved proposal" and strand the case in `PENDING_HUMAN` (`25161`)
@@ -151,7 +151,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Future-Proof Data Capture
 - [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change — 2026-03-08)`
-- [ ] Capture raw inbound/outbound provider payloads `(IN PROGRESS - Codex 2026-03-08)`
+- [x] Capture raw inbound/outbound provider payloads — `messages.provider_payload` now stores sanitized inbound/outbound SendGrid payloads, webhook fallbacks persist raw inbound envelope/body/attachment metadata, and message upserts merge provider payloads safely `(2026-03-08)`
 - [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table + execution-layer metadata now persisted on executions via migration 069; error-tracking-service + executor-adapter/database normalize and store all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
 
@@ -193,15 +193,15 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Decide whether `delivery` and `records_ready` should remain distinct; collapse them if the execution layer treats them the same — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `RECORDS_READY` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
 - [x] Review the `partial_*` classifications against real cases and simplify if they are causing drift or misrouting — **AUDITED**: 4 production cases found (2 partial_denial, 2 partial_delivery). Both partial_delivery cases were misclassified (should be partial_denial — agencies withholding, not interim delivery). **FIXED**: (1) Added all partial_* intents + wrong_agency to `isComplexCase` gate in email-queue.js so they route to Trigger.dev; (2) Added `PARTIAL_DELIVERY` to requires_response bypass list in decide-next-action.ts; (3) Strengthened classifier prompt to distinguish partial_delivery (interim, more coming) from partial_denial (final, some withheld)
 - [x] Ensure the decision prompt consumes richer classifier output: `referral_contact`, exemption citations, evidence quotes, response nature, and attachment-informed context — **FIXED**: Classifier Evidence section existed in `buildEnrichedDecisionPrompt` but was reading `la.decision_evidence_quotes` instead of `la.full_analysis_json.decision_evidence_quotes` (fields were always undefined). Fixed all 6 field paths to read from `full_analysis_json`
-- [ ] Pass attachment-aware context into simulation and eval so tuning reflects real production messages `(IN PROGRESS - Codex 2026-03-08)`
+- [x] Pass attachment-aware context into simulation and eval so tuning reflects real production messages — `/api/simulate`, `/api/eval/cases/from-simulation`, `simulate-decision`, and `eval-decision` now persist and pass extracted attachment text through the judge / simulator pipeline `(2026-03-08)`
 - [x] Exclude internal synthetic messages (for example phone call update notes) from the normal inbound agency-response classifier path — added auto-classification in classify-inbound.ts for phone_call message_type and "phone call update/log/note" subject patterns → NO_RESPONSE without AI call
 - [x] Add a clear prompt rule for mixed messages: fee + denial, partial release + withholding, portal notice + human instruction, and other combined cases `(classifier + decision prompt — 2026-03-08)`
 - [x] Add explicit guidance for “closure after we did not answer” portal messages so they are not treated like generic denials or generic acknowledgments `(classifier prompt — 2026-03-08)`
 - [x] Add explicit guidance for request-form and mailing-address workflows so they classify as clarification/process blockers rather than delivery `(classifier prompt — 2026-03-08)`
 - [x] Add explicit guidance that attached letters may be acknowledgments, denials, fee notices, formal responses, or actual records, and must be classified from content rather than file presence `(classifier prompt — 2026-03-08)`
-- [ ] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier `(IN PROGRESS - Codex 2026-03-08)`
-- [ ] Ensure fallback constraint extraction can use attachment text, not just email body text `(IN PROGRESS - Codex 2026-03-08)`
-- [ ] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals `(IN PROGRESS - Codex 2026-03-08)`
+- [x] Add OCR fallback for scanned/image-only PDFs so attachment-heavy cases are not partially invisible to the classifier — PDF extraction now falls back to rasterizing the first pages with `pdftoppm` and OCRing them when direct text extraction is too thin `(2026-03-08)`
+- [x] Ensure fallback constraint extraction can use attachment text, not just email body text — `update-constraints.ts` now feeds extracted attachment text into both the AI fallback extractor and the regex fallback signals `(2026-03-08)`
+- [x] Build a prompt test set from real message patterns: portal confirmations, portal releases, portal access issues, blank request forms, fee letters, denial letters, mixed partial releases, wrong-agency referrals — added `prompt-pattern-dataset-service` plus `npm run test:prompts:build-real` to generate grouped real-message fixtures from production-shaped inbound traffic `(2026-03-08)`
 - [ ] Review low-confidence and `other` classifications regularly and feed those examples into the prompt test set
 - [x] Add validation reporting for attachment extraction coverage so we know which PDF/image messages reached classification without usable text — added `attachment_extraction` section to reconciliation report with inbound_with_attachments, has_extraction, missing_extraction, and extraction_rate metrics
 
@@ -234,12 +234,12 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify live rollout of `email_events` capture and `messages.delivered_at` / `messages.bounced_at` updates — tables/columns exist but live counts are `0` — **code is complete and tested**: `POST /webhooks/events` handler in webhooks.js, `processSendgridEvent()` in email-event-service.js, `createEmailEvent()` + `updateMessageDeliveryStatus()` in database.js; **needs SendGrid Event Webhook configuration** to point at `https://<domain>/webhooks/events`
 - [x] Verify live rollout of `portal_submissions` capture — DB spot-check 2026-03-08 still shows `0` live rows. **Code exists only in submit-portal.ts** (Trigger.dev task); legacy paths (email-queue.js, run-pending-portals.js) bypass it; this still needs a real Trigger.dev portal submission to confirm end-to-end capture
 - [x] Finish live schema rollout for proposal AI metadata — added missing columns (decision_completion_tokens, decision_latency_ms, draft_completion_tokens, draft_latency_ms)
-- [x] Verify AI model metadata is actually being written on new analyses — DB spot-check 2026-03-08 shows proposal metadata live (`5` proposals with model/usage fields) but `response_analysis` model metadata is still `0`, so the classify-step write path remains unresolved
+- [x] Verify AI model metadata is actually being written on new analyses — local regression now proves both `classify-inbound` and legacy `aiService.analyzeResponse()` persist `model_id`, token counts, and latency into `response_analysis`; proposal metadata remained green `(2026-03-08)`
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
 - [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns stale responses that do not match repo code. Isolated current backend on `localhost:3010` verifies `/api/dashboard/costs`, `/api/dashboard/compliance`, `/api/eval/quality-report`, `/api/eval/classification-confusion`, `/api/requests/:id/export`, and `/api/requests/:id/workspace`; only `/api/dashboard/outcomes` fails on current code
-- [x] Fix `/api/dashboard/outcomes` against the current schema — replaced `completed_at` (doesn't exist) with `updated_at` filtered to `status = 'completed'`; also fixed denial queries to use case-insensitive LOWER(intent) to match both legacy uppercase and Trigger.dev lowercase intents
+- [x] Fix `/api/dashboard/outcomes` against the current schema — replaced `completed_at` with `updated_at`, fixed denial queries to use case-insensitive intent matching `(2026-03-08)`
 - [x] Make the dashboard Export Package action use the same current API origin/proxy as the rest of the UI instead of opening a stale absolute `localhost:3004` URL — changed to relative `/api/requests/:id/export` path which works via same-origin in production and via next.config.js proxy locally
 - [x] Fix `response_analysis` model metadata persistence for live classify runs — replaced CJS `require("../../utils/ai-model-metadata")` with inline `extractModelMetadata()` in classify-inbound.ts and decide-next-action.ts to avoid Trigger.dev bundle resolution failures that silently fell back to legacy aiService path (which doesn't capture metadata). Also fixes decision_model_id on proposals (0 rows had it)
 
@@ -383,7 +383,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
 - [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
-- [ ] Batch status view: sent / responded / denied counts — UI shell exists at `/requests/batch`, but isolated backend check on 2026-03-08 shows `/api/requests/batch/:batchId/status` currently fails with `operator does not exist: text[] @> jsonb`
+- [x] Batch status view: sent / responded / denied counts — UI shell exists at `/requests/batch`, backend endpoint fixed (text[] @> text[] array containment — 2026-03-08)
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -451,8 +451,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Proposals missing `case_agency_id` when derivable — 18 found, backfilled from primary case_agency
 - [x] Cases with agency email but no matching directory entry — now mitigated by research caching (persistResearch upserts to `agencies` table) + import validation (validateImportedCase checks `findAgencyByName`)
 - [x] Cases with bounced emails still in "awaiting_response" — 0 found (clean)
-- [ ] Cases in `needs_human_review` / `needs_phone_call` with no active proposal, no active agent run, and no pending phone/portal/human work item — should be zero
-- [ ] Cases with pending `phone_call_queue` or portal tasks still counted by system health as `stuck_cases` — should be zero
+- [x] Cases in `needs_human_review` / `needs_phone_call` with no active proposal, no active agent run, and no pending phone/portal/human work item — should be zero `(added dead_end_cases to reconciliation report + fixed system-health stuck_cases query — 2026-03-08)`
+- [x] Cases with pending `phone_call_queue` or portal tasks still counted by system health as `stuck_cases` — should be zero `(added phone_call_queue and portal_tasks NOT EXISTS to both count and details queries — 2026-03-08)`
 
 ---
 

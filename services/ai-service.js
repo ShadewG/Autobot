@@ -717,6 +717,7 @@ Please analyze and provide a JSON response with:
 Return ONLY valid JSON, no other text.`;
 
             // Use GPT-5 with medium reasoning for analysis (better at understanding nuance)
+            const startedAt = Date.now();
             const response = await this.openai.responses.create({
                 model: 'gpt-5.2-2025-12-11',
                 reasoning: { effort: 'medium' },
@@ -724,6 +725,11 @@ Return ONLY valid JSON, no other text.`;
                 input: `${responseHandlingPrompts.analysisSystemPrompt}
 
 ${prompt}`
+            });
+            const modelMetadata = buildModelMetadata({
+                response,
+                usage: response.usage,
+                startedAt,
             });
 
             const analysis = JSON.parse(response.output_text);
@@ -746,7 +752,11 @@ ${prompt}`
                 extracted_fee_amount: analysis.extracted_fee_amount === "null" || !analysis.extracted_fee_amount ? null : analysis.extracted_fee_amount,
                 requires_action: analysis.requires_action,
                 suggested_action: analysis.suggested_action,
-                full_analysis_json: analysis
+                full_analysis_json: analysis,
+                model_id: modelMetadata.modelId,
+                prompt_tokens: modelMetadata.promptTokens,
+                completion_tokens: modelMetadata.completionTokens,
+                latency_ms: modelMetadata.latencyMs,
             });
 
             // Backfill message summary from analysis

@@ -104,6 +104,13 @@ export async function updateConstraints(
     ...(caseData.constraints_jsonb || currentConstraints),
   ];
   const scopeItems = caseData.scope_items_jsonb || currentScopeItems;
+  const message = await db.getMessageById(messageId);
+  const messageAttachments = (await db.getAttachmentsByMessageId(messageId)).filter(
+    (attachment: any) => attachment?.extracted_text
+  );
+  const attachmentText = messageAttachments
+    .map((attachment: any) => `Attachment: ${attachment.filename || "unnamed"}\n${attachment.extracted_text}`)
+    .join("\n\n");
 
   let extractedConstraints: string[] = Array.isArray(parsed.constraints_to_add)
     ? parsed.constraints_to_add
@@ -114,7 +121,6 @@ export async function updateConstraints(
 
   if (extractedConstraints.length === 0) {
     try {
-      const message = await db.getMessageById(messageId);
       const { object } = await generateObject({
         model: decisionModel,
         schema: constraintExtractionSchema,
@@ -130,6 +136,7 @@ ${JSON.stringify(parsed, null, 2)}
 Subject: ${message?.subject || "No subject"}
 Body:
 ${(message?.body_text || message?.body_html || "").substring(0, 4000)}
+${attachmentText ? `\n\n## Attachment text\n${attachmentText.substring(0, 6000)}` : ""}
 
 Return constraint tags and scope item updates only when supported by the message content.`,
         experimental_telemetry: telemetry,
@@ -156,8 +163,15 @@ Return constraint tags and scope item updates only when supported by the message
   }
 
   // Fallback: extract from key_points
-  if (extractedConstraints.length === 0 && parsed.key_points) {
-    for (const point of parsed.key_points) {
+  const fallbackSignals = [
+    ...(Array.isArray(parsed.key_points) ? parsed.key_points : []),
+    message?.subject || "",
+    message?.body_text || message?.body_html || "",
+    attachmentText,
+  ].filter(Boolean);
+
+  if (extractedConstraints.length === 0 && fallbackSignals.length > 0) {
+    for (const point of fallbackSignals) {
       const pl = point.toLowerCase();
       if (
         (pl.includes("body camera") || pl.includes("bwc")) &&
@@ -177,6 +191,12 @@ Return constraint tags and scope item updates only when supported by the message
         !constraints.includes("ID_REQUIRED")
       ) {
         constraints.push("ID_REQUIRED");
+      }
+      if (
+        (pl.includes("appeal rights") || pl.includes("exemption") || pl.includes("withheld")) &&
+        !constraints.includes("DENIAL_RECEIVED")
+      ) {
+        constraints.push("DENIAL_RECEIVED");
       }
       if (
         (pl.includes("ongoing investigation") || pl.includes("active case") || pl.includes("pending litigation")) &&

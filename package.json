@@ -18,6 +18,7 @@
     "test:prompts:gate": "node scripts/test-prompt-suite.js --min-pass-rate=90 --require-pass-standards",
     "test:prompts:verbose": "node scripts/test-prompt-suite.js --verbose",
     "test:prompts:dry": "node scripts/test-prompt-suite.js --dry-run",
+    "test:prompts:build-real": "node scripts/build-real-message-prompt-test-set.js",
     "test:e2e:prompts": "node tests/e2e/api-prompt-e2e.test.js",
     "test:prod-ready": "node tests/e2e/production-readiness.test.js",
     "test:prod-ready:full": "node tests/e2e/production-readiness.test.js --full",

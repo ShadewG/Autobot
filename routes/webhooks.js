@@ -310,10 +310,22 @@ router.post('/inbound', upload.any(), async (req, res) => {
                 const htmlRaw = emailHtml || inboundData.html || inboundData.body_html || '';
 
                 const unmatchedMsg = await db.query(`
-                    INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, received_at, created_at)
-                    VALUES ('inbound', $1, $2, $3, $4, $5, NOW(), NOW())
+                    INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, received_at, created_at, provider_payload)
+                    VALUES ('inbound', $1, $2, $3, $4, $5, NOW(), NOW(), $6)
                     RETURNING id
-                `, [fromRaw, toRaw, subjectRaw, textRaw, htmlRaw]);
+                `, [
+                    fromRaw,
+                    toRaw,
+                    subjectRaw,
+                    textRaw,
+                    htmlRaw,
+                    sendgridService.buildInboundProviderPayload({
+                        ...inboundData,
+                        text: textRaw,
+                        html: htmlRaw,
+                        attachments: inboundAttachments,
+                    }),
+                ]);
 
                 const savedMsgId = unmatchedMsg.rows[0]?.id;
 
