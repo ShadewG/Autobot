@@ -23,6 +23,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatRelativeTime, humanizeRiskFlag, condenseReviewNotes, formatReasoningItem } from "@/lib/utils";
 import type { ThreadMessage } from "@/lib/types";
 import { Thread } from "@/components/thread";
@@ -58,6 +59,9 @@ import {
   Paperclip,
   DollarSign,
   CalendarDays,
+  ListChecks,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import {
   Collapsible,
@@ -653,6 +657,13 @@ function MonitorPageContent() {
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const [reviewNotesExpanded, setReviewNotesExpanded] = useState(false);
   const [riskFlagsExpanded, setRiskFlagsExpanded] = useState(false);
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<Set<number>>(new Set());
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+  const [showBulkConfirm, setShowBulkConfirm] = useState<{
+    action: "APPROVE" | "DISMISS";
+    reason?: string;
+  } | null>(null);
   const [showDestructiveConfirm, setShowDestructiveConfirm] = useState<{
     title: string;
     description: string;
@@ -1232,6 +1243,76 @@ function MonitorPageContent() {
     setPendingAction({ label, item, execute: apiCall, timerId, startedAt: Date.now() });
   }, [pendingAction, currentIndex, queue.length, revalidateQueue, showToast]);
 
+  // ── Bulk actions ────────────────────────────
+  const bulkProposals = useMemo(() =>
+    queue.filter((i): i is QueueItem & { type: "proposal" } => i.type === "proposal"),
+    [queue]
+  );
+
+  const toggleBulkSelect = (id: number) => {
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleBulkSelectAll = () => {
+    const allIds = bulkProposals.map((i) => i.data.id);
+    const allSelected = allIds.length > 0 && allIds.every((id) => bulkSelected.has(id));
+    if (allSelected) {
+      setBulkSelected(new Set());
+    } else {
+      setBulkSelected(new Set(allIds));
+    }
+  };
+
+  const handleBulkAction = async () => {
+    if (!showBulkConfirm || bulkSelected.size === 0) return;
+    setBulkSubmitting(true);
+    try {
+      const res = await fetch("/api/monitor/proposals/bulk-decision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proposal_ids: [...bulkSelected],
+          action: showBulkConfirm.action,
+          dismiss_reason: showBulkConfirm.reason || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || `Failed (${res.status})`);
+
+      // Remove all acted-on items from queue
+      setRemovedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of bulkSelected) {
+          next.add(`p:${id}`);
+          const proposal = bulkProposals.find((p) => p.data.id === id);
+          if (proposal) next.add(`r:${proposal.data.case_id}`);
+        }
+        return next;
+      });
+
+      const { succeeded, failed } = data.summary;
+      showToast(
+        failed > 0
+          ? `${succeeded} ${showBulkConfirm.action.toLowerCase()}d, ${failed} failed`
+          : `${succeeded} proposals ${showBulkConfirm.action.toLowerCase()}d`
+      );
+      setBulkSelected(new Set());
+      setBulkMode(false);
+      setShowBulkConfirm(null);
+      setCurrentIndex(0);
+      revalidateQueue();
+    } catch (err) {
+      showToast(`Bulk action failed: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setBulkSubmitting(false);
+      setShowBulkConfirm(null);
+    }
+  };
+
   const handleAddToPhoneQueue = async (caseId: number, reason?: string) => {
     setAddingToPhoneQueue(true);
     try {
@@ -1559,33 +1640,147 @@ function MonitorPageContent() {
           </Badge>
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(-1)}
-            disabled={queue.length <= 1}
-            title="Previous (←)"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(1)}
-            disabled={queue.length <= 1}
-            title="Next (→)"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <div className="w-px h-4 bg-border mx-1" />
-          <Button variant="ghost" size="sm" onClick={() => mutate()} title="Refresh">
-            <RefreshCw className="h-3 w-3" />
-          </Button>
+          {!bulkMode && (<>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(-1)}
+              disabled={queue.length <= 1}
+              title="Previous (←)"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(1)}
+              disabled={queue.length <= 1}
+              title="Next (→)"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            <div className="w-px h-4 bg-border mx-1" />
+          </>)}
+          {bulkProposals.length > 1 && (
+            <Button
+              variant={bulkMode ? "default" : "ghost"}
+              size="sm"
+              onClick={() => { setBulkMode(!bulkMode); setBulkSelected(new Set()); }}
+              title="Bulk select mode"
+            >
+              <ListChecks className="h-3.5 w-3.5 mr-1" />
+              {bulkMode ? "Exit Bulk" : "Bulk"}
+            </Button>
+          )}
+          {!bulkMode && (
+            <Button variant="ghost" size="sm" onClick={() => mutate()} title="Refresh">
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+          )}
         </div>
       </div>
 
+      {/* ── Bulk Select Mode ─────────────────── */}
+      {bulkMode && bulkProposals.length > 0 && (
+        <div className="space-y-3 mb-4">
+          {/* Bulk action bar */}
+          <div className="flex items-center justify-between border bg-card px-3 py-2">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={toggleBulkSelectAll}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                {bulkSelected.size === bulkProposals.length && bulkProposals.length > 0
+                  ? <CheckSquare className="h-3.5 w-3.5" />
+                  : <Square className="h-3.5 w-3.5" />}
+                {bulkSelected.size === bulkProposals.length ? "Deselect All" : "Select All"}
+              </button>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                {bulkSelected.size} of {bulkProposals.length} selected
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="default"
+                className="bg-green-600 hover:bg-green-700 text-white h-7 text-xs"
+                disabled={bulkSelected.size === 0 || bulkSubmitting}
+                onClick={() => setShowBulkConfirm({ action: "APPROVE" })}
+              >
+                <CheckCircle className="h-3 w-3 mr-1" />
+                Approve {bulkSelected.size > 0 ? `(${bulkSelected.size})` : ""}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={bulkSelected.size === 0 || bulkSubmitting}
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" />
+                    Dismiss {bulkSelected.size > 0 ? `(${bulkSelected.size})` : ""}
+                    <ChevronDown className="h-3 w-3 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {DISMISS_REASONS.map((reason) => (
+                    <DropdownMenuItem
+                      key={reason}
+                      onClick={() => setShowBulkConfirm({ action: "DISMISS", reason })}
+                    >
+                      {reason}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          {/* Compact list of proposals */}
+          <div className="border divide-y max-h-[60vh] overflow-y-auto">
+            {bulkProposals.map((item) => {
+              const p = item.data;
+              const isSelected = bulkSelected.has(p.id);
+              return (
+                <div
+                  key={p.id}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors",
+                    isSelected ? "bg-muted/50" : "hover:bg-muted/30"
+                  )}
+                  onClick={() => toggleBulkSelect(p.id)}
+                >
+                  <Checkbox
+                    checked={isSelected}
+                    className="h-4 w-4 pointer-events-none"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-muted-foreground">#{p.case_id}</span>
+                      <Badge variant="outline" className="text-[10px] px-1 py-0">
+                        {p.action_type.replace(/_/g, " ")}
+                      </Badge>
+                      {p.risk_flags && p.risk_flags.filter(f => !["NO_DRAFT", "MISSING_DRAFT", "DRAFT_EMPTY"].includes(f)).length > 0 && (
+                        <AlertTriangle className="h-3 w-3 text-amber-400" />
+                      )}
+                    </div>
+                    <p className="text-xs truncate mt-0.5">
+                      {p.case_name || "Unnamed Case"}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground truncate">
+                      {p.agency_name} {"\u00B7"} {formatRelativeTime(p.created_at)}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Empty State ────────────────────── */}
-      {queue.length === 0 && (
+      {queue.length === 0 && !bulkMode && (
         <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
           <CheckCircle className="h-10 w-10 text-green-500" />
           <p className="text-sm text-muted-foreground">
@@ -1598,7 +1793,7 @@ function MonitorPageContent() {
       )}
 
       {/* ── Proposal View ──────────────────── */}
-      {selectedItem?.type === "proposal" && (
+      {selectedItem?.type === "proposal" && !bulkMode && (
         <div className="space-y-4">
           {/* Case header */}
           <div className="border-b pb-3">
@@ -2285,7 +2480,7 @@ function MonitorPageContent() {
       )}
 
       {/* ── Human Review View ──────────────── */}
-      {selectedItem?.type === "review" && (
+      {selectedItem?.type === "review" && !bulkMode && (
         <div className="space-y-4">
           {/* Case header */}
           <div className="border-b pb-3">
@@ -3500,6 +3695,37 @@ function MonitorPageContent() {
           )}
         </div>
       )}
+
+      {/* ── Bulk Confirmation Dialog ────────── */}
+      <Dialog open={!!showBulkConfirm} onOpenChange={(open) => !open && setShowBulkConfirm(null)}>
+        <DialogContent className="bg-card border max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              {showBulkConfirm?.action === "APPROVE" ? "Bulk Approve" : "Bulk Dismiss"}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              {showBulkConfirm?.action === "APPROVE"
+                ? `This will approve ${bulkSelected.size} proposal${bulkSelected.size !== 1 ? "s" : ""} and execute them immediately. Each will be sent as-is (no draft edits).`
+                : `This will dismiss ${bulkSelected.size} proposal${bulkSelected.size !== 1 ? "s" : ""} with reason: "${showBulkConfirm?.reason}".`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setShowBulkConfirm(null)} disabled={bulkSubmitting}>
+              Cancel
+            </Button>
+            <Button
+              variant={showBulkConfirm?.action === "APPROVE" ? "default" : "destructive"}
+              size="sm"
+              onClick={handleBulkAction}
+              disabled={bulkSubmitting}
+              className={showBulkConfirm?.action === "APPROVE" ? "bg-green-600 hover:bg-green-700" : ""}
+            >
+              {bulkSubmitting && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+              {showBulkConfirm?.action === "APPROVE" ? `Approve ${bulkSelected.size}` : `Dismiss ${bulkSelected.size}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Destructive Confirmation Dialog ── */}
       <Dialog open={!!showDestructiveConfirm} onOpenChange={(open) => !open && setShowDestructiveConfirm(null)}>

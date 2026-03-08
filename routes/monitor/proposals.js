@@ -147,4 +147,50 @@ router.post('/proposals/:id/generate-draft', express.json(), async (req, res) =>
     }
 });
 
+/**
+ * POST /api/monitor/proposals/bulk-decision
+ * Apply the same decision to multiple proposals at once.
+ * Body: { proposal_ids: number[], action: 'APPROVE' | 'DISMISS', dismiss_reason?: string }
+ */
+router.post('/proposals/bulk-decision', express.json(), async (req, res) => {
+    try {
+        const { proposal_ids, action, dismiss_reason } = req.body || {};
+        const userId = req.headers['x-user-id'] || null;
+
+        if (!Array.isArray(proposal_ids) || proposal_ids.length === 0) {
+            return res.status(400).json({ success: false, error: 'proposal_ids must be a non-empty array' });
+        }
+        if (!['APPROVE', 'DISMISS'].includes(action)) {
+            return res.status(400).json({ success: false, error: 'Bulk action must be APPROVE or DISMISS' });
+        }
+        if (proposal_ids.length > 50) {
+            return res.status(400).json({ success: false, error: 'Maximum 50 proposals per bulk action' });
+        }
+
+        const results = [];
+        for (const id of proposal_ids) {
+            try {
+                const result = await processProposalDecision(parseInt(id), action, {
+                    reason: dismiss_reason || null,
+                    userId,
+                });
+                results.push({ id, success: true });
+            } catch (err) {
+                results.push({ id, success: false, error: err.message });
+            }
+        }
+
+        const succeeded = results.filter(r => r.success).length;
+        const failed = results.filter(r => !r.success).length;
+
+        res.json({
+            success: true,
+            summary: { total: proposal_ids.length, succeeded, failed },
+            results,
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 module.exports = router;
