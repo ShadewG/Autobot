@@ -40,6 +40,7 @@ export function NavLinks() {
     { href: "/portal-tasks", label: "PORTALS", count: portalCount },
     { href: "/agencies", label: "AGENCIES" },
     { href: "/eval", label: "EVALS" },
+    { href: "/errors", label: "ERRORS" },
     { href: "/analytics", label: "ANALYTICS" },
     { href: "/simulate", label: "SIM" },
     { href: "/settings", label: "SETTINGS" },
