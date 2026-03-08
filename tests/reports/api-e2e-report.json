@@ -1,0 +1,279 @@
+{
+  "timestamp": "2026-03-08T23:25:16.844Z",
+  "api_base_url": "http://127.0.0.1:3020",
+  "summary": {
+    "total": 24,
+    "passed": 24,
+    "failed": 0
+  },
+  "results": [
+    {
+      "fixture_id": "portal_redirect_simple",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25498,
+      "message_id": 1023,
+      "duration_ms": 21977
+    },
+    {
+      "fixture_id": "portal_redirect_no_url",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Portal URL not saved to case"
+      ],
+      "case_id": 25500,
+      "message_id": 1027,
+      "duration_ms": 22219
+    },
+    {
+      "fixture_id": "acknowledgment",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25501,
+      "message_id": 1028,
+      "duration_ms": 21068
+    },
+    {
+      "fixture_id": "records_ready_link",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25503,
+      "message_id": 1031,
+      "duration_ms": 27751
+    },
+    {
+      "fixture_id": "delivery_attached",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25504,
+      "message_id": 1032,
+      "duration_ms": 50417
+    },
+    {
+      "fixture_id": "partial_delivery_more_coming",
+      "category": "no_response",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25506,
+      "message_id": 1036,
+      "proposal_id": 1197,
+      "duration_ms": 49665
+    },
+    {
+      "fixture_id": "more_info_needed",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25507,
+      "message_id": 1037,
+      "proposal_id": 1201,
+      "duration_ms": 74484
+    },
+    {
+      "fixture_id": "direct_question",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25512,
+      "message_id": 1044,
+      "proposal_id": 1203,
+      "duration_ms": 61942
+    },
+    {
+      "fixture_id": "fee_request_low",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25514,
+      "message_id": 1046,
+      "proposal_id": 1205,
+      "duration_ms": 38934
+    },
+    {
+      "fixture_id": "fee_request_high",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25516,
+      "message_id": 1048,
+      "proposal_id": 1206,
+      "duration_ms": 53249
+    },
+    {
+      "fixture_id": "denial_weak",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25517,
+      "message_id": 1049,
+      "proposal_id": 1209,
+      "duration_ms": 72366
+    },
+    {
+      "fixture_id": "denial_strong",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25519,
+      "message_id": 1051,
+      "proposal_id": 1211,
+      "duration_ms": 84726
+    },
+    {
+      "fixture_id": "wrong_agency",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25521,
+      "message_id": 1053,
+      "proposal_id": 1214,
+      "duration_ms": 30899
+    },
+    {
+      "fixture_id": "retention_expired",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25523,
+      "message_id": 1055,
+      "proposal_id": 1217,
+      "duration_ms": 94885
+    },
+    {
+      "fixture_id": "hostile",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25527,
+      "message_id": 1059,
+      "proposal_id": 1218,
+      "duration_ms": 34620
+    },
+    {
+      "fixture_id": "sensitive_minors",
+      "category": "respond_required",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25529,
+      "message_id": 1061,
+      "proposal_id": 1220,
+      "duration_ms": 66344
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_1",
+      "category": "followup",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Followup E2E not implemented"
+      ],
+      "case_id": null,
+      "message_id": null,
+      "run_id": null,
+      "proposal_id": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_2",
+      "category": "followup",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Followup E2E not implemented"
+      ],
+      "case_id": null,
+      "message_id": null,
+      "run_id": null,
+      "proposal_id": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "no_response_followup_attempt_3_final",
+      "category": "followup",
+      "passed": true,
+      "errors": [],
+      "warnings": [
+        "Followup E2E not implemented"
+      ],
+      "case_id": null,
+      "message_id": null,
+      "run_id": null,
+      "proposal_id": null,
+      "duration_ms": 0
+    },
+    {
+      "fixture_id": "multi_portal_plus_fee",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25531,
+      "message_id": 1063,
+      "duration_ms": 24288
+    },
+    {
+      "fixture_id": "multi_portal_plus_denial_language",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25532,
+      "message_id": 1064,
+      "duration_ms": 22466
+    },
+    {
+      "fixture_id": "multi_partial_approval_plus_fee",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25534,
+      "message_id": 1066,
+      "proposal_id": 1222,
+      "duration_ms": 57364
+    },
+    {
+      "fixture_id": "multi_ack_plus_fee_estimate",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25535,
+      "message_id": 1067,
+      "proposal_id": 1225,
+      "duration_ms": 43567
+    },
+    {
+      "fixture_id": "multi_denial_plus_partial_release",
+      "category": "multi_intent",
+      "passed": true,
+      "errors": [],
+      "warnings": [],
+      "case_id": 25536,
+      "message_id": 1070,
+      "proposal_id": 1226,
+      "duration_ms": 56093
+    }
+  ]
+}
