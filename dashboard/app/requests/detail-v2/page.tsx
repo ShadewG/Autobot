@@ -359,7 +359,7 @@ function DetailV2Content() {
   const [newConstraintType, setNewConstraintType] = useState("FEE_REQUIRED");
   const [newConstraintDesc, setNewConstraintDesc] = useState("");
   // View management
-  const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency" | "intel">("thread");
+  const [activeView, setActiveView] = useState<"thread" | "case-info" | "agency" | "intel" | "timeline">("thread");
   const [bottomDrawer, setBottomDrawer] = useState<"runs" | "agent-log" | null>(null);
   const [conversationTab, setConversationTab] = useState<string>("all");
   // Multi-agency state
@@ -1518,6 +1518,23 @@ function DetailV2Content() {
               </button>
             </>
           )}
+          {/* Import validation warnings */}
+          {Array.isArray(request.import_warnings) && request.import_warnings.length > 0 && (
+            <div className="w-full mt-1.5 border border-yellow-700/50 bg-yellow-500/10 rounded px-2.5 py-1.5">
+              <p className="text-[10px] font-semibold text-yellow-400 uppercase tracking-wider flex items-center gap-1 mb-1">
+                <AlertTriangle className="h-3 w-3" />
+                Import Warnings
+              </p>
+              <ul className="space-y-0.5">
+                {request.import_warnings.map((w: any, i: number) => (
+                  <li key={i} className="text-xs text-yellow-300/80 flex items-start gap-1">
+                    <span className="text-yellow-500 mt-0.5">·</span>
+                    <span>{w.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {isAdmin && (liveRun?.trigger_run_id || activeWorkspaceRun?.trigger_run_id) && (
             <>
               <span className="text-border hidden sm:inline">|</span>
@@ -2208,6 +2225,11 @@ function DetailV2Content() {
                 </CollapsibleSection>
               )}
             </ScrollArea>
+          ) : activeView === "timeline" ? (
+            /* ── TIMELINE VIEW — full chronological case activity ──────────── */
+            <div className="flex-1 min-h-0 p-3">
+              <Timeline events={timeline_events} />
+            </div>
           ) : null}
         </div>
 
@@ -2378,7 +2400,7 @@ function DetailV2Content() {
       <div className="shrink-0 border-t border-border/50">
         <div className="flex h-8 items-center gap-0 overflow-x-auto whitespace-nowrap px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {/* Main view tabs */}
-          {(["thread", "case-info", "agency"] as const).map((tab) => (
+          {(["thread", "case-info", "agency", "timeline"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => {
@@ -2399,6 +2421,14 @@ function DetailV2Content() {
                   Agency
                   {pendingAgencyCandidatesCount > 0 && (
                     <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">{pendingAgencyCandidatesCount}</Badge>
+                  )}
+                </>
+              )}
+              {tab === "timeline" && (
+                <>
+                  Timeline
+                  {timeline_events.length > 0 && (
+                    <Badge variant="secondary" className="ml-1 text-[10px] px-1 py-0">{timeline_events.length}</Badge>
                   )}
                 </>
               )}

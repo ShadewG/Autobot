@@ -94,7 +94,7 @@ Ordered by priority within each phase. Check items off as completed.
 ### P1 — Important for confidence
 
 #### Case Timeline & Audit Trail
-- [ ] Add "Case Timeline" view to case detail — every state transition chronologically
+- [x] Add "Case Timeline" view to case detail — every state transition chronologically
 - [ ] Wire `decision_traces` into all Trigger.dev workflows (inbound, initial, followup, portal)
 - [ ] Create a trace at run start, complete with classification, router output, gate decision, node trace, duration
 - [ ] Add `actor_type`, `actor_id`, `source_service` to major lifecycle events
@@ -301,8 +301,8 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Keep the `strategy_used` column on `cases` for historical reference, stop writing to it
 
 #### Quality Reporting
-- [ ] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution
-- [ ] Classification confusion matrix: AI classified vs actual (from human corrections)
+- [ ] Weekly auto-generated report: cases processed, approval rate, common adjustments/failures, time-to-resolution `(IN PROGRESS - Codex)`
+- [ ] Classification confusion matrix: AI classified vs actual (from human corrections) `(IN PROGRESS - Codex)`
 - [ ] Draft quality scoring: eval judge rates sent drafts after case resolves
 
 #### Regression Testing
