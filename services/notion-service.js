@@ -1963,9 +1963,19 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             } catch (_) { /* non-critical */ }
 
             await this.updatePage(caseData.notion_page_id, updates);
+            // Track successful outbound sync
+            await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1', [caseId]);
             console.log(`Updated Notion page for case: ${caseData.case_name}`);
         } catch (error) {
             console.error('Error syncing status to Notion:', error);
+            // Log to activity_log so sync failures are visible in dashboard
+            try {
+                await db.logActivity('notion_sync_error', `Notion sync failed for case ${caseId}`, {
+                    case_id: caseId,
+                    error: String(error?.message || error).substring(0, 500),
+                    status: error?.status || null,
+                });
+            } catch (_) { /* don't let logging failure mask original error */ }
         }
     }
 
@@ -1973,27 +1983,13 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
      * Map our internal status to Notion status values
      */
     mapStatusToNotion(internalStatus) {
-        const statusMap = {
-            'ready_to_send': 'Ready To Send',
-            'sent': 'Sent',
-            'awaiting_response': 'Awaiting Response',
-            'responded': 'Responded',
-            'completed': 'Completed',
-            'error': 'Error',
-            'fee_negotiation': 'Fee Negotiation',
-            'needs_human_fee_approval': 'Needs Human Approval',
-            'needs_human_review': 'Needs Human Review',
-            'needs_contact_info': 'Needs Human Review',
-            'portal_in_progress': 'Portal Submission',
-            'portal_submission_failed': 'Portal Issue',
-            'needs_phone_call': 'Needs Phone Call',
+        // Use the single canonical NOTION_STATUS_MAP plus extra outbound-only mappings
+        const extraMappings = {
             'cancelled': 'Completed',
-            'pending': 'Ready to Send',
-            'pending_fee_decision': 'Needs Human Approval',
-            'id_state': 'ID State',
+            'closed': 'Completed',
         };
-
-        if (statusMap[internalStatus]) return statusMap[internalStatus];
+        if (NOTION_STATUS_MAP[internalStatus]) return NOTION_STATUS_MAP[internalStatus];
+        if (extraMappings[internalStatus]) return extraMappings[internalStatus];
         console.warn(`[Notion] No Live Status mapping for internal status "${internalStatus}"`);
         return null;
     }

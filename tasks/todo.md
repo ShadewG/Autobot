@@ -120,7 +120,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Notion Sync
 - [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTING - UI Codex 2026-03-08 - control confirmed in case actions menu; action not fired during live pass)`
 - [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTED IN UI - Codex 2026-03-08)`
-- [ ] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues)
+- [x] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues) — **ROOT CAUSED & FIXED**: (1) Status map casing bug: `mapStatusToNotion()` had duplicate inline map with "Ready To Send" (uppercase T) vs `NOTION_STATUS_MAP` "Ready to Send" (lowercase t) — consolidated to single `NOTION_STATUS_MAP`; (2) Missing `closed` status mapping — added; (3) Silent error swallowing in `_syncStatusToNotion` — now logs to `activity_log` as `notion_sync_error`; (4) `last_notion_synced_at` never updated on outbound sync — now set after successful `updatePage`
 
 #### Constraint Management
 - [x] Allow removing/overriding stale constraints from dashboard `(TESTING - UI Codex 2026-03-08 - edit mode, remove controls, and add dialog verified; destructive actions not exercised)`
@@ -171,7 +171,7 @@ AI sometimes wants to research before responding (when it should just respond) o
 - [x] Add decision prompt rule: "For vague denials citing 'policy' without statutory authority, SEND_REBUTTAL requesting the specific legal basis. For 'no duty to create' responses, RESEARCH_AGENCY to find what records the agency actually maintains before reformulating."
 
 #### Prompt & Classifier Alignment
-- [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract
+- [ ] Unify the Trigger.dev classifier and the legacy queue/fallback analyzer around one canonical intent schema and prompt contract `(ASSESSED 2026-03-08: both run for every message — legacy first in email-queue.js, then Trigger.dev re-classifies for complex cases. Legacy produces 9 intents, Trigger.dev 15. Trigger.dev is strictly superset. Best path: refactor email-queue.js to call classifyInbound() directly, remove legacy aiService.analyzeResponse(). Medium effort ~2-3 hours.)`
 - [x] Remove or rewrite the PDF bias in `classify-inbound` so attachments do not implicitly force `records_ready` / `delivery` — rewrote attachment instruction to classify based on CONTENT not presence; removed "classify as records_ready or delivery" directive, replaced with reference to Attached Letters & Documents section
 - [x] Add explicit prompt handling for portal/system traffic: submission confirmations, document release notices, password/unlock emails, portal closures, and similar non-agency-human messages — added portal account management auto-classification (password reset, welcome, unlock, activate) in classify-inbound.ts, plus detectPortalSystemEmail() in portal-utils.js for webhook-level filtering
 - [x] Decide whether `question` and `more_info_needed` should remain distinct; collapse them if downstream logic does not truly need both — **DECIDED: keep both in prompt but already collapsed downstream**. Both map to `CLARIFICATION_REQUEST` in CLASSIFICATION_MAP. Prompt uses both so AI can match subtle distinctions; downstream treats them identically
