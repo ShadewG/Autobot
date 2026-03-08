@@ -702,6 +702,111 @@ router.get('/dashboard/kpi', async (req, res) => {
 });
 
 /**
+ * Cost Tracking — AI + email costs per case
+ */
+router.get('/dashboard/costs', async (req, res) => {
+    try {
+        // Model pricing (per 1M tokens) — approximate
+        const MODEL_COSTS = {
+            'gpt-4o': { input: 2.5, output: 10 },
+            'gpt-4o-mini': { input: 0.15, output: 0.6 },
+            'gpt-4.1': { input: 2, output: 8 },
+            'gpt-4.1-mini': { input: 0.4, output: 1.6 },
+            'gpt-5.2': { input: 2, output: 8 },
+            'o3-mini': { input: 1.1, output: 4.4 },
+            'claude-3-5-sonnet': { input: 3, output: 15 },
+            'claude-sonnet-4-20250514': { input: 3, output: 15 },
+        };
+
+        const [aiCosts, perCase] = await Promise.all([
+            // Aggregate AI costs from proposals + response_analysis
+            db.query(`
+                WITH ai_usage AS (
+                    SELECT model_id, prompt_tokens, completion_tokens, 'classify' as step
+                    FROM response_analysis
+                    WHERE model_id IS NOT NULL AND prompt_tokens IS NOT NULL
+                    UNION ALL
+                    SELECT decision_model_id as model_id, decision_prompt_tokens as prompt_tokens,
+                           decision_completion_tokens as completion_tokens, 'decide' as step
+                    FROM proposals
+                    WHERE decision_model_id IS NOT NULL AND decision_prompt_tokens IS NOT NULL
+                    UNION ALL
+                    SELECT draft_model_id as model_id, draft_prompt_tokens as prompt_tokens,
+                           draft_completion_tokens as completion_tokens, 'draft' as step
+                    FROM proposals
+                    WHERE draft_model_id IS NOT NULL AND draft_prompt_tokens IS NOT NULL
+                )
+                SELECT
+                    COALESCE(model_id, 'unknown') as model,
+                    step,
+                    COUNT(*) as calls,
+                    SUM(COALESCE(prompt_tokens, 0)) as total_input_tokens,
+                    SUM(COALESCE(completion_tokens, 0)) as total_output_tokens
+                FROM ai_usage
+                GROUP BY model_id, step
+                ORDER BY total_input_tokens DESC
+            `),
+            // Per-case cost (top 20 most expensive)
+            db.query(`
+                WITH case_tokens AS (
+                    SELECT c.id, c.case_name, c.agency_name,
+                        COALESCE(SUM(ra.prompt_tokens), 0) + COALESCE(SUM(p.decision_prompt_tokens), 0) + COALESCE(SUM(p.draft_prompt_tokens), 0) as input_tokens,
+                        COALESCE(SUM(ra.completion_tokens), 0) + COALESCE(SUM(p.decision_completion_tokens), 0) + COALESCE(SUM(p.draft_completion_tokens), 0) as output_tokens
+                    FROM cases c
+                    LEFT JOIN messages m ON m.case_id = c.id AND m.direction = 'inbound'
+                    LEFT JOIN response_analysis ra ON ra.message_id = m.id AND ra.prompt_tokens IS NOT NULL
+                    LEFT JOIN proposals p ON p.case_id = c.id AND (p.decision_prompt_tokens IS NOT NULL OR p.draft_prompt_tokens IS NOT NULL)
+                    GROUP BY c.id, c.case_name, c.agency_name
+                    HAVING COALESCE(SUM(ra.prompt_tokens), 0) + COALESCE(SUM(p.decision_prompt_tokens), 0) + COALESCE(SUM(p.draft_prompt_tokens), 0) > 0
+                )
+                SELECT * FROM case_tokens ORDER BY input_tokens + output_tokens DESC LIMIT 20
+            `)
+        ]);
+
+        // Compute dollar costs
+        function estimateCost(model, inputTokens, outputTokens) {
+            // Try to find a matching model
+            const key = Object.keys(MODEL_COSTS).find(k => (model || '').toLowerCase().includes(k));
+            const rates = key ? MODEL_COSTS[key] : { input: 2, output: 8 }; // default to ~gpt-4 rates
+            return ((inputTokens / 1e6) * rates.input) + ((outputTokens / 1e6) * rates.output);
+        }
+
+        let totalCost = 0;
+        const byModel = aiCosts.rows.map(row => {
+            const cost = estimateCost(row.model, Number(row.total_input_tokens), Number(row.total_output_tokens));
+            totalCost += cost;
+            return {
+                model: row.model,
+                step: row.step,
+                calls: Number(row.calls),
+                input_tokens: Number(row.total_input_tokens),
+                output_tokens: Number(row.total_output_tokens),
+                estimated_cost: Math.round(cost * 100) / 100,
+            };
+        });
+
+        const topCases = perCase.rows.map(row => ({
+            case_id: row.id,
+            case_name: row.case_name,
+            agency_name: row.agency_name,
+            input_tokens: Number(row.input_tokens),
+            output_tokens: Number(row.output_tokens),
+            estimated_cost: Math.round(estimateCost(null, Number(row.input_tokens), Number(row.output_tokens)) * 100) / 100,
+        }));
+
+        res.json({
+            success: true,
+            total_estimated_cost: Math.round(totalCost * 100) / 100,
+            by_model: byModel,
+            top_cases: topCases,
+        });
+    } catch (error) {
+        console.error('Error getting cost data:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
  * Case Outcomes — records received rate, avg time, denial rate by state
  */
 router.get('/dashboard/outcomes', async (req, res) => {

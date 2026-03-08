@@ -2193,6 +2193,7 @@ class SendGridService {
 
             // Create message record — use per-case user email if available
             const resolvedFrom = await this.getFromEmail(messageData.case_id);
+            const attachmentCount = Array.isArray(messageData.attachments) ? messageData.attachments.length : 0;
             const message = await db.createMessage({
                 thread_id: thread.id,
                 case_id: messageData.case_id,
@@ -2204,6 +2205,8 @@ class SendGridService {
                 subject: messageData.subject,
                 body_text: messageData.body_text,
                 body_html: messageData.body_html,
+                has_attachments: attachmentCount > 0,
+                attachment_count: attachmentCount,
                 message_type: messageData.message_type,
                 sent_at: new Date(),
                 metadata: {

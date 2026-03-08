@@ -175,15 +175,22 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
                 const caseData = await db.getCaseById(caseId);
                 await discordService.notifyRequestSent(caseData, 'email');
 
-                // Schedule follow-up
+                // Schedule follow-up using the case deadline when available, otherwise
+                // fall back to the standard response window so initial sends never fail
+                // after the outbound message has already been created.
                 const thread = await db.getThreadByCaseId(caseId);
 
                 if (thread) {
-                    await db.createFollowUpSchedule({
-                        case_id: caseId,
-                        thread_id: thread.id,
-                        next_followup_date: caseData.deadline_date,
-                        followup_count: 0
+                    const followupDelayDays = parseInt(process.env.FOLLOWUP_DELAY_DAYS || '7', 10);
+                    const nextFollowupDate = caseData.deadline_date
+                        ? new Date(caseData.deadline_date)
+                        : new Date(Date.now() + followupDelayDays * 24 * 60 * 60 * 1000);
+
+                    await db.upsertFollowUpSchedule(caseId, {
+                        threadId: thread.id,
+                        nextFollowupDate,
+                        followupCount: 0,
+                        status: 'scheduled',
                     });
                 }
 

@@ -141,8 +141,21 @@ router.post('/cases/:caseId/simulate-response', async (req, res) => {
             });
         }
 
-        // Get or create thread for this case (CRITICAL for messages to show in conversation)
-        let thread = await db.getThreadByCaseId(caseId);
+        // Get or create thread for this case (CRITICAL for messages to show in conversation).
+        // In multi-agency QA flows, prefer the thread that already matches the replying
+        // agency inbox so simulated replies land on the same conversation chain.
+        let thread = null;
+        const normalizedFromEmail = String(from_email || caseData.agency_email || '').trim().toLowerCase();
+        if (normalizedFromEmail) {
+            const threads = await db.getThreadsByCaseId(caseId);
+            thread = threads.find((candidate) =>
+                String(candidate.agency_email || '').trim().toLowerCase() === normalizedFromEmail
+            ) || null;
+        }
+
+        if (!thread) {
+            thread = await db.getThreadByCaseId(caseId);
+        }
         if (!thread) {
             const syntheticMessageId = `sim-thread-${Date.now()}-${Math.random().toString(36).slice(2)}`;
             const threadIdentifier = `<${syntheticMessageId}@autobot.local>`;

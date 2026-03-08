@@ -255,6 +255,39 @@ function AgencyDetailContent() {
           </CardContent>
         </Card>
 
+        {/* Denial Metrics */}
+        {(agency as any).denial_metrics?.total_denials > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Denial Metrics</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Total Denials</span>
+                <span className="font-medium text-red-400">{(agency as any).denial_metrics.total_denials}</span>
+              </div>
+              {(agency as any).denial_metrics.denial_rate != null && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Denial Rate</span>
+                  <Badge variant={(agency as any).denial_metrics.denial_rate > 50 ? "destructive" : "outline"}>
+                    {(agency as any).denial_metrics.denial_rate}%
+                  </Badge>
+                </div>
+              )}
+              <Separator />
+              <div className="space-y-1.5">
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Reasons</p>
+                {Object.entries((agency as any).denial_metrics.reasons || {}).map(([reason, count]) => (
+                  <div key={reason} className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground capitalize">{reason.replace(/_/g, ' ')}</span>
+                    <span>{count as number}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Automation Rules */}
         <Card>
           <CardHeader>

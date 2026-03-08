@@ -61,7 +61,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### System Health & Observability
 - [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTED IN UI - Codex 2026-03-08)`
-- [ ] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures
+- [x] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures `(Discord notification via cron 8AM ET — 2026-03-08)`
 - [ ] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions
 
 #### Agency Validation at Import ✅ DONE
@@ -126,7 +126,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Allow removing/overriding stale constraints from dashboard `(TESTING - UI Codex 2026-03-08 - edit mode, remove controls, and add dialog verified; destructive actions not exercised)`
 - [x] Show constraint history (when added, by whom/what)
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
-- [ ] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events
+- [x] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events — verified: activity_log→toTimelineEvent maps constraint_detected/added/removed to CONSTRAINT_DETECTED timeline type (RESEARCH category); frontend timeline.tsx renders with AlertTriangle icon + orange styling; constraints-display.tsx has ConstraintHistoryEntry UI; 182 backfilled entries confirmed in DB
 - [x] Backfill or reconstruct constraint history for existing cases so the new history UI is not empty on older requests — backfilled 182 `constraint_detected` activity_log entries for 77 cases from `constraints_jsonb` data
 - [x] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes
 - [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
@@ -332,10 +332,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 ### P2 — Optimization
 
 #### Agency Intelligence
-- [ ] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method
+- [x] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method `(API + UI — 2026-03-08)`
 - [ ] Feed agency history into AI decisions ("this agency responds in 3 days on average, don't follow up yet")
 - [x] Show agency stats to operators on case detail page
-- [ ] Case templates for common types (bodycam, 911 calls, arrest records)
+- [x] Case templates for common types (bodycam, 911 calls, arrest records) `(New case form — 2026-03-08)`
 
 #### Operational Speed
 - [ ] Reduce Notion polling to 5 minutes
@@ -395,7 +395,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Analytics & Reporting
 - [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type
-- [ ] Cost tracking: AI + email + portal cost per case, cost per successful case
+- [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(API + analytics page — 2026-03-08)`
 - [ ] Compliance report: correct statute, correct deadlines, correct custodian — per state
 - [x] Export case package for journalists: correspondence, records, timeline — one click
 

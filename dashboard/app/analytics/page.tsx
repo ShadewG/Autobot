@@ -17,6 +17,27 @@ import {
   Pie,
 } from "recharts";
 
+interface CostsResponse {
+  success: boolean;
+  total_estimated_cost: number;
+  by_model: Array<{
+    model: string;
+    step: string;
+    calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost: number;
+  }>;
+  top_cases: Array<{
+    case_id: number;
+    case_name: string;
+    agency_name: string;
+    input_tokens: number;
+    output_tokens: number;
+    estimated_cost: number;
+  }>;
+}
+
 interface OutcomesResponse {
   success: boolean;
   overall: {
@@ -65,6 +86,12 @@ export default function AnalyticsPage() {
     "/dashboard/outcomes",
     fetcher,
     { refreshInterval: 60000 }
+  );
+
+  const { data: costData } = useSWR<CostsResponse>(
+    "/dashboard/costs",
+    fetcher,
+    { refreshInterval: 120000 }
   );
 
   const { statusData, stateData, denialData, kpis } = useMemo(() => {
@@ -323,6 +350,111 @@ export default function AnalyticsPage() {
             </table>
           </CardContent>
         </Card>
+      )}
+      {/* Cost Tracking */}
+      {costData?.success && (
+        <>
+          <h2 className="text-lg font-semibold mt-4">AI Cost Tracking</h2>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <KPICard
+              label="Total AI Cost"
+              value={`$${costData.total_estimated_cost.toFixed(2)}`}
+            />
+            <KPICard
+              label="Total Calls"
+              value={costData.by_model.reduce((s, m) => s + m.calls, 0)}
+            />
+            <KPICard
+              label="Avg Cost/Case"
+              value={
+                costData.top_cases.length > 0
+                  ? `$${(costData.top_cases.reduce((s, c) => s + c.estimated_cost, 0) / costData.top_cases.length).toFixed(2)}`
+                  : "N/A"
+              }
+            />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Cost by model */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Cost by Model + Step</CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="text-left py-2 px-2">Model</th>
+                      <th className="text-left py-2 px-2">Step</th>
+                      <th className="text-right py-2 px-2">Calls</th>
+                      <th className="text-right py-2 px-2">Tokens</th>
+                      <th className="text-right py-2 px-2">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costData.by_model.map((m, i) => (
+                      <tr key={i} className="border-b border-border/50">
+                        <td className="py-1.5 px-2 font-mono text-[11px]">
+                          {m.model.replace(/^.*\//, "")}
+                        </td>
+                        <td className="py-1.5 px-2 capitalize">{m.step}</td>
+                        <td className="text-right py-1.5 px-2">{m.calls}</td>
+                        <td className="text-right py-1.5 px-2 text-muted-foreground">
+                          {((m.input_tokens + m.output_tokens) / 1000).toFixed(0)}k
+                        </td>
+                        <td className="text-right py-1.5 px-2 font-medium">
+                          ${m.estimated_cost.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+
+            {/* Top cases by cost */}
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Most Expensive Cases</CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="text-left py-2 px-2">Case</th>
+                      <th className="text-right py-2 px-2">Tokens</th>
+                      <th className="text-right py-2 px-2">Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {costData.top_cases.slice(0, 10).map((c) => (
+                      <tr
+                        key={c.case_id}
+                        className="border-b border-border/50 cursor-pointer hover:bg-muted/50"
+                        onClick={() =>
+                          (window.location.href = `/requests/detail-v2?id=${c.case_id}`)
+                        }
+                      >
+                        <td className="py-1.5 px-2">
+                          <span className="font-medium">{c.case_name}</span>
+                          <span className="text-muted-foreground ml-1 text-[10px]">
+                            {c.agency_name}
+                          </span>
+                        </td>
+                        <td className="text-right py-1.5 px-2 text-muted-foreground">
+                          {((c.input_tokens + c.output_tokens) / 1000).toFixed(0)}k
+                        </td>
+                        <td className="text-right py-1.5 px-2 font-medium">
+                          ${c.estimated_cost.toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          </div>
+        </>
       )}
     </div>
   );

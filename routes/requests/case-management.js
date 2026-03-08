@@ -227,9 +227,14 @@ router.post('/:id/send-manual', async (req, res) => {
             ? `Re: ${baseSubject}`
             : baseSubject;
 
+        const currentThreadAgencyEmail = String(currentThread?.agency_email || '').trim().toLowerCase();
+        const canReuseCurrentThread =
+            replyingToInbound ||
+            (!explicitTo && currentThread && (!currentThreadAgencyEmail || currentThreadAgencyEmail === targetEmail));
+
         const threadIdentifier = replyingToInbound
             ? latestInbound.message_id
-            : (currentThread?.thread_id || currentThread?.initial_message_id || null);
+            : (canReuseCurrentThread ? (currentThread?.thread_id || currentThread?.initial_message_id || null) : null);
 
         const validatedAttachments = Array.isArray(attachments)
             ? attachments.filter(a => a && typeof a.filename === 'string' && typeof a.content === 'string' && typeof a.type === 'string')

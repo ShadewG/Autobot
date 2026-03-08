@@ -413,6 +413,22 @@ router.get('/:id', async (req, res) => {
             LIMIT 10
         `, [agencyId, row.name]);
 
+        // Get denial metrics for this agency
+        const denialResult = await db.query(`
+            SELECT
+                COUNT(*) as total_denials,
+                COUNT(*) FILTER (WHERE full_analysis_json->>'denial_subtype' = 'overly_broad') as overly_broad,
+                COUNT(*) FILTER (WHERE full_analysis_json->>'denial_subtype' = 'no_records') as no_records,
+                COUNT(*) FILTER (WHERE full_analysis_json->>'denial_subtype' = 'privacy_exemption') as privacy_exemption,
+                COUNT(*) FILTER (WHERE full_analysis_json->>'denial_subtype' = 'excessive_fees') as excessive_fees,
+                COUNT(*) FILTER (WHERE full_analysis_json->>'denial_subtype' = 'ongoing_investigation') as ongoing_investigation,
+                COUNT(*) FILTER (WHERE full_analysis_json->>'denial_subtype' = 'wrong_agency') as wrong_agency
+            FROM response_analysis ra
+            JOIN messages m ON ra.message_id = m.id
+            JOIN cases c ON m.case_id = c.id
+            WHERE ra.intent = 'denial' AND (c.agency_id = $1 OR c.agency_name = $2)
+        `, [agencyId, row.name]);
+
         // Get comments
         const commentsResult = await db.query(`
             SELECT * FROM agency_comments
@@ -465,6 +481,17 @@ router.get('/:id', async (req, res) => {
                 forms_required: row.forms_required || false,
                 id_required: row.id_required || false,
                 notarization_required: row.notarization_required || false
+            },
+            denial_metrics: {
+                total_denials: parseInt(denialResult.rows[0]?.total_denials) || 0,
+                denial_rate: (parseInt(stats.total_requests) || 0) > 0
+                    ? Math.round((parseInt(denialResult.rows[0]?.total_denials) || 0) * 100 / parseInt(stats.total_requests))
+                    : null,
+                reasons: Object.fromEntries(
+                    ['overly_broad', 'no_records', 'privacy_exemption', 'excessive_fees', 'ongoing_investigation', 'wrong_agency']
+                        .map(k => [k, parseInt(denialResult.rows[0]?.[k]) || 0])
+                        .filter(([, v]) => v > 0)
+                ),
             },
             fee_behavior: {
                 typical_fee_min: row.typical_fee_min != null ? parseFloat(row.typical_fee_min) : null,

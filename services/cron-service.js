@@ -147,6 +147,16 @@ class CronService {
             }
         }, null, true, 'America/New_York');
 
+        // Daily operator digest — 8:00 AM ET
+        this.jobs.dailyOperatorDigest = new CronJob('0 8 * * *', async () => {
+            try {
+                console.log('Running daily operator digest...');
+                await this.sendDailyOperatorDigest();
+            } catch (error) {
+                console.error('Error in daily operator digest cron:', error);
+            }
+        }, null, true, 'America/New_York');
+
         // Check for stuck responses every 30 minutes
         this.jobs.stuckResponseCheck = new CronJob('*/30 * * * *', async () => {
             try {
@@ -1764,6 +1774,94 @@ class CronService {
         });
 
         return { report, confusion };
+    }
+
+    /**
+     * Daily operator digest: stuck cases, stale proposals, bounced emails, portal failures.
+     * Sends a Discord notification summarizing overnight system health.
+     */
+    async sendDailyOperatorDigest() {
+        const [stuck, staleProposals, bounced, portalFailures, queueDepth] = await Promise.all([
+            // Cases stuck in processing states for > 24h
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM cases
+                WHERE status IN ('processing', 'classifying', 'deciding', 'drafting', 'researching')
+                  AND updated_at < NOW() - INTERVAL '24 hours'
+            `),
+            // Proposals pending approval for > 48h
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM proposals
+                WHERE status = 'PENDING_APPROVAL'
+                  AND created_at < NOW() - INTERVAL '48 hours'
+            `),
+            // Bounced/failed emails in the last 24h
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM email_events
+                WHERE event IN ('bounce', 'dropped', 'deferred')
+                  AND created_at > NOW() - INTERVAL '24 hours'
+            `),
+            // Portal task failures in the last 24h
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM portal_tasks
+                WHERE status IN ('failed', 'error', 'timed_out')
+                  AND updated_at > NOW() - INTERVAL '24 hours'
+            `),
+            // Current queue depth: cases awaiting action
+            db.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE status = 'ready_to_send')::int AS ready_to_send,
+                    COUNT(*) FILTER (WHERE status = 'pending_portal')::int AS pending_portal,
+                    COUNT(*) FILTER (WHERE status = 'needs_review')::int AS needs_review
+                FROM cases
+            `),
+        ]);
+
+        const stuckCount = stuck.rows[0]?.count || 0;
+        const staleCount = staleProposals.rows[0]?.count || 0;
+        const bouncedCount = bounced.rows[0]?.count || 0;
+        const portalFailCount = portalFailures.rows[0]?.count || 0;
+        const queue = queueDepth.rows[0] || {};
+
+        const issues = [];
+        if (stuckCount > 0) issues.push(`${stuckCount} stuck case(s)`);
+        if (staleCount > 0) issues.push(`${staleCount} stale proposal(s) (>48h)`);
+        if (bouncedCount > 0) issues.push(`${bouncedCount} bounced email(s)`);
+        if (portalFailCount > 0) issues.push(`${portalFailCount} portal failure(s)`);
+
+        const healthy = issues.length === 0;
+        const statusLine = healthy ? 'All systems healthy' : issues.join(' · ');
+
+        await db.logActivity('daily_operator_digest', statusLine, {
+            stuck_cases: stuckCount,
+            stale_proposals: staleCount,
+            bounced_emails: bouncedCount,
+            portal_failures: portalFailCount,
+            queue_ready_to_send: queue.ready_to_send || 0,
+            queue_pending_portal: queue.pending_portal || 0,
+            queue_needs_review: queue.needs_review || 0,
+        });
+
+        await discordService.notify({
+            title: `Daily Digest — ${healthy ? '✅ Healthy' : '⚠️ Action Needed'}`,
+            description: statusLine,
+            color: healthy ? 0x38a169 : 0xe53e3e,
+            fields: [
+                { name: 'Stuck Cases (>24h)', value: `${stuckCount}`, inline: true },
+                { name: 'Stale Proposals (>48h)', value: `${staleCount}`, inline: true },
+                { name: 'Bounced Emails (24h)', value: `${bouncedCount}`, inline: true },
+                { name: 'Portal Failures (24h)', value: `${portalFailCount}`, inline: true },
+                { name: 'Queue: Ready to Send', value: `${queue.ready_to_send || 0}`, inline: true },
+                { name: 'Queue: Pending Portal', value: `${queue.pending_portal || 0}`, inline: true },
+                { name: 'Queue: Needs Review', value: `${queue.needs_review || 0}`, inline: true },
+            ],
+        });
+
+        console.log(`Daily digest: ${statusLine}`);
+        return { stuckCount, staleCount, bouncedCount, portalFailCount, queue };
     }
 
     /**

@@ -18,6 +18,44 @@ const US_STATES = [
   "VA","WA","WV","WI","WY","DC",
 ];
 
+const CASE_TEMPLATES: Array<{
+  label: string;
+  description: string;
+  records: string[];
+  details: string;
+}> = [
+  {
+    label: "Body Camera Footage",
+    description: "Request body-worn camera video from law enforcement",
+    records: ["Body-worn camera footage", "In-car dashboard camera footage"],
+    details: "Requesting all body-worn camera and dashboard camera footage related to the incident.",
+  },
+  {
+    label: "911 Dispatch Records",
+    description: "Request 911 call audio and dispatch logs",
+    records: ["911 call audio recordings", "CAD (Computer Aided Dispatch) logs", "Dispatch communications"],
+    details: "Requesting all 911 call recordings and dispatch records related to the incident.",
+  },
+  {
+    label: "Arrest Records",
+    description: "Request arrest reports and booking records",
+    records: ["Arrest report", "Booking records", "Incident/offense report", "Probable cause affidavit"],
+    details: "Requesting all arrest-related documentation including reports and booking records.",
+  },
+  {
+    label: "Use of Force",
+    description: "Request use-of-force reports and related documentation",
+    records: ["Use of force report", "Internal affairs investigation", "Body-worn camera footage", "Witness statements"],
+    details: "Requesting all documentation related to use of force during the incident.",
+  },
+  {
+    label: "General Records",
+    description: "Request incident reports and general documentation",
+    records: ["Incident report", "Supplemental reports", "Witness statements"],
+    details: "",
+  },
+];
+
 export default function NewCasePage() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -79,6 +117,35 @@ export default function NewCasePage() {
           <p className="text-sm text-muted-foreground">Create a FOIA request manually</p>
         </div>
       </div>
+
+      {/* Template picker */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm">Start from Template</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2">
+            {CASE_TEMPLATES.map((t) => (
+              <Button
+                key={t.label}
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => {
+                  setRecords(t.records);
+                  if (t.details) set("additional_details", t.details);
+                }}
+              >
+                {t.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Click a template to pre-fill requested records. You can still edit everything.
+          </p>
+        </CardContent>
+      </Card>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Case info */}
