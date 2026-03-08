@@ -82,7 +82,12 @@ const simulateRoutes = require('./routes/simulate');
 
 app.use('/webhooks', webhookRoutes);
 app.use('/api', apiRoutes);
-app.use('/api/test', testRoutes);
+// Guard test routes: require ENABLE_TEST_ROUTES=true (never set in production)
+if (process.env.ENABLE_TEST_ROUTES === 'true') {
+    app.use('/api/test', testRoutes);
+} else {
+    app.use('/api/test', (req, res) => res.status(404).json({ error: 'Test routes disabled' }));
+}
 app.use('/api/requests', requestRoutes);
 app.use('/api/agencies', agencyRoutes);
 app.use('/api', runEngineRoutes);  // Run Engine (Phase 3): /api/cases/:id/run-*, /api/proposals/:id/decision

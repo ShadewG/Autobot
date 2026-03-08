@@ -29,7 +29,7 @@ Ordered by priority within each phase. Check items off as completed.
 
 #### Tests & Dev Utilities
 - [ ] Audit `tests/` vs root-level test files and consolidate runnable tests under `tests/`
-- [ ] Review `routes/test/*` and either guard them behind explicit dev-only checks or move them to `.old/legacy-routes`
+- [x] Review `routes/test/*` and either guard them behind explicit dev-only checks or move them to `.old/legacy-routes` — guarded behind `ENABLE_TEST_ROUTES=true` env var in server.js; returns 404 when not set (production). Contains dangerous endpoints like `/clear-all-cases` that were previously accessible in production
 - [ ] Review `scripts/` for one-off migration/debug helpers and split into `scripts/active/` vs archived helpers in `.old/root-scripts`
 - [ ] Remove or archive duplicate prompt/debug runners once the canonical test commands are documented
 
@@ -87,7 +87,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Verify the email worker always calls the final execution update path after success
 
 #### Operator Workflow
-- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(UI BUG FOUND 2026-03-08 - selection works, but Cancel in Bulk Approve opens Bulk Dismiss with reason "undefined")`
+- [x] Bulk approve/dismiss on `/gated` — select multiple, one-click approve with confirmation `(TESTED IN UI - Codex 2026-03-08 - bulk mode works on localhost:3001 static stack; Bulk Approve Cancel now closes cleanly without opening Bulk Dismiss)`
 - [x] Full-text case search across case name, agency name, subject, email content `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Finish mobile responsiveness: every page usable at 390px viewport `(TESTING - UI Codex 2026-03-08 - detail page and mobile timeline verified at 390px; full page sweep not complete)`
 
@@ -218,11 +218,12 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
+- [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns `404` for `/api/dashboard/outcomes`, `/api/dashboard/costs`, and `/api/dashboard/compliance` even though those routes exist in `routes/api.js`, which blocks full analytics UI verification on the local stack
 
 ---
 
 - [x] Scope trailing-slash normalization to API routes only; direct app page loads are currently broken on localhost:3000 — **RESOLVED**: trailing-slash middleware was already scoped to `/api` only (server.js:31). Broken page loads were due to stale `dashboard/out` build; rebuilt with all pages present including `/simulate`. Local env issue (another app on port 3000) was the root cause of earlier testing failures.
-- [x] Stabilize the local dashboard test stack before more UI verification — normalized local verification to the real Autobot stack (`localhost:3001` dashboard, `localhost:3004` backend), fixed dashboard fallback defaults that still pointed at `localhost:3000`, updated the example env file, and documented the correct local ports in `guide.md`
+- [x] Stabilize the local dashboard test stack before more UI verification — normalized local verification to the real Autobot stack (`localhost:3001` dashboard, `localhost:3004` backend), fixed dashboard fallback defaults that still pointed at `localhost:3000`, updated the example env file, documented the correct local ports in `guide.md`, and switched local UI verification to `npm run dashboard:local` instead of the flaky `next dev` watcher
 
 ## Phase 2: Feedback & Continuous Improvement
 
@@ -330,7 +331,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Regression Testing
 - [x] Eval suite runs automatically on every deploy (CI step)
 - [x] Block deploy if accuracy drops below 90% — added prompt eval gate (`npm run test:prompts:gate`) to Railway build and GitHub backend regression workflow
-- [x] Track eval results over time in `/eval` dashboard `(UI BUG FOUND 2026-03-08 - direct load on localhost:3000 returns 500)`
+- [x] Track eval results over time in `/eval` dashboard `(TESTED IN UI - Codex 2026-03-08 - loads correctly on the stabilized localhost:3001 static stack)`
 
 ### P2 — Optimization
 
@@ -375,7 +376,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Case Intake Beyond Notion
 - [x] API endpoint for programmatic case creation (`POST /api/cases`)
-- [x] Web form in dashboard for manual case creation `(UI BUG FOUND 2026-03-08 - /requests/new direct load returns 500 with missing error components)`
+- [x] Web form in dashboard for manual case creation `(TESTED IN UI - Codex 2026-03-08 - /requests/new loads correctly on the stabilized localhost:3001 static stack)`
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
 #### Priority System
@@ -397,7 +398,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Per-team queue isolation
 
 #### Analytics & Reporting
-- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(UI BUG FOUND 2026-03-08 - /analytics direct load 404s and requests missing Next chunks)`
+- [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTING - UI Codex 2026-03-08 - page shell and assets load on localhost:3001 static stack, but data calls to /api/dashboard/outcomes|costs|compliance currently return 404 from the active backend listener on localhost:3004)`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(API + analytics page — 2026-03-08)`
 - [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(API + analytics page — 2026-03-08)`
 - [x] Export case package for journalists: correspondence, records, timeline — one click
