@@ -1,3 +1,11 @@
+# Project Rules
+
+## File Organization
+- No new root-level one-off scripts. Place all scripts under `scripts/`.
+- Tests go under `tests/`. Root `test-setup.js` is a config checker, not a test suite.
+- Archived/legacy files go under `.old/` (with subdirectories: `legacy-services/`, `test-artifacts/`, `root-scripts/`).
+- Active runtime code: `routes/`, `services/`, `queues/`, `trigger/`.
+
 <!-- TRIGGER.DEV basic START -->
 # Trigger.dev Basic Tasks (v4)
 

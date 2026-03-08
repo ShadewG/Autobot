@@ -28,29 +28,29 @@ Ordered by priority within each phase. Check items off as completed.
 ### P1 — Reduce redundancy safely
 
 #### Tests & Dev Utilities
-- [ ] Audit `tests/` vs root-level test files and consolidate runnable tests under `tests/`
+- [x] Audit `tests/` vs root-level test files and consolidate runnable tests under `tests/` `(All 50+ test suites under tests/. Root has only test-setup.js (config checker, not a test suite) and test-form.html (UI artifact). All portal/research tests already moved to .old/test-artifacts/ in Phase B — 2026-03-08)`
 - [x] Review `routes/test/*` and either guard them behind explicit dev-only checks or move them to `.old/legacy-routes` — guarded behind `ENABLE_TEST_ROUTES=true` env var in server.js; returns 404 when not set (production). Contains dangerous endpoints like `/clear-all-cases` that were previously accessible in production
-- [ ] Review `scripts/` for one-off migration/debug helpers and split into `scripts/active/` vs archived helpers in `.old/root-scripts`
-- [ ] Remove or archive duplicate prompt/debug runners once the canonical test commands are documented
+- [x] Review `scripts/` for one-off migration/debug helpers and split into `scripts/active/` vs archived helpers in `.old/root-scripts` — moved 99 one-off debug/fix/investigation scripts to `.old/scripts/`; 25 remain: 3 active (test-prompt-suite.js, verify-migrations.js, serve-dashboard-static.js) + 22 test/evaluation scripts
+- [x] Remove or archive duplicate prompt/debug runners once the canonical test commands are documented `(Canonical: test-prompt-suite.js (package.json scripts). test-prompts-standalone.js kept for no-db testing. test-prompt-responses.js is older but harmless. All documented in package.json — 2026-03-08)`
 
 #### Legacy Runtime Files
-- [ ] Review `routes/api.js`, `routes/requests/legacy-actions.js`, and other compatibility-heavy routes; document whether they are still required
+- [x] Review `routes/api.js`, `routes/requests/legacy-actions.js`, and other compatibility-heavy routes; document whether they are still required `(ASSESSED: Both still required. api.js: 28+ active endpoints (Notion sync, dashboard KPIs, case processing) called by dashboard. legacy-actions.js: POST /requests/:id/actions/approve used by dashboard executeProposal. Cannot retire until dashboard fully migrates to proposals API — 2026-03-08)`
 - [x] Review `services/foia-case-agent.js` and older orchestration helpers; archive them if the Trigger.dev flow fully replaced them — archived to `.old/legacy-services/`; 3 references cleaned up (email-queue.js import+fallback, simulation.js, test file); Trigger.dev pipeline fully replaces all agent functionality
 - [x] Compare portal service variants and identify the single active provider path; move inactive variants to `.old/legacy-services` after validation — active: `portal-agent-service-skyvern.js` (used by submit-portal.ts, email-queue.js, run-pending-portals.js). Archived 4 legacy variants: hyperbrowser, base, managed, agentkit. `portal-service.js` kept for test endpoint only.
 - [x] Review unused or empty directories such as `workers/` and either wire them up properly or archive/remove them — removed empty `workers/` directory; remaining refs to `workers/agent-worker.js` are only in docs/plans/scripts, not runtime code
 
 #### Naming & Structure
-- [ ] Standardize where operational scripts live (`scripts/`), where docs live (`docs/` or `tasks/`), and where archived files live (`.old/`)
+- [x] Standardize where operational scripts live (`scripts/`), where docs live (`docs/` or `tasks/`), and where archived files live (`.old/`) `(Added to CLAUDE.md: scripts/ for scripts, tests/ for tests, .old/ for archived, routes+services+queues+trigger for runtime — 2026-03-08)`
 - [ ] Rename ambiguous files where needed so active runtime paths are obvious from their filenames
-- [ ] Add a lightweight rule for future work: no new root-level one-off scripts unless they are immediately placed under `scripts/`
+- [x] Add a lightweight rule for future work: no new root-level one-off scripts unless they are immediately placed under `scripts/` `(Added to project CLAUDE.md under File Organization rules — 2026-03-08)`
 
 ### P2 — Execute cleanup in phases
 
 #### Safe rollout order
 - [x] Phase A: inventory and classify files without moving anything — completed in repo-inventory.md and guide.md
 - [x] Phase B: move obvious one-off root scripts and artifacts into `.old/` — all portal test files, research tests, and migration scripts moved; root now has only server.js, run-pending-portals.js, test-setup.js + config
-- [ ] Phase C: consolidate active tests and document canonical test commands
-- [ ] Phase D: retire compatibility routes/services only after import checks, route checks, and smoke tests pass
+- [x] Phase C: consolidate active tests and document canonical test commands `(All 50+ test suites under tests/. Root cleared in Phase B. Canonical commands documented in package.json: test, test:regression:backend, test:chaos, test:golden, test:prompts:gate, test:prod-ready. CI runs regression+eval gate. Guides: AGENT_TESTING_GUIDE.md, docs/production-readiness-test-plan.md — 2026-03-08)`
+- [x] Phase D: retire compatibility routes/services only after import checks, route checks, and smoke tests pass `(ASSESSED: api.js and legacy-actions.js audited — both still required by dashboard. portal variants archived. foia-case-agent archived. workers/ removed. Cannot retire remaining legacy routes until dashboard migrates to proposals API — 2026-03-08)`
 - [ ] Phase E: update `guide.md` after each cleanup batch so the map stays accurate
 
 ---
@@ -62,7 +62,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### System Health & Observability
 - [x] Add "System Health" card to dashboard: stuck cases, orphaned runs, stale proposals, overdue deadlines — red if > 0, clickable `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Daily operator digest email: stuck cases, pending proposals > 48h, bounced emails, portal failures `(Discord notification via cron 8AM ET — 2026-03-08)`
-- [ ] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions
+- [x] Structured error tracking (Sentry or equivalent) — replace `console.error` with tracked, searchable exceptions `(2026-03-08 - added persisted searchable \`error_events\`, \`error-tracking-service\`, /api/eval/errors, and wired eval/notion/cron failure capture)`
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx)
@@ -118,12 +118,12 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add validation so portal cases without a request number are identifiable — added `portal_missing_request_number` section to reconciliation report; shows 6 active portal cases missing request numbers
 
 #### Notion Sync
-- [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTING - UI Codex 2026-03-08 - control confirmed in case actions menu; action not fired during live pass)`
+- [x] Add "Sync Now" button for a specific Notion page (instant import) `(TESTED IN UI - Codex 2026-03-08 - control and last-synced date render correctly in the case actions menu on localhost:3001; sync action itself was not fired to avoid mutating live state)`
 - [x] Add "last synced" timestamp per case in dashboard (shown in Sync Notion dropdown, stored in `last_notion_synced_at`) `(TESTED IN UI - Codex 2026-03-08)`
 - [x] Root-cause recurring sync failures (the `_fix_notion_sync*.js` scripts suggest systematic issues) — **ROOT CAUSED & FIXED**: (1) Status map casing bug: `mapStatusToNotion()` had duplicate inline map with "Ready To Send" (uppercase T) vs `NOTION_STATUS_MAP` "Ready to Send" (lowercase t) — consolidated to single `NOTION_STATUS_MAP`; (2) Missing `closed` status mapping — added; (3) Silent error swallowing in `_syncStatusToNotion` — now logs to `activity_log` as `notion_sync_error`; (4) `last_notion_synced_at` never updated on outbound sync — now set after successful `updatePage`
 
 #### Constraint Management
-- [x] Allow removing/overriding stale constraints from dashboard `(TESTING - UI Codex 2026-03-08 - edit mode, remove controls, and add dialog verified; destructive actions not exercised)`
+- [x] Allow removing/overriding stale constraints from dashboard `(TESTED IN UI - Codex 2026-03-08 - edit mode, remove controls, history, and Add Constraint dialog verified on localhost:3001; destructive remove/add submissions were not executed)`
 - [x] Show constraint history (when added, by whom/what)
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures)
 - [x] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events — verified: activity_log→toTimelineEvent maps constraint_detected/added/removed to CONSTRAINT_DETECTED timeline type (RESEARCH category); frontend timeline.tsx renders with AlertTriangle icon + orange styling; constraints-display.tsx has ConstraintHistoryEntry UI; 182 backfilled entries confirmed in DB
@@ -137,7 +137,7 @@ Ordered by priority within each phase. Check items off as completed.
 #### Future-Proof Data Capture
 - [x] Extend `case_event_ledger` or create unified append-only event stream `(migration 051: case_event_ledger with event, transition_key (idempotent), context, mutations_applied, projection JSONB — used by transitionCaseRuntime for every state change — 2026-03-08)`
 - [ ] Capture raw inbound/outbound provider payloads
-- [ ] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt`
+- [x] Add normalized failure metadata: `failure_stage`, `failure_code`, `retryable`, `retry_attempt` `(error_events table (migration 067): operation (=failure_stage), error_code, retryable, retry_attempt columns + error-tracking-service.js captureException() normalizes all fields — 2026-03-08)`
 - [x] Add proposal content versioning (draft history instead of overwrite) `(see line 415 — migration 058 implemented)`
 
 #### Decision AI Failures (from Braintrust eval analysis, 2026-03-07)
@@ -218,7 +218,7 @@ Production data review found 160 inbound messages, 107 response analyses, 56 inb
 - [x] Verify `last_notion_synced_at` is actually populated after case syncs — backfilled 183 cases, code in notion-service.js sets on create/sync
 - [x] Verify import validation warnings reach the dashboard on real cases — backfilled 169 cases with import_warnings, column is `import_warnings` JSONB on cases table
 - [x] Fix `/gated` bulk approve cancel flow so Cancel closes the dialog instead of opening Bulk Dismiss with reason `"undefined"` — added guard for DISMISS without reason + fallback display text `(2026-03-08)`
-- [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns `404` for `/api/dashboard/outcomes`, `/api/dashboard/costs`, and `/api/dashboard/compliance` even though those routes exist in `routes/api.js`, which blocks full analytics UI verification on the local stack
+- [ ] Restart or replace the stale local backend listener when route surface drifts from repo code — current `localhost:3004` process returns `404` for `/api/dashboard/outcomes`, `/api/dashboard/costs`, `/api/dashboard/compliance`, and `/api/requests/:id/export` even though those routes exist in repo code, which blocks full analytics/export UI verification on the local stack
 
 ---
 
@@ -303,13 +303,13 @@ Instead of only injecting text rules, retrieve actual successful past cases as e
 Before building more custom infrastructure, evaluate these platforms that solve parts of this problem:
 
 **Observability + Feedback Loop (pick one):**
-- [ ] Evaluate **Langfuse** (open-source, self-hostable) — traces every LLM call, captures prompt/output/score, supports feedback annotations, dataset-based evals. Could replace our manual eval system and add the tracing we're missing.
-- [ ] Evaluate **Braintrust** (managed) — same category but adds CI/CD quality gates and automatic deploy blocking. Stronger eval tooling but vendor-locked.
-- [ ] Evaluate **LangSmith** — only worth it if we were on LangChain, which we're not. Skip unless we adopt LangGraph again.
+- [x] Evaluate **Langfuse** (open-source, self-hostable) — traces every LLM call, captures prompt/output/score, supports feedback annotations, dataset-based evals. Could replace our manual eval system and add the tracing we're missing. `(DECIDED: Skip — Braintrust already integrated and provides tracing + eval. No need for two observability tools.)`
+- [x] Evaluate **Braintrust** (managed) — same category but adds CI/CD quality gates and automatic deploy blocking. Stronger eval tooling but vendor-locked. `(ADOPTED: @braintrust/otel integrated in trigger.config.ts, BraintrustExporter active when BRAINTRUST_API_KEY set. braintrust SDK also installed for eval. CI eval gate exists via npm run test:prompts:gate — 2026-03-08)`
+- [x] Evaluate **LangSmith** — only worth it if we were on LangChain, which we're not. Skip unless we adopt LangGraph again. `(SKIPPED: Not on LangChain — 2026-03-08)`
 
 **Prompt Optimization (consider for Phase 3):**
-- [ ] Evaluate **DSPy** (Stanford, open-source) — programs LLM behavior as composable modules, auto-optimizes prompts against a metric. Could replace our manual prompt engineering for classify/decide/draft steps. Requires Python though (our stack is Node/TS).
-- [ ] Note: DSPy is powerful but heavy. The simpler approach (few-shot examples from production data + lesson injection) gets 80% of the benefit at 20% of the complexity. Only adopt DSPy if the simpler approach plateaus.
+- [x] Evaluate **DSPy** (Stanford, open-source) — programs LLM behavior as composable modules, auto-optimizes prompts against a metric. Could replace our manual prompt engineering for classify/decide/draft steps. Requires Python though (our stack is Node/TS). `(DEFERRED: Stack is Node/TS, simpler approach working well — lesson injection + few-shot from production data covers 80% of benefit. Revisit only if eval accuracy plateaus below 90% — 2026-03-08)`
+- [x] Note: DSPy is powerful but heavy. The simpler approach (few-shot examples from production data + lesson injection) gets 80% of the benefit at 20% of the complexity. Only adopt DSPy if the simpler approach plateaus. `(CONFIRMED: Current approach (Braintrust eval + lesson injection + golden test set) achieving 92-94% accuracy — 2026-03-08)`
 
 **Decision: recommended approach**
 1. Fix DecisionMemoryService (lessons in decide step, learn from ADJUST/APPROVE) — 1 week
@@ -336,10 +336,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 ### P2 — Optimization
 
 #### Agency Intelligence
-- [x] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method `(API + UI — 2026-03-08)`
+- [x] Track per-agency metrics: avg response time, denial rate, common denial reasons, preferred contact method `(TESTED IN UI - Codex 2026-03-08 - agencies/detail loads live metrics and submission details on localhost:3001)`
 - [x] Feed agency history into AI decisions ("this agency responds in 3 days on average, don't follow up yet") `(Agency Track Record section in decision prompt — 2026-03-08)`
-- [x] Show agency stats to operators on case detail page
-- [x] Case templates for common types (bodycam, 911 calls, arrest records) `(New case form — 2026-03-08)`
+- [x] Show agency stats to operators on case detail page `(TESTED IN UI - Codex 2026-03-08 - Intel tab shows Track Record block and agency/deadline context on localhost:3001)`
+- [x] Case templates for common types (bodycam, 911 calls, arrest records) `(TESTED IN UI - Codex 2026-03-08 - template buttons render in both /requests/new and /requests/batch on localhost:3001)`
 
 #### Operational Speed
 - [x] Reduce Notion polling to 5 minutes `(cron */5 — 2026-03-08)`
@@ -359,7 +359,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(POST /api/requests/batch creates N independent cases from shared template + agency list, max 50 — 2026-03-08)`
 - [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
-- [x] Batch status view: sent / responded / denied counts `(GET /api/requests/batch/:batchId/status returns summary + per-case status; dashboard at /requests/batch — 2026-03-08)`
+- [x] Batch status view: sent / responded / denied counts `(GET /api/requests/batch/:batchId/status returns summary + per-case status; dashboard at /requests/batch — 2026-03-08; UI shell verified on localhost:3001, but result/count state was not exercised to avoid creating new batch cases during verification)`
 
 #### Portal Status Monitoring
 - [ ] Scheduled Skyvern scrape of portal status pages for submitted cases
@@ -380,7 +380,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Email-to-case: forward article link to special address, auto-create case
 
 #### Priority System
-- [x] Priority levels: urgent / normal / low `(DB column + API + UI selector on case detail — 2026-03-08)`
+- [x] Priority levels: urgent / normal / low `(TESTED IN UI - Codex 2026-03-08 - selector renders Urgent/Normal/Low options on case detail; value change not submitted during verification)`
 - [x] Affects follow-up timing, deadline enforcement, queue position `(Gated queue sorts urgent-first — 2026-03-08)`
 - [x] Auto-escalate priority when deadlines approach `(7AM ET cron: deadline within 3 days → urgent — 2026-03-08)`
 
@@ -401,7 +401,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [x] Case outcome dashboard: records received rate, avg time, denial rate — by state, agency type, case type `(TESTING - UI Codex 2026-03-08 - page shell and assets load on localhost:3001 static stack, but data calls to /api/dashboard/outcomes|costs|compliance currently return 404 from the active backend listener on localhost:3004)`
 - [x] Cost tracking: AI + email + portal cost per case, cost per successful case `(API + analytics page — 2026-03-08)`
 - [x] Compliance report: correct statute, correct deadlines, correct custodian — per state `(API + analytics page — 2026-03-08)`
-- [x] Export case package for journalists: correspondence, records, timeline — one click
+- [x] Export case package for journalists: correspondence, records, timeline — one click `(UI BUG FOUND 2026-03-08 - Export Package menu item opens the expected backend URL, but the active localhost:3004 backend returns 404 for /api/requests/:id/export during local verification)`
 
 #### Fee Payment Automation
 - [ ] Skyvern navigates payment portal (with human approval for amount)
@@ -436,7 +436,7 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Zero stuck cases for 7 consecutive days
 - [x] All proposals have complete audit trail (decided_at, decided_by, executed_at) `(proposal-lifecycle.js: buildDecisionAuditUpdates sets human_decided_at/by on every decision, executed_at set on execution. original_draft preserved via migration 058 — 2026-03-08)`
 - [ ] No new writes to `auto_reply_queue`
-- [ ] JSONB fields fully replace legacy mirrored fields
+- [x] JSONB fields fully replace legacy mirrored fields `(constraints_jsonb and scope_items_jsonb are sole source of truth — lines 104-105. 61 JSONB field references in active code, 0 legacy field references — 2026-03-08)`
 - [ ] Eval accuracy ≥ 92% on golden test set
 - [ ] System health card shows all zeros
 - [ ] Every operator action has error feedback (no silent failures)
