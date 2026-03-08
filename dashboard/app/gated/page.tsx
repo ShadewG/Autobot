@@ -613,6 +613,249 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 }
 
 /* ─────────────────────────────────────────────
+   Health Metric Detail — drill-down panel
+   ───────────────────────────────────────────── */
+
+type HealthMetricKey = "stuck_cases" | "orphaned_runs" | "stale_proposals" | "overdue_deadlines" | "bounced_emails" | "portal_failures";
+
+function HealthMetricDetail({ metric, onClose }: { metric: HealthMetricKey; onClose: () => void }) {
+  const { data, isLoading, error } = useSWR<{
+    success: boolean;
+    metric: string;
+    count: number;
+    items: Record<string, unknown>[];
+  }>(`/api/monitor/system-health/details?metric=${metric}`);
+
+  if (isLoading) {
+    return (
+      <div className="border border-t-0 bg-card px-3 py-4 text-xs text-muted-foreground flex items-center gap-2">
+        <Loader2 className="h-3 w-3 animate-spin" /> Loading details...
+      </div>
+    );
+  }
+
+  if (error || !data?.success) {
+    return (
+      <div className="border border-t-0 bg-card px-3 py-2 text-xs text-red-400">
+        Failed to load details.{" "}
+        <button onClick={onClose} className="underline text-muted-foreground ml-1">Close</button>
+      </div>
+    );
+  }
+
+  if (data.items.length === 0) {
+    return (
+      <div className="border border-t-0 bg-card px-3 py-2 text-xs text-muted-foreground">
+        No records found.{" "}
+        <button onClick={onClose} className="underline ml-1">Close</button>
+      </div>
+    );
+  }
+
+  // Render based on metric type
+  const renderStuckCases = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">Agency</th>
+          <th className="pb-1 font-medium">Status</th>
+          <th className="pb-1 font-medium">Pause Reason</th>
+          <th className="pb-1 font-medium">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5">
+              <Link href={`/requests/detail-v2?id=${item.id}`} className="text-blue-400 hover:underline">
+                #{item.id}
+              </Link>
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name}</td>
+            <td className="py-1.5"><Badge variant="outline" className="text-[10px] h-4">{item.status}</Badge></td>
+            <td className="py-1.5 text-muted-foreground">{item.pause_reason || "-"}</td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.updated_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderStaleProposals = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">Agency</th>
+          <th className="pb-1 font-medium">Action</th>
+          <th className="pb-1 font-medium">Proposal Status</th>
+          <th className="pb-1 font-medium">Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.proposal_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5">
+              <Link href={`/requests/detail-v2?id=${item.case_id}`} className="text-blue-400 hover:underline">
+                #{item.case_id}
+              </Link>
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name}</td>
+            <td className="py-1.5"><Badge variant="outline" className="text-[10px] h-4">{item.action_type}</Badge></td>
+            <td className="py-1.5"><Badge variant="outline" className="text-[10px] h-4">{item.proposal_status}</Badge></td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.created_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderOverdueDeadlines = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">Agency</th>
+          <th className="pb-1 font-medium">Status</th>
+          <th className="pb-1 font-medium">Deadline</th>
+          <th className="pb-1 font-medium">Days Overdue</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5">
+              <Link href={`/requests/detail-v2?id=${item.id}`} className="text-blue-400 hover:underline">
+                #{item.id}
+              </Link>
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name}</td>
+            <td className="py-1.5"><Badge variant="outline" className="text-[10px] h-4">{item.status}</Badge></td>
+            <td className="py-1.5 text-muted-foreground">{item.deadline_date ? new Date(item.deadline_date).toLocaleDateString() : "-"}</td>
+            <td className="py-1.5 text-red-400 font-medium">{item.days_overdue}d</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderPortalFailures = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">Agency</th>
+          <th className="pb-1 font-medium">Action</th>
+          <th className="pb-1 font-medium">Portal</th>
+          <th className="pb-1 font-medium">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.task_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5">
+              <Link href={`/requests/detail-v2?id=${item.case_id}`} className="text-blue-400 hover:underline">
+                #{item.case_id}
+              </Link>
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name}</td>
+            <td className="py-1.5"><Badge variant="outline" className="text-[10px] h-4">{item.action_type}</Badge></td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[120px]">{item.portal_url || "-"}</td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.updated_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderOrphanedRuns = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Run</th>
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">Agency</th>
+          <th className="pb-1 font-medium">Type</th>
+          <th className="pb-1 font-medium">Started</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.run_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5 text-muted-foreground">#{item.run_id}</td>
+            <td className="py-1.5">
+              {item.case_id ? (
+                <Link href={`/requests/detail-v2?id=${item.case_id}`} className="text-blue-400 hover:underline">
+                  #{item.case_id}
+                </Link>
+              ) : "-"}
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name || "-"}</td>
+            <td className="py-1.5"><Badge variant="outline" className="text-[10px] h-4">{item.trigger_type}</Badge></td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.started_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderBouncedEmails = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">Agency</th>
+          <th className="pb-1 font-medium">From</th>
+          <th className="pb-1 font-medium">To</th>
+          <th className="pb-1 font-medium">Bounced</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.message_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5">
+              {item.case_id ? (
+                <Link href={`/requests/detail-v2?id=${item.case_id}`} className="text-blue-400 hover:underline">
+                  #{item.case_id}
+                </Link>
+              ) : "-"}
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.agency_name || "-"}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[140px]">{item.from_address}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[140px]">{item.to_address}</td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.bounced_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderers: Record<HealthMetricKey, () => React.ReactNode> = {
+    stuck_cases: renderStuckCases,
+    stale_proposals: renderStaleProposals,
+    overdue_deadlines: renderOverdueDeadlines,
+    portal_failures: renderPortalFailures,
+    orphaned_runs: renderOrphanedRuns,
+    bounced_emails: renderBouncedEmails,
+  };
+
+  return (
+    <div className="col-span-full border border-t-0 bg-card px-3 py-3 overflow-x-auto">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          {data.count} record{data.count !== 1 ? "s" : ""}
+        </span>
+        <button onClick={onClose} className="text-[10px] text-muted-foreground hover:text-foreground">
+          Close
+        </button>
+      </div>
+      {renderers[metric]()}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    Main Component
    ───────────────────────────────────────────── */
 
@@ -646,6 +889,7 @@ function MonitorPageContent() {
   const [editedRecipient, setEditedRecipient] = useState<string>("");
   const [outboundAttachments, setOutboundAttachments] = useState<Attachment[]>([]);
   const [queueFilter, setQueueFilter] = useState<"all" | "proposals" | "reviews">("all");
+  const [expandedHealthMetric, setExpandedHealthMetric] = useState<HealthMetricKey | null>(null);
   const [caseNotFoundId, setCaseNotFoundId] = useState<number | null>(null);
   const [pendingAction, setPendingAction] = useState<{
     label: string;
@@ -1628,29 +1872,33 @@ function MonitorPageContent() {
               {[
                 ...(healthData.metrics.stuck_breakdown && healthData.metrics.stuck_cases > 0
                   ? [
-                      { label: "Stuck: review", value: healthData.metrics.stuck_breakdown.needs_human_review, href: "/requests?status=needs_human_review" },
-                      { label: "Stuck: phone", value: healthData.metrics.stuck_breakdown.needs_phone_call },
-                      { label: "Stuck: contact", value: healthData.metrics.stuck_breakdown.needs_contact_info },
-                      { label: "Stuck: fee", value: healthData.metrics.stuck_breakdown.needs_human_fee_approval },
-                      { label: "Stuck: research handoff", value: healthData.metrics.stuck_breakdown.research_handoff },
+                      { label: "Stuck: review", value: healthData.metrics.stuck_breakdown.needs_human_review, metric: "stuck_cases" as HealthMetricKey },
+                      { label: "Stuck: phone", value: healthData.metrics.stuck_breakdown.needs_phone_call, metric: "stuck_cases" as HealthMetricKey },
+                      { label: "Stuck: contact", value: healthData.metrics.stuck_breakdown.needs_contact_info, metric: "stuck_cases" as HealthMetricKey },
+                      { label: "Stuck: fee", value: healthData.metrics.stuck_breakdown.needs_human_fee_approval, metric: "stuck_cases" as HealthMetricKey },
+                      { label: "Stuck: research handoff", value: healthData.metrics.stuck_breakdown.research_handoff, metric: "stuck_cases" as HealthMetricKey },
                     ].filter(m => m.value > 0)
-                  : [{ label: "Stuck cases", value: healthData.metrics.stuck_cases, href: "/requests?status=needs_human_review" }]
+                  : [{ label: "Stuck cases", value: healthData.metrics.stuck_cases, metric: "stuck_cases" as HealthMetricKey }]
                 ),
-                { label: "Orphaned runs", value: healthData.metrics.orphaned_runs, href: "/runs" },
-                { label: "Stale proposals", value: healthData.metrics.stale_proposals },
-                { label: "Overdue deadlines", value: healthData.metrics.overdue_deadlines },
-                { label: "Bounced emails (24h)", value: healthData.metrics.bounced_emails },
-                { label: "Portal failures (24h)", value: healthData.metrics.portal_failures },
+                { label: "Orphaned runs", value: healthData.metrics.orphaned_runs, metric: "orphaned_runs" as HealthMetricKey },
+                { label: "Stale proposals", value: healthData.metrics.stale_proposals, metric: "stale_proposals" as HealthMetricKey },
+                { label: "Overdue deadlines", value: healthData.metrics.overdue_deadlines, metric: "overdue_deadlines" as HealthMetricKey },
+                { label: "Bounced emails (24h)", value: healthData.metrics.bounced_emails, metric: "bounced_emails" as HealthMetricKey },
+                { label: "Portal failures (24h)", value: healthData.metrics.portal_failures, metric: "portal_failures" as HealthMetricKey },
               ].map((m) => (
                 <div
                   key={m.label}
                   className={cn(
                     "bg-card px-3 py-2",
                     m.value > 0 && "cursor-pointer hover:bg-muted/50",
+                    expandedHealthMetric === m.metric && "ring-1 ring-inset ring-foreground/30 bg-muted/40",
                   )}
-                  onClick={m.value > 0 && m.href ? () => window.location.href = m.href : undefined}
+                  onClick={m.value > 0 ? () => setExpandedHealthMetric(expandedHealthMetric === m.metric ? null : m.metric) : undefined}
                 >
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                    {m.label}
+                    {m.value > 0 && <ChevronRight className={cn("h-2.5 w-2.5 transition-transform", expandedHealthMetric === m.metric && "rotate-90")} />}
+                  </div>
                   <div className={cn(
                     "text-lg font-bold tabular-nums",
                     m.value > 0 ? "text-red-400" : "text-green-400"
@@ -1660,6 +1908,12 @@ function MonitorPageContent() {
                 </div>
               ))}
             </div>
+            {expandedHealthMetric && (
+              <HealthMetricDetail
+                metric={expandedHealthMetric}
+                onClose={() => setExpandedHealthMetric(null)}
+              />
+            )}
           </CollapsibleContent>
         </Collapsible>
       )}
