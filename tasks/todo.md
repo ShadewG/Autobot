@@ -70,7 +70,7 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Fix stuck-case summary counts so the headline total matches the rendered case list / grouped buckets `(TESTED VIA API - Codex 2026-03-08 - summary now reports total_issues=20 while stuck_cases remains 0 and details are empty)`
 - [x] Deduplicate phone-call fallback creation so repeated deadline/research loops do not keep creating skipped `phone_call_queue` rows for the same case `(createPhoneCallTask now checks for recently-skipped entries within 7 days and returns existing instead of creating new — 2026-03-08)`
 - [x] Align phone-call escalations to a phone-call-specific pause reason instead of leaving `needs_phone_call` cases under `RESEARCH_HANDOFF` `(TESTED VIA REGRESSION - Codex 2026-03-08 - case-reducer.test.js covers needs_phone_call review-state and followup alignment)`
-- [x] System health metric drill-down: UI wiring confirmed working — clickable metrics expand detail tables via `HealthMetricDetail` component with SWR data fetching (Codex report was stale)
+- [x] System health metric drill-down: UI wiring confirmed working — clickable metrics expand detail tables via `HealthMetricDetail` component with SWR data fetching `(TESTED IN UI - Codex 2026-03-08 - fresh dashboard localhost:3026 expands Overdue Deadlines into a live 19-row detail table with case links and close control)`
 
 #### Agency Validation at Import ✅ DONE
 - [x] On Notion import, validate agency email (format check + MX record lookup via dns.resolveMx) `(TESTED VIA LIVE DATA - Codex 2026-03-08 - import_warnings currently include 7 NO_MX_RECORD cases, proving the MX lookup path is active)`
@@ -115,12 +115,12 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Add Event Ledger section to case detail — timeline-style state transition log with color-coded events, context summary, lazy-load on expand `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows 49 entries with RUN_WAITING/PROPOSAL_GATED/RUN_COMPLETED/CASE_ESCALATED/PROPOSAL_EXECUTED/CASE_RECONCILED event types)`
 - [x] Add Portal Submissions section to case detail — table of all portal attempts with status badges, engine, result/error, lazy-load `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "0" with empty state message)`
 - [x] Add Provider Payloads debug section to case detail — messages/executions/email_events tables with expandable raw JSON payloads, lazy-load `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "0 msg, 12 exec" with table of 12 RESEARCH_AGENCY SENT rows)`
-- [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate) `(BUG: /api/dashboard/message-volume returns 500 — Message Activity chart broken on localhost:3013/analytics. Other analytics sections render fine)`
+- [x] Add Message Activity charts to analytics — 30-day inbound vs outbound stacked bar chart with KPI cards (inbound, outbound, reply rate) `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - Message Activity renders: 281 inbound, 179 outbound, 64% reply rate with stacked bar chart Feb 7–Mar 8. BUG FIXED: trailing-slash proxy rule in next.config.js)`
 - [x] Add Hourly Activity chart to analytics — bar chart showing event volume by hour of day `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - Hourly Activity chart renders with 24-hour bar chart on /analytics/)`
 - [x] Add Error Events dashboard page — filterable table with KPI cards, source/operation filters, expandable stack traces, auto-refresh `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /errors/ renders "Error Events" heading with "Recent Errors (92 shown)" table)`
 - [x] Add AI Decision Lessons dashboard page — CRUD, AI parse button, active toggle, text search, source/status filters `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /lessons/ renders "AI Decision Lessons" heading with lesson list)`
 - [x] Add Reconciliation Report dashboard page — system diagnostic cards with green/red status, 9 expandable sections, case ID links `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /reconciliation/ shows 120 Total Issues, 7 Categories With Issues, 2 Clean, 9 expandable sections: Dropped Actions 20, Dead End Cases 0, Unanalyzed Inbound 20, Processing Errors 0, Runs Without Traces 1, Portal Missing Request Number 7, Attachment Extraction 7, Stale Proposals 2, Orphaned Inbound 63)`
-- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /examples/ renders filters (Classification, Action Type, State, Agency Type) and empty state. NOTE: /api/eval/examples/ returns 500)`
+- [x] Add Successful Examples viewer page — filterable table with classification/action/state/agency filters, expandable drafts, human_edited indicator `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - /examples/ renders 16 examples with filters, expandable rows showing Subject/Draft Body/Requested Records/Case#/Proposal#/Approved by. Filtering by action type works (e.g. SEND_CLARIFICATION → 2 of 2). BUG FIXED: trailing-slash proxy rule in next.config.js)`
 - [x] Add Proposal History section to case detail — expandable cards showing all proposals (not just pending), human_decided_by audit, original vs edited draft comparison, lazy-load `(TESTED VIA AUTHENTICATED API+REGRESSION - Codex 2026-03-08)`
 - [x] Add Decision Traces section to case detail — AI classification/routing/gate decision visualization with node trace flow, confidence coloring, run links, lazy-load from audit-stream `(TESTED VIA PLAYWRIGHT UI 2026-03-09 - expanded on case 25148, shows "Decision Traces 0" with "No decision traces recorded" empty state)`
 - [x] Add decision_traces to audit-stream endpoint — backend now includes decision traces in unified event feed alongside ledger, activity, portal, email, and error events `(TESTED VIA AUTHENTICATED API - Codex 2026-03-08 - fresh backend localhost:3025 audit-stream summary includes decision_traces alongside activity_log and case_event_ledger)`
@@ -165,8 +165,8 @@ Ordered by priority within each phase. Check items off as completed.
 - [x] Wire real `constraint_added` / `constraint_removed` / `constraint_detected` producers into `activity_log` — added to update-constraints.ts (AI analysis), execute-action.ts (WRONG_AGENCY add/remove), case-management.js (manual add/remove with fixed logActivity signatures) `(TESTED VIA UI+DB - Codex 2026-03-08 - history entries are visible in workspace payloads and rendered in the dashboard)`
 - [x] Verify new constraint history producers are visible in live workspace payloads and UI after fresh events — verified: activity_log→toTimelineEvent maps constraint_detected/added/removed to CONSTRAINT_DETECTED timeline type (RESEARCH category); frontend timeline.tsx renders with AlertTriangle icon + orange styling; constraints-display.tsx has ConstraintHistoryEntry UI; 182 backfilled entries confirmed in DB
 - [x] Backfill or reconstruct constraint history for existing cases so the new history UI is not empty on older requests — backfilled 182 `constraint_detected` activity_log entries for 77 cases from `constraints_jsonb` data
-- [x] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes
-- [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>`
+- [x] Fix Add Constraint dialog accessibility: associate labels to fields and add stable `id`/`name` attributes `(TESTED IN UI+DOM - Codex 2026-03-08 - fresh dashboard localhost:3026 opens Add Constraint dialog with `Type`→`constraint-type` and `Description`→`constraint-description` labels plus stable `name` attributes)`
+- [x] Fix `CollapsibleSection` summary action markup so interactive controls are not nested inside `<summary>` `(TESTED VIA DOM - Codex 2026-03-08 - fresh dashboard localhost:3026 has 0 matches for `summary button, summary a, summary [role=\"button\"]`)`
 
 #### Dashboard API Hygiene
 - [x] Remove trailing-slash `308` redirect hops for dashboard API calls like `/api/auth/me`, `/api/monitor/live-overview`, `/api/requests/:id/workspace`, `/api/requests/:id/agent-runs`, and `/api/requests/:id/portal-screenshots` — added trailing-slash strip middleware in server.js before API route handlers; redirects `/api/path/` → `/api/path` with 301 `(TESTED VIA API - Codex 2026-03-08 - localhost:3020 returns 200 for slashless routes and 301 to the slashless path for `/api/monitor/live-overview/` and `/api/requests/25164/workspace/`)`
@@ -412,12 +412,12 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 
 #### Proactive Contact Research
 - [x] On import, if agency email suspect or not in directory, auto-trigger `RESEARCH_AGENCY` before drafting `(TESTED VIA REGRESSION - Codex 2026-03-08 - request-normalization.test.js, denial-wrong-agency-research.test.js, and retry-research-decision.test.js cover the import-warning → research path)`
-- [x] Cache research results in agency directory for future cases `(persistResearch in research-context.ts now upserts to agencies table — creates new or fills missing email/portal — 2026-03-08)`
+- [x] Cache research results in agency directory for future cases `(TESTED VIA LIVE DB - Codex 2026-03-08 - fresh E2E case #25518 (`E2E_wrong_agency_1773011769439`) persisted researched email `records@dallascounty.org` into agencies row #5161; live directory also contains matched research-derived Rockford / Pennsylvania / Norfolk contact rows)`
 - [x] FIXED — research success-rate tracking per agency type: `getAgencyIntelligence(agencyName, null)` now succeeds for name-only lookups and returns live agency-history stats `(TESTED VIA DB HELPER - Codex 2026-03-08 - Synthetic QA Records Unit, Arizona returned total_cases=83, fee_cases=11, top_denial_reasons=[no_records, ongoing_investigation])`
 
 #### Batch Operations
 - [x] "Send this request to N agencies" — template + agency list → N independent cases `(TESTED VIA UI+API - Codex 2026-03-08 - fresh dashboard localhost:3013 renders the full batch workflow shell and fresh backend localhost:3012 returns route-level responses for create + status endpoints)`
-- [x] Shared template, independent threads and proposal queues `(each case gets unique notion_page_id, own proposal queue, tagged with batch:{id} — 2026-03-08)`
+- [x] Shared template, independent threads and proposal queues `(TESTED VIA API+DB - Codex 2026-03-08 - fresh batch `batch-1773011528968-c9no3a` created cases #25509/#25510 with distinct notion_page_id values (`...-0` / `...-1`), shared `batch:{id}` tag, and independent pending proposals #1199/#1200)`
 - [x] FIXED — batch status route `GET /api/requests/batch/:batchId/status` had SQL type mismatch (`text[] @> jsonb`). Fixed by using `ARRAY[$1]::text[]` instead of `$1::text[]`. Deployed to Railway `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 no longer throws SQL error; nonexistent batch now returns 404 Batch not found)`
 
 #### Portal Status Monitoring
@@ -428,10 +428,10 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 ### P1 — Scale features
 
 #### Records Delivery Intake
-- [ ] Auto-download email attachments and portal download links when records arrive
-- [ ] Catalog received documents against original request scope
-- [ ] Flag incomplete deliveries for follow-up
-- [ ] Case completion report: requested vs received
+- [x] Auto-download email attachments and portal download links when records arrive `(TESTED VIA REGRESSION - Codex 2026-03-09: records-delivery-service.test.js catalogs inbound attachments and downloads direct delivery links into attachments + received_records)`
+- [x] Catalog received documents against original request scope `(TESTED VIA REGRESSION - Codex 2026-03-09: records-delivery-service.buildCaseCompletionReport matches received artifacts to requested scope items)`
+- [x] Flag incomplete deliveries for follow-up `(TESTED VIA REGRESSION - Codex 2026-03-09: partial-delivery cataloging logs delivery_incomplete_flagged when requested scope remains outstanding)`
+- [x] Case completion report: requested vs received `(TESTED VIA API ROUTE - Codex 2026-03-09: GET /api/requests/:id/completion-report via request-completion-report-route.test.js)`
 
 #### Case Intake Beyond Notion
 - [x] RESOLVED — `POST /api/cases` route exists in codebase (`routes/cases.js`), was stale Railway deploy. Fresh deploy confirmed route returns 401 without auth key as expected `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3012 returns 401 Invalid service key without auth)`
@@ -439,9 +439,9 @@ Before building more custom infrastructure, evaluate these platforms that solve 
 - [ ] Email-to-case: forward article link to special address, auto-create case `(BACKEND ROUTE IMPLEMENTED + TESTED - Codex 2026-03-08: POST /api/cases/email-intake creates/dedupes human-review intake cases from forwarded article emails; mailbox/special-address wiring still pending)`
 
 #### Priority System
-- [x] Priority levels: urgent / normal / low `(TESTED IN UI - Codex 2026-03-08 - selector renders Urgent/Normal/Low options on case detail; value change not submitted during verification)`
-- [x] Affects follow-up timing, deadline enforcement, queue position `(Gated queue sorts urgent-first — 2026-03-08)`
-- [x] Auto-escalate priority when deadlines approach `(7AM ET cron: deadline within 3 days → urgent — 2026-03-08)`
+- [x] Priority levels: urgent / normal / low `(TESTED VIA UI+API+DB - Codex 2026-03-08 - synthetic batch case #25509 updated through PUT /api/requests/25509/priority -> 2, persisted in DB, logged `priority_updated`, and renders as `Urgent` on detail page localhost:3026)`
+- [x] Affects follow-up timing, deadline enforcement, queue position `(TESTED VIA API - Codex 2026-03-08 - fresh backend localhost:3025 `/api/monitor/live-overview` sorts urgent synthetic case #25509 / proposal #1199 to the top of pending_approvals)`
+- [ ] Auto-escalate priority when deadlines approach — cron exists in code, but live behavior is not proven and current DB contradicts it: `0` `priority_auto_escalate` activity rows, `0` urgent cases, and `21` in-window cases still below urgent on fresh DB `(REOPENED - Codex 2026-03-08)`
 
 #### Automated Phone Calls
 - [ ] Twilio integration for outbound calls
@@ -519,7 +519,7 @@ Full browser-based UI verification of all dashboard pages at `localhost:3013` (b
 ### Pages Tested (all PASS unless noted)
 | Page | URL | Status | Notes |
 |------|-----|--------|-------|
-| Gated Queue | `/gated/` | PASS | KPIs, proposal cards, bulk button, keyboard shortcuts, system health drill-down |
+| Gated Queue | `/gated/` | PASS | KPIs (18 attention, 11 proposals, 7 review, 4 inbound 24h, 1 unmatched), proposal cards with draft editing, bulk button, keyboard shortcuts overlay (←→↑↓JK/A/D/?/Esc), system health drill-down (19 overdue table with clickable case links), INBOUND tab (100 messages with all/unmatched/matched filters), PHONE CALLS tab (14 pending with call purpose/phone/state), Next/Previous navigation between proposals |
 | Case Detail | `/requests/detail-v2/?id=25148` | PASS | Thread, agency panel, deadline, constraints, timeline (50), Decision Traces, Event Ledger (49), Portal Submissions, Provider Payloads (12 exec) |
 | Analytics | `/analytics/` | PARTIAL | Outcomes, Cost, Compliance, Hourly Activity all render. **BUG**: `/api/dashboard/message-volume` returns 500 |
 | Eval | `/eval/` | PASS | Pass Rate KPIs, Decision Quality chart, eval cases table, failure categories |

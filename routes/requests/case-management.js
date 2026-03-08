@@ -6,6 +6,7 @@ const { transitionCaseRuntime } = require('../../services/case-runtime');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { sanitizeValue } = require('../../services/decision-trace-service');
 const { buildOperatorActionErrorResponse } = require('../../services/operator-action-errors');
+const recordsDeliveryService = require('../../services/records-delivery-service');
 const { buildHumanDecision } = proposalLifecycle;
 
 const SENSITIVE_PAYLOAD_KEY_PATTERNS = [
@@ -1274,6 +1275,30 @@ router.get('/:id/portal-submissions', async (req, res) => {
         });
     } catch (error) {
         logger.error('Error fetching portal submissions:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * GET /api/requests/:id/completion-report
+ * Compare requested scope against received records/delivery artifacts.
+ */
+router.get('/:id/completion-report', async (req, res) => {
+    try {
+        const caseId = parseInt(req.params.id, 10);
+        const caseData = await db.getCaseById(caseId);
+        if (!caseData) {
+            return res.status(404).json({ success: false, error: 'Case not found' });
+        }
+
+        const report = await recordsDeliveryService.buildCaseCompletionReport(caseId, { db, caseData });
+        res.json({
+            success: true,
+            case_id: caseId,
+            report,
+        });
+    } catch (error) {
+        logger.error('Error building completion report:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

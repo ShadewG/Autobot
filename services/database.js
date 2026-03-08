@@ -4324,6 +4324,68 @@ class DatabaseService {
         return result.rows[0];
     }
 
+    async getReceivedRecordByAttachmentId(attachmentId) {
+        if (!attachmentId) return null;
+        const result = await this.query(
+            'SELECT * FROM received_records WHERE attachment_id = $1 LIMIT 1',
+            [attachmentId]
+        );
+        return result.rows[0] || null;
+    }
+
+    async getReceivedRecordBySourceUrl(caseId, sourceUrl) {
+        if (!caseId || !sourceUrl) return null;
+        const result = await this.query(
+            'SELECT * FROM received_records WHERE case_id = $1 AND source_url = $2 LIMIT 1',
+            [caseId, sourceUrl]
+        );
+        return result.rows[0] || null;
+    }
+
+    async createReceivedRecord(data) {
+        if (data.attachment_id) {
+            const existingByAttachment = await this.getReceivedRecordByAttachmentId(data.attachment_id);
+            if (existingByAttachment) return existingByAttachment;
+        }
+        if (data.case_id && data.source_url) {
+            const existingByUrl = await this.getReceivedRecordBySourceUrl(data.case_id, data.source_url);
+            if (existingByUrl) return existingByUrl;
+        }
+        const result = await this.query(
+            `INSERT INTO received_records
+                (case_id, message_id, attachment_id, source_type, source_url, filename, content_type, size_bytes,
+                 matched_scope_item, match_confidence, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING *`,
+            [
+                data.case_id,
+                data.message_id || null,
+                data.attachment_id || null,
+                data.source_type,
+                data.source_url || null,
+                data.filename || null,
+                data.content_type || null,
+                data.size_bytes || null,
+                data.matched_scope_item || null,
+                data.match_confidence ?? null,
+                data.notes || null,
+            ]
+        );
+        return result.rows[0];
+    }
+
+    async getReceivedRecordsByCaseId(caseId) {
+        const result = await this.query(
+            `SELECT rr.*, a.extracted_text, a.storage_url AS attachment_storage_url
+               FROM received_records rr
+          LEFT JOIN attachments a ON a.id = rr.attachment_id
+              WHERE rr.case_id = $1
+           ORDER BY rr.created_at DESC, rr.id DESC`,
+            [caseId]
+        );
+        return result.rows;
+    }
+
     async dismissMessage(messageId) {
         await this.query('DELETE FROM messages WHERE id = $1 AND case_id IS NULL', [messageId]);
     }

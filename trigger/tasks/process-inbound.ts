@@ -23,6 +23,7 @@ import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { HumanDecision, InboundPayload, ResearchContext, ChainAction, ActionType } from "../lib/types";
 const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
+const recordsDeliveryService = require("../../services/records-delivery-service");
 
 const DRAFT_REQUIRED_ACTIONS = [
   "SEND_INITIAL_REQUEST", "SUBMIT_PORTAL", "SEND_FOLLOWUP", "SEND_REBUTTAL", "SEND_CLARIFICATION",
@@ -561,6 +562,26 @@ export const processInbound = task({
       caseId, effectiveClassification, classification.extractedFeeAmount,
       messageId, context.constraints, context.scopeItems
     );
+
+    if (effectiveClassification === "RECORDS_READY" || effectiveClassification === "PARTIAL_DELIVERY") {
+      try {
+        const triggerMessage = await db.getMessageById(messageId);
+        const deliveryCatalog = await recordsDeliveryService.catalogMessageDelivery({
+          caseId,
+          messageId,
+          classification: effectiveClassification,
+          bodyText: triggerMessage?.body_text || "",
+        });
+        trace.setExecutionDetail("delivery_catalog", {
+          cataloged: deliveryCatalog.cataloged,
+          downloaded: deliveryCatalog.downloaded,
+          flaggedIncomplete: deliveryCatalog.flaggedIncomplete,
+          outstanding: deliveryCatalog.report?.outstanding || [],
+        });
+      } catch (err: any) {
+        logger.warn("Delivery cataloging failed", { caseId, messageId, error: err.message });
+      }
+    }
 
     // Step 4: Decide next action
     const effectiveTriggerType = triggerType || "INBOUND_MESSAGE";
