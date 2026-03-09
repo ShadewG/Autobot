@@ -5,9 +5,11 @@ const notionService = require('../services/notion-service');
 const portalService = require('../services/portal-service-test-only');
 const dashboardService = require('../services/dashboard-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
+const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
 
 const RETIRED_ADAPTIVE_LEARNING_MESSAGE =
     'AdaptiveLearningService has been retired. Use decision memory and successful examples instead.';
+const REAL_CASES_WHERE = buildRealCaseWhereClause('c');
 
 function formatSyncedCasesResponse(cases) {
     return {
@@ -723,18 +725,25 @@ router.get('/dashboard/costs', async (req, res) => {
             db.query(`
                 WITH ai_usage AS (
                     SELECT model_id, prompt_tokens, completion_tokens, 'classify' as step
-                    FROM response_analysis
-                    WHERE model_id IS NOT NULL AND prompt_tokens IS NOT NULL
+                    FROM response_analysis ra
+                    JOIN messages m ON m.id = ra.message_id
+                    JOIN cases c ON c.id = m.case_id
+                    WHERE ra.model_id IS NOT NULL AND ra.prompt_tokens IS NOT NULL
+                      AND ${REAL_CASES_WHERE}
                     UNION ALL
                     SELECT decision_model_id as model_id, decision_prompt_tokens as prompt_tokens,
                            decision_completion_tokens as completion_tokens, 'decide' as step
-                    FROM proposals
-                    WHERE decision_model_id IS NOT NULL AND decision_prompt_tokens IS NOT NULL
+                    FROM proposals p
+                    JOIN cases c ON c.id = p.case_id
+                    WHERE p.decision_model_id IS NOT NULL AND p.decision_prompt_tokens IS NOT NULL
+                      AND ${REAL_CASES_WHERE}
                     UNION ALL
                     SELECT draft_model_id as model_id, draft_prompt_tokens as prompt_tokens,
                            draft_completion_tokens as completion_tokens, 'draft' as step
-                    FROM proposals
-                    WHERE draft_model_id IS NOT NULL AND draft_prompt_tokens IS NOT NULL
+                    FROM proposals p
+                    JOIN cases c ON c.id = p.case_id
+                    WHERE p.draft_model_id IS NOT NULL AND p.draft_prompt_tokens IS NOT NULL
+                      AND ${REAL_CASES_WHERE}
                 )
                 SELECT
                     COALESCE(model_id, 'unknown') as model,
@@ -756,6 +765,7 @@ router.get('/dashboard/costs', async (req, res) => {
                     LEFT JOIN messages m ON m.case_id = c.id AND m.direction = 'inbound'
                     LEFT JOIN response_analysis ra ON ra.message_id = m.id AND ra.prompt_tokens IS NOT NULL
                     LEFT JOIN proposals p ON p.case_id = c.id AND (p.decision_prompt_tokens IS NOT NULL OR p.draft_prompt_tokens IS NOT NULL)
+                    WHERE ${REAL_CASES_WHERE}
                     GROUP BY c.id, c.case_name, c.agency_name
                     HAVING COALESCE(SUM(ra.prompt_tokens), 0) + COALESCE(SUM(p.decision_prompt_tokens), 0) + COALESCE(SUM(p.draft_prompt_tokens), 0) > 0
                 )
@@ -839,6 +849,7 @@ router.get('/dashboard/compliance', async (req, res) => {
                 FROM cases c
                 LEFT JOIN state_deadlines sd ON sd.state_code = c.state
                 WHERE c.state IS NOT NULL
+                  AND ${REAL_CASES_WHERE}
                   AND c.status NOT IN ('draft', 'cancelled')
                 GROUP BY c.state, sd.response_days, sd.statute_citation
                 HAVING COUNT(*) >= 2
@@ -849,6 +860,7 @@ router.get('/dashboard/compliance', async (req, res) => {
                 SELECT COUNT(*)::int AS count
                 FROM cases
                 WHERE deadline_date IS NOT NULL
+                  AND ${buildRealCaseWhereClause('cases')}
                   AND deadline_date < NOW()
                   AND last_response_date IS NULL
                   AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
@@ -858,6 +870,7 @@ router.get('/dashboard/compliance', async (req, res) => {
                 SELECT COUNT(*)::int AS count
                 FROM cases
                 WHERE (agency_email IS NULL OR agency_email = '')
+                  AND ${buildRealCaseWhereClause('cases')}
                   AND (portal_url IS NULL OR portal_url = '')
                   AND status NOT IN ('completed', 'closed', 'denied', 'cancelled', 'withdrawn', 'draft')
             `),
@@ -913,6 +926,7 @@ router.get('/dashboard/outcomes', async (req, res) => {
                         FILTER (WHERE status = 'completed')::numeric, 1)
                         as avg_case_duration_days
                 FROM cases
+                WHERE ${buildRealCaseWhereClause('cases')}
             `),
             // Outcomes by state
             db.query(`
@@ -929,6 +943,7 @@ router.get('/dashboard/outcomes', async (req, res) => {
                         WHERE m.case_id = ANY(ARRAY_AGG(c.id)) AND LOWER(ra.intent) = 'denial') as denials
                 FROM cases c
                 WHERE c.state IS NOT NULL AND c.state != ''
+                  AND ${REAL_CASES_WHERE}
                 GROUP BY c.state
                 HAVING COUNT(*) >= 2
                 ORDER BY total DESC
@@ -939,8 +954,11 @@ router.get('/dashboard/outcomes', async (req, res) => {
                 SELECT
                     COALESCE(full_analysis_json->>'denial_subtype', 'unspecified') as reason,
                     COUNT(*) as count
-                FROM response_analysis
-                WHERE LOWER(intent) = 'denial'
+                FROM response_analysis ra
+                JOIN messages m ON m.id = ra.message_id
+                JOIN cases c ON c.id = m.case_id
+                WHERE LOWER(ra.intent) = 'denial'
+                  AND ${REAL_CASES_WHERE}
                 GROUP BY full_analysis_json->>'denial_subtype'
                 ORDER BY count DESC
             `),
@@ -948,6 +966,7 @@ router.get('/dashboard/outcomes', async (req, res) => {
             db.query(`
                 SELECT status, COUNT(*) as count
                 FROM cases
+                WHERE ${buildRealCaseWhereClause('cases')}
                 GROUP BY status
                 ORDER BY count DESC
             `)

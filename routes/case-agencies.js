@@ -6,6 +6,8 @@ const pdContactService = require('../services/pd-contact-service');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { normalizeAgencyEmailHint, findCanonicalAgency } = require('../services/canonical-agency');
 const {
+    extractMetadataAgencyHint,
+    detectCaseMetadataAgencyMismatch,
     extractResearchSuggestedAgency,
     isPlaceholderAgencyEmail,
     shouldSuppressPlaceholderAgencyDisplay,
@@ -104,6 +106,11 @@ function buildExistingContactFallback(caseAgency, caseData) {
 
 async function canonicalizeCaseAgency(caseAgency, caseData) {
     const researchSuggestedAgency = extractResearchSuggestedAgency(caseData?.contact_research_notes);
+    const metadataAgencyHint = extractMetadataAgencyHint(caseData?.additional_details);
+    const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
+        currentAgencyName: caseAgency?.agency_name || caseData?.agency_name,
+        additionalDetails: caseData?.additional_details,
+    });
     const shouldPreferResearchDisplay = Boolean(
         researchSuggestedAgency
         && ['case_row_backfill', 'case_row_fallback'].includes(caseAgency?.added_source)
@@ -129,6 +136,10 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
         canonicalAgency?.portal_url,
         canonicalAgency?.portal_url_alt,
     ].map((value) => normalizePortalUrl(value)).find(Boolean) || null;
+    const resolvedFallbackName =
+        metadataAgencyMismatch?.expectedAgencyName ||
+        metadataAgencyHint?.name ||
+        null;
 
     return {
         ...caseAgency,
@@ -138,7 +149,7 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
             ? (canonicalAgency?.id || null)
             : (canonicalAgency?.id || caseAgency?.agency_id || null),
         agency_name: suppressPlaceholderDisplay
-            ? 'Unknown agency'
+            ? (resolvedFallbackName || 'Unknown agency')
             : (canonicalAgency?.name || (shouldPreferResearchDisplay ? researchSuggestedAgency?.name : caseAgency?.agency_name)),
         agency_email: suppressPlaceholderDisplay
             ? null

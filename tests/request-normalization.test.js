@@ -3,6 +3,7 @@ const assert = require('assert');
 const {
   extractMetadataAgencyHint,
   detectCaseMetadataAgencyMismatch,
+  isGenericAgencyLabel,
 } = require('../utils/request-normalization');
 
 describe('request normalization helpers', function () {
@@ -46,5 +47,28 @@ describe('request normalization helpers', function () {
     });
 
     assert.strictEqual(mismatch, null);
+  });
+
+  it('treats a generic agency label as a mismatch when metadata names the real department', function () {
+    const mismatch = detectCaseMetadataAgencyMismatch({
+      currentAgencyName: 'Police Department',
+      additionalDetails: `
+**Case Summary:** Example
+**Police Department:** Gwinnett County Police Department, Georgia
+`,
+    });
+
+    assert.deepStrictEqual(mismatch, {
+      expectedAgencyName: 'Gwinnett County Police Department, Georgia',
+      expectedState: 'GA',
+      currentAgencyName: 'Police Department',
+      source: 'additional_details',
+    });
+  });
+
+  it('recognizes generic placeholder agency labels', function () {
+    assert.strictEqual(isGenericAgencyLabel('Police Department'), true);
+    assert.strictEqual(isGenericAgencyLabel('Unknown agency'), true);
+    assert.strictEqual(isGenericAgencyLabel('Gwinnett County Police Department, Georgia'), false);
   });
 });

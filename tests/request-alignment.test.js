@@ -779,6 +779,98 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests upgrades a generic police department label from metadata and drops stale channels', async function () {
+    const originalQuery = requestHelpers.db.query;
+
+    requestHelpers.db.query = async (sql) => {
+      if (sql.includes('FROM cases c') && sql.includes('LEFT JOIN LATERAL')) {
+        return {
+          rows: [
+            {
+              id: 25210,
+              subject_name: 'Norcross case',
+              requested_records: ['Body camera footage'],
+              case_name: 'Norcross case',
+              agency_id: null,
+              agency_name: 'Police Department',
+              agency_email: 'ORR@mylubbock.us',
+              state: 'GA',
+              portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+              portal_provider: 'govqa',
+              additional_details: '**Police Department:** Gwinnett County Police Department, Georgia',
+              contact_research_notes: JSON.stringify({
+                cleared: true,
+                retryReason: 'user_retry',
+              }),
+              status: 'needs_human_review',
+              requires_human: true,
+              updated_at: '2026-03-06T00:00:00.000Z',
+              created_at: '2026-03-05T00:00:00.000Z',
+              next_due_at: null,
+              last_response_date: null,
+              active_run_status: null,
+              active_run_trigger_type: null,
+              active_run_started_at: null,
+              active_run_trigger_run_id: null,
+              active_portal_task_status: null,
+              active_portal_task_type: null,
+              active_proposal_status: 'PENDING_APPROVAL',
+              autopilot_mode: 'SUPERVISED',
+              substatus: 'Resolving: custom',
+            },
+          ],
+        };
+      }
+
+      if (sql.includes('SELECT DISTINCT ON (ca.case_id)')) {
+        return {
+          rows: [
+            {
+              case_id: 25210,
+              agency_id: 1365,
+              agency_name: 'Lubbock Police Department, Texas',
+              agency_email: 'ORR@mylubbock.us',
+              portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+              portal_provider: 'govqa',
+              added_source: 'case_row_backfill',
+              canonical_agency_name: 'Lubbock Police Department, Texas',
+              canonical_state: 'TX',
+              canonical_email_main: null,
+              canonical_email_foia: 'ORR@mylubbock.us',
+              canonical_portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+              canonical_portal_url_alt: null,
+              canonical_portal_provider: 'govqa',
+            },
+          ],
+        };
+      }
+
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) {
+        return { rows: [] };
+      }
+
+      if (sql.includes("WHERE c.status IN ('completed', 'cancelled')")) {
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected query in generic agency metadata test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.requests[0].agency_name, 'Gwinnett County Police Department, Georgia');
+      assert.strictEqual(response.body.requests[0].state, 'GA');
+      assert.strictEqual(response.body.requests[0].agency_email ?? null, null);
+      assert.strictEqual(response.body.requests[0].portal_url ?? null, null);
+    } finally {
+      requestHelpers.db.query = originalQuery;
+    }
+  });
+
   it('GET /api/requests uses metadata-derived agency identity when stale case-row channels contaminate the case', async function () {
     const originalQuery = requestHelpers.db.query;
 

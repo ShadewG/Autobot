@@ -153,6 +153,31 @@ function extractMetadataAgencyHint(additionalDetails) {
   return null;
 }
 
+function isGenericAgencyLabel(value) {
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
+  if (!normalized) return false;
+
+  return new Set([
+    'agency',
+    'department',
+    'department unknown',
+    'law enforcement',
+    'police',
+    'police department',
+    'records department',
+    'sheriff office',
+    'sheriffs office',
+    'sheriff s office',
+    'unknown agency',
+    'unknown department',
+  ]).has(normalized);
+}
+
 const AGENCY_COMPARISON_STOPWORDS = new Set([
   'agency',
   'bureau',
@@ -189,6 +214,15 @@ function detectCaseMetadataAgencyMismatch({ currentAgencyName, additionalDetails
   const currentName = String(currentAgencyName || '').trim();
   if (!hintedAgency?.name || !currentName) return null;
 
+  if (isGenericAgencyLabel(currentName)) {
+    return {
+      expectedAgencyName: hintedAgency.name,
+      expectedState: hintedAgency.state || null,
+      currentAgencyName: currentName,
+      source: hintedAgency.source,
+    };
+  }
+
   const currentTokens = agencyComparisonTokens(currentName);
   const hintedTokens = agencyComparisonTokens(hintedAgency.name);
   if (!currentTokens.length || !hintedTokens.length) return null;
@@ -222,5 +256,6 @@ module.exports = {
   hasUnresolvedResearchPlaceholder,
   shouldSuppressPlaceholderAgencyDisplay,
   extractMetadataAgencyHint,
+  isGenericAgencyLabel,
   detectCaseMetadataAgencyMismatch,
 };

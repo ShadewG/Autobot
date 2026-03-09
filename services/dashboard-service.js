@@ -1,4 +1,5 @@
 const db = require('./database');
+const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
 
 class DashboardService {
     /**
@@ -245,7 +246,9 @@ class DashboardService {
                 event_type,
                 COUNT(*) as count
             FROM activity_log
+            LEFT JOIN cases c ON c.id = activity_log.case_id
             WHERE created_at >= NOW() - INTERVAL '24 hours'
+              AND (activity_log.case_id IS NULL OR ${buildRealCaseWhereClause('c')})
             GROUP BY date_trunc('hour', created_at), event_type
             ORDER BY hour DESC
         `);
@@ -273,6 +276,8 @@ class DashboardService {
                 (m.direction = 'inbound' AND m.received_at::date = d.day)
                 OR (m.direction = 'outbound' AND m.sent_at::date = d.day)
             )
+            LEFT JOIN cases c ON c.id = m.case_id
+            WHERE m.id IS NULL OR ${buildRealCaseWhereClause('c')}
             GROUP BY d.day
             ORDER BY d.day
         `);

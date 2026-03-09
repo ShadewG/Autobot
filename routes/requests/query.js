@@ -7,7 +7,9 @@ const { normalizeAgencyEmailHint, isTestAgencyEmail, findCanonicalAgency } = req
 const {
     deriveDisplayState,
     detectCaseMetadataAgencyMismatch,
+    extractMetadataAgencyHint,
     extractResearchSuggestedAgency,
+    isGenericAgencyLabel,
     isPlaceholderAgencyEmail,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
@@ -380,6 +382,7 @@ router.get('/', async (req, res) => {
                         portal_provider: row.portal_provider || override.portal_provider || null,
                     }
                     : row;
+                const metadataAgencyHint = extractMetadataAgencyHint(row.additional_details);
                 const canForceCorrectedAgencyDisplay = !override || ['case_row_backfill', 'case_row_fallback'].includes(String(override.added_source || ''));
                 const metadataAgencyMismatch = detectCaseMetadataAgencyMismatch({
                     currentAgencyName: displayRow.agency_name,
@@ -424,8 +427,11 @@ router.get('/', async (req, res) => {
                     caseAgencyName: row.agency_name,
                     caseState: normalizedRowState,
                 });
-                const narrativeAgencyName = normalizeNotionReferenceId(displayRow.agency_name || row.agency_name)
-                    ? extractAgencyNameFromAdditionalDetails(row.additional_details)
+                const narrativeAgencyName = (
+                    normalizeNotionReferenceId(displayRow.agency_name || row.agency_name)
+                    || isGenericAgencyLabel(displayRow.agency_name || row.agency_name)
+                )
+                    ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(row.additional_details))
                     : null;
                 const notionAgencyOverride = (!suppressPlaceholderDisplay && !preferResearchDisplay && !forceCorrectedAgencyDisplay)
                     ? await lookupAgencyByNotionReference(displayRow.agency_name || row.agency_name)
@@ -435,7 +441,11 @@ router.get('/', async (req, res) => {
                         ? correctedAgencyDisplay.name
                         : preferResearchDisplay
                         ? (researchCanonical?.name || researchSuggestedAgency.name)
-                        : (suppressPlaceholderDisplay ? 'Unknown agency' : notionAgencyOverride?.name),
+                        : (
+                            suppressPlaceholderDisplay
+                                ? (metadataAgencyHint?.name || narrativeAgencyName || 'Unknown agency')
+                                : notionAgencyOverride?.name
+                        ),
                     narrativeAgencyName,
                     displayRow.agency_name,
                     row.agency_name
@@ -526,8 +536,12 @@ router.get('/', async (req, res) => {
                 caseAgencyName: row.agency_name,
                 caseState: normalizedRowState,
             });
-            const narrativeAgencyName = normalizeNotionReferenceId(override.agency_name || row.agency_name)
-                ? extractAgencyNameFromAdditionalDetails(row.additional_details)
+            const metadataAgencyHint = extractMetadataAgencyHint(row.additional_details);
+            const narrativeAgencyName = (
+                normalizeNotionReferenceId(override.agency_name || row.agency_name)
+                || isGenericAgencyLabel(override.agency_name || row.agency_name)
+            )
+                ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(row.additional_details))
                 : null;
             const notionAgencyOverride = (!suppressPlaceholderDisplay && !preferResearchDisplay && !forceCorrectedAgencyDisplay)
                 ? await lookupAgencyByNotionReference(override.agency_name || row.agency_name)
@@ -535,7 +549,7 @@ router.get('/', async (req, res) => {
 
             const resolvedAgencyName = pickAgencyDisplayName(
                 suppressPlaceholderDisplay
-                    ? 'Unknown agency'
+                    ? (metadataAgencyHint?.name || narrativeAgencyName || 'Unknown agency')
                     : forceCorrectedAgencyDisplay
                     ? correctedAgencyDisplay.name
                     : preferResearchDisplay
@@ -940,6 +954,7 @@ router.get('/:id/workspace', async (req, res) => {
             currentAgencyName: canonicalAgency?.name || preferredCaseAgency?.agency_name || caseData.agency_name,
             additionalDetails: caseData.additional_details,
         });
+        const metadataAgencyHint = extractMetadataAgencyHint(caseData.additional_details);
         const canForceCorrectedAgencyDisplay = !preferredCaseAgency || primaryCaseAgencyIsSynthetic;
         const useResearchSuggestedDisplay = shouldPreferResearchAgencyDisplay({
             researchSuggestedAgency,
@@ -980,8 +995,11 @@ router.get('/:id/workspace', async (req, res) => {
             caseAgencyName: caseData.agency_name,
             caseState: caseData.state,
         });
-        const narrativeAgencyName = normalizeNotionReferenceId(preferredCaseAgency?.agency_name || caseData.agency_name)
-            ? extractAgencyNameFromAdditionalDetails(caseData.additional_details)
+        const narrativeAgencyName = (
+            normalizeNotionReferenceId(preferredCaseAgency?.agency_name || caseData.agency_name)
+            || isGenericAgencyLabel(preferredCaseAgency?.agency_name || caseData.agency_name)
+        )
+            ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(caseData.additional_details))
             : null;
 
         // Resolve canonical agency id for deep-linking to /agencies/detail.
@@ -1008,7 +1026,7 @@ router.get('/:id/workspace', async (req, res) => {
             ? canonicalAgency.name
             : (
                 suppressPlaceholderAgencyDisplay
-                    ? 'Unknown agency'
+                    ? (metadataAgencyHint?.name || narrativeAgencyName || 'Unknown agency')
                     : forceCorrectedAgencyDisplay
                     ? correctedAgencyDisplay.name
                     : useResearchSuggestedDisplay
