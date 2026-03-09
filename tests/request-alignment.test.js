@@ -1824,6 +1824,80 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests blocks stale pending proposals when latest inbound manual paste mismatches the case thread', async function () {
+    const originalDbMethods = {
+      query: db.query,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+    };
+
+    db.query = async (sql) => {
+      if (sql.includes('FROM cases c')) {
+        return {
+          rows: [{
+            id: 25148,
+            case_name: 'Anthony Douglas Shoffner Jr.',
+            subject_name: 'Anthony Douglas Shoffner Jr.',
+            agency_id: 1106,
+            agency_name: 'Perry Police Department, Georgia',
+            agency_email: null,
+            portal_url: null,
+            portal_provider: null,
+            state: 'GA',
+            status: 'needs_human_review',
+            requires_human: true,
+            pause_reason: 'SENSITIVE',
+            substatus: 'agency_research_complete',
+            contact_research_notes: null,
+            additional_details: null,
+            requested_records: [],
+            autopilot_mode: 'SUPERVISED',
+            updated_at: '2026-03-08T23:02:47.544Z',
+            created_at: '2026-03-08T22:00:00.000Z',
+            active_run_status: 'waiting',
+            active_run_trigger_type: 'inbound_message',
+            active_run_started_at: '2026-03-08T22:10:38.734Z',
+            active_run_trigger_run_id: 'run_cmmib33dz6tpb0uoee20rqqfw',
+            active_portal_task_status: null,
+            active_portal_task_type: null,
+            active_proposal_status: 'PENDING_APPROVAL',
+          }],
+        };
+      }
+      if (sql.includes('FROM case_agencies ca')) return { rows: [] };
+      if (sql.includes("SELECT c.* FROM cases c")) return { rows: [] };
+      throw new Error(`Unexpected list query in manual paste mismatch test: ${sql}`);
+    };
+    db.getThreadsByCaseId = async () => ([{
+      id: 53,
+      agency_email: 'jill.jennings@perry-ga.gov',
+    }]);
+    db.getMessagesByThreadId = async () => ([{
+      id: 990,
+      direction: 'INBOUND',
+      from_email: 'records@atlanta.gov',
+      source: 'manual_paste',
+      created_at: '2026-03-08T22:10:32.096Z',
+    }]);
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.requests.length, 1);
+      assert.strictEqual(response.body.requests[0].review_state, 'IDLE');
+      assert.strictEqual(response.body.requests[0].control_state, 'BLOCKED');
+      assert.strictEqual(response.body.requests[0].pause_reason, 'MANUAL_PASTE_MISMATCH');
+      assert.ok(response.body.requests[0].substatus.includes('records@atlanta.gov'));
+    } finally {
+      db.query = originalDbMethods.query;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+    }
+  });
+
   it('GET /api/cases/:id/agencies does not keep a stale synthetic agency_id when only research display is available', async function () {
     const originalGetCaseById = db.getCaseById;
     const originalGetCaseAgencies = db.getCaseAgencies;
@@ -1990,6 +2064,106 @@ describe('Request alignment regressions', function () {
       assert.strictEqual(response.body.pending_proposal.action_type, 'SEND_INITIAL_REQUEST');
       assert.deepStrictEqual(response.body.pending_proposal.gate_options, ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW']);
       assert.deepStrictEqual(response.body.next_action_proposal.gate_options, ['APPROVE', 'ADJUST', 'DISMISS', 'WITHDRAW']);
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
+  it('GET /api/requests/:id/workspace skips comma-separated Notion relation ids and uses later metadata agency text', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 25158,
+      subject_name: 'Casey McDonald Dye',
+      case_name: 'Casey McDonald Dye',
+      agency_id: null,
+      agency_name: '2f087c20-070a-80bb-be19-ff0770d2906d, 2b087c20-070a-80f8-a8b7-fe38ebc6ca39',
+      agency_email: null,
+      portal_url: null,
+      portal_provider: null,
+      state: 'KS',
+      status: 'responded',
+      requires_human: false,
+      pause_reason: null,
+      substatus: null,
+      contact_research_notes: JSON.stringify({
+        portal_url: 'https://www.allencounty.org/word_doc/OPENREC.DOC',
+        contact_email: 'coclerk@allencounty.org',
+      }),
+      additional_details: [
+        'Police Department: 2f087c20-070a-80bb-be19-ff0770d2906d, 2b087c20-070a-80f8-a8b7-fe38ebc6ca39',
+        'Police Department: Allen County Sheriff’s Office, with assistance from Kansas Bureau of Investigation (KBI) and Neosho County authorities, Kansas',
+      ].join('\\n'),
+      requested_records: [],
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-05T00:00:00.000Z',
+      updated_at: '2026-03-06T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      import_warnings: null,
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 28,
+      case_id: 25158,
+      agency_id: null,
+      agency_name: '2f087c20-070a-80bb-be19-ff0770d2906d, 2b087c20-070a-80f8-a8b7-fe38ebc6ca39',
+      agency_email: null,
+      portal_url: null,
+      portal_provider: null,
+      is_primary: true,
+      is_active: true,
+      added_source: 'case_row_backfill',
+      status: 'active',
+      created_at: '2026-03-05T00:00:00.000Z',
+      updated_at: '2026-03-06T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM proposals')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in multi notion relation metadata test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/25158/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(
+        response.body.request.agency_name,
+        'Allen County Sheriff’s Office, with assistance from Kansas Bureau of Investigation (KBI) and Neosho County authorities, Kansas'
+      );
+      assert.strictEqual(
+        response.body.agency_summary.name,
+        'Allen County Sheriff’s Office, with assistance from Kansas Bureau of Investigation (KBI) and Neosho County authorities, Kansas'
+      );
+      assert.strictEqual(response.body.request.state, 'KS');
     } finally {
       db.getCaseById = originalDbMethods.getCaseById;
       db.getCaseAgencies = originalDbMethods.getCaseAgencies;

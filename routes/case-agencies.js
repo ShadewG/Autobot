@@ -87,11 +87,13 @@ function dedupeCanonicalCaseAgencies(caseAgencies = []) {
 }
 
 function buildExistingContactFallback(caseAgency, caseData) {
-    const existingEmail = firstNonEmpty(
+    const existingEmail = [
         caseAgency?.agency_email,
         caseAgency?.is_primary ? caseData?.agency_email : null,
-        caseAgency?.is_primary ? caseData?.alternate_agency_email : null
-    );
+        caseAgency?.is_primary ? caseData?.alternate_agency_email : null,
+    ]
+        .map((value) => normalizeAgencyEmailHint(value))
+        .find((value) => value && !isPlaceholderAgencyEmail(value)) || null;
     const existingPortalUrl = firstNonEmpty(
         normalizePortalUrl(caseAgency?.portal_url),
         caseAgency?.is_primary ? normalizePortalUrl(caseData?.portal_url) : null
@@ -351,6 +353,14 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
         if (!caseAgency || caseAgency.case_id !== caseId) {
             return res.status(404).json({ success: false, error: 'Case agency not found' });
         }
+        const canonicalCaseAgency = await canonicalizeCaseAgency(caseAgency, caseData);
+        const effectiveAgencyName = firstNonEmpty(canonicalCaseAgency?.agency_name, caseAgency?.agency_name);
+        const unresolvedPlaceholderAgency = Boolean(
+            /^unknown agency$/i.test(String(effectiveAgencyName || '').trim())
+            && !canonicalCaseAgency?.agency_id
+            && !canonicalCaseAgency?.agency_email
+            && !canonicalCaseAgency?.portal_url
+        );
 
         const reuseExistingSignals = async (reason, extraMeta = {}) => {
             const fallback = buildExistingContactFallback(caseAgency, caseData);
@@ -405,13 +415,19 @@ router.post('/:id/agencies/:caId/research', express.json(), async (req, res) => 
                 return;
             }
         }
+        if (unresolvedPlaceholderAgency) {
+            return res.status(422).json({
+                success: false,
+                error: 'Research requires a real agency target. Add or select the correct department first.',
+            });
+        }
 
         const RESEARCH_TIMEOUT_MS = 30_000;
         let lookup;
         try {
             lookup = await Promise.race([
                 pdContactService.lookupContact(
-                    caseAgency.agency_name,
+                    effectiveAgencyName,
                     caseData.state,
                     { forceSearch: true }
                 ),

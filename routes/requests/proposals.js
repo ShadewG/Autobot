@@ -4,6 +4,47 @@ const { db, logger, triggerDispatch } = require('./_helpers');
 const proposalLifecycle = require('../../services/proposal-lifecycle');
 const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/proposal-feedback');
 const { buildHumanDecision } = proposalLifecycle;
+const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
+
+async function detectLatestInboundManualPasteMismatch(caseId) {
+    try {
+        if (!Number.isInteger(Number(caseId)) || Number(caseId) <= 0) return null;
+
+        let threads = [];
+        if (typeof db.getThreadsByCaseId === 'function') {
+            threads = await db.getThreadsByCaseId(Number(caseId));
+        } else if (typeof db.getThreadByCaseId === 'function') {
+            const singleThread = await db.getThreadByCaseId(Number(caseId));
+            threads = singleThread ? [singleThread] : [];
+        }
+        if (!threads.length || typeof db.getMessagesByThreadId !== 'function') return null;
+
+        const messagesByThread = await Promise.all(
+            threads.map(async (thread) => {
+                const messages = await db.getMessagesByThreadId(thread.id);
+                return Array.isArray(messages)
+                    ? messages.map((message) => ({ ...message, __thread: thread }))
+                    : [];
+            })
+        );
+
+        const latestInboundPair = messagesByThread
+            .flat()
+            .filter((message) => String(message.direction || '').toUpperCase() === 'INBOUND')
+            .sort((a, b) => {
+                const aTime = new Date(a.created_at || a.received_at || 0).getTime();
+                const bTime = new Date(b.created_at || b.received_at || 0).getTime();
+                return bTime - aTime;
+            })[0];
+
+        if (!latestInboundPair) return null;
+
+        const { __thread, ...latestInbound } = latestInboundPair;
+        return shouldEscalateManualPasteMismatch(latestInbound, __thread || null, null);
+    } catch (_) {
+        return null;
+    }
+}
 
 async function completeProposalWaitpoint(proposal, data, log) {
     if (!proposal?.waitpoint_token) return null;
@@ -69,6 +110,10 @@ router.get('/:id/proposals', async (req, res) => {
             proposals = result.rows;
         } else {
             proposals = await db.getPendingProposalsByCaseId(requestId);
+            const manualPasteMismatch = await detectLatestInboundManualPasteMismatch(requestId);
+            if (manualPasteMismatch?.mismatch) {
+                proposals = [];
+            }
         }
 
         const transformedProposals = proposals.map(p => ({

@@ -118,6 +118,7 @@ describe('Case agency and run guards', function () {
 
     it('reuses existing case-agency signals when lookup returns no data', async function () {
       const dbStub = {
+        query: sinon.stub().resolves({ rows: [] }),
         getCaseById: sinon.stub().resolves({
           id: 25169,
           state: 'IN',
@@ -197,6 +198,7 @@ describe('Case agency and run guards', function () {
 
     it('returns 504 when lookup times out and no existing signals are available', async function () {
       const dbStub = {
+        query: sinon.stub().resolves({ rows: [] }),
         getCaseById: sinon.stub().resolves({
           id: 88,
           state: 'TX',
@@ -204,11 +206,13 @@ describe('Case agency and run guards', function () {
           alternate_agency_email: null,
           portal_url: null,
           portal_provider: null,
+          additional_details: null,
+          contact_research_notes: null,
         }),
         getCaseAgencyById: sinon.stub().resolves({
           id: 9,
           case_id: 88,
-          agency_name: 'Unknown Agency',
+          agency_name: 'Austin Police Department',
           agency_email: null,
           portal_url: null,
           portal_provider: null,
@@ -238,6 +242,61 @@ describe('Case agency and run guards', function () {
         assert.strictEqual(response.status, 504);
         assert.strictEqual(response.body.success, false);
         assert.match(response.body.error, /timed out/i);
+        sinon.assert.notCalled(dbStub.updateCaseAgency);
+      } finally {
+        restore();
+      }
+    });
+
+    it('does not reuse placeholder channels for unresolved unknown agencies', async function () {
+      const dbStub = {
+        query: sinon.stub().resolves({ rows: [] }),
+        getCaseById: sinon.stub().resolves({
+          id: 25243,
+          state: 'GA',
+          agency_email: null,
+          alternate_agency_email: null,
+          portal_url: null,
+          portal_provider: null,
+          additional_details: null,
+          contact_research_notes: JSON.stringify({ cleared: true }),
+        }),
+        getCaseAgencyById: sinon.stub().resolves({
+          id: 65,
+          case_id: 25243,
+          agency_id: 152,
+          agency_name: 'Stow Police Department',
+          agency_email: 'pending-research@placeholder.invalid',
+          portal_url: null,
+          portal_provider: null,
+          is_primary: true,
+          added_source: 'case_row_backfill',
+          status: 'active',
+        }),
+        updateCaseAgency: sinon.stub().resolves(null),
+        logActivity: sinon.stub().resolves(),
+      };
+      const pdContactStub = {
+        lookupContact: sinon.stub().resolves(null),
+      };
+      const { router, restore } = loadCaseAgenciesRouter({
+        dbStub,
+        notionStub: {},
+        pdContactStub,
+      });
+
+      try {
+        const app = express();
+        app.use('/api/cases', router);
+
+        const response = await supertest(app)
+          .post('/api/cases/25243/agencies/65/research')
+          .send({});
+
+        assert.strictEqual(response.status, 422);
+        assert.strictEqual(response.body.success, false);
+        assert.match(response.body.error, /real agency target/i);
+        sinon.assert.notCalled(pdContactStub.lookupContact);
         sinon.assert.notCalled(dbStub.updateCaseAgency);
       } finally {
         restore();

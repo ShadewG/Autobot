@@ -10,8 +10,31 @@ const {
     normalizePortalTimeoutSubstatus,
     deriveDisplayState,
     extractResearchSuggestedAgency,
+    extractMetadataAgencyHint,
+    isGenericAgencyLabel,
+    isNotionReferenceList,
     isPlaceholderAgencyEmail,
 } = require('../../utils/request-normalization');
+
+function isSingleNotionReference(value = '') {
+    const normalized = String(value || '').trim().replace(/-/g, '').toLowerCase();
+    return /^[a-f0-9]{32}$/.test(normalized);
+}
+
+function resolveDisplayAgencyName(caseData) {
+    const rawAgencyName = String(caseData.agency_name || '').trim();
+    if (!rawAgencyName) return '—';
+
+    const metadataAgencyHint = extractMetadataAgencyHint(caseData.additional_details);
+    if (
+        (isSingleNotionReference(rawAgencyName) || isNotionReferenceList(rawAgencyName) || isGenericAgencyLabel(rawAgencyName))
+        && metadataAgencyHint?.name
+    ) {
+        return metadataAgencyHint.name;
+    }
+
+    return rawAgencyName;
+}
 
 function normalizeImportWarnings(importWarnings) {
     if (!Array.isArray(importWarnings)) return importWarnings || null;
@@ -722,7 +745,7 @@ function detectControlMismatches({ caseData, reviewState, pendingProposal, activ
  */
 function toRequestListItem(caseData) {
     const normalizedSubstatus = normalizePortalTimeoutSubstatus(caseData.substatus || null);
-    const displayAgencyName = caseData.agency_name || '—';
+    const displayAgencyName = resolveDisplayAgencyName(caseData);
     const displayState = deriveDisplayState(caseData.state, displayAgencyName);
     const subject = caseData.subject_name
         ? `${caseData.subject_name}${caseData.requested_records?.length ? ` — ${Array.isArray(caseData.requested_records) ? caseData.requested_records.slice(0, 2).join(', ') : 'Records Request'}` : ''}`

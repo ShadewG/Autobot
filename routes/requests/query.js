@@ -10,6 +10,7 @@ const {
     extractMetadataAgencyHint,
     extractResearchSuggestedAgency,
     isGenericAgencyLabel,
+    isNotionReferenceList,
     isPlaceholderAgencyEmail,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
@@ -177,6 +178,11 @@ function deriveDefaultGateOptions(actionType, draftBodyText = '') {
 }
 
 function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
+    const metadataHint = extractMetadataAgencyHint(additionalDetails);
+    if (metadataHint?.name) {
+        return metadataHint.name;
+    }
+
     const lines = String(additionalDetails || '').split(/\r?\n/);
     for (const rawLine of lines) {
         const line = String(rawLine || '').trim();
@@ -185,7 +191,7 @@ function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
             .replace(/^(\*\*)?Police Department:?\s*/i, '')
             .replace(/\*\*$/g, '')
             .trim();
-        if (!candidate || normalizeNotionReferenceId(candidate)) continue;
+        if (!candidate || normalizeNotionReferenceId(candidate) || isNotionReferenceList(candidate)) continue;
         return candidate
             .replace(/\s*,?\s*with\s+.+$/i, '')
             .trim();
@@ -200,7 +206,7 @@ function pickAgencyDisplayName(...candidates) {
         const candidate = String(rawCandidate || '').trim();
         if (!candidate) continue;
         if (!fallback) fallback = candidate;
-        if (!normalizeNotionReferenceId(candidate)) {
+        if (!normalizeNotionReferenceId(candidate) && !isNotionReferenceList(candidate)) {
             return candidate;
         }
     }
@@ -215,6 +221,65 @@ function buildManualPasteMismatchSubstatus(result) {
         ? result.expectedEmails.join(', ')
         : 'known agency channels';
     return `Manual review required: pasted inbound sender ${sender} does not match expected agency channel(s): ${expected}`;
+}
+
+async function detectLatestInboundManualPasteMismatch(caseId) {
+    try {
+        if (!Number.isInteger(Number(caseId)) || Number(caseId) <= 0) return null;
+
+        let threads = [];
+        if (typeof db.getThreadsByCaseId === 'function') {
+            threads = await db.getThreadsByCaseId(Number(caseId));
+        } else if (typeof db.getThreadByCaseId === 'function') {
+            const singleThread = await db.getThreadByCaseId(Number(caseId));
+            threads = singleThread ? [singleThread] : [];
+        }
+        if (!threads.length || typeof db.getMessagesByThreadId !== 'function') return null;
+
+        const messagesByThread = await Promise.all(
+            threads.map(async (thread) => {
+                const messages = await db.getMessagesByThreadId(thread.id);
+                return Array.isArray(messages)
+                    ? messages.map((message) => ({ ...message, __thread: thread }))
+                    : [];
+            })
+        );
+
+        const latestInboundPair = messagesByThread
+            .flat()
+            .filter((message) => String(message.direction || '').toUpperCase() === 'INBOUND')
+            .sort((a, b) => {
+                const aTime = new Date(a.created_at || a.received_at || 0).getTime();
+                const bTime = new Date(b.created_at || b.received_at || 0).getTime();
+                return bTime - aTime;
+            })[0];
+
+        if (!latestInboundPair) return null;
+
+        const { __thread, ...latestInbound } = latestInboundPair;
+        return shouldEscalateManualPasteMismatch(latestInbound, __thread || null, null);
+    } catch (error) {
+        logger.warn('[requests] skipped manual paste mismatch check', {
+            case_id: caseId,
+            error: error.message,
+        });
+        return null;
+    }
+}
+
+function applyManualPasteMismatchListOverride(listItem, mismatch) {
+    if (!mismatch?.mismatch) return listItem;
+
+    return {
+        ...listItem,
+        status: 'NEEDS_HUMAN_REVIEW',
+        requires_human: true,
+        pause_reason: 'MANUAL_PASTE_MISMATCH',
+        substatus: buildManualPasteMismatchSubstatus(mismatch),
+        review_state: 'IDLE',
+        control_state: 'BLOCKED',
+        control_mismatches: [],
+    };
 }
 
 function filterStaleImportWarnings(importWarnings, {
@@ -412,6 +477,12 @@ router.get('/', async (req, res) => {
         }
 
         const requests = await Promise.all(result.rows.map(async (row) => {
+            const manualPasteMismatch = (
+                row.active_proposal_status ||
+                String(row.active_run_trigger_type || '').toLowerCase() === 'inbound_message'
+            )
+                ? await detectLatestInboundManualPasteMismatch(Number(row.id))
+                : null;
             const normalizedRowState = row.state === '{}' ? null : row.state;
             const override = listAgencyOverrides.get(Number(row.id));
             const ignoreOverrideForDisplay = override?.added_source === 'wrong_agency_referral';
@@ -483,6 +554,7 @@ router.get('/', async (req, res) => {
                 });
                 const narrativeAgencyName = (
                     normalizeNotionReferenceId(displayRow.agency_name || row.agency_name)
+                    || isNotionReferenceList(displayRow.agency_name || row.agency_name)
                     || isGenericAgencyLabel(displayRow.agency_name || row.agency_name)
                 )
                     ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(row.additional_details))
@@ -504,7 +576,7 @@ router.get('/', async (req, res) => {
                     displayRow.agency_name,
                     row.agency_name
                 );
-                return toRequestListItem({
+                return applyManualPasteMismatchListOverride(toRequestListItem({
                     ...displayRow,
                     agency_id: suppressPlaceholderDisplay
                         ? null
@@ -534,7 +606,7 @@ router.get('/', async (req, res) => {
                         : preferResearchDisplay
                         ? (researchCanonical?.portal_provider || null)
                         : (suppressPlaceholderDisplay ? null : (notionAgencyOverride?.portal_provider || displayRow.portal_provider)),
-                });
+                }), manualPasteMismatch);
             }
 
             const canonicalOverride = await findCanonicalAgency(db, {
@@ -593,6 +665,7 @@ router.get('/', async (req, res) => {
             const metadataAgencyHint = extractMetadataAgencyHint(row.additional_details);
             const narrativeAgencyName = (
                 normalizeNotionReferenceId(override.agency_name || row.agency_name)
+                || isNotionReferenceList(override.agency_name || row.agency_name)
                 || isGenericAgencyLabel(override.agency_name || row.agency_name)
             )
                 ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(row.additional_details))
@@ -661,7 +734,7 @@ router.get('/', async (req, res) => {
                 ((preferResearchDisplay || suppressPlaceholderDisplay) ? null : row.portal_provider) ||
                 null;
 
-            return toRequestListItem({
+            return applyManualPasteMismatchListOverride(toRequestListItem({
                 ...row,
                 agency_id: suppressPlaceholderDisplay
                     ? null
@@ -684,7 +757,7 @@ router.get('/', async (req, res) => {
                     ? (resolvedPortalUrl || null)
                     : (forceCorrectedAgencyDisplay ? (resolvedPortalUrl || null) : (resolvedPortalUrl || row.portal_url || null)),
                 portal_provider: resolvedPortalProvider,
-            });
+            }), manualPasteMismatch);
         }));
 
         // Fetch completed cases separately (most recent 50)
@@ -1067,6 +1140,7 @@ router.get('/:id/workspace', async (req, res) => {
         });
         const narrativeAgencyName = (
             normalizeNotionReferenceId(preferredCaseAgency?.agency_name || caseData.agency_name)
+            || isNotionReferenceList(preferredCaseAgency?.agency_name || caseData.agency_name)
             || isGenericAgencyLabel(preferredCaseAgency?.agency_name || caseData.agency_name)
         )
             ? (metadataAgencyHint?.name || extractAgencyNameFromAdditionalDetails(caseData.additional_details))

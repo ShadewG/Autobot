@@ -23,15 +23,19 @@ export function collectExpectedAgencyEmails(caseData, thread) {
 
 export function shouldEscalateManualPasteMismatch(message, thread, caseData) {
   const metadata = (message?.metadata || {});
-  const isManualPaste = metadata.manual_paste === true || metadata.source === "manual_paste";
+  const isManualPaste =
+    metadata.manual_paste === true ||
+    metadata.source === "manual_paste" ||
+    message?.source === "manual_paste";
   const senderEmail = normalizeEmailAddress(message?.from_email);
   const expectedEmails = collectExpectedAgencyEmails(caseData, thread);
   const senderDomain = normalizeEmailDomain(senderEmail);
   const expectedDomains = Array.from(
     new Set(expectedEmails.map((email) => normalizeEmailDomain(email)).filter(Boolean))
   );
+  const direction = String(message?.direction || "").toLowerCase();
 
-  if (!isManualPaste || message?.direction !== "inbound" || !senderEmail || expectedEmails.length === 0) {
+  if (!isManualPaste || direction !== "inbound" || !senderEmail || expectedEmails.length === 0) {
     return {
       mismatch: false,
       senderEmail,

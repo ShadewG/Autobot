@@ -117,37 +117,59 @@ function shouldSuppressPlaceholderAgencyDisplay({ contactResearchNotes, agencyEm
 }
 
 function cleanMetadataLine(value) {
-  return String(value || '')
-    .replace(/\u200c/g, ' ')
-    .replace(/\*\*/g, '')
-    .replace(/\[[^\]]+\]\([^)]+\)/g, '')
+    return String(value || '')
+        .replace(/\u200c/g, ' ')
+        .replace(/\*\*/g, '')
+        .replace(/\[[^\]]+\]\([^)]+\)/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/[.:;,]+$/, '');
+        .trim()
+        .replace(/[.:;,]+$/, '');
+}
+
+function normalizeMetadataText(value) {
+    return String(value || '')
+        .replace(/\\r\\n/g, '\n')
+        .replace(/\\n/g, '\n');
+}
+
+function normalizeNotionReferenceId(value = '') {
+  const normalized = String(value || '').trim().replace(/-/g, '').toLowerCase();
+  return /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
+}
+
+function isNotionReferenceList(value = '') {
+  const parts = String(value || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.length > 0 && parts.every((part) => Boolean(normalizeNotionReferenceId(part)));
 }
 
 function extractMetadataAgencyHint(additionalDetails) {
-  const text = String(additionalDetails || '');
-  if (!text.trim()) return null;
+    const text = normalizeMetadataText(additionalDetails);
+    if (!text.trim()) return null;
 
   const patterns = [
-    /(?:^|\n)\*{0,2}Police Department:\*{0,2}\s*([^\n\r]+)/i,
-    /(?:^|\n)\*{0,2}Sheriff(?:'s)? Office:\*{0,2}\s*([^\n\r]+)/i,
-    /(?:^|\n)\*{0,2}Agency:\*{0,2}\s*([^\n\r]+)/i,
+    /(?:^|\n)\*{0,2}Police Department:\*{0,2}\s*([^\n\r]+)/gi,
+    /(?:^|\n)\*{0,2}Sheriff(?:'s)? Office:\*{0,2}\s*([^\n\r]+)/gi,
+    /(?:^|\n)\*{0,2}Agency:\*{0,2}\s*([^\n\r]+)/gi,
   ];
 
   for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match) continue;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      const name = cleanMetadataLine(match[1]);
+      if (!name || isNotionReferenceList(name) || normalizeNotionReferenceId(name)) {
+        continue;
+      }
 
-    const name = cleanMetadataLine(match[1]);
-    if (!name) continue;
-
-    return {
-      name,
-      state: parseStateFromAgencyName(name),
-      source: 'additional_details',
-    };
+      return {
+        name,
+        state: parseStateFromAgencyName(name),
+        source: 'additional_details',
+      };
+    }
   }
 
   return null;
@@ -258,4 +280,5 @@ module.exports = {
   extractMetadataAgencyHint,
   isGenericAgencyLabel,
   detectCaseMetadataAgencyMismatch,
+  isNotionReferenceList,
 };

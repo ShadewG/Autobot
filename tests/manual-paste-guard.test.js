@@ -53,4 +53,19 @@ describe('manual pasted inbound guard', function () {
       ['kayla.neesmith@perry-ga.gov', 'records@perry-ga.gov']
     );
   });
+
+  it('handles top-level manual_paste source and uppercase inbound direction', function () {
+    const result = shouldEscalateManualPasteMismatch(
+      {
+        direction: 'INBOUND',
+        from_email: 'records@atlanta.gov',
+        source: 'manual_paste',
+      },
+      { agency_email: 'kayla.neesmith@perry-ga.gov' },
+      { agency_email: null, alternate_agency_email: null }
+    );
+
+    assert.strictEqual(result.mismatch, true);
+    assert.strictEqual(result.senderEmail, 'records@atlanta.gov');
+  });
 });
