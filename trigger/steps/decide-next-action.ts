@@ -71,6 +71,7 @@ function validateFollowUpAction(
 }
 
 function useAIRouter(caseId: number): boolean {
+  if (!Number.isFinite(caseId) || caseId <= 0) return false;
   if (AI_ROUTER_V2 === "true") return true;
   if (AI_ROUTER_V2 === "false") return false;
   const pct = parseInt(AI_ROUTER_V2, 10);
@@ -87,6 +88,12 @@ function normalizeEmail(value: any): string | null {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw || !raw.includes("@")) return null;
   return raw;
+}
+
+function looksLikeContractorCustodyDenial(inlineKeyPoints?: string[]): boolean {
+  const text = (inlineKeyPoints || []).join(" ").toLowerCase();
+  if (!text) return false;
+  return /not (an?|federal) agency records|not .*subject to foia|custody and control of the contractor|held by the contractor|private contractor|proprietary work product/.test(text);
 }
 
 function emailDomain(value: string | null): string | null {
@@ -776,7 +783,7 @@ ${feeSection}${portalSection}${researchSection}
 
 ## Thread Summary
 IMPORTANT: Messages labeled [PORTAL_NOTIFICATION:*] are automated emails from records portals (NextRequest, GovQA, etc.) and reflect ONLY the portal track status. A portal marked "closed" or "completed" does NOT mean the case is resolved — there may be active direct email correspondence with the agency that still needs a response. Base your decision on the classifier result and direct agency correspondence.
-${threadSummary || "No thread messages available. IMPORTANT: When thread messages are unavailable, rely on the Classifier Result and Latest Analysis Key Points above to make your decision. Do NOT escalate solely because thread messages are missing — the classifier has already analyzed the message content and its findings are trustworthy. Choose the action that best matches the classification, denial subtype, and key points."}
+${threadSummary || "No thread messages available. IMPORTANT: When thread messages are unavailable, rely on the Classifier Result and Latest Analysis Key Points above to make your decision. Treat the classifier payload as the trigger message. Do NOT choose NONE or ESCALATE solely because thread messages are missing. For FEE_QUOTE, DENIAL, CLARIFICATION_REQUEST, PARTIAL_APPROVAL, PARTIAL_DELIVERY, RECORDS_READY, WRONG_AGENCY, and PORTAL_REDIRECT, choose the action that best matches the classification, denial subtype, and key points even when the thread is unavailable."}
 
 ## ALLOWED ACTIONS (you MUST choose from this list)
 ${allowedActionsSection}
@@ -862,7 +869,7 @@ Examples:
 - Rule: If the denial cites a specific statute, exemption number, privilege, or provides a Vaughn index → SEND_APPEAL. If the denial is vague, informal, or cites only "policy" → SEND_REBUTTAL.
 
 ### No Trigger Message = No Action
-If there is no trigger message (no new inbound email or event), strongly prefer NONE or CLOSE_CASE. Do NOT fabricate actions without a clear trigger.
+If there is no trigger message (no new inbound email or event), strongly prefer NONE or CLOSE_CASE. Do NOT fabricate actions without a clear trigger. However, when thread messages are unavailable but the classifier has already analyzed a provided message (simulation/dry-run contexts), use that classifier payload as the trigger instead of defaulting to NONE.
 
 ### RESEARCH_AGENCY vs Direct Response
 - Vague denials citing "policy" without statutory authority → SEND_REBUTTAL requesting the specific legal basis.
@@ -1096,16 +1103,20 @@ function validateStructureV2(
 }
 
 async function assessDenialStrength(caseId: number, denialSubtype?: string | null, inlineKeyPoints?: string[]): Promise<"strong" | "medium" | "weak"> {
-  const analysis = await db.getLatestResponseAnalysis(caseId);
+  const hasRealCase = Number.isFinite(caseId) && caseId > 0;
+  const analysis = hasRealCase ? await db.getLatestResponseAnalysis(caseId) : null;
   // Use DB key_points when available; fall back to inline key_points from classification (e.g. mock/simulator context)
   const keyPoints: string[] = analysis?.key_points?.length ? analysis.key_points : (inlineKeyPoints || []);
 
   // Also check the original message body — key_points may paraphrase and lose indicator phrases
-  const latestMessage = await db.query(
-    `SELECT body_text FROM messages WHERE case_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`,
-    [caseId]
-  );
-  const messageBody = latestMessage?.rows?.[0]?.body_text || "";
+  let messageBody = "";
+  if (hasRealCase) {
+    const latestMessage = await db.query(
+      `SELECT body_text FROM messages WHERE case_id = $1 AND direction = 'inbound' ORDER BY created_at DESC LIMIT 1`,
+      [caseId]
+    );
+    messageBody = latestMessage?.rows?.[0]?.body_text || "";
+  }
 
   // Combine key_points + message body for indicator scanning
   const allTextSources = [...keyPoints, messageBody];
@@ -1123,7 +1134,8 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
     "in court", "sealed", "court order",
     // Withholding language
     "cannot be provided", "nothing can be provided", "prohibited from disclosing",
-    "confidential",
+    "confidential", "withheld in full", "no segregable", "mandatory exemption",
+    "law enforcement privacy", "unwarranted invasion of personal privacy",
     // Statutory exemptions (specific enough to indicate strong denial)
     "552(b)(7)", "exemption 7(a)", "exemption 7a",
   ];
@@ -1431,7 +1443,7 @@ ${JSON.stringify(scopeItems || [], null, 2)}
 ${feeSection}${portalSection}${researchSection}
 ## Thread Summary
 IMPORTANT: Messages labeled [PORTAL_NOTIFICATION:*] are automated emails from records portals (NextRequest, GovQA, etc.) and reflect ONLY the portal track status. A portal marked "closed" or "completed" does NOT mean the case is resolved — there may be active direct email correspondence with the agency that still needs a response. Base your decision on the classifier result and direct agency correspondence.
-${threadSummary || "No thread messages available."}
+${threadSummary || "No thread messages available. IMPORTANT: Treat the classifier payload as the trigger message in simulation/dry-run contexts. Do NOT default to NONE or ESCALATE solely because the thread is unavailable."}
 
 ## Policy Rulebook (follow these rules strictly)
 
@@ -1520,7 +1532,7 @@ Examples:
 - Rule: If the denial cites a specific statute, exemption number, privilege, or provides a Vaughn index → SEND_APPEAL. If the denial is vague, informal, or cites only "policy" → SEND_REBUTTAL.
 
 ### No Trigger Message = No Action
-If there is no trigger message (no new inbound email or event to respond to), strongly prefer NONE or CLOSE_CASE. Do NOT fabricate actions or send emails without a clear trigger. Stale proposals and synthetic QA items with no trigger should be NONE.
+If there is no trigger message (no new inbound email or event to respond to), strongly prefer NONE or CLOSE_CASE. Do NOT fabricate actions or send emails without a clear trigger. Stale proposals and synthetic QA items with no trigger should be NONE. However, when thread messages are unavailable but the classifier has already analyzed a provided message (simulation/dry-run contexts), use that classifier payload as the trigger instead of defaulting to NONE.
 
 ### RESEARCH_AGENCY vs Direct Response
 - For vague denials citing only "policy" without statutory authority → SEND_REBUTTAL requesting the specific legal basis. Do NOT research first.
@@ -1891,17 +1903,20 @@ async function deterministicRouting(
   denialSubtype: string | null,
   inlineKeyPoints?: string[]
 ): Promise<DecisionResult> {
+  const hasRealCase = Number.isFinite(caseId) && caseId > 0;
   const reasoning: string[] = [];
   const isFollowupTrigger = ["SCHEDULED_FOLLOWUP", "time_based_followup", "followup_trigger"].includes(triggerType);
 
   // Citizenship/residency restriction: mark as ID State regardless of classification
-  const caseDataForConstraints = await db.getCaseById(caseId);
+  const caseDataForConstraints = hasRealCase ? await db.getCaseById(caseId) : null;
   const topConstraints = caseDataForConstraints?.constraints_jsonb || caseDataForConstraints?.constraints || [];
   const CITIZEN_CONSTRAINTS_TOP = ["AL_CITIZENSHIP_REQUIRED", "CITIZENSHIP_REQUIRED", "RESIDENCY_REQUIRED"];
   if (CITIZEN_CONSTRAINTS_TOP.some((c: string) => topConstraints.includes(c))) {
-    await caseRuntime.transitionCaseRuntime(caseId, "CASE_ID_STATE", {
-      substatus: "Citizenship/residency restriction — requires in-state identity",
-    });
+    if (hasRealCase) {
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_ID_STATE", {
+        substatus: "Citizenship/residency restriction — requires in-state identity",
+      });
+    }
     logger.info("Marked case as ID State due to citizenship restriction", { caseId, classification });
     return noAction(["Citizenship/residency restriction — marked as ID State for human handling"]);
   }
@@ -1910,6 +1925,12 @@ async function deterministicRouting(
   if (classification === "FEE_QUOTE") {
     const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
     if (fee === null || !isFinite(fee) || fee < 0) {
+      if (!hasRealCase) {
+        return decision("NEGOTIATE_FEE", {
+          pauseReason: "FEE_QUOTE",
+          reasoning: [`Fee amount invalid/missing (${extractedFeeAmount})`],
+        });
+      }
       // No actual fee amount quoted — check if agency is asking a question
       // (e.g., "Do you want to proceed? We'll send an estimate.")
       const feeAnalysis = await db.getLatestResponseAnalysis(caseId);
@@ -1931,21 +1952,23 @@ async function deterministicRouting(
     reasoning.push(`Fee quote received: $${fee}`);
 
     // BWC denial check alongside fee
-    const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
-    const kp = (latestAnalysis?.key_points || []).join(" ").toLowerCase();
-    const caseData = await db.getCaseById(caseId);
-    const rr = (Array.isArray(caseData?.requested_records)
-      ? caseData.requested_records.join(" ")
-      : (caseData?.requested_records || "")).toLowerCase();
-    const bwcRequested = /body.?cam|bodycam|bwc|body.?worn|video/.test(rr);
-    const bwcDenied = /body.?cam|bodycam|bwc|body.?worn|video/.test(kp) &&
-      /not disclos|denied|withheld|exempt|not subject|not available|unable to release/.test(kp);
+    if (hasRealCase) {
+      const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
+      const kp = (latestAnalysis?.key_points || []).join(" ").toLowerCase();
+      const caseData = await db.getCaseById(caseId);
+      const rr = (Array.isArray(caseData?.requested_records)
+        ? caseData.requested_records.join(" ")
+        : (caseData?.requested_records || "")).toLowerCase();
+      const bwcRequested = /body.?cam|bodycam|bwc|body.?worn|video/.test(rr);
+      const bwcDenied = /body.?cam|bodycam|bwc|body.?worn|video/.test(kp) &&
+        /not disclos|denied|withheld|exempt|not subject|not available|unable to release/.test(kp);
 
-    if (bwcRequested && bwcDenied) {
-      return decision("SEND_REBUTTAL", {
-        pauseReason: "DENIAL",
-        reasoning: [...reasoning, "BWC denied alongside fee - challenge denial before paying"],
-      });
+      if (bwcRequested && bwcDenied) {
+        return decision("SEND_REBUTTAL", {
+          pauseReason: "DENIAL",
+          reasoning: [...reasoning, "BWC denied alongside fee - challenge denial before paying"],
+        });
+      }
     }
 
     if (fee <= FEE_AUTO_APPROVE_MAX && autopilotMode === "AUTO") {
@@ -1970,10 +1993,10 @@ async function deterministicRouting(
   // DENIAL
   if (classification === "DENIAL") {
     reasoning.push("Denial received from agency");
-    const caseData = await db.getCaseById(caseId);
+    const caseData = hasRealCase ? await db.getCaseById(caseId) : null;
 
     // Check for unanswered clarification
-    const unansweredMsgId = await checkUnansweredClarification(caseId);
+    const unansweredMsgId = hasRealCase ? await checkUnansweredClarification(caseId) : null;
     if (unansweredMsgId) {
       return decision("SEND_CLARIFICATION", {
         pauseReason: "DENIAL",
@@ -1982,7 +2005,7 @@ async function deterministicRouting(
       });
     }
 
-    const resolvedSubtype = denialSubtype || (await db.getLatestResponseAnalysis(caseId))?.full_analysis_json?.denial_subtype || null;
+    const resolvedSubtype = denialSubtype || (hasRealCase ? (await db.getLatestResponseAnalysis(caseId))?.full_analysis_json?.denial_subtype : null) || null;
 
     switch (resolvedSubtype) {
       case "no_records": {
@@ -2007,14 +2030,16 @@ async function deterministicRouting(
       }
       case "wrong_agency": {
         // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
-        await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
-        const currentConstraints = caseData?.constraints_jsonb || [];
-        if (!currentConstraints.includes("WRONG_AGENCY")) {
-          await db.updateCase(caseId, {
-            constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
-          });
+        if (hasRealCase) {
+          await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
+          const currentConstraints = caseData?.constraints_jsonb || [];
+          if (!currentConstraints.includes("WRONG_AGENCY")) {
+            await db.updateCase(caseId, {
+              constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+            });
+          }
         }
-        const directAction = await getWrongAgencyDirectAction(caseId);
+        const directAction = hasRealCase ? await getWrongAgencyDirectAction(caseId) : null;
         if (directAction) {
           return decision(directAction, {
             pauseReason: "DENIAL",
@@ -2073,6 +2098,13 @@ async function deterministicRouting(
           reasoning: [...reasoning, "Sealed by court order - recommending closure (strong exemption)"],
         });
       case "third_party_confidential": {
+        if (looksLikeContractorCustodyDenial(inlineKeyPoints)) {
+          return decision("RESEARCH_AGENCY", {
+            pauseReason: "DENIAL",
+            researchLevel: "medium",
+            reasoning: [...reasoning, "Contractor-custody denial indicates the current agency may not be the actual custodian - researching the correct holder before rebutting"],
+          });
+        }
         const canAuto3p = autopilotMode === "AUTO";
         return decision("SEND_REBUTTAL", {
           canAutoExecute: canAuto3p,
@@ -2122,14 +2154,16 @@ async function deterministicRouting(
 
   // CLARIFICATION_REQUEST
   if (classification === "CLARIFICATION_REQUEST") {
-    const caseData = await db.getCaseById(caseId);
-    const latestAnalysis = await db.getLatestResponseAnalysis(caseId);
-    const detResearchCount = await db.query(
-      `SELECT COUNT(*)::int AS cnt FROM proposals
-       WHERE case_id = $1 AND action_type = 'RESEARCH_AGENCY' AND status IN ('EXECUTED', 'DISMISSED')`,
-      [caseId]
-    ).then((r: any) => r.rows?.[0]?.cnt || 0);
-    if (detResearchCount < 2 && shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, topConstraints)) {
+    const caseData = hasRealCase ? await db.getCaseById(caseId) : null;
+    const latestAnalysis = hasRealCase ? await db.getLatestResponseAnalysis(caseId) : null;
+    const detResearchCount = hasRealCase
+      ? await db.query(
+          `SELECT COUNT(*)::int AS cnt FROM proposals
+           WHERE case_id = $1 AND action_type = 'RESEARCH_AGENCY' AND status IN ('EXECUTED', 'DISMISSED')`,
+          [caseId]
+        ).then((r: any) => r.rows?.[0]?.cnt || 0)
+      : 0;
+    if (hasRealCase && detResearchCount < 2 && shouldPrioritizeBodycamCustodianResearch(caseData, latestAnalysis, topConstraints)) {
       return decision("RESEARCH_AGENCY", {
         pauseReason: "DENIAL",
         researchLevel: "deep",
@@ -2152,19 +2186,26 @@ async function deterministicRouting(
 
   // RECORDS_READY
   if (classification === "RECORDS_READY") {
-    await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", { substatus: "records_received" });
-    await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
+    if (hasRealCase) {
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", { substatus: "records_received" });
+      await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
+    }
     return noAction(["Records ready - case completed"]);
   }
 
   // ACKNOWLEDGMENT
   if (classification === "ACKNOWLEDGMENT") {
-    await caseRuntime.transitionCaseRuntime(caseId, "ACKNOWLEDGMENT_RECEIVED", {});
+    if (hasRealCase) {
+      await caseRuntime.transitionCaseRuntime(caseId, "ACKNOWLEDGMENT_RECEIVED", {});
+    }
     return noAction(["Acknowledgment received - status reset to awaiting_response"]);
   }
 
   // PORTAL_REDIRECT
   if (classification === "PORTAL_REDIRECT") {
+    if (!hasRealCase) {
+      return noAction(["Portal redirect - task creation skipped in simulation (no real case)"]);
+    }
     await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
     await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_redirect" });
     try {
@@ -2188,15 +2229,17 @@ async function deterministicRouting(
 
   // WRONG_AGENCY — cancel in-flight work, add constraint, then research
   if (classification === "WRONG_AGENCY") {
-    await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
-    const caseData = await db.getCaseById(caseId);
-    const currentConstraints = caseData?.constraints_jsonb || [];
-    if (!currentConstraints.includes("WRONG_AGENCY")) {
-      await db.updateCase(caseId, {
-        constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
-      });
+    if (hasRealCase) {
+      await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
+      const caseData = await db.getCaseById(caseId);
+      const currentConstraints = caseData?.constraints_jsonb || [];
+      if (!currentConstraints.includes("WRONG_AGENCY")) {
+        await db.updateCase(caseId, {
+          constraints_jsonb: JSON.stringify([...currentConstraints, "WRONG_AGENCY"]),
+        });
+      }
     }
-    const directAction = await getWrongAgencyDirectAction(caseId);
+    const directAction = hasRealCase ? await getWrongAgencyDirectAction(caseId) : null;
     if (directAction) {
       return decision(directAction, {
         pauseReason: "DENIAL",
@@ -2212,7 +2255,9 @@ async function deterministicRouting(
 
   // PARTIAL_DELIVERY
   if (classification === "PARTIAL_DELIVERY") {
-    await caseRuntime.transitionCaseRuntime(caseId, "PARTIAL_DELIVERY_RECEIVED", {});
+    if (hasRealCase) {
+      await caseRuntime.transitionCaseRuntime(caseId, "PARTIAL_DELIVERY_RECEIVED", {});
+    }
     return noAction(["Partial delivery - waiting for remainder"]);
   }
 
@@ -2283,6 +2328,7 @@ export async function decideNextAction(
   jurisdictionLevel?: string | null,
   inlineKeyPoints?: string[]
 ): Promise<DecisionResult> {
+  const hasRealCase = Number.isFinite(caseId) && caseId > 0;
   const reasoning: string[] = [];
 
   try {
@@ -2297,7 +2343,7 @@ export async function decideNextAction(
 
       // Check for unanswered clarification on denial
       // (classification guard above excludes DENIAL, but runtime data may differ from type narrowing)
-      if ((classification as string) === "DENIAL") {
+      if (hasRealCase && (classification as string) === "DENIAL") {
         const unansweredMsgId = await checkUnansweredClarification(caseId);
         if (unansweredMsgId) {
           return decision("SEND_CLARIFICATION", {
@@ -2314,6 +2360,9 @@ export async function decideNextAction(
 
       // Handle suggested actions for no-response cases
       if (suggestedAction === "use_portal") {
+        if (!hasRealCase) {
+          return noAction([...reasoning, "Portal redirect - task creation skipped in simulation (no real case)"]);
+        }
         await db.updateCasePortalStatus(caseId, { portal_url: portalUrl });
         await caseRuntime.transitionCaseRuntime(caseId, "PORTAL_STARTED", { substatus: "portal_required" });
         try {
@@ -2335,6 +2384,9 @@ export async function decideNextAction(
         return noAction([...reasoning, "Portal redirect - task created, cron will dispatch"]);
       }
       if (suggestedAction === "download") {
+        if (!hasRealCase) {
+          return noAction([...reasoning, "Records ready for download"]);
+        }
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_COMPLETED", { substatus: "records_received" });
         await db.updateCase(caseId, { outcome_type: "full_approval", outcome_recorded: true });
         return noAction([...reasoning, "Records ready for download"]);
@@ -2343,6 +2395,13 @@ export async function decideNextAction(
         return noAction([...reasoning, "Acknowledgment received, waiting"]);
       }
       if (suggestedAction === "find_correct_agency") {
+        if (!hasRealCase) {
+          return decision("RESEARCH_AGENCY", {
+            pauseReason: "DENIAL",
+            researchLevel: "deep",
+            reasoning: [...reasoning, "Wrong agency - researching correct custodian"],
+          });
+        }
         // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
         await caseRuntime.transitionCaseRuntime(caseId, "CASE_WRONG_AGENCY", {});
         const wrongAgencyCaseData = await db.getCaseById(caseId);
@@ -3079,6 +3138,72 @@ export async function decideNextAction(
     });
 
     if (aiResult) {
+      if (classification === "PARTIAL_DELIVERY" && suggestedAction === "wait") {
+        const deterministicPartialResult = await deterministicRouting(
+          caseId,
+          classification,
+          extractedFeeAmount,
+          sentiment,
+          autopilotMode,
+          triggerType,
+          requiresResponse,
+          portalUrl,
+          denialSubtype,
+          inlineKeyPoints
+        );
+        if (deterministicPartialResult.actionType === "NONE" && aiResult.actionType !== "NONE") {
+          logger.info("Overriding AI partial-delivery decision with deterministic no-action", {
+            caseId,
+            classification,
+            aiAction: aiResult.actionType,
+          });
+          return {
+            ...deterministicPartialResult,
+            reasoning: [
+              `AI suggested ${aiResult.actionType}, but deterministic partial-delivery routing preferred NONE`,
+              ...(deterministicPartialResult.reasoning || []),
+            ],
+          };
+        }
+      }
+      if (classification === "DENIAL") {
+        const deterministicDenialResult = await deterministicRouting(
+          caseId,
+          classification,
+          extractedFeeAmount,
+          sentiment,
+          autopilotMode,
+          triggerType,
+          requiresResponse,
+          portalUrl,
+          denialSubtype,
+          inlineKeyPoints
+        );
+        const preferDeterministicDenial =
+          (deterministicDenialResult.actionType === "CLOSE_CASE" && aiResult.actionType !== "CLOSE_CASE") ||
+          (["wrong_agency", "no_duty_to_create", "no_records"].includes(String(denialSubtype || "")) &&
+            deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
+            aiResult.actionType !== "RESEARCH_AGENCY") ||
+          (looksLikeContractorCustodyDenial(inlineKeyPoints) &&
+            deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
+            aiResult.actionType !== "RESEARCH_AGENCY");
+        if (preferDeterministicDenial) {
+          logger.info("Overriding AI denial decision with deterministic denial routing", {
+            caseId,
+            classification,
+            denialSubtype,
+            aiAction: aiResult.actionType,
+            deterministicAction: deterministicDenialResult.actionType,
+          });
+          return {
+            ...deterministicDenialResult,
+            reasoning: [
+              `AI suggested ${aiResult.actionType}, but deterministic denial routing preferred ${deterministicDenialResult.actionType}`,
+              ...(deterministicDenialResult.reasoning || []),
+            ],
+          };
+        }
+      }
       logger.info("AI decision selected action", {
         caseId,
         classification,

@@ -12,7 +12,7 @@ const { tasks, runs } = require('@trigger.dev/sdk');
 const { Pool } = require('pg');
 
 const DB_URL = process.env.DATABASE_URL;
-const BATCH_SIZE = 6;
+const BATCH_SIZE = 3;
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 120_000;
 

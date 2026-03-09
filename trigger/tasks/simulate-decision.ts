@@ -85,7 +85,7 @@ export interface SimulationResult {
   }>;
 }
 
-function buildMockContext(): CaseContext {
+function buildMockContext(payload: SimulationPayload): CaseContext {
   return {
     caseId: 0,
     caseData: {
@@ -98,7 +98,21 @@ function buildMockContext(): CaseContext {
       agency_email: null,
       autopilot_mode: "SUPERVISED",
     },
-    messages: [],
+    messages: [
+      {
+        id: 0,
+        case_id: 0,
+        direction: "inbound",
+        from_email: payload.fromEmail,
+        to_email: null,
+        subject: payload.subject,
+        body_text: payload.messageBody,
+        body_html: null,
+        sent_at: null,
+        received_at: null,
+        created_at: new Date().toISOString(),
+      } as any,
+    ],
     attachments: [],
     analysis: null,
     followups: null,
@@ -127,7 +141,7 @@ export const simulateDecision = task({
         skipped: false,
       });
     } else {
-      context = buildMockContext();
+      context = buildMockContext(payload);
       log.push({
         step: "load_context",
         result: "Mock context (no case selected)",
@@ -178,6 +192,10 @@ export const simulateDecision = task({
     }
 
     // ── Step 3: Decide next action ────────────────────────────────────────────
+    const simulationInlineKeyPoints = Array.isArray(classification.keyPoints) && classification.keyPoints.length > 0
+      ? classification.keyPoints
+      : (classification.decision_evidence_quotes || []);
+
     const decision = await decideNextAction(
       context.caseId,
       classification.classification,
@@ -195,7 +213,7 @@ export const simulateDecision = task({
       undefined,    // reviewInstruction
       undefined,    // humanDecision
       undefined,    // jurisdictionLevel
-      classification.keyPoints || []  // inlineKeyPoints for mock-context denial strength
+      simulationInlineKeyPoints  // inlineKeyPoints for mock-context denial strength
     );
 
     log.push({

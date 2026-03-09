@@ -87,6 +87,43 @@ describe('Proposal draft history', function () {
     assert.strictEqual(insertCall.args[1][10], false);
   });
 
+  it('preserves explicit false requiresHuman/canAutoExecute values on proposal creation', async function () {
+    sinon.stub(db, 'getCaseById').resolves(null);
+    const queryStub = sinon.stub(db, 'query');
+    queryStub.onCall(0).resolves({ rows: [] });
+    queryStub.onCall(1).resolves({
+      rows: [{
+        id: 88,
+        case_id: 456,
+        status: 'DRAFT',
+        action_type: 'SEND_INITIAL_REQUEST',
+        draft_subject: 'Initial subject',
+        draft_body_text: 'Initial body',
+        draft_body_html: null,
+        can_auto_execute: true,
+        requires_human: false,
+      }],
+    });
+    queryStub.onCall(2).resolves({ rows: [] });
+    queryStub.onCall(3).resolves({ rows: [{ id: 2, version_number: 1 }] });
+
+    await db.upsertProposal({
+      proposalKey: '456:initial:SEND_INITIAL_REQUEST:0',
+      caseId: 456,
+      actionType: 'SEND_INITIAL_REQUEST',
+      draftSubject: 'Initial subject',
+      draftBodyText: 'Initial body',
+      canAutoExecute: true,
+      requiresHuman: false,
+      status: 'DRAFT',
+    });
+
+    const insertCall = queryStub.getCalls().find((call) => /INSERT INTO proposals/.test(call.args[0]));
+    assert.strictEqual(insertCall.args[1][23], true);
+    assert.strictEqual(insertCall.args[1][24], false);
+    assert.strictEqual(insertCall.args[1][25], 'DRAFT');
+  });
+
   it('builds insert defaults for original draft fields', function () {
     const fields = buildOriginalDraftInsertFields({
       draftSubject: 'Original subject',
