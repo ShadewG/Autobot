@@ -73,6 +73,21 @@ router.get('/me', async (req, res) => {
 });
 
 /**
+ * GET /users — Public list of active user names for login picker
+ */
+router.get('/users', async (req, res) => {
+    try {
+        const result = await db.query(
+            'SELECT id, name FROM users WHERE active = true ORDER BY name'
+        );
+        res.json({ success: true, users: result.rows });
+    } catch (error) {
+        console.error('User list error:', error);
+        res.status(500).json({ success: false, error: 'Failed to load users' });
+    }
+});
+
+/**
  * POST /logout — Clear auth cookie
  */
 router.post('/logout', (req, res) => {

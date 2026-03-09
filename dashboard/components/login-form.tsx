@@ -1,15 +1,31 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { useAuth } from "./auth-provider";
+
+interface LoginUser {
+  id: number;
+  name: string;
+}
 
 export function LoginForm() {
   const { login, error } = useAuth();
+  const [users, setUsers] = useState<LoginUser[]>([]);
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [touched, setTouched] = useState({ name: false, password: false });
+
+  // Fetch active users for the dropdown
+  useEffect(() => {
+    fetch("/api/auth/users")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.users) setUsers(data.users);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -19,7 +35,7 @@ export function LoginForm() {
       return;
     }
     if (!name.trim()) {
-      setValidationError("Name is required");
+      setValidationError("Select your name");
       return;
     }
     if (!password) {
@@ -49,14 +65,31 @@ export function LoginForm() {
           <label className="text-xs text-muted-foreground uppercase tracking-wide">
             Name
           </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => { setName(e.target.value); setValidationError(null); }}
-            autoFocus
-            autoComplete="username"
-            className={`w-full h-9 px-3 text-sm bg-card border text-foreground focus:outline-none focus:ring-1 focus:ring-ring ${showNameError ? "border-destructive" : "border-border"}`}
-          />
+          {users.length > 0 ? (
+            <select
+              value={name}
+              onChange={(e) => { setName(e.target.value); setValidationError(null); }}
+              autoFocus
+              className={`w-full h-9 px-3 text-sm bg-card border text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none cursor-pointer ${showNameError ? "border-destructive" : "border-border"}`}
+            >
+              <option value="">Select your name...</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.name}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setValidationError(null); }}
+              autoFocus
+              autoComplete="username"
+              placeholder="Your name"
+              className={`w-full h-9 px-3 text-sm bg-card border text-foreground focus:outline-none focus:ring-1 focus:ring-ring ${showNameError ? "border-destructive" : "border-border"}`}
+            />
+          )}
         </div>
 
         <div className="space-y-1">

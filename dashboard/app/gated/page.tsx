@@ -1214,15 +1214,11 @@ function MonitorPageContent() {
     }
   });
 
-  // Request notification permission on first click
+  // In-app notification permission banner (replaces Chrome popup)
+  const [showNotifBanner, setShowNotifBanner] = useState(false);
   useEffect(() => {
-    if (typeof window === "undefined" || !("Notification" in window) || Notification.permission !== "default") return;
-    const handler = () => {
-      Notification.requestPermission();
-      document.removeEventListener("click", handler);
-    };
-    document.addEventListener("click", handler);
-    return () => document.removeEventListener("click", handler);
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission === "default") setShowNotifBanner(true);
   }, []);
 
   // Show toast when new items arrive while viewing the page
@@ -1935,6 +1931,29 @@ function MonitorPageContent() {
 
   return (
     <div className="max-w-4xl mx-auto">
+      {/* ── Notification permission banner ── */}
+      {showNotifBanner && (
+        <div className="flex items-center justify-between gap-3 mb-4 rounded-md border border-border bg-card px-4 py-2.5 text-xs">
+          <span className="text-muted-foreground">Enable browser notifications to get alerts when new items need attention.</span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              className="text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setShowNotifBanner(false)}
+            >
+              Dismiss
+            </button>
+            <button
+              className="rounded bg-foreground px-3 py-1 text-background text-xs font-medium hover:bg-foreground/90 transition-colors"
+              onClick={async () => {
+                const result = await Notification.requestPermission();
+                setShowNotifBanner(result === "default");
+              }}
+            >
+              Enable
+            </button>
+          </div>
+        </div>
+      )}
       {/* ── Stats Bar ──────────────────────── */}
       <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-6">
         <StatBox
