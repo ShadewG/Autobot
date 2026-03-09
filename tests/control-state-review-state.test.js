@@ -118,6 +118,42 @@ describe('Review and control state regressions', function () {
     assert.deepStrictEqual(mismatches, []);
   });
 
+  it('treats import-review placeholder cases with no proposal as blocked work, not out-of-sync decisions', function () {
+    const caseData = {
+      id: 26635,
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: 'IMPORT_REVIEW',
+      substatus: 'Placeholder Notion page — fix source page before drafting',
+    };
+
+    const reviewState = resolveReviewState({
+      caseData,
+      activeProposal: null,
+      activeRun: null,
+    });
+
+    const controlState = resolveControlState({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    const mismatches = detectControlMismatches({
+      caseData,
+      reviewState,
+      pendingProposal: null,
+      activeRun: null,
+      activePortalTaskStatus: null,
+    });
+
+    assert.strictEqual(reviewState, 'IDLE');
+    assert.strictEqual(controlState, 'BLOCKED');
+    assert.deepStrictEqual(mismatches, []);
+  });
+
   it('treats stale research phone handoffs as blocked manual work and keeps them in the paused queue', function () {
     const caseData = {
       id: 25148,

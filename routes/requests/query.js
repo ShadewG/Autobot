@@ -178,6 +178,30 @@ function deriveDefaultGateOptions(actionType, draftBodyText = '') {
     return null;
 }
 
+const CONTRADICTORY_NO_RESPONSE_ACTIONS = new Set([
+    'SEND_INITIAL_REQUEST',
+    'SEND_FOLLOWUP',
+    'SEND_REBUTTAL',
+    'SEND_CLARIFICATION',
+    'SEND_PDF_EMAIL',
+    'ACCEPT_FEE',
+    'NEGOTIATE_FEE',
+    'DECLINE_FEE',
+    'RESPOND_PARTIAL_APPROVAL',
+]);
+
+function proposalSignalsNoResponseDraft(draftBodyText) {
+    const text = String(draftBodyText || '').trim();
+    return /^(no response needed|no reply needed)\b/i.test(text);
+}
+
+function isContradictoryNoResponseProposal(proposal) {
+    if (!proposal) return false;
+    const actionType = String(proposal.action_type || '').toUpperCase();
+    return CONTRADICTORY_NO_RESPONSE_ACTIONS.has(actionType)
+        && proposalSignalsNoResponseDraft(proposal.draft_body_text);
+}
+
 function pickAgencyDisplayName(...candidates) {
     let fallback = null;
 
@@ -1615,6 +1639,7 @@ router.get('/:id/workspace', async (req, res) => {
                     ),
             }
             : null;
+        const contradictoryNoResponseProposal = isContradictoryNoResponseProposal(pendingProposal);
         if (!nextActionProposal && pendingProposal) {
             nextActionProposal = {
                 id: String(pendingProposal.id),
@@ -1634,6 +1659,10 @@ router.get('/:id/workspace', async (req, res) => {
                 gate_options: Array.isArray(pendingProposal.gate_options) ? pendingProposal.gate_options : null,
                 status: pendingProposal.status || null,
             };
+        }
+        if (contradictoryNoResponseProposal) {
+            nextActionProposal = null;
+            pendingProposal = null;
         }
         const manualPasteMismatch = shouldEscalateManualPasteMismatch(
             latestInboundMessageForGuard,
@@ -1827,20 +1856,28 @@ router.get('/:id/workspace', async (req, res) => {
             : null;
 
         // Compute derived review_state
+        const reviewStateCaseData = contradictoryNoResponseProposal
+            ? {
+                ...rawCaseData,
+                status: 'awaiting_response',
+                requires_human: false,
+                pause_reason: null,
+            }
+            : rawCaseData;
         let review_state = resolveReviewState({
-            caseData: rawCaseData,
+            caseData: reviewStateCaseData,
             activeProposal: pendingProposal,
             activeRun,
         });
         let control_mismatches = detectControlMismatches({
-            caseData: rawCaseData,
+            caseData: reviewStateCaseData,
             reviewState: review_state,
             pendingProposal,
             activeRun,
             activePortalTaskStatus: caseData.active_portal_task_status || null,
         });
         let control_state = resolveControlState({
-            caseData: rawCaseData,
+            caseData: reviewStateCaseData,
             reviewState: review_state,
             pendingProposal,
             activeRun,
@@ -1853,6 +1890,11 @@ router.get('/:id/workspace', async (req, res) => {
         }
         if (importSafetyBlockedProposal) {
             review_state = 'IDLE';
+            control_state = 'BLOCKED';
+            control_mismatches = [];
+        }
+        if (contradictoryNoResponseProposal) {
+            review_state = 'WAITING_AGENCY';
             control_state = 'BLOCKED';
             control_mismatches = [];
         }
@@ -1945,7 +1987,7 @@ router.get('/:id/workspace', async (req, res) => {
 
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
-        const dbStatus = String(rawCaseData?.status || '').toLowerCase();
+        const dbStatus = String(reviewStateCaseData?.status || '').toLowerCase();
         const isHumanReviewStatus = [
             'needs_human_review',
             'needs_human_fee_approval',
@@ -1960,8 +2002,14 @@ router.get('/:id/workspace', async (req, res) => {
         requestDetail.control_mismatches = control_mismatches;
         let effectiveRequiresHuman =
             review_state === 'DECISION_REQUIRED' ||
-            Boolean(rawCaseData?.requires_human) ||
+            Boolean(reviewStateCaseData?.requires_human) ||
             isHumanReviewStatus;
+        if (contradictoryNoResponseProposal) {
+            requestDetail.status = 'AWAITING_RESPONSE';
+            requestDetail.substatus = requestDetail.substatus || 'No response needed — automated portal/account message';
+            requestDetail.pause_reason = null;
+            effectiveRequiresHuman = false;
+        }
         if (review_state !== 'DECISION_REQUIRED' && !isHumanReviewStatus) {
             requestDetail.pause_reason = null;
         }
@@ -1971,16 +2019,17 @@ router.get('/:id/workspace', async (req, res) => {
         const portalActive = portalStatus === 'PENDING' || portalStatus === 'IN_PROGRESS';
         const isManualHandoffReview =
             dbStatus === 'needs_phone_call' ||
-            String(rawCaseData?.pause_reason || '').toUpperCase() === 'RESEARCH_HANDOFF' ||
-            String(rawCaseData?.pause_reason || '').toUpperCase() === 'AGENCY_RESEARCH_COMPLETE' ||
+            String(reviewStateCaseData?.pause_reason || '').toUpperCase() === 'RESEARCH_HANDOFF' ||
+            String(reviewStateCaseData?.pause_reason || '').toUpperCase() === 'AGENCY_RESEARCH_COMPLETE' ||
+            String(reviewStateCaseData?.pause_reason || '').toUpperCase() === 'IMPORT_REVIEW' ||
             (
                 dbStatus === 'needs_human_review' &&
-                String(rawCaseData?.pause_reason || '').toUpperCase() === 'UNSPECIFIED' &&
-                /ready to send via (portal|email)/i.test(String(rawCaseData?.substatus || ''))
+                String(reviewStateCaseData?.pause_reason || '').toUpperCase() === 'UNSPECIFIED' &&
+                /ready to send via (portal|email)/i.test(String(reviewStateCaseData?.substatus || ''))
             );
         const shouldNormalizeStaleReviewStatus =
             isHumanReviewStatus &&
-            !Boolean(rawCaseData?.requires_human) &&
+            !Boolean(reviewStateCaseData?.requires_human) &&
             review_state !== 'DECISION_REQUIRED' &&
             !pendingProposal &&
             !hasActiveRun &&

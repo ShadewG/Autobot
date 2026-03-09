@@ -15,6 +15,23 @@ const {
     normalizePortalTimeoutSubstatus,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
+
+const CONTRADICTORY_NO_RESPONSE_ACTIONS = new Set([
+    'SEND_INITIAL_REQUEST',
+    'SEND_FOLLOWUP',
+    'SEND_REBUTTAL',
+    'SEND_CLARIFICATION',
+    'SEND_PDF_EMAIL',
+    'ACCEPT_FEE',
+    'NEGOTIATE_FEE',
+    'DECLINE_FEE',
+    'RESPOND_PARTIAL_APPROVAL',
+]);
+
+function proposalSignalsNoResponseDraft(draftBodyText) {
+    const text = String(draftBodyText || '').trim();
+    return /^(no response needed|no reply needed)\b/i.test(text);
+}
 const { isLikelyRequestFormAttachment } = require('../../services/pdf-form-service');
 
 const LIVE_OVERVIEW_CACHE_TTL_MS = 15_000;
@@ -476,6 +493,7 @@ router.get('/live-overview', async (req, res) => {
                 p.trigger_message_id,
                 p.reasoning,
                 p.draft_subject,
+                p.draft_body_text,
                 p.pause_reason AS proposal_pause_reason,
                 p.risk_flags,
                 p.warnings,
@@ -745,6 +763,12 @@ router.get('/live-overview', async (req, res) => {
             if (
                 importSafety.shouldBlockAutoDispatch &&
                 ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(row.action_type || '').toUpperCase())
+            ) {
+                return null;
+            }
+            if (
+                CONTRADICTORY_NO_RESPONSE_ACTIONS.has(String(row.action_type || '').toUpperCase()) &&
+                proposalSignalsNoResponseDraft(row.draft_body_text)
             ) {
                 return null;
             }

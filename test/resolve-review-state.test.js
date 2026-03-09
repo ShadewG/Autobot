@@ -125,13 +125,13 @@ test('requires_human=true → DECISION_REQUIRED', () => {
     assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
 });
 
-test('needs_phone_call status → DECISION_REQUIRED', () => {
+test('needs_phone_call without proposal → IDLE manual handoff', () => {
     const result = resolveReviewState({
         caseData: { id: 12, status: 'needs_phone_call', requires_human: false },
         activeProposal: null,
         activeRun: null,
     });
-    assert(result === REVIEW_STATES.DECISION_REQUIRED, `Expected DECISION_REQUIRED, got ${result}`);
+    assert(result === REVIEW_STATES.IDLE, `Expected IDLE, got ${result}`);
 });
 
 test('needs_contact_info status → DECISION_REQUIRED', () => {

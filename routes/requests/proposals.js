@@ -6,6 +6,29 @@ const { autoCaptureEvalCase, captureDismissFeedback } = require('../../services/
 const { buildHumanDecision } = proposalLifecycle;
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
 
+const CONTRADICTORY_NO_RESPONSE_ACTIONS = new Set([
+    'SEND_INITIAL_REQUEST',
+    'SEND_FOLLOWUP',
+    'SEND_REBUTTAL',
+    'SEND_CLARIFICATION',
+    'SEND_PDF_EMAIL',
+    'ACCEPT_FEE',
+    'NEGOTIATE_FEE',
+    'DECLINE_FEE',
+    'RESPOND_PARTIAL_APPROVAL',
+]);
+
+function proposalSignalsNoResponseDraft(draftBodyText) {
+    const text = String(draftBodyText || '').trim();
+    return /^(no response needed|no reply needed)\b/i.test(text);
+}
+
+function isContradictoryNoResponseProposal(proposal) {
+    if (!proposal) return false;
+    return CONTRADICTORY_NO_RESPONSE_ACTIONS.has(String(proposal.action_type || '').toUpperCase())
+        && proposalSignalsNoResponseDraft(proposal.draft_body_text);
+}
+
 async function detectLatestInboundManualPasteMismatch(caseId) {
     try {
         if (!Number.isInteger(Number(caseId)) || Number(caseId) <= 0) return null;
@@ -114,6 +137,7 @@ router.get('/:id/proposals', async (req, res) => {
             if (manualPasteMismatch?.mismatch) {
                 proposals = [];
             }
+            proposals = proposals.filter((proposal) => !isContradictoryNoResponseProposal(proposal));
         }
 
         const transformedProposals = proposals.map(p => ({

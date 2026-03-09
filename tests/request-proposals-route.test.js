@@ -107,4 +107,39 @@ describe('Request proposals route regressions', function () {
     assert.strictEqual(response.body.count, 0);
     assert.deepStrictEqual(response.body.proposals, []);
   });
+
+  it('suppresses contradictory pending send proposals whose draft says no response is needed', async function () {
+    db.getCaseById = async () => ({
+      id: 25891,
+      status: 'needs_human_review',
+    });
+    db.getPendingProposalsByCaseId = async () => ([
+      {
+        id: 1314,
+        proposal_key: '25891:2576:SEND_CLARIFICATION:0',
+        action_type: 'SEND_CLARIFICATION',
+        status: 'PENDING_APPROVAL',
+        draft_subject: 'RE: [Records Center] Welcome to the Records Center!',
+        draft_body_text: 'No response needed. This is an automated portal/account registration message and does not require any reply.',
+        reasoning: [],
+        warnings: [],
+        risk_flags: [],
+        can_auto_execute: false,
+        requires_human: true,
+        adjustment_count: 0,
+        created_at: '2026-03-09T12:37:25.000Z',
+      },
+    ]);
+    db.getThreadsByCaseId = async () => ([]);
+    db.getMessagesByThreadId = async () => ([]);
+
+    const app = express();
+    app.use('/api/requests', proposalsRouter);
+
+    const response = await supertest(app).get('/api/requests/25891/proposals');
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.count, 0);
+    assert.deepStrictEqual(response.body.proposals, []);
+  });
 });
