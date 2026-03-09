@@ -158,6 +158,46 @@ describe("Pipeline E2E: Classification Step", function () {
       mocks.restore();
     }
   });
+
+  it("auto-classifies portal password-assistance emails as portal routing work", async function () {
+    const mocks = installMocks("acknowledgment");
+    try {
+      const { classifyInbound } = require("../../trigger/steps/classify-inbound.ts");
+
+      mocks.caseData.portal_url = "https://example.govqa.us/portal";
+      mocks.message.from_email = "lubbock@govqa.us";
+      mocks.message.subject = "[Records Center] Password Assistance";
+      mocks.message.body_text = [
+        "We received your request for password assistance.",
+        "Below is your temporary password.",
+        "Please use it to access your account online.",
+        "https://example.govqa.us/portal/reset"
+      ].join("\n");
+
+      const context = {
+        caseId: 1003,
+        caseData: mocks.caseData,
+        messages: [mocks.message],
+        attachments: [],
+        analysis: null,
+        followups: null,
+        existingProposal: null,
+        autopilotMode: "SUPERVISED",
+        constraints: [],
+        scopeItems: [],
+      };
+
+      const result = await classifyInbound(context, mocks.message.id, "INBOUND_MESSAGE");
+
+      expect(result.classification).to.equal("PORTAL_REDIRECT");
+      expect(result.requiresResponse).to.equal(true);
+      expect(result.suggestedAction).to.equal("use_portal");
+      expect(result.portalUrl).to.equal("https://example.govqa.us/portal/reset");
+      expect(mocks.generateObjectStub.called).to.equal(false);
+    } finally {
+      mocks.restore();
+    }
+  });
 });
 
 // ============================================================

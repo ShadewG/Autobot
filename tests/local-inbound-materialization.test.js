@@ -150,6 +150,73 @@ describe('Local inbound materialization', function () {
     }
   });
 
+  it('ingest-email persists synthetic attachments with extracted text', async function () {
+    const dbStub = {
+      getCaseById: sinon.stub().resolves({
+        id: 30002,
+        our_email: 'sam@foib-request.com',
+        agency_email: 'agency@example.gov',
+      }),
+      getThreadByCaseId: sinon.stub().resolves({
+        id: 7002,
+        case_id: 30002,
+        subject: 'RE: Request',
+        agency_email: 'agency@example.gov',
+      }),
+      createEmailThread: sinon.stub().resolves(),
+      createAttachment: sinon.stub().resolves({ id: 9101 }),
+      updateCase: sinon.stub().resolves(),
+      logActivity: sinon.stub().resolves(),
+      query: sinon.stub(),
+    };
+
+    dbStub.query.onCall(0).resolves({ rows: [] });
+    dbStub.query.onCall(1).resolves({ rows: [{ id: 8002, thread_id: 7002, received_at: new Date().toISOString() }] });
+    dbStub.query.onCall(2).resolves({ rows: [] });
+
+    const aiServiceStub = {};
+    const triggerDispatchStub = { triggerTask: sinon.stub().resolves({ handle: { id: 'unused' } }) };
+    const { router, restore } = loadRunEngineRouter({ dbStub, aiServiceStub, triggerDispatchStub });
+
+    try {
+      const app = express();
+      app.use(express.json({ limit: '5mb' }));
+      app.use('/api', router);
+
+      const response = await supertest(app)
+        .post('/api/cases/30002/ingest-email')
+        .send({
+          from_email: 'agency@example.gov',
+          subject: 'RE: Request form attached',
+          body_text: 'Please complete the attached request form and return it.',
+          trigger_run: false,
+          attachments: [
+            {
+              filename: 'request-form.pdf',
+              content_type: 'application/pdf',
+              extracted_text: 'PUBLIC RECORDS REQUEST FORM',
+              content_base64: Buffer.from('%PDF-1.4 synthetic form').toString('base64'),
+            },
+          ],
+        });
+
+      assert.strictEqual(response.status, 201);
+      sinon.assert.calledOnce(dbStub.createAttachment);
+      const attachmentArgs = dbStub.createAttachment.firstCall.args[0];
+      assert.strictEqual(attachmentArgs.message_id, 8002);
+      assert.strictEqual(attachmentArgs.case_id, 30002);
+      assert.strictEqual(attachmentArgs.filename, 'request-form.pdf');
+      assert.ok(Buffer.isBuffer(attachmentArgs.file_data));
+      sinon.assert.calledWithExactly(
+        dbStub.query.getCall(2),
+        'UPDATE attachments SET extracted_text = $1 WHERE id = $2',
+        ['PUBLIC RECORDS REQUEST FORM', 9101]
+      );
+    } finally {
+      restore();
+    }
+  });
+
   it('materializes clarification proposals locally when Trigger credentials are absent', async function () {
     const originalNodeEnv = process.env.NODE_ENV;
     const originalTriggerSecret = process.env.TRIGGER_SECRET_KEY;

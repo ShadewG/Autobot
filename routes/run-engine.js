@@ -120,6 +120,34 @@ function isOrphanedWaitingRun(run) {
   return !getTriggerRunId(run);
 }
 
+function normalizeInboundAttachments(rawAttachments) {
+  if (!Array.isArray(rawAttachments)) return [];
+  return rawAttachments
+    .map((attachment) => {
+      if (!attachment || typeof attachment !== 'object') return null;
+      const filename = String(attachment.filename || '').trim();
+      if (!filename) return null;
+      const contentType = String(
+        attachment.content_type || attachment.type || 'application/octet-stream'
+      ).trim();
+      const extractedText = attachment.extracted_text == null
+        ? null
+        : String(attachment.extracted_text);
+      const contentBase64 = attachment.content_base64 == null
+        ? null
+        : String(attachment.content_base64).trim();
+      const sizeBytes = Number(attachment.size_bytes);
+      return {
+        filename,
+        contentType,
+        extractedText,
+        contentBase64,
+        sizeBytes: Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : null,
+      };
+    })
+    .filter(Boolean);
+}
+
 async function reconcileCaseAfterDismiss(caseId, proposal = null) {
   const remaining = await db.query(
     `SELECT 1 FROM proposals WHERE case_id = $1 AND status IN ('PENDING_APPROVAL','BLOCKED','PENDING_PORTAL') LIMIT 1`,
@@ -3141,6 +3169,8 @@ router.post('/runs/:id/retry', async (req, res) => {
  * - source: string - Source of the email (defaults to 'manual_paste')
  * - autopilot_mode: 'AUTO' | 'SUPERVISED' (defaults to 'SUPERVISED')
  * - trigger_run: boolean (defaults to true) - Set false to only create message without processing
+ * - attachments: array (optional) - Synthetic/manual attachment payloads with filename, content_type/type,
+ *   extracted_text, and optional content_base64 for file-backed attachment workflows
  */
 router.post('/cases/:id/ingest-email', async (req, res) => {
   const caseId = parseInt(req.params.id);
@@ -3152,8 +3182,10 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
     received_at,
     source = 'manual_paste',
     autopilot_mode = 'SUPERVISED',
-    trigger_run = true
+    trigger_run = true,
+    attachments: rawAttachments = []
   } = req.body || {};
+  const attachments = normalizeInboundAttachments(rawAttachments);
 
   try {
     // === VALIDATION (422 for parsing failures) ===
@@ -3250,6 +3282,7 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
     const messageResult = await db.query(`
       INSERT INTO messages (
         thread_id,
+        case_id,
         direction,
         from_email,
         to_email,
@@ -3260,10 +3293,11 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
         provider_message_id,
         metadata
       )
-      VALUES ($1, 'inbound', $2, $3, $4, $5, $6, NOW(), $7, $8)
+      VALUES ($1, $2, 'inbound', $3, $4, $5, $6, $7, NOW(), $8, $9)
       RETURNING *
     `, [
       thread.id,
+      caseId,
       from_email,
       caseData.our_email || process.env.FOIA_FROM_EMAIL || 'noreply@example.com',
       subject || '(No subject)',
@@ -3274,11 +3308,39 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
         source,
         manual_paste: true,
         dedupe_key: dedupeKey,
-        message_id_header: message_id_header || null
+        message_id_header: message_id_header || null,
+        attachment_count: attachments.length
       })
     ]);
 
     const message = messageResult.rows[0];
+
+    if (attachments.length > 0) {
+      for (const attachment of attachments) {
+        const fileBuffer = attachment.contentBase64
+          ? Buffer.from(attachment.contentBase64, 'base64')
+          : null;
+        const savedAttachment = await db.createAttachment({
+          message_id: message.id,
+          case_id: caseId,
+          filename: attachment.filename,
+          content_type: attachment.contentType,
+          size_bytes:
+            attachment.sizeBytes ||
+            fileBuffer?.length ||
+            Buffer.byteLength(attachment.extractedText || '', 'utf8'),
+          storage_path: null,
+          storage_url: null,
+          file_data: fileBuffer,
+        });
+        if (attachment.extractedText) {
+          await db.query(
+            'UPDATE attachments SET extracted_text = $1 WHERE id = $2',
+            [attachment.extractedText, savedAttachment.id]
+          );
+        }
+      }
+    }
 
     // Update case last_response_date
     await db.updateCase(caseId, {

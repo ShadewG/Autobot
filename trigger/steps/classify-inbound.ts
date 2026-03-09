@@ -59,6 +59,17 @@ function normalizeClassificationText(input: any): string {
     .toLowerCase();
 }
 
+function extractFirstUrlHint(...values: any[]): string | null {
+  const raw = values
+    .map((value) => String(value || ""))
+    .filter(Boolean)
+    .join("\n");
+  if (!raw) return null;
+  const match = raw.match(/https?:\/\/[^\s"'<>]+/i);
+  if (!match) return null;
+  return match[0].replace(/[)\].,;!?]+$/g, "");
+}
+
 export function looksLikeRequestFormClarification(message: any, attachments: any[] = []): boolean {
   const corpus = [
     message?.subject,
@@ -428,16 +439,25 @@ export async function classifyInbound(
   const portalSystems = ["justfoia", "nextrequest", "govqa", "civicplus", "jotform", "smartsheet"];
   const isPortalSystem = portalSystems.some((p: string) => fromAddr.includes(p) || subjectLower.includes(p));
   const isNoReply = /no.?reply|do.?not.?reply/.test(fromAddr);
+  const portalUrlHint = extractFirstUrlHint(
+    message.subject,
+    message.body_text,
+    message.body_html,
+    context.caseData?.portal_url
+  );
 
-  // Detect portal account management emails (password reset, welcome, unlock)
-  const isAccountManagement =
-    subjectLower.includes("password reset") || subjectLower.includes("reset your password") ||
-    subjectLower.includes("unlock your account") || subjectLower.includes("account unlock") ||
-    subjectLower.includes("activate your account") || subjectLower.includes("account created") ||
-    (subjectLower.includes("welcome to") && isPortalSystem);
+  const portalAccessCorpus = normalizeClassificationText([
+    message.subject,
+    message.body_text,
+    message.body_html,
+  ].join("\n"));
+  const isPortalAccessWorkflow =
+    /password assistance|temporary password|unlock public portal account|unlock your account|account unlock|account locked|reset your password|request a new password|activate your account|account created|login id|access your account online|sign in to your account|create a permanent password|track and monitor the status of your request/.test(
+      portalAccessCorpus
+    );
 
-  if (isPortalSystem && isAccountManagement) {
-    logger.info("Auto-classified as portal account management email", {
+  if ((isPortalSystem || isNoReply) && isPortalAccessWorkflow) {
+    logger.info("Auto-classified as portal access workflow email", {
       caseId: context.caseId,
       from: fromAddr,
       subject: message.subject,
@@ -445,25 +465,29 @@ export async function classifyInbound(
     await db.saveResponseAnalysis({
       messageId,
       caseId: context.caseId,
-      intent: "none",
+      intent: "portal_redirect",
       confidenceScore: 0.99,
       sentiment: "neutral",
-      keyPoints: ["Automated portal account management email - no action needed"],
-      requiresAction: false,
-      suggestedAction: null,
-      fullAnalysisJson: { auto_classified: true, reason: "portal_account_management_email" },
+      keyPoints: ["Portal access/account email indicates the request must continue through the portal"],
+      requiresAction: true,
+      suggestedAction: "use_portal",
+      fullAnalysisJson: {
+        auto_classified: true,
+        reason: "portal_access_workflow_email",
+        portal_url: portalUrlHint,
+      },
     });
     return {
-      classification: "NO_RESPONSE",
+      classification: "PORTAL_REDIRECT",
       confidence: 0.99,
       sentiment: "neutral",
       extractedFeeAmount: null,
       extractedDeadline: null,
       denialSubtype: null,
-      requiresResponse: false,
-      portalUrl: null,
-      suggestedAction: null,
-      reasonNoResponse: "Automated portal account management email",
+      requiresResponse: true,
+      portalUrl: portalUrlHint,
+      suggestedAction: "use_portal",
+      reasonNoResponse: null,
       unansweredAgencyQuestion: null,
     };
   }

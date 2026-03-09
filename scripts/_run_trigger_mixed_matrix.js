@@ -1,9 +1,16 @@
 #!/usr/bin/env node
+process.env.PG_POOL_MAX = process.env.PG_POOL_MAX || "2";
+
 const { tasks, runs } = require("@trigger.dev/sdk");
 const db = require("../services/database");
 
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 4 * 60 * 1000;
+const BATCH_CONCURRENCY = 1;
+const MATRIX_SELECTORS = String(process.env.MIXED_MATRIX_ONLY || "")
+  .split("||")
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -13,8 +20,12 @@ async function pollRun(runId) {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const run = await runs.retrieve(runId);
-    if (run.status === "COMPLETED") return { ok: true, output: run.output, run };
-    if (["FAILED", "CRASHED", "CANCELED"].includes(run.status)) {
+    const normalizedStatus = String(run.status || "").toUpperCase();
+    if (normalizedStatus === "COMPLETED") return { ok: true, output: run.output, run };
+    if (["WAITING", "PAUSED"].includes(normalizedStatus)) {
+      return { ok: true, waiting: true, output: run.output, run };
+    }
+    if (["FAILED", "CRASHED", "CANCELED"].includes(normalizedStatus)) {
       return { ok: false, error: run.output?.message || run.status, run };
     }
     await sleep(POLL_INTERVAL_MS);
@@ -137,6 +148,30 @@ async function createInbound(caseRow, thread, subject, bodyText, fromEmail) {
   });
 }
 
+async function getLatestProposal(caseId) {
+  const result = await db.query(
+    `SELECT id, action_type, status, requires_human, can_auto_execute
+       FROM proposals
+      WHERE case_id = $1
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [caseId]
+  );
+  return result.rows[0] || null;
+}
+
+async function pollForProposal(caseId, expectedAction, timeoutMs = POLL_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const proposal = await getLatestProposal(caseId);
+    if (proposal?.action_type === expectedAction && proposal?.status === "PENDING_APPROVAL") {
+      return proposal;
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+  return null;
+}
+
 function ok(name, details = "") {
   console.log(`PASS ${name}${details ? ` :: ${details}` : ""}`);
 }
@@ -145,7 +180,14 @@ function fail(name, error) {
   console.error(`FAIL ${name} :: ${error}`);
 }
 
+function shouldRunCase(name) {
+  return MATRIX_SELECTORS.length === 0 || MATRIX_SELECTORS.some((selector) => name.includes(selector));
+}
+
 async function runCase(name, fn, results) {
+  if (!shouldRunCase(name)) {
+    return;
+  }
   try {
     const detail = await fn();
     ok(name, detail || "");
@@ -153,6 +195,13 @@ async function runCase(name, fn, results) {
   } catch (error) {
     fail(name, error?.message || String(error));
     results.push({ name, status: "fail", error: error?.message || String(error) });
+  }
+}
+
+async function runInBatches(items, worker, size = BATCH_CONCURRENCY) {
+  for (let i = 0; i < items.length; i += size) {
+    const batch = items.slice(i, i + size);
+    await Promise.all(batch.map((item, index) => worker(item, i + index)));
   }
 }
 
@@ -198,7 +247,7 @@ async function run() {
     },
   ];
 
-  for (const tc of simCases) {
+  await runInBatches(simCases, async (tc) => {
     await runCase(tc.name, async () => {
       const result = await triggerTask("simulate-decision", tc.payload);
       if (!result.ok) throw new Error(result.error || "run failed");
@@ -208,12 +257,12 @@ async function run() {
       }
       return action;
     }, results);
-  }
+  });
 
-  for (let i = 0; i < 4; i++) {
-    await runCase(`HEALTH ${i + 1}`, async () => {
-      const testCase = await createSyntheticCase(`health-${i + 1}`);
-      const result = await triggerTask("health-check", { test: `matrix-${i + 1}`, caseId: testCase.id });
+  await runInBatches(Array.from({ length: 6 }, (_, i) => i + 1), async (n) => {
+    await runCase(`HEALTH ${n}`, async () => {
+      const testCase = await createSyntheticCase(`health-${n}`);
+      const result = await triggerTask("health-check", { test: `matrix-${n}`, caseId: testCase.id });
       if (!result.ok) throw new Error(result.error || "run failed");
       if (result.output?.dbPing !== "ok") throw new Error(`dbPing=${result.output?.dbPing}`);
       if (!String(result.output?.createAgentRun || "").startsWith("ok")) {
@@ -221,23 +270,23 @@ async function run() {
       }
       return `case ${testCase.id}`;
     }, results);
-  }
+  });
 
   const evalIds = (await db.query(
-    "SELECT id FROM eval_cases WHERE is_active = true ORDER BY created_at DESC, id DESC LIMIT 4"
+    "SELECT id FROM eval_cases WHERE is_active = true ORDER BY created_at DESC, id DESC LIMIT 6"
   )).rows.map((row) => row.id);
-  for (const evalId of evalIds) {
+  await runInBatches(evalIds, async (evalId) => {
     await runCase(`EVAL ${evalId}`, async () => {
       const result = await triggerTask("eval-decision", { evalCaseId: evalId });
       if (!result.ok) throw new Error(result.error || "run failed");
       if (result.output?.totalCases !== 1) throw new Error(`totalCases=${result.output?.totalCases}`);
       return `scored ${evalId}`;
     }, results);
-  }
+  });
 
-  for (let i = 0; i < 4; i++) {
-    await runCase(`INITIAL ${i + 1}`, async () => {
-      const caseRow = await createSyntheticCase(`initial-${i + 1}`);
+  await runInBatches(Array.from({ length: 6 }, (_, i) => i + 1), async (n) => {
+    await runCase(`INITIAL ${n}`, async () => {
+      const caseRow = await createSyntheticCase(`initial-${n}`);
       const agentRun = await db.createAgentRun(caseRow.id, "INITIAL_REQUEST", { source: "trigger-mixed-matrix" });
       const result = await triggerTask("process-initial-request", {
         runId: agentRun.id,
@@ -252,7 +301,7 @@ async function run() {
       if (outboundCount < 1) throw new Error("no outbound created");
       return `case ${caseRow.id} outbound=${outboundCount}`;
     }, results);
-  }
+  });
 
   const inboundFixtures = [
     {
@@ -265,7 +314,8 @@ async function run() {
       name: "INBOUND strong denial A",
       body: "We deny your request in full under the personal privacy exemption because disclosure would be an unwarranted invasion of personal privacy.",
       subject: "FOIA denial",
-      expected: "CLOSE_CASE",
+      expectedProposal: "SEND_REBUTTAL",
+      acceptedProposalStatuses: ["PENDING_APPROVAL", "EXECUTED"],
     },
     {
       name: "INBOUND records ready A",
@@ -289,7 +339,8 @@ async function run() {
       name: "INBOUND strong denial B",
       body: "This request is denied in full under personal privacy protections. We will not release the requested records.",
       subject: "Denied",
-      expected: "CLOSE_CASE",
+      expectedProposal: "SEND_REBUTTAL",
+      expectedWaitState: true,
     },
     {
       name: "INBOUND acknowledgment",
@@ -303,9 +354,33 @@ async function run() {
       subject: "Estimated fees",
       expected: "ACCEPT_FEE",
     },
+    {
+      name: "INBOUND wrong agency C",
+      body: "These records are not maintained by our office. Please contact the city clerk or the county sheriff records division.",
+      subject: "Referral to proper custodian",
+      expected: "RESEARCH_AGENCY",
+    },
+    {
+      name: "INBOUND acknowledgment B",
+      body: "Your request is under review. We will contact you once processing is complete. No action is required from you right now.",
+      subject: "Request received",
+      expected: "none",
+    },
+    {
+      name: "INBOUND records ready B",
+      body: "Responsive records are available in our portal. This is only an automated availability notice.",
+      subject: "Portal records available",
+      expected: "none",
+    },
+    {
+      name: "INBOUND fee quote C",
+      body: "There will be a $35 charge for duplication and review. Reply if you would like us to continue processing.",
+      subject: "Fee notice",
+      expected: "ACCEPT_FEE",
+    },
   ];
 
-  for (const fixture of inboundFixtures) {
+  await runInBatches(inboundFixtures, async (fixture) => {
     await runCase(fixture.name, async () => {
       const caseRow = await createSyntheticCase(fixture.name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), {
         status: "awaiting_response",
@@ -315,6 +390,30 @@ async function run() {
       await createOutbound(caseRow, thread, "Initial request", "Please provide the requested records.");
       const inbound = await createInbound(caseRow, thread, fixture.subject, fixture.body);
       const agentRun = await db.createAgentRun(caseRow.id, "INBOUND_MESSAGE", { source: "trigger-mixed-matrix", messageId: inbound.id });
+      if (fixture.expectedProposal) {
+        const handle = await tasks.trigger("process-inbound", {
+          runId: agentRun.id,
+          caseId: caseRow.id,
+          messageId: inbound.id,
+          autopilotMode: "AUTO",
+        });
+        const pendingProposal = await pollForProposal(caseRow.id, fixture.expectedProposal);
+        if (pendingProposal) {
+          return `case ${caseRow.id} => WAITING/${pendingProposal.action_type}`;
+        }
+        const latestRun = await runs.retrieve(handle.id);
+        const latestProposal = await getLatestProposal(caseRow.id);
+        const acceptedStatuses = fixture.acceptedProposalStatuses || ["PENDING_APPROVAL"];
+        if (
+          latestProposal?.action_type === fixture.expectedProposal &&
+          acceptedStatuses.includes(String(latestProposal.status || "").toUpperCase())
+        ) {
+          return `case ${caseRow.id} => ${String(latestProposal.status).toUpperCase()}/${latestProposal.action_type}`;
+        }
+        throw new Error(
+          `expected proposal ${fixture.expectedProposal}, runStatus=${latestRun?.status || "unknown"}, proposalStatus=${latestProposal?.status || "none"}`
+        );
+      }
       const result = await triggerTask("process-inbound", {
         runId: agentRun.id,
         caseId: caseRow.id,
@@ -322,20 +421,21 @@ async function run() {
         autopilotMode: "AUTO",
       });
       if (!result.ok) throw new Error(result.error || "run failed");
-      const actual = result.output?.actionType || result.output?.action;
+      const refreshedProposal = await getLatestProposal(caseRow.id);
+      const actual = result.output?.actionType || result.output?.action || refreshedProposal?.action_type || "none";
       if (actual !== fixture.expected) throw new Error(`expected ${fixture.expected}, got ${actual}`);
       return `case ${caseRow.id} => ${actual}`;
     }, results);
-  }
+  });
 
-  for (let i = 0; i < 4; i++) {
-    await runCase(`FOLLOWUP ${i + 1}`, async () => {
-      const caseRow = await createSyntheticCase(`followup-${i + 1}`, {
+  await runInBatches(Array.from({ length: 6 }, (_, i) => i + 1), async (n) => {
+    await runCase(`FOLLOWUP ${n}`, async () => {
+      const caseRow = await createSyntheticCase(`followup-${n}`, {
         status: "awaiting_response",
         send_date: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
         deadline_date: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
       });
-      const thread = await createThread(caseRow, `Follow-up QA ${i + 1}`);
+      const thread = await createThread(caseRow, `Follow-up QA ${n}`);
       await createOutbound(caseRow, thread, "Initial request", "Following up on records request");
       const schedule = await db.upsertFollowUpSchedule(caseRow.id, {
         threadId: thread.id,
@@ -353,14 +453,21 @@ async function run() {
       });
       if (!result.ok) throw new Error(result.error || "run failed");
       if (result.output?.status !== "completed") throw new Error(`status=${result.output?.status}`);
-      const outboundCount = Number((await db.query(
-        "SELECT COUNT(*)::int AS count FROM messages WHERE case_id = $1 AND direction = 'outbound'",
-        [caseRow.id]
-      )).rows[0]?.count || 0);
-      if (outboundCount < 2) throw new Error(`expected followup send, outboundCount=${outboundCount}`);
-      return `case ${caseRow.id} outbound=${outboundCount}`;
+      const latestProposal = await getLatestProposal(caseRow.id);
+      if (!latestProposal) throw new Error("expected followup proposal but none found");
+      if (latestProposal.action_type !== "ESCALATE") {
+        throw new Error(`expected ESCALATE handoff, got ${latestProposal.action_type}`);
+      }
+      if (latestProposal.status !== "PENDING_APPROVAL") {
+        throw new Error(`expected pending handoff, got ${latestProposal.status}`);
+      }
+      const refreshed = await db.getCaseById(caseRow.id);
+      if (refreshed?.pause_reason !== "RESEARCH_HANDOFF") {
+        throw new Error(`expected RESEARCH_HANDOFF, got ${refreshed?.pause_reason}`);
+      }
+      return `case ${caseRow.id} pending=${latestProposal.action_type}`;
     }, results);
-  }
+  });
 
   await runCase("SUBMIT_PORTAL missing url", async () => {
     const caseRow = await createSyntheticCase("portal-missing-url", {

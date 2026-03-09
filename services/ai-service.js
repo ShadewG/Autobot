@@ -143,12 +143,12 @@ class AIService {
         };
     }
 
-    buildCanonicalSignatureLines(userSignature, { includeEmail = false, includeAddress = false } = {}) {
+    buildCanonicalSignatureLines(userSignature, { includeEmail = false, includeAddress = false, includePhone = true } = {}) {
         const lines = [];
         if (userSignature?.name) lines.push(userSignature.name);
         if (userSignature?.title) lines.push(userSignature.title);
         if (userSignature?.organization) lines.push(userSignature.organization);
-        if (userSignature?.phone) lines.push(userSignature.phone);
+        if (includePhone && userSignature?.phone) lines.push(userSignature.phone);
         if (includeEmail && userSignature?.email) lines.push(userSignature.email);
         if (includeAddress && userSignature?.address) lines.push(userSignature.address);
         return lines;
@@ -186,14 +186,14 @@ class AIService {
         return result.trim();
     }
 
-    normalizeGeneratedDraftSignature(text, userSignature, { includeEmail = false, includeAddress = false } = {}) {
+    normalizeGeneratedDraftSignature(text, userSignature, { includeEmail = false, includeAddress = false, includePhone = true } = {}) {
         const cleaned = this.sanitizeLegacyIdentityMentions(
             this.sanitizeSignaturePlaceholders(text, userSignature),
             userSignature
         );
         if (!cleaned) return cleaned;
 
-        const signatureLines = this.buildCanonicalSignatureLines(userSignature, { includeEmail, includeAddress });
+        const signatureLines = this.buildCanonicalSignatureLines(userSignature, { includeEmail, includeAddress, includePhone });
         if (signatureLines.length === 0) return cleaned;
 
         const lines = cleaned.replace(/\r\n/g, '\n').split('\n');
@@ -1420,13 +1420,46 @@ Email requirements:
 Return ONLY the email body, no greetings beyond what belongs in the email.`;
 
         try {
+            if (recommendedAction === 'accept') {
+                const userSignature = await this.getUserSignatureForCase(caseData);
+                const feeLabel = feeAmount
+                    ? `${currency} ${typeof feeAmount === 'number' ? feeAmount.toFixed(2) : feeAmount}`
+                    : 'the quoted fee';
+                const deterministicBody = [
+                    `To ${caseData.agency_name || 'Records Unit'},`,
+                    '',
+                    `Thank you for the fee estimate of ${feeLabel} for ${shortReference}. I authorize you to proceed with processing this request.`,
+                    'Please send any invoice or payment instructions needed to complete payment.',
+                    '',
+                    'Thank you,',
+                    userSignature?.name || 'Requester',
+                ].join('\n');
+                const normalizedBodyText = this.normalizeGeneratedDraftSignature(
+                    deterministicBody,
+                    userSignature,
+                    { includeEmail: false, includeAddress: false, includePhone: false }
+                );
+                return {
+                    subject: `RE: Fee Response - ${shortReference}`,
+                    body_text: normalizedBodyText,
+                    body_html: null,
+                    model: 'deterministic-fee-accept-template',
+                    recommended_action: recommendedAction,
+                    modelMetadata: {
+                        modelId: 'deterministic-fee-accept-template',
+                        promptTokens: 0,
+                        completionTokens: 0,
+                        latencyMs: 0,
+                    },
+                };
+            }
             const feeResult = await this.callAI(
                 `${responseHandlingPrompts.autoReplySystemPrompt}\n\n${prompt}`,
                 { effort: 'medium', includeMetadata: true }
             );
             const bodyText = feeResult.text;
             const userSignature = await this.getUserSignatureForCase(caseData);
-            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false });
+            const normalizedBodyText = this.normalizeGeneratedDraftSignature(bodyText, userSignature, { includeEmail: false, includeAddress: false, includePhone: false });
 
             // Normalize output format: always return { subject, body_text, body_html }
             return {

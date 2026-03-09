@@ -287,11 +287,14 @@ router.post('/cases/:caseId/simulate-outbound', async (req, res) => {
         // Get or create thread
         let thread = await db.getThreadByCaseId(caseId);
         if (!thread) {
+            const threadAgencyEmail =
+                String(to_email || caseData.agency_email || '').trim().toLowerCase()
+                || 'records@agency.gov';
             const threadResult = await db.query(`
-                INSERT INTO email_threads (case_id, subject, created_at, updated_at)
-                VALUES ($1, $2, NOW(), NOW())
+                INSERT INTO email_threads (case_id, subject, agency_email, created_at, updated_at)
+                VALUES ($1, $2, $3, NOW(), NOW())
                 RETURNING *
-            `, [caseId, `Thread for case ${caseId}`]);
+            `, [caseId, `Thread for case ${caseId}`, threadAgencyEmail]);
             thread = threadResult.rows[0];
         }
 
@@ -362,7 +365,6 @@ router.post('/cases/:caseId/setup-for-e2e', async (req, res) => {
             UPDATE cases SET
                 agency_email = $1,
                 status = 'draft',
-                submitted_at = NULL,
                 updated_at = NOW()
             WHERE id = $2
         `, [agency_email, caseId]);

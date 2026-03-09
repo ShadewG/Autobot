@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-03-08T23:25:16.844Z",
-  "api_base_url": "http://127.0.0.1:3020",
+  "timestamp": "2026-03-09T00:48:45.700Z",
+  "api_base_url": "http://127.0.0.1:3035",
   "summary": {
     "total": 24,
-    "passed": 24,
-    "failed": 0
+    "passed": 23,
+    "failed": 1
   },
   "results": [
     {
@@ -13,9 +13,9 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25498,
-      "message_id": 1023,
-      "duration_ms": 21977
+      "case_id": 25554,
+      "message_id": 1092,
+      "duration_ms": 24593
     },
     {
       "fixture_id": "portal_redirect_no_url",
@@ -25,9 +25,9 @@
       "warnings": [
         "Portal URL not saved to case"
       ],
-      "case_id": 25500,
-      "message_id": 1027,
-      "duration_ms": 22219
+      "case_id": 25555,
+      "message_id": 1093,
+      "duration_ms": 22898
     },
     {
       "fixture_id": "acknowledgment",
@@ -35,9 +35,9 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25501,
-      "message_id": 1028,
-      "duration_ms": 21068
+      "case_id": 25556,
+      "message_id": 1094,
+      "duration_ms": 21604
     },
     {
       "fixture_id": "records_ready_link",
@@ -45,19 +45,22 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25503,
-      "message_id": 1031,
-      "duration_ms": 27751
+      "case_id": 25558,
+      "message_id": 1096,
+      "duration_ms": 21578
     },
     {
       "fixture_id": "delivery_attached",
       "category": "no_response",
-      "passed": true,
-      "errors": [],
+      "passed": false,
+      "errors": [
+        "Exception: No completed run for case 25559 within 120000ms"
+      ],
       "warnings": [],
-      "case_id": 25504,
-      "message_id": 1032,
-      "duration_ms": 50417
+      "case_id": 25559,
+      "message_id": 1097,
+      "proposal_id": null,
+      "duration_ms": 123364
     },
     {
       "fixture_id": "partial_delivery_more_coming",
@@ -65,10 +68,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25506,
-      "message_id": 1036,
-      "proposal_id": 1197,
-      "duration_ms": 49665
+      "case_id": 25597,
+      "message_id": 1101,
+      "proposal_id": 1240,
+      "duration_ms": 57520
     },
     {
       "fixture_id": "more_info_needed",
@@ -76,10 +79,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25507,
-      "message_id": 1037,
-      "proposal_id": 1201,
-      "duration_ms": 74484
+      "case_id": 25664,
+      "message_id": 1106,
+      "proposal_id": 1242,
+      "duration_ms": 67147
     },
     {
       "fixture_id": "direct_question",
@@ -87,10 +90,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25512,
-      "message_id": 1044,
-      "proposal_id": 1203,
-      "duration_ms": 61942
+      "case_id": 25681,
+      "message_id": 1108,
+      "proposal_id": 1244,
+      "duration_ms": 71245
     },
     {
       "fixture_id": "fee_request_low",
@@ -98,10 +101,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25514,
-      "message_id": 1046,
-      "proposal_id": 1205,
-      "duration_ms": 38934
+      "case_id": 25711,
+      "message_id": 1122,
+      "proposal_id": 1245,
+      "duration_ms": 38986
     },
     {
       "fixture_id": "fee_request_high",
@@ -109,10 +112,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25516,
-      "message_id": 1048,
-      "proposal_id": 1206,
-      "duration_ms": 53249
+      "case_id": 25739,
+      "message_id": 1178,
+      "proposal_id": 1247,
+      "duration_ms": 51348
     },
     {
       "fixture_id": "denial_weak",
@@ -120,10 +123,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25517,
-      "message_id": 1049,
-      "proposal_id": 1209,
-      "duration_ms": 72366
+      "case_id": 25775,
+      "message_id": 1247,
+      "proposal_id": 1250,
+      "duration_ms": 78610
     },
     {
       "fixture_id": "denial_strong",
@@ -131,10 +134,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25519,
-      "message_id": 1051,
-      "proposal_id": 1211,
-      "duration_ms": 84726
+      "case_id": 25812,
+      "message_id": 1320,
+      "proposal_id": 1253,
+      "duration_ms": 78675
     },
     {
       "fixture_id": "wrong_agency",
@@ -142,10 +145,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25521,
-      "message_id": 1053,
-      "proposal_id": 1214,
-      "duration_ms": 30899
+      "case_id": 25818,
+      "message_id": 1329,
+      "proposal_id": 1256,
+      "duration_ms": 30576
     },
     {
       "fixture_id": "retention_expired",
@@ -153,10 +156,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25523,
-      "message_id": 1055,
-      "proposal_id": 1217,
-      "duration_ms": 94885
+      "case_id": 25826,
+      "message_id": 1343,
+      "proposal_id": 1266,
+      "duration_ms": 94832
     },
     {
       "fixture_id": "hostile",
@@ -164,10 +167,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25527,
-      "message_id": 1059,
-      "proposal_id": 1218,
-      "duration_ms": 34620
+      "case_id": 25843,
+      "message_id": 1373,
+      "proposal_id": 1269,
+      "duration_ms": 32182
     },
     {
       "fixture_id": "sensitive_minors",
@@ -175,10 +178,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25529,
-      "message_id": 1061,
-      "proposal_id": 1220,
-      "duration_ms": 66344
+      "case_id": 25846,
+      "message_id": 1377,
+      "proposal_id": 1278,
+      "duration_ms": 77847
     },
     {
       "fixture_id": "no_response_followup_attempt_1",
@@ -228,9 +231,9 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25531,
-      "message_id": 1063,
-      "duration_ms": 24288
+      "case_id": 25856,
+      "message_id": 1397,
+      "duration_ms": 77869
     },
     {
       "fixture_id": "multi_portal_plus_denial_language",
@@ -238,9 +241,9 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25532,
-      "message_id": 1064,
-      "duration_ms": 22466
+      "case_id": 25864,
+      "message_id": 1416,
+      "duration_ms": 21494
     },
     {
       "fixture_id": "multi_partial_approval_plus_fee",
@@ -248,10 +251,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25534,
-      "message_id": 1066,
-      "proposal_id": 1222,
-      "duration_ms": 57364
+      "case_id": 25873,
+      "message_id": 1432,
+      "proposal_id": 1290,
+      "duration_ms": 67346
     },
     {
       "fixture_id": "multi_ack_plus_fee_estimate",
@@ -259,10 +262,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25535,
-      "message_id": 1067,
-      "proposal_id": 1225,
-      "duration_ms": 43567
+      "case_id": 25880,
+      "message_id": 1449,
+      "proposal_id": 1296,
+      "duration_ms": 90988
     },
     {
       "fixture_id": "multi_denial_plus_partial_release",
@@ -270,10 +273,10 @@
       "passed": true,
       "errors": [],
       "warnings": [],
-      "case_id": 25536,
-      "message_id": 1070,
-      "proposal_id": 1226,
-      "duration_ms": 56093
+      "case_id": 25886,
+      "message_id": 1460,
+      "proposal_id": 1302,
+      "duration_ms": 64154
     }
   ]
 }

@@ -36,10 +36,14 @@ class DatabaseService {
             keepAliveInitialDelayMillis: 10000,
             idleTimeoutMillis: 30000,
             connectionTimeoutMillis: 10000,
-            // Explicit pool size — defaults to 10 (pg default) but can be lowered
-            // for test/CI environments via PG_POOL_MAX to avoid exhausting Railway's
-            // server-side connection limit (typically 100).
-            max: parseInt(process.env.PG_POOL_MAX, 10) || 10,
+            // Explicit pool size — keep local/test usage conservative so many parallel
+            // helper processes don't exhaust the shared Postgres connection budget.
+            max: (() => {
+                const configured = parseInt(process.env.PG_POOL_MAX, 10);
+                if (Number.isFinite(configured) && configured > 0) return configured;
+                return process.env.NODE_ENV === 'production' ? 10 : 3;
+            })(),
+            allowExitOnIdle: process.env.NODE_ENV === 'production' ? false : true,
         };
         this.pool = this._createPool();
     }

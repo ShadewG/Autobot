@@ -47,7 +47,7 @@ const ALL_ACTION_TYPES: ActionType[] = [
 ];
 
 const ALWAYS_GATE_ACTIONS: ActionType[] = [
-  "CLOSE_CASE", "ESCALATE", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW",
+  "CLOSE_CASE", "ESCALATE", "SEND_REBUTTAL", "SEND_APPEAL", "SEND_FEE_WAIVER_REQUEST", "WITHDRAW",
 ];
 
 // Valid action chain pairs: primary → allowed follow-ups
@@ -1059,12 +1059,31 @@ async function makeAIDecisionV2(params: {
     }
   }
 
-  // All 3 attempts failed — escalate
-  logger.error("AI Router v2 exhausted all attempts", { caseId, classification, lastError });
-  return decision("ESCALATE", {
-    pauseReason: "SENSITIVE",
-    reasoning: [`AI Router v2 failed after 3 attempts: ${lastError}`, "Escalating to human review"],
+  // All 3 attempts failed — fall back to deterministic routing before escalating.
+  logger.error("AI Router v2 exhausted all attempts; using deterministic fallback", {
+    caseId,
+    classification,
+    lastError,
   });
+  const deterministicFallback = await deterministicRouting(
+    caseId,
+    classification,
+    extractedFeeAmount,
+    sentiment,
+    autopilotMode,
+    "INBOUND_MESSAGE",
+    true,
+    preComputed.caseData?.portal_url || null,
+    params.denialSubtype || null,
+    params.inlineKeyPoints
+  );
+  return {
+    ...deterministicFallback,
+    reasoning: [
+      `AI Router v2 failed after 3 attempts: ${lastError}`,
+      ...(deterministicFallback.reasoning || []),
+    ],
+  };
 }
 
 function validateStructureV2(
@@ -1090,8 +1109,34 @@ function validateStructureV2(
 
   // 4. Fee threshold check
   const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
+  if (
+    fee != null &&
+    isFinite(fee) &&
+    fee >= 0 &&
+    autopilotMode === "AUTO" &&
+    fee <= FEE_AUTO_APPROVE_MAX &&
+    (aiResult.action !== "ACCEPT_FEE" || aiResult.requiresHuman)
+  ) {
+    return {
+      valid: false,
+      reason: `Fee $${fee} is within auto-approve max $${FEE_AUTO_APPROVE_MAX}; must auto-accept without human gating`,
+    };
+  }
   if (fee != null && isFinite(fee) && fee > FEE_NEGOTIATE_THRESHOLD && aiResult.action !== "NEGOTIATE_FEE" && aiResult.action !== "SEND_FEE_WAIVER_REQUEST" && aiResult.action !== "ESCALATE") {
     return { valid: false, reason: `Fee $${fee} exceeds negotiate threshold $${FEE_NEGOTIATE_THRESHOLD}; must use NEGOTIATE_FEE or SEND_FEE_WAIVER_REQUEST` };
+  }
+  if (
+    fee != null &&
+    isFinite(fee) &&
+    fee > FEE_AUTO_APPROVE_MAX &&
+    aiResult.action === "ACCEPT_FEE" &&
+    autopilotMode === "AUTO" &&
+    !aiResult.requiresHuman
+  ) {
+    return {
+      valid: false,
+      reason: `Fee $${fee} exceeds auto-approve max $${FEE_AUTO_APPROVE_MAX}; cannot auto-accept`,
+    };
   }
 
   // 5. Reasoning must be non-empty
@@ -1545,7 +1590,7 @@ When the agency mentions fees but has NOT provided a specific dollar amount or w
 Choose exactly one action. Provide concise reasoning. Set researchLevel appropriately.`;
 }
 
-async function validateDecision(
+export async function validateDecision(
   aiDecisionResult: DecisionOutput,
   context: {
     caseId: number;
@@ -1653,8 +1698,8 @@ async function validateDecision(
     return { valid: false, reason: "DENIAL without a specific subtype should use SEND_REBUTTAL or CLOSE_CASE, not SEND_CLARIFICATION" };
   }
 
-  if (aiDecisionResult.action === "CLOSE_CASE" && !aiDecisionResult.requiresHuman) {
-    return { valid: false, reason: "CLOSE_CASE must require human review" };
+  if (ALWAYS_GATE_ACTIONS.includes(aiDecisionResult.action as ActionType) && !aiDecisionResult.requiresHuman) {
+    return { valid: false, reason: `${aiDecisionResult.action} must require human review` };
   }
 
   // Strong ongoing_investigation, sealed_court_order, or privacy_exemption denials should close, not rebuttal
@@ -1682,6 +1727,16 @@ async function validateDecision(
 
   const fee = extractedFeeAmount != null ? Number(extractedFeeAmount) : null;
   if (classification === "FEE_QUOTE" && fee != null && isFinite(fee) && fee >= 0) {
+    if (
+      autopilotMode === "AUTO" &&
+      fee <= FEE_AUTO_APPROVE_MAX &&
+      (aiDecisionResult.action !== "ACCEPT_FEE" || aiDecisionResult.requiresHuman)
+    ) {
+      return {
+        valid: false,
+        reason: `Fee $${fee} is within auto-approve max $${FEE_AUTO_APPROVE_MAX}; must auto-accept without human gating`,
+      };
+    }
     if (fee > FEE_NEGOTIATE_THRESHOLD && aiDecisionResult.action !== "NEGOTIATE_FEE") {
       return {
         valid: false,
@@ -2060,13 +2115,12 @@ async function deterministicRouting(
             reasoning: [...reasoning, `Strong ${resolvedSubtype} denial - recommending closure`],
           });
         }
-        const canAuto = autopilotMode === "AUTO" && strength === "weak";
         return decision("SEND_REBUTTAL", {
-          canAutoExecute: canAuto,
-          requiresHuman: !canAuto,
-          pauseReason: canAuto ? null : "DENIAL",
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: "DENIAL",
           researchLevel: "medium",
-          reasoning: [...reasoning, `${resolvedSubtype} denial (${strength}) - drafting rebuttal`],
+          reasoning: [...reasoning, `${resolvedSubtype} denial (${strength}) - drafting rebuttal for review`],
         });
       }
       case "excessive_fees":
@@ -2105,13 +2159,12 @@ async function deterministicRouting(
             reasoning: [...reasoning, "Contractor-custody denial indicates the current agency may not be the actual custodian - researching the correct holder before rebutting"],
           });
         }
-        const canAuto3p = autopilotMode === "AUTO";
         return decision("SEND_REBUTTAL", {
-          canAutoExecute: canAuto3p,
-          requiresHuman: !canAuto3p,
-          pauseReason: canAuto3p ? null : "DENIAL",
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: "DENIAL",
           researchLevel: "medium",
-          reasoning: [...reasoning, "Third-party confidential - rebutting with redaction offer"],
+          reasoning: [...reasoning, "Third-party confidential - drafting rebuttal with redaction offer for review"],
         });
       }
       case "records_not_yet_created": {
@@ -2132,13 +2185,12 @@ async function deterministicRouting(
             reasoning: [...reasoning, "Strong denial - recommending closure"],
           });
         }
-        const canAuto = autopilotMode === "AUTO" && strength === "weak";
         return decision("SEND_REBUTTAL", {
-          canAutoExecute: canAuto,
-          requiresHuman: !canAuto,
-          pauseReason: canAuto ? null : "DENIAL",
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: "DENIAL",
           researchLevel: "medium",
-          reasoning: [...reasoning, `Denial (${strength}) - ${canAuto ? "auto-" : ""}drafting rebuttal`],
+          reasoning: [...reasoning, `Denial (${strength}) - drafting rebuttal for review`],
         });
       }
     }
