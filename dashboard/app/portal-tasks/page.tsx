@@ -65,6 +65,9 @@ const STATUS_CONFIG: Record<PortalTask['status'], { icon: React.ReactNode; label
   cancelled: { icon: <XCircle className="h-4 w-4" />, label: "Cancelled", color: "text-muted-foreground bg-muted" },
 };
 
+const FALLBACK_TASK_TYPE = { icon: <FileText className="h-4 w-4" />, label: "Unknown", color: "text-muted-foreground bg-muted" };
+const FALLBACK_STATUS = { icon: <Clock className="h-4 w-4" />, label: "Unknown", color: "text-muted-foreground bg-muted" };
+
 export default function PortalTasksPage() {
   const [selectedTask, setSelectedTask] = useState<PortalTask | null>(null);
   const [showCompleteModal, setShowCompleteModal] = useState(false);
@@ -216,8 +219,8 @@ export default function PortalTasksPage() {
               <ScrollArea className="h-[500px]">
                 <div className="divide-y">
                   {pendingTasks.map((task) => {
-                    const typeConfig = TASK_TYPE_CONFIG[task.task_type];
-                    const statusConfig = STATUS_CONFIG[task.status];
+                    const typeConfig = TASK_TYPE_CONFIG[task.task_type] || FALLBACK_TASK_TYPE;
+                    const statusConfig = STATUS_CONFIG[task.status] || FALLBACK_STATUS;
 
                     return (
                       <div
