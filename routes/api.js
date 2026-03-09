@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const db = require('../services/database');
 const notionService = require('../services/notion-service');
-const portalService = require('../services/portal-service-test-only');
 const dashboardService = require('../services/dashboard-service');
 const { generateQueue, emailQueue } = require('../queues/email-queue');
 const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
@@ -10,6 +9,10 @@ const { buildRealCaseWhereClause } = require('../utils/analytics-test-filter');
 const RETIRED_ADAPTIVE_LEARNING_MESSAGE =
     'AdaptiveLearningService has been retired. Use decision memory and successful examples instead.';
 const REAL_CASES_WHERE = buildRealCaseWhereClause('c');
+
+function getPortalTestService() {
+    return require('../services/portal-service-test-only');
+}
 
 function formatSyncedCasesResponse(cases) {
     return {
@@ -524,7 +527,7 @@ router.post('/test-portal', async (req, res) => {
         };
 
         console.log(`Testing portal: ${portalUrl}`);
-        const result = await portalService.testPortal(portalUrl, testCaseData, { dryRun: true });
+        const result = await getPortalTestService().testPortal(portalUrl, testCaseData, { dryRun: true });
 
         // Save screenshots to public folder and return URLs
         const fs = require('fs');
@@ -597,7 +600,7 @@ router.post('/test-portal/:caseId', async (req, res) => {
             });
         }
 
-        const result = await portalService.submitToPortal(caseId, portalUrl, true);
+        const result = await getPortalTestService().submitToPortal(caseId, portalUrl, true);
 
         const responseResult = {
             ...result,
