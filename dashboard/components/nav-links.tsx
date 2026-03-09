@@ -24,8 +24,6 @@ export function NavLinks() {
     (liveData?.summary?.pending_approvals_total || 0) +
     (liveData?.summary?.human_review_total || 0);
 
-  const inboxCount = liveData?.summary?.pending_approvals_total || 0;
-
   const { data: portalData } = useSWR<{
     success: boolean;
     count: number;
@@ -34,7 +32,6 @@ export function NavLinks() {
 
   const links = [
     { href: "/gated", label: "QUEUE", count: queueCount },
-    { href: "/inbox", label: "INBOX", count: inboxCount },
     { href: "/requests", label: "CASES" },
     { href: "/portal-tasks", label: "PORTALS", count: portalCount },
     { href: "/agencies", label: "AGENCIES" },
