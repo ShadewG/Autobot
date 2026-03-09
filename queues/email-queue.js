@@ -244,7 +244,14 @@ const emailWorker = connection ? new Worker('email-queue', async (job) => {
             case 'rebuttal':
             case 'clarification':
             case 'fee':
-            case 'reply': {
+            case 'reply':
+            case 'appeal':
+            case 'fee_waiver_request':
+            case 'status_update':
+            case 'respond_partial_approval':
+            case 'accept_fee':
+            case 'decline_fee':
+            case 'reformulate_request': {
                 // Handle emails from executor adapter
                 const {
                     executionKey: execKey, executionId, proposalId,
