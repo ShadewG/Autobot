@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { AdminGuard } from "@/components/admin-guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -99,6 +100,12 @@ const STATUS_CONFIG: Record<AgentRun['status'], {
   },
 };
 
+const FALLBACK_STATUS_CONFIG = {
+  icon: Clock,
+  color: "text-muted-foreground bg-muted",
+  label: "Unknown",
+};
+
 interface RunsResponse {
   runs: Array<AgentRun & { case_name?: string }>;
 }
@@ -188,14 +195,17 @@ export default function RunsPage() {
 
   if (error) {
     return (
+      <AdminGuard>
       <div className="text-center py-8">
         <p className="text-destructive">Failed to load runs</p>
         <p className="text-sm text-muted-foreground">{error.message}</p>
       </div>
+      </AdminGuard>
     );
   }
 
   return (
+    <AdminGuard>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -292,7 +302,7 @@ export default function RunsPage() {
               </TableHeader>
               <TableBody>
                 {sortedRuns.map((run) => {
-                  const config = STATUS_CONFIG[run.status];
+                  const config = STATUS_CONFIG[run.status] || FALLBACK_STATUS_CONFIG;
                   const Icon = config.icon;
                   const duration = run.completed_at
                     ? Math.round(
@@ -452,9 +462,9 @@ export default function RunsPage() {
               {selectedRun && (
                 <Badge
                   variant="outline"
-                  className={cn("ml-2", STATUS_CONFIG[selectedRun.status].color)}
+                  className={cn("ml-2", (STATUS_CONFIG[selectedRun.status] || FALLBACK_STATUS_CONFIG).color)}
                 >
-                  {STATUS_CONFIG[selectedRun.status].label}
+                  {(STATUS_CONFIG[selectedRun.status] || FALLBACK_STATUS_CONFIG).label}
                 </Badge>
               )}
             </DialogTitle>
@@ -717,5 +727,6 @@ export default function RunsPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </AdminGuard>
   );
 }

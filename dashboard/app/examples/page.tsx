@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { AdminGuard } from "@/components/admin-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -230,6 +231,7 @@ export default function ExamplesPage() {
   };
 
   return (
+    <AdminGuard>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -390,5 +392,6 @@ export default function ExamplesPage() {
         </CardContent>
       </Card>
     </div>
+    </AdminGuard>
   );
 }

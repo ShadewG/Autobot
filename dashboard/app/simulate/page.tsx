@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { AdminGuard } from "@/components/admin-guard";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchAPI } from "@/lib/api";
@@ -338,6 +339,7 @@ export default function SimulatePage() {
   };
 
   return (
+    <AdminGuard>
     <div className="flex gap-4 h-[calc(100vh-9rem)] min-h-0">
       {/* ── Left Panel: Input ─────────────────────────────────────────────── */}
       <div className="w-[420px] shrink-0 flex flex-col gap-3">
@@ -785,5 +787,6 @@ export default function SimulatePage() {
         </ScrollArea>
       </div>
     </div>
+    </AdminGuard>
   );
 }

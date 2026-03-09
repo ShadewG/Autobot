@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { AdminGuard } from "@/components/admin-guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -172,6 +173,7 @@ export default function ErrorsPage() {
   };
 
   return (
+    <AdminGuard>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -430,6 +432,7 @@ export default function ErrorsPage() {
         </CardContent>
       </Card>
     </div>
+    </AdminGuard>
   );
 }
 

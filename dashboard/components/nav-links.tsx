@@ -36,19 +36,24 @@ export function NavLinks() {
     { href: "/gated", label: "QUEUE", count: queueCount },
     { href: "/inbox", label: "INBOX", count: inboxCount },
     { href: "/requests", label: "CASES" },
-    { href: "/runs", label: "RUNS" },
     { href: "/portal-tasks", label: "PORTALS", count: portalCount },
     { href: "/agencies", label: "AGENCIES" },
-    { href: "/eval", label: "EVALS" },
-    { href: "/examples", label: "EXAMPLES" },
-    { href: "/reconciliation", label: "RECON" },
     { href: "/lessons", label: "LESSONS" },
-    { href: "/errors", label: "ERRORS" },
     { href: "/analytics", label: "ANALYTICS" },
-    { href: "/simulate", label: "SIM" },
     { href: "/settings", label: "SETTINGS" },
     { href: "/feedback", label: "FEEDBACK" },
-    ...(isAdmin ? [{ href: "/admin", label: "ADMIN" }] : []),
+    // Admin-only tabs: internal tooling and diagnostics
+    ...(isAdmin
+      ? [
+          { href: "/runs", label: "RUNS" },
+          { href: "/eval", label: "EVALS" },
+          { href: "/examples", label: "EXAMPLES" },
+          { href: "/reconciliation", label: "RECON" },
+          { href: "/errors", label: "ERRORS" },
+          { href: "/simulate", label: "SIM" },
+          { href: "/admin", label: "ADMIN" },
+        ]
+      : []),
   ];
 
   return (

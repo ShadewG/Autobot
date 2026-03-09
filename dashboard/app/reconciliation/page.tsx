@@ -3,6 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import { AdminGuard } from "@/components/admin-guard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -652,6 +653,7 @@ export default function ReconciliationPage() {
     : 0;
 
   return (
+    <AdminGuard>
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -771,5 +773,6 @@ export default function ReconciliationPage() {
         </>
       )}
     </div>
+    </AdminGuard>
   );
 }
