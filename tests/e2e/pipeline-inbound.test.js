@@ -198,6 +198,83 @@ describe("Pipeline E2E: Classification Step", function () {
       mocks.restore();
     }
   });
+
+  it("overrides portal acknowledgment drift when the body explicitly says there are no responsive records", async function () {
+    const mocks = installMocks("acknowledgment");
+    try {
+      const { classifyInbound } = require("../../trigger/steps/classify-inbound.ts");
+
+      mocks.message.from_email = "lubbock@govqa.us";
+      mocks.message.subject = "[Records Center] Police Records Request :: P002732-030626";
+      mocks.message.body_text = [
+        "The City of Lubbock received a public information request from you on March 06, 2026.",
+        "The City of Lubbock has reviewed its files and has determined there are no responsive documents to your request.",
+        "To monitor the progress or update this request please log into the Open Records Center.",
+      ].join("\n");
+
+      const context = {
+        caseId: 1003,
+        caseData: mocks.caseData,
+        messages: [mocks.message],
+        attachments: [],
+        analysis: null,
+        followups: null,
+        existingProposal: null,
+        autopilotMode: "SUPERVISED",
+        constraints: [],
+        scopeItems: [],
+      };
+
+      const result = await classifyInbound(context, mocks.message.id, "INBOUND_MESSAGE");
+
+      expect(result.classification).to.equal("DENIAL");
+      expect(result.denialSubtype).to.equal("no_records");
+      expect(result.requiresResponse).to.equal(true);
+      expect(result.suggestedAction).to.equal("respond");
+      expect(mocks.generateObjectStub.called).to.equal(true);
+    } finally {
+      mocks.restore();
+    }
+  });
+
+  it("overrides fee-schedule drift when the response also asserts statutory confidentiality", async function () {
+    const mocks = installMocks("acknowledgment");
+    try {
+      const { classifyInbound } = require("../../trigger/steps/classify-inbound.ts");
+
+      mocks.message.from_email = "kristy.winslow@maine.gov";
+      mocks.message.subject = "FW: Public Records Request - Marcel A. Lagrange Jr";
+      mocks.message.body_text = [
+        "Please consider this letter an acknowledgment of receipt of your Freedom of Access Act request.",
+        "We will remove records that are clearly confidential by statute, including criminal history record information.",
+        "911 calls are confidential pursuant to 25 M.R.S. § 2929 and cannot be disseminated.",
+        "The fees for production of records are as follows: $25 per hour for staff time after the first two hours; $0.10 per page.",
+      ].join("\n");
+
+      const context = {
+        caseId: 1004,
+        caseData: mocks.caseData,
+        messages: [mocks.message],
+        attachments: [],
+        analysis: null,
+        followups: null,
+        existingProposal: null,
+        autopilotMode: "SUPERVISED",
+        constraints: [],
+        scopeItems: [],
+      };
+
+      const result = await classifyInbound(context, mocks.message.id, "INBOUND_MESSAGE");
+
+      expect(result.classification).to.equal("DENIAL");
+      expect(result.denialSubtype).to.equal("privacy_exemption");
+      expect(result.requiresResponse).to.equal(true);
+      expect(result.suggestedAction).to.equal("respond");
+      expect(mocks.generateObjectStub.called).to.equal(true);
+    } finally {
+      mocks.restore();
+    }
+  });
 });
 
 // ============================================================

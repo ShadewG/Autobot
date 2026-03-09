@@ -13,6 +13,15 @@ const {
     isPlaceholderAgencyEmail,
 } = require('../../utils/request-normalization');
 
+function normalizeImportWarnings(importWarnings) {
+    if (!Array.isArray(importWarnings)) return importWarnings || null;
+    const filtered = importWarnings.filter((warning) => {
+        const message = String(warning?.message || '');
+        return !/placeholder\.invalid/i.test(message);
+    });
+    return filtered.length > 0 ? filtered : null;
+}
+
 /**
  * Status mapping from database to API format (UPPER_SNAKE_CASE)
  */
@@ -971,7 +980,7 @@ function toRequestDetail(caseData) {
             ? detectReviewReason(caseData)
             : undefined,
         phone_call_plan: extractPhoneCallPlan(caseData.contact_research_notes, caseData),
-        import_warnings: caseData.import_warnings || null,
+        import_warnings: normalizeImportWarnings(caseData.import_warnings),
         last_notion_synced_at: caseData.last_notion_synced_at || null,
         tags: Array.isArray(caseData.tags) ? caseData.tags : [],
         priority: caseData.priority ?? 0,

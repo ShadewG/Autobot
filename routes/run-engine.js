@@ -485,6 +485,98 @@ function extractFeeAmountForLocalMaterialization(message, llmStubs) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function shouldUseCurrentCheckoutInboundReplay(llmStubs) {
+  return llmStubs?.current_checkout_replay === true;
+}
+
+async function inferInboundCurrentCheckoutDecision({ caseData, message, analysis, autopilotMode, llmStubs }) {
+  require('tsx/cjs');
+  const { decideNextAction } = require('../trigger/steps/decide-next-action.ts');
+
+  const classifyStub = llmStubs?.classify || {};
+  const classification = String(
+    classifyStub.classification || analysis?.intent || analysis?.classification || ''
+  ).trim().toUpperCase();
+  if (!classification) {
+    return null;
+  }
+
+  const constraints = Array.isArray(caseData?.constraints_jsonb)
+    ? caseData.constraints_jsonb
+    : Array.isArray(caseData?.constraints)
+      ? caseData.constraints
+      : [];
+  const extractedFeeAmount =
+    Number.isFinite(Number(classifyStub.fee_amount))
+      ? Number(classifyStub.fee_amount)
+      : (analysis?.extracted_fee_amount ?? extractFeeAmountForLocalMaterialization(message, llmStubs) ?? null);
+  const sentiment = String(classifyStub.sentiment || analysis?.sentiment || 'neutral').trim().toLowerCase() || 'neutral';
+  const requiresResponse = typeof classifyStub.requires_response === 'boolean'
+    ? classifyStub.requires_response
+    : typeof classifyStub.requires_action === 'boolean'
+      ? classifyStub.requires_action
+      : typeof analysis?.requires_response === 'boolean'
+        ? analysis.requires_response
+        : typeof analysis?.requires_action === 'boolean'
+          ? analysis.requires_action
+          : true;
+  const portalUrl = classifyStub.portal_url || analysis?.full_analysis_json?.portal_url || caseData?.portal_url || null;
+  const suggestedAction =
+    classifyStub.suggested_action ||
+    analysis?.suggested_action ||
+    analysis?.full_analysis_json?.suggested_action ||
+    null;
+  const reasonNoResponse =
+    classifyStub.reason_no_response ||
+    analysis?.full_analysis_json?.reason_no_response ||
+    null;
+  const denialSubtype =
+    classifyStub.denial_subtype ||
+    analysis?.full_analysis_json?.denial_subtype ||
+    null;
+  const jurisdictionLevel =
+    classifyStub.jurisdiction_level ||
+    analysis?.full_analysis_json?.jurisdiction_level ||
+    null;
+  const keyPointsSource =
+    classifyStub.key_points ||
+    analysis?.key_points ||
+    analysis?.full_analysis_json?.key_points ||
+    [message?.body_text || ''];
+  const inlineKeyPoints = Array.isArray(keyPointsSource)
+    ? keyPointsSource.map((point) => String(point || '').trim()).filter(Boolean)
+    : [String(keyPointsSource || '').trim()].filter(Boolean);
+
+  const result = await decideNextAction(
+    caseData.id,
+    classification,
+    constraints,
+    extractedFeeAmount,
+    sentiment,
+    autopilotMode,
+    'INBOUND_MESSAGE',
+    requiresResponse,
+    portalUrl,
+    suggestedAction,
+    reasonNoResponse,
+    denialSubtype,
+    null,
+    null,
+    null,
+    jurisdictionLevel,
+    inlineKeyPoints
+  );
+
+  return {
+    actionType: result.actionType,
+    requiresHuman: result.requiresHuman,
+    pauseReason: result.pauseReason,
+    gateOptions: result.gateOptions || [],
+    canAutoExecute: result.canAutoExecute,
+    reasoning: Array.isArray(result.reasoning) ? result.reasoning : [],
+  };
+}
+
 function inferInboundLocalDecision({ classification, message, llmStubs, autopilotMode }) {
   const normalizedClassification = String(classification || '').trim().toUpperCase();
   const mode = String(autopilotMode || 'SUPERVISED').trim().toUpperCase();
@@ -663,12 +755,20 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
 
   const analysis = await db.getResponseAnalysisByMessageId(message.id);
   const intent = String(llmStubs?.classify?.classification || analysis?.intent || '').trim().toUpperCase();
-  const localDecision = inferInboundLocalDecision({
-    classification: intent,
-    message,
-    llmStubs,
-    autopilotMode,
-  });
+  const localDecision = shouldUseCurrentCheckoutInboundReplay(llmStubs)
+    ? await inferInboundCurrentCheckoutDecision({
+        caseData,
+        message,
+        analysis,
+        autopilotMode,
+        llmStubs,
+      })
+    : inferInboundLocalDecision({
+        classification: intent,
+        message,
+        llmStubs,
+        autopilotMode,
+      });
   if (!localDecision) {
     return null;
   }
@@ -691,6 +791,8 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
       ? 'Agency response requires manual review before any reply is sent.'
       : caseData?.portal_url && ['ACCEPT_FEE', 'NEGOTIATE_FEE'].includes(localDecision.actionType)
         ? `Portal fee workflow requires manual portal handling for ${caseData.agency_name || 'this agency'}.`
+        : shouldUseCurrentCheckoutInboundReplay(llmStubs)
+          ? `Synthetic current-checkout replay placeholder for ${localDecision.actionType}.`
         : null;
   const draftSubject = draft?.subject || fallbackSubject;
   const draftBodyText = draft?.bodyText || fallbackBody;
@@ -709,9 +811,13 @@ async function materializeInboundProposalLocally({ caseData, message, run, autop
     draftBodyText,
     draftBodyHtml: draft?.bodyHtml || null,
     reasoning: [
-      `Locally materialized ${localDecision.actionType} response for ${resolvedAgencyName}`,
-      `Inbound message ${message.id} classified as ${intent}`,
-      `Autopilot: ${autopilotMode || 'SUPERVISED'}`,
+      ...(Array.isArray(localDecision.reasoning) && localDecision.reasoning.length > 0
+        ? localDecision.reasoning
+        : [
+            `Locally materialized ${localDecision.actionType} response for ${resolvedAgencyName}`,
+            `Inbound message ${message.id} classified as ${intent || 'UNKNOWN'}`,
+            `Autopilot: ${autopilotMode || 'SUPERVISED'}`,
+          ]),
     ],
     canAutoExecute: !localDecision.requiresHuman,
     requiresHuman: localDecision.requiresHuman,

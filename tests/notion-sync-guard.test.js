@@ -71,6 +71,36 @@ describe('Notion sync guards', function () {
     assert.strictEqual(activityStub.firstCall.args[0], 'notion_sync_error');
   });
 
+  it('quarantines missing notion pages during status sync', async function () {
+    sinon.stub(db, 'getCaseById').resolves({
+      id: 70,
+      notion_page_id: '12345678123412341234123456789012',
+      case_name: 'Missing Page Case',
+      status: 'responded',
+      updated_at: new Date().toISOString(),
+      import_warnings: [],
+    });
+    sinon.stub(db, 'getFollowUpScheduleByCaseId').resolves(null);
+    sinon.stub(notionService, 'updatePage').rejects(Object.assign(new Error('Could not find page with ID: 123'), {
+      status: 404,
+      code: 'object_not_found',
+    }));
+    const queryStub = sinon.stub(db, 'query').resolves({ rows: [] });
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+    const activityStub = sinon.stub(db, 'logActivity').resolves({ id: 9 });
+
+    await notionService._syncStatusToNotion(70);
+
+    assert.strictEqual(queryStub.calledOnce, true);
+    assert.match(queryStub.firstCall.args[0], /SET notion_page_id = \$3/i);
+    assert.match(queryStub.firstCall.args[1][2], /^missing:70:12345678123412341234123456789012$/);
+    assert.strictEqual(captureStub.calledOnce, true);
+    assert.strictEqual(captureStub.firstCall.args[1].retryable, false);
+    assert.strictEqual(captureStub.firstCall.args[1].metadata.quarantinedMissingPage, true);
+    assert.strictEqual(activityStub.firstCall.args[0], 'notion_page_missing');
+    assert.strictEqual(activityStub.secondCall.args[0], 'notion_sync_error');
+  });
+
   it('skips invalid agency notion ids when reading submission memory', async function () {
     const commentStub = sinon.stub(notionService.notion.comments, 'list').resolves({ results: [], has_more: false, next_cursor: null });
 
@@ -106,6 +136,21 @@ describe('Notion sync guards', function () {
     assert.strictEqual(captureStub.calledOnce, true);
     assert.strictEqual(captureStub.firstCall.args[1].operation, 'get_page_property_names');
     assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678-1234-1234-1234-123456789012');
+  });
+
+  it('does not double-track object_not_found during page-property lookup', async function () {
+    sinon.stub(notionService.notion.pages, 'retrieve').rejects(Object.assign(new Error('Could not find page with ID: 123'), {
+      status: 404,
+      code: 'object_not_found',
+    }));
+    const captureStub = sinon.stub(errorTrackingService, 'captureException').resolves(null);
+
+    await assert.rejects(
+      () => notionService.getPagePropertyNames('12345678-1234-1234-1234-123456789012'),
+      /Could not find page/
+    );
+
+    assert.strictEqual(captureStub.called, false);
   });
 
   it('tracks database schema lookup failures with database context', async function () {

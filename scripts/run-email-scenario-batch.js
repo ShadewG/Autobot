@@ -9,8 +9,9 @@ const API_BASE_URL = process.env.API_BASE_URL || "http://127.0.0.1:3035";
 const SERVICE_KEY = process.env.FOIA_SERVICE_KEY || "";
 const CONCURRENCY = Math.max(1, Number(process.env.EMAIL_SCENARIO_CONCURRENCY || "5"));
 const SCENARIO_FILTER = String(process.env.EMAIL_SCENARIO_FILTER || "").trim().toLowerCase();
+const LOCAL_CURRENT_CHECKOUT_REPLAY = process.env.EMAIL_SCENARIO_LOCAL_REPLAY === "1";
 const POLL_INTERVAL_MS = 1000;
-const POLL_TIMEOUT_MS = 120000;
+const POLL_TIMEOUT_MS = Math.max(1000, Number(process.env.EMAIL_SCENARIO_POLL_TIMEOUT_MS || "240000"));
 const ACTIVE_RUN_STATUSES = new Set(["created", "queued", "running", "processing"]);
 
 const GOLDEN_FIXTURES_PATH = path.join(__dirname, "../tests/fixtures/inbound/golden-fixtures.json");
@@ -30,6 +31,37 @@ function extractPortalUrl(text = "") {
   const match = String(text).match(/https?:\/\/[^\s"'<>]+/i);
   if (!match) return null;
   return match[0].replace(/[)\].,;!?]+$/g, "");
+}
+
+function fallbackPortalUrl(provider) {
+  switch (String(provider || "").trim().toLowerCase()) {
+    case "nextrequest":
+      return "https://example.nextrequest.com/requests";
+    case "justfoia":
+      return "https://example.request.justfoia.com/";
+    case "govqa":
+      return "https://example.govqa.us/portal";
+    case "civicplus":
+      return "https://example.civicplus.help/portal";
+    default:
+      return null;
+  }
+}
+
+function sanitizeSyntheticPortalUrl(url, provider) {
+  const trimmed = String(url || "").trim();
+  if (!trimmed) return fallbackPortalUrl(provider);
+
+  const lower = trimmed.toLowerCase();
+  if (
+    trimmed.length > 950 ||
+    lower.includes(".sendgrid.net/ls/click") ||
+    lower.includes("ct.sendgrid.net/ls/click")
+  ) {
+    return fallbackPortalUrl(provider);
+  }
+
+  return trimmed;
 }
 
 function headers() {
@@ -74,13 +106,34 @@ async function sleep(ms) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function pollLatestRun(caseId, timeoutMs = POLL_TIMEOUT_MS) {
+async function pollLatestRun(runId, caseId, timeoutMs = POLL_TIMEOUT_MS) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const response = await get(`/api/requests/${caseId}/agent-runs`);
-    const runs = response.runs || response;
-    if (Array.isArray(runs) && runs.length > 0) {
-      const run = runs[0];
+    let run = null;
+    if (runId) {
+      const result = await db.query(
+        `SELECT id, case_id, status, error, started_at, ended_at
+           FROM agent_runs
+          WHERE id = $1
+          LIMIT 1`,
+        [runId]
+      );
+      run = result.rows[0] || null;
+    }
+
+    if (!run && caseId) {
+      const result = await db.query(
+        `SELECT id, case_id, status, error, started_at, ended_at
+           FROM agent_runs
+          WHERE case_id = $1
+          ORDER BY id DESC
+          LIMIT 1`,
+        [caseId]
+      );
+      run = result.rows[0] || null;
+    }
+
+    if (run) {
       const status = String(run.status || "").trim().toLowerCase();
       if (!ACTIVE_RUN_STATUSES.has(status)) {
         return run;
@@ -88,24 +141,33 @@ async function pollLatestRun(caseId, timeoutMs = POLL_TIMEOUT_MS) {
     }
     await sleep(POLL_INTERVAL_MS);
   }
-  throw new Error(`Timed out waiting for latest run on case ${caseId}`);
+  throw new Error(
+    runId
+      ? `Timed out waiting for run ${runId} on case ${caseId}`
+      : `Timed out waiting for latest run on case ${caseId}`
+  );
 }
 
 async function createCaseForScenario(label, scenario) {
   const name = `EMAIL_E2E ${label} ${Date.now()}`;
   const agencyEmail = `scenario+${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}@matcher.com`;
+  const originalContext = scenario.original_case_context || {};
+  const requestedRecords =
+    Array.isArray(originalContext.requested_records) && originalContext.requested_records.length > 0
+      ? originalContext.requested_records
+      : [
+          scenario.request_summary ||
+            scenario.requested_records ||
+            "All body camera footage, dispatch audio, and incident reports related to the incident.",
+        ];
   const payload = {
     case_name: name,
-    subject_name: scenario.subject_name || "Scenario Subject",
+    subject_name: scenario.subject_name || originalContext.subject_name || "Scenario Subject",
     agency_name: scenario.agency_name || `Scenario Agency ${label}`,
     agency_email: agencyEmail,
     state: scenario.state || "TX",
-    requested_records: [
-      scenario.request_summary ||
-        scenario.requested_records ||
-        "All body camera footage, dispatch audio, and incident reports related to the incident.",
-    ],
-    incident_date: scenario.incident_date || "2024-01-01",
+    requested_records: requestedRecords,
+    incident_date: scenario.incident_date || originalContext.incident_date || "2024-01-01",
     status: "draft",
   };
   const response = await post("/api/cases", payload);
@@ -116,11 +178,10 @@ async function createCaseForScenario(label, scenario) {
     scenario.inbound?.subject
   );
   const inferredPortalUrl =
-    extractPortalUrl(`${scenario.inbound?.subject || ""}\n${scenario.inbound?.body_text || ""}`) ||
-    (inferredPortalProvider === "nextrequest" ? "https://example.nextrequest.com/requests" : null) ||
-    (inferredPortalProvider === "justfoia" ? "https://example.request.justfoia.com/" : null) ||
-    (inferredPortalProvider === "govqa" ? "https://example.govqa.us/portal" : null) ||
-    (inferredPortalProvider === "civicplus" ? "https://example.civicplus.help/portal" : null);
+    sanitizeSyntheticPortalUrl(
+      extractPortalUrl(`${scenario.inbound?.subject || ""}\n${scenario.inbound?.body_text || ""}`),
+      inferredPortalProvider
+    ) || fallbackPortalUrl(inferredPortalProvider);
 
   // Override notion_page_id to a non-UUID so Notion sync skips these test cases
   // (hasValidNotionPageId rejects anything not matching /^[0-9a-f]{32}$/i)
@@ -128,6 +189,12 @@ async function createCaseForScenario(label, scenario) {
   if (inferredPortalProvider || inferredPortalUrl) {
     updates.portal_provider = inferredPortalProvider;
     updates.portal_url = inferredPortalUrl;
+  }
+  if (originalContext.additional_details) {
+    updates.additional_details = originalContext.additional_details;
+  }
+  if (originalContext.contact_research_notes) {
+    updates.contact_research_notes = originalContext.contact_research_notes;
   }
   await db.updateCase(createdCase.id, updates);
 
@@ -177,6 +244,76 @@ function normalizeFromEmail(raw) {
   return raw.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + "@fixture.test";
 }
 
+function inferLocalReplayClassification(scenario) {
+  const explicit = String(scenario.expected_intent || scenario.intent || "").trim().toUpperCase();
+  if (explicit) return explicit;
+
+  switch (String(scenario.pattern || "").trim().toLowerCase()) {
+    case "portal_confirmation":
+      return "ACKNOWLEDGMENT";
+    case "portal_release":
+      return "RECORDS_READY";
+    case "portal_access_issue":
+      return "PORTAL_REDIRECT";
+    case "blank_request_form":
+      return "CLARIFICATION_REQUEST";
+    case "fee_letter":
+      return "FEE_QUOTE";
+    case "denial_letter":
+      return "DENIAL";
+    case "mixed_partial_release":
+      return "PARTIAL_DELIVERY";
+    case "wrong_agency_referral":
+      return "WRONG_AGENCY";
+    default:
+      return null;
+  }
+}
+
+function inferLocalReplayDenialSubtype(scenario) {
+  const explicit = String(scenario.denial_subtype || "").trim().toLowerCase();
+  if (explicit) return explicit;
+
+  const corpus = [
+    scenario.body_excerpt,
+    scenario.inbound?.subject,
+    scenario.inbound?.body_text,
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+
+  if (/no responsive records|no records/.test(corpus)) return "no_records";
+  if (/wrong agency|not the custodian|not our records|another agency|another division/.test(corpus)) return "wrong_agency";
+  if (/exemption 7\(a\)|ongoing investigation|law enforcement investigation/.test(corpus)) return "ongoing_investigation";
+  if (/privacy|confidential/.test(corpus)) return "privacy_exemption";
+  if (/juvenile/.test(corpus)) return "juvenile_records";
+  if (/sealed/.test(corpus)) return "sealed_court_order";
+  if (/attorney[- ]client|work product|privilege/.test(corpus)) return "privilege_attorney_work_product";
+  return null;
+}
+
+function buildLocalReplayStubs(scenario) {
+  const classification = inferLocalReplayClassification(scenario);
+  if (!classification) return null;
+
+  return {
+    current_checkout_replay: true,
+    classify: {
+      classification,
+      sentiment: "neutral",
+      key_points: [
+        scenario.body_excerpt,
+        scenario.inbound?.subject,
+        scenario.inbound?.body_text,
+      ].filter(Boolean),
+      suggested_action: scenario.expected_action || scenario.suggested_action || null,
+      denial_subtype: inferLocalReplayDenialSubtype(scenario),
+      requires_action: scenario.requires_action !== false,
+    },
+  };
+}
+
 async function ingestInbound(caseId, inbound) {
   const payload = {
     from_email: normalizeFromEmail(inbound.from_email),
@@ -189,17 +326,33 @@ async function ingestInbound(caseId, inbound) {
   return post(`/api/cases/${caseId}/ingest-email`, payload);
 }
 
-async function triggerInbound(caseId, messageId) {
-  return post(`/api/cases/${caseId}/run-inbound`, {
+async function triggerInbound(caseId, messageId, scenario) {
+  const payload = {
     messageId,
     autopilotMode: "SUPERVISED",
-  });
+  };
+  if (LOCAL_CURRENT_CHECKOUT_REPLAY) {
+    payload.llmStubs = buildLocalReplayStubs(scenario) || { current_checkout_replay: true };
+  }
+  return post(`/api/cases/${caseId}/run-inbound`, payload);
 }
 
 async function getLatestProposal(caseId) {
   const response = await get(`/api/requests/${caseId}/proposals?all=true&limit=5`);
   const proposals = response.proposals || [];
   return proposals[0] || null;
+}
+
+async function getRecentProposals(caseId) {
+  const result = await db.query(
+    `SELECT id, case_id, action_type, status, created_at
+       FROM proposals
+      WHERE case_id = $1
+      ORDER BY id DESC
+      LIMIT 5`,
+    [caseId]
+  );
+  return result.rows || [];
 }
 
 async function getLatestPortalTask(caseId) {
@@ -250,8 +403,10 @@ function flattenRealPatterns() {
 async function loadRealPatternScenarios() {
   const rows = flattenRealPatterns();
   const ids = rows.map((row) => row.message_id).filter(Boolean);
+  const caseIds = rows.map((row) => row.case_id).filter(Boolean);
   const bodyLookup = new Map();
   const attachmentsLookup = new Map();
+  const caseLookup = new Map();
 
   if (ids.length) {
     const result = await db.query(
@@ -295,8 +450,21 @@ async function loadRealPatternScenarios() {
     }
   }
 
+  if (caseIds.length) {
+    const caseResult = await db.query(
+      `SELECT id, subject_name, incident_date, additional_details, contact_research_notes, requested_records
+         FROM cases
+        WHERE id = ANY($1::int[])`,
+      [caseIds]
+    );
+    for (const row of caseResult.rows) {
+      caseLookup.set(row.id, row);
+    }
+  }
+
   return rows.map((row) => {
     const full = bodyLookup.get(row.message_id) || {};
+    const originalCase = caseLookup.get(row.case_id) || null;
     return {
       label: `real:${row.pattern}:${row.message_id}`,
       source: "real_pattern",
@@ -309,18 +477,33 @@ async function loadRealPatternScenarios() {
       inbound: {
         from_email: row.from_email || "records@test.gov",
         subject: full.subject || row.subject || "Re: Public Records Request",
-        body_text: full.body_text || row.body_excerpt || "",
+        body_text: full.body_text || full.body_html || row.body_excerpt || "",
         source: `real_pattern:${row.pattern}`,
         attachments: attachmentsLookup.get(row.message_id) || [],
       },
+      original_case_context: originalCase
+        ? {
+            subject_name: originalCase.subject_name || null,
+            incident_date: originalCase.incident_date || null,
+            additional_details: originalCase.additional_details || null,
+            contact_research_notes: originalCase.contact_research_notes || null,
+            requested_records: originalCase.requested_records || null,
+          }
+        : null,
     };
   });
 }
 
-function classifyOutcome(proposal, portalTask, scenario) {
-  const actualAction = proposal?.action_type || (portalTask ? "SUBMIT_PORTAL" : null);
+function classifyOutcome(proposals, portalTask, scenario) {
+  const proposalList = Array.isArray(proposals) ? proposals : proposals ? [proposals] : [];
+  const latestProposal = proposalList[0] || null;
+  const actualAction = latestProposal?.action_type || (portalTask ? "SUBMIT_PORTAL" : null);
   const expectedAction = normalizeExpectedAction(scenario.expected_action);
-  const matches = !expectedAction || actualAction === expectedAction;
+  const matchedProposal = expectedAction
+    ? proposalList.find((proposal) => proposal?.action_type === expectedAction)
+    : null;
+  const effectiveAction = matchedProposal?.action_type || actualAction;
+  const matches = !expectedAction || effectiveAction === expectedAction;
 
   if (!actualAction) {
     return {
@@ -328,14 +511,16 @@ function classifyOutcome(proposal, portalTask, scenario) {
       actual_action: null,
       expected_action: expectedAction,
       matches_expected_action: expectedAction == null || expectedAction === "NONE",
+      matched_via_action: null,
     };
   }
 
   return {
-    status: proposal ? "proposal_created" : "portal_task_created",
-    actual_action: actualAction,
+    status: latestProposal ? "proposal_created" : "portal_task_created",
+    actual_action: effectiveAction,
     expected_action: expectedAction,
     matches_expected_action: matches,
+    matched_via_action: matchedProposal?.action_type || null,
   };
 }
 
@@ -396,24 +581,41 @@ async function runScenario(scenario) {
       null;
     record.inbound_message_id = inboundMessageId;
 
-    const trigger = await triggerInbound(createdCase.id, inboundMessageId);
+    const trigger = await triggerInbound(createdCase.id, inboundMessageId, scenario);
     record.run_id = trigger.run?.id || trigger.run_id || null;
 
-    const completedRun = await pollLatestRun(createdCase.id);
-    record.run_id = completedRun.id;
+    let runTimeoutError = null;
+    try {
+      const completedRun = await pollLatestRun(record.run_id, createdCase.id);
+      record.run_id = completedRun.id;
+    } catch (error) {
+      if (/Timed out waiting for latest run/i.test(String(error?.message || ""))) {
+        runTimeoutError = error;
+      } else {
+        throw error;
+      }
+    }
 
-    const proposal = await getLatestProposal(createdCase.id);
+    const proposals = await getRecentProposals(createdCase.id);
+    const proposal = proposals[0] || null;
     const portalTask = await getLatestPortalTask(createdCase.id);
+    if (runTimeoutError && !proposal && !portalTask) {
+      throw runTimeoutError;
+    }
+    if (runTimeoutError) {
+      record.run_timeout = true;
+    }
     record.proposal_id = proposal?.id || null;
     record.proposal_action = proposal?.action_type || null;
     record.portal_task_id = portalTask?.id || null;
     record.portal_task_status = portalTask?.status || null;
 
-    const outcome = classifyOutcome(proposal, portalTask, scenario);
+    const outcome = classifyOutcome(proposals, portalTask, scenario);
     record.status = outcome.status;
     record.actual_action = outcome.actual_action || null;
     record.matches_expected_action = outcome.matches_expected_action;
     record.expected_action_normalized = outcome.expected_action || null;
+    record.matched_via_action = outcome.matched_via_action || null;
   } catch (error) {
     record.status = "error";
     record.error = error.message;

@@ -30,10 +30,25 @@ function normalizePortalTimeoutError(rawError) {
 class CronService {
     constructor() {
         this.jobs = {};
+        this.runningJobs = new Set();
         this.lastOperationalAlert = {
             portalHardTimeout: null,
             processInboundSuperseded: null,
         };
+    }
+
+    async runWithoutOverlap(jobName, fn) {
+        if (this.runningJobs.has(jobName)) {
+            console.warn(`[cron] ${jobName} is still running; skipping overlapping invocation`);
+            return null;
+        }
+
+        this.runningJobs.add(jobName);
+        try {
+            return await fn();
+        } finally {
+            this.runningJobs.delete(jobName);
+        }
     }
 
     /**
@@ -133,7 +148,7 @@ class CronService {
         // Operational alerting: check key failure/supersede counters in a rolling 1h window.
         this.jobs.operationalAlerts = new CronJob('*/15 * * * *', async () => {
             try {
-                await this.checkOperationalAlerts();
+                await this.runWithoutOverlap('operational_alert_check', () => this.checkOperationalAlerts());
             } catch (error) {
                 await errorTrackingService.captureException(error, {
                     sourceService: 'cron_service',
@@ -173,7 +188,7 @@ class CronService {
         this.jobs.dailyOperatorDigest = new CronJob('0 8 * * *', async () => {
             try {
                 console.log('Running daily operator digest...');
-                await this.sendDailyOperatorDigest();
+                await this.runWithoutOverlap('daily_operator_digest_cron', () => this.sendDailyOperatorDigest());
             } catch (error) {
                 await errorTrackingService.captureException(error, {
                     sourceService: 'cron_service',
@@ -1901,50 +1916,56 @@ class CronService {
      * Sends a Discord notification summarizing overnight system health.
      */
     async sendDailyOperatorDigest() {
-        const [stuck, staleProposals, bounced, portalFailures, queueDepth] = await Promise.all([
-            // Cases stuck in processing states for > 24h
-            db.query(`
-                SELECT COUNT(*)::int AS count
-                FROM cases
-                WHERE status IN ('processing', 'classifying', 'deciding', 'drafting', 'researching')
-                  AND updated_at < NOW() - INTERVAL '24 hours'
-            `),
-            // Proposals pending approval for > 48h
-            db.query(`
-                SELECT COUNT(*)::int AS count
-                FROM proposals
-                WHERE status = 'PENDING_APPROVAL'
-                  AND created_at < NOW() - INTERVAL '48 hours'
-            `),
-            // Bounced/failed emails in the last 24h
-            db.query(`
-                SELECT COUNT(*)::int AS count
-                FROM email_events
-                WHERE event IN ('bounce', 'dropped', 'deferred')
-                  AND created_at > NOW() - INTERVAL '24 hours'
-            `),
-            // Portal task failures in the last 24h
-            db.query(`
-                SELECT COUNT(*)::int AS count
-                FROM portal_tasks
-                WHERE status IN ('failed', 'error', 'timed_out')
-                  AND updated_at > NOW() - INTERVAL '24 hours'
-            `),
-            // Current queue depth: cases awaiting action
-            db.query(`
-                SELECT
-                    COUNT(*) FILTER (WHERE status = 'ready_to_send')::int AS ready_to_send,
-                    COUNT(*) FILTER (WHERE status = 'pending_portal')::int AS pending_portal,
-                    COUNT(*) FILTER (WHERE status = 'needs_review')::int AS needs_review
-                FROM cases
-            `),
-        ]);
+        const digestResult = await db.query(`
+            SELECT
+                (
+                    SELECT COUNT(*)::int
+                    FROM cases
+                    WHERE status IN ('processing', 'classifying', 'deciding', 'drafting', 'researching')
+                      AND updated_at < NOW() - INTERVAL '24 hours'
+                ) AS stuck_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM proposals
+                    WHERE status = 'PENDING_APPROVAL'
+                      AND created_at < NOW() - INTERVAL '48 hours'
+                ) AS stale_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM email_events
+                    WHERE event_type IN ('bounce', 'dropped', 'deferred')
+                      AND created_at > NOW() - INTERVAL '24 hours'
+                ) AS bounced_count,
+                (
+                    SELECT COUNT(*)::int
+                    FROM portal_tasks
+                    WHERE status IN ('FAILED', 'ERROR', 'TIMED_OUT', 'failed', 'error', 'timed_out')
+                      AND updated_at > NOW() - INTERVAL '24 hours'
+                ) AS portal_fail_count,
+                (
+                    SELECT COUNT(*) FILTER (WHERE status = 'ready_to_send')::int
+                    FROM cases
+                ) AS ready_to_send,
+                (
+                    SELECT COUNT(*) FILTER (WHERE status = 'pending_portal')::int
+                    FROM cases
+                ) AS pending_portal,
+                (
+                    SELECT COUNT(*) FILTER (WHERE status = 'needs_review')::int
+                    FROM cases
+                ) AS needs_review
+        `);
 
-        const stuckCount = stuck.rows[0]?.count || 0;
-        const staleCount = staleProposals.rows[0]?.count || 0;
-        const bouncedCount = bounced.rows[0]?.count || 0;
-        const portalFailCount = portalFailures.rows[0]?.count || 0;
-        const queue = queueDepth.rows[0] || {};
+        const row = digestResult.rows[0] || {};
+        const stuckCount = row.stuck_count || 0;
+        const staleCount = row.stale_count || 0;
+        const bouncedCount = row.bounced_count || 0;
+        const portalFailCount = row.portal_fail_count || 0;
+        const queue = {
+            ready_to_send: row.ready_to_send || 0,
+            pending_portal: row.pending_portal || 0,
+            needs_review: row.needs_review || 0,
+        };
 
         const issues = [];
         if (stuckCount > 0) issues.push(`${stuckCount} stuck case(s)`);
@@ -2029,27 +2050,32 @@ class CronService {
         const portalThreshold = Number.isFinite(portalThresholdRaw) ? portalThresholdRaw : 0;
         const supersededThreshold = Number.isFinite(supersededThresholdRaw) ? supersededThresholdRaw : 5;
 
-        const [portalResult, supersededResult] = await Promise.all([
-            db.query(`
-                SELECT
-                    COUNT(*) FILTER (WHERE event_type = 'portal_hard_timeout')::int AS portal_hard_timeout_total,
-                    COUNT(*) FILTER (WHERE event_type = 'portal_soft_timeout')::int AS portal_soft_timeout_total
-                FROM activity_log
-                WHERE created_at > NOW() - INTERVAL '1 hour'
-            `),
-            db.query(`
-                SELECT COUNT(*)::int AS process_inbound_superseded_total
-                FROM agent_runs
-                WHERE status = 'cancelled'
-                  AND (error = 'superseded' OR error LIKE 'deduped to active%')
-                  AND COALESCE(ended_at, started_at) > NOW() - INTERVAL '1 hour'
-            `),
-        ]);
+        const countersResult = await db.query(`
+            SELECT
+                (
+                    SELECT COUNT(*) FILTER (WHERE event_type = 'portal_hard_timeout')::int
+                    FROM activity_log
+                    WHERE created_at > NOW() - INTERVAL '1 hour'
+                ) AS portal_hard_timeout_total,
+                (
+                    SELECT COUNT(*) FILTER (WHERE event_type = 'portal_soft_timeout')::int
+                    FROM activity_log
+                    WHERE created_at > NOW() - INTERVAL '1 hour'
+                ) AS portal_soft_timeout_total,
+                (
+                    SELECT COUNT(*)::int
+                    FROM agent_runs
+                    WHERE status = 'cancelled'
+                      AND (error = 'superseded' OR error LIKE 'deduped to active%')
+                      AND COALESCE(ended_at, started_at) > NOW() - INTERVAL '1 hour'
+                ) AS process_inbound_superseded_total
+        `);
 
-        const portalHardTimeoutTotal = parseInt(portalResult.rows[0]?.portal_hard_timeout_total || 0, 10);
-        const portalSoftTimeoutTotal = parseInt(portalResult.rows[0]?.portal_soft_timeout_total || 0, 10);
+        const counters = countersResult.rows[0] || {};
+        const portalHardTimeoutTotal = parseInt(counters.portal_hard_timeout_total || 0, 10);
+        const portalSoftTimeoutTotal = parseInt(counters.portal_soft_timeout_total || 0, 10);
         const processInboundSupersededTotal = parseInt(
-            supersededResult.rows[0]?.process_inbound_superseded_total || 0,
+            counters.process_inbound_superseded_total || 0,
             10
         );
 

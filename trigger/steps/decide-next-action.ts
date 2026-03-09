@@ -290,6 +290,31 @@ function buildAllowedActions(params: {
   return base;
 }
 
+function hasVerifiedCustodianChannel(caseData: any): boolean {
+  if (!caseData) return false;
+  if (caseData.agency_email || caseData.portal_url || caseData.agency_id) {
+    return true;
+  }
+
+  if (!caseData.contact_research_notes) {
+    return false;
+  }
+
+  try {
+    const notes = typeof caseData.contact_research_notes === "string"
+      ? JSON.parse(caseData.contact_research_notes)
+      : caseData.contact_research_notes;
+    return !!(
+      notes?.suggested_agency?.email ||
+      notes?.suggested_agency?.phone ||
+      notes?.email ||
+      notes?.phone
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function getWrongAgencyDirectAction(caseId: number): Promise<ActionType | null> {
   const [caseData, agencies, latestInbound] = await Promise.all([
     db.getCaseById(caseId),
@@ -2159,10 +2184,14 @@ async function deterministicRouting(
             ],
           });
         }
-        if (!caseData?.contact_research_notes) {
+        if (!hasVerifiedCustodianChannel(caseData)) {
           return decision("RESEARCH_AGENCY", { pauseReason: "DENIAL", researchLevel: "deep", reasoning: [...reasoning, "No records - researching correct agency (deep)"] });
         }
-        return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", researchLevel: "medium", reasoning: [...reasoning, "Already researched - reformulating request"] });
+        return decision("SEND_REBUTTAL", {
+          pauseReason: "DENIAL",
+          researchLevel: "medium",
+          reasoning: [...reasoning, "No responsive records from a verified custodian - rebutting the denial instead of re-researching"],
+        });
       }
       case "wrong_agency": {
         // Atomically cancel portal tasks + dismiss portal-type proposals via the runtime
@@ -3291,6 +3320,9 @@ export async function decideNextAction(
           (["wrong_agency", "no_duty_to_create", "no_records"].includes(resolvedDenialSubtype) &&
             deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
             v2Result.actionType !== "RESEARCH_AGENCY") ||
+          (resolvedDenialSubtype === "no_records" &&
+            deterministicSpecificDenialActions.has(deterministicDenialResult.actionType) &&
+            v2Result.actionType !== deterministicDenialResult.actionType) ||
           (["privacy_exemption", "third_party_confidential", "retention_expired", "glomar_ncnd", "privilege_attorney_work_product"].includes(resolvedDenialSubtype) &&
             v2Result.actionType === "ESCALATE" &&
             deterministicSpecificDenialActions.has(deterministicDenialResult.actionType)) ||
@@ -3390,6 +3422,9 @@ export async function decideNextAction(
           (["wrong_agency", "no_duty_to_create", "no_records"].includes(resolvedDenialSubtype) &&
             deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
             aiResult.actionType !== "RESEARCH_AGENCY") ||
+          (resolvedDenialSubtype === "no_records" &&
+            deterministicSpecificDenialActions.has(deterministicDenialResult.actionType) &&
+            aiResult.actionType !== deterministicDenialResult.actionType) ||
           (["privacy_exemption", "third_party_confidential", "retention_expired", "glomar_ncnd", "privilege_attorney_work_product"].includes(resolvedDenialSubtype) &&
             aiResult.actionType === "ESCALATE" &&
             deterministicSpecificDenialActions.has(deterministicDenialResult.actionType)) ||

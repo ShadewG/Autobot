@@ -140,6 +140,15 @@ function isRetryableNotionError(error) {
     return /(rate limit|temporar|timeout|ECONNRESET|ENOTFOUND|EAI_AGAIN)/i.test(message);
 }
 
+function isNotionObjectNotFoundError(error) {
+    const status = Number(error?.status);
+    const code = String(error?.code || error?.body?.code || '');
+    const message = String(error?.message || '');
+    if (status === 404) return true;
+    if (/object_not_found/i.test(code)) return true;
+    return /could not find (page|block) with id/i.test(message);
+}
+
 function hasValidNotionPageId(pageId) {
     const normalized = db.normalizeNotionPageId(pageId);
     return Boolean(normalized && /^[0-9a-f]{32}$/i.test(normalized));
@@ -184,6 +193,60 @@ class NotionService {
         this.submissionMemoryCache = new Map(); // pageId -> { data, fetchedAt }
         this.statusSyncQueues = new Map(); // caseId -> { running, pending, promise }
         this.enableAINormalization = process.env.ENABLE_NOTION_AI_NORMALIZATION !== 'false';
+    }
+
+    async quarantineMissingCasePage(caseData, operation, error) {
+        if (!caseData?.id || !hasValidNotionPageId(caseData?.notion_page_id) || !isNotionObjectNotFoundError(error)) {
+            return false;
+        }
+
+        const missingPageId = db.normalizeNotionPageId(caseData.notion_page_id);
+        const quarantinedPageId = `missing:${caseData.id}:${missingPageId}`;
+        const existingWarnings = Array.isArray(caseData.import_warnings)
+            ? caseData.import_warnings
+            : Array.isArray(caseData.import_warnings_json)
+                ? caseData.import_warnings_json
+                : [];
+
+        const warning = {
+            type: 'NOTION_PAGE_MISSING',
+            message: `Stored Notion page is no longer accessible; sync disabled after ${operation}`,
+            field: 'notion_page_id',
+            notion_page_id: missingPageId,
+            operation,
+            detected_at: new Date().toISOString(),
+        };
+
+        const mergedWarnings = existingWarnings.some((entry) => (
+            entry
+            && entry.type === warning.type
+            && String(entry.notion_page_id || '') === String(warning.notion_page_id)
+        ))
+            ? existingWarnings
+            : [...existingWarnings, warning];
+
+        this.pagePropertyCache.delete(missingPageId);
+
+        await db.query(
+            `UPDATE cases
+             SET notion_page_id = $3,
+                 last_notion_synced_at = NULL,
+                 import_warnings = $2::jsonb,
+                 updated_at = NOW()
+             WHERE id = $1
+               AND notion_page_id IS NOT NULL`,
+            [caseData.id, JSON.stringify(mergedWarnings), quarantinedPageId]
+        );
+
+        await db.logActivity('notion_page_missing', `Disabled Notion sync for missing page ${missingPageId}`, {
+            case_id: caseData.id,
+            source_service: 'notion_service',
+            operation,
+            notion_page_id: missingPageId,
+            error: String(error?.message || error).substring(0, 500),
+        });
+
+        return true;
     }
 
     /**
@@ -458,9 +521,10 @@ class NotionService {
     parseNotionPage(page) {
         const props = page.properties;
 
-        // Get title from any title property
+        // Get title from any title property (sanitize HTML entities like &nbsp;)
         const titleProp = Object.values(props).find(p => p.type === 'title');
-        const caseName = titleProp?.title?.[0]?.plain_text || 'Untitled Case';
+        const rawTitle = (titleProp?.title?.[0]?.plain_text || '').replace(/&nbsp;/gi, ' ').trim();
+        const caseName = rawTitle || 'Untitled Case';
 
         // Get portal URL if available (fall back to other portal-labeled fields)
         const portalUrl = this.getProperty(props, 'Portal', 'url') ||
@@ -782,16 +846,22 @@ class NotionService {
         if (!prop) return null;
 
         switch (type) {
-            case 'title':
-                return (prop.title || [])
+            case 'title': {
+                const t = (prop.title || [])
                     .map((part) => part.plain_text || '')
                     .join(' ')
+                    .replace(/&nbsp;/gi, ' ')
                     .trim();
-            case 'rich_text':
-                return (prop.rich_text || [])
+                return t || null;
+            }
+            case 'rich_text': {
+                const t = (prop.rich_text || [])
                     .map((part) => part.plain_text || '')
                     .join(' ')
+                    .replace(/&nbsp;/gi, ' ')
                     .trim();
+                return t || null;
+            }
             case 'email':
                 return prop.email || '';
             case 'select':
@@ -1713,6 +1783,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             }
             return null;
         } catch (error) {
+            if (isNotionObjectNotFoundError(error)) {
+                this.pagePropertyCache.delete(pageId);
+                throw error;
+            }
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'update_page',
@@ -2039,14 +2113,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             await db.query('UPDATE cases SET last_notion_synced_at = NOW() WHERE id = $1', [caseId]);
             console.log(`Updated Notion page for case: ${caseData.case_name}`);
         } catch (error) {
+            const quarantined = await this.quarantineMissingCasePage(caseData, 'sync_status_to_notion', error).catch(() => false);
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'sync_status_to_notion',
                 caseId,
-                retryable: isRetryableNotionError(error),
+                retryable: quarantined ? false : isRetryableNotionError(error),
                 metadata: {
                     notionPageId: caseData?.notion_page_id || null,
                     caseStatus: caseData?.status || null,
+                    quarantinedMissingPage: quarantined,
                 },
             });
             console.error('Error syncing status to Notion:', error);
@@ -2093,11 +2169,17 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 ai_summary: summary
             });
         } catch (error) {
+            const caseData = await db.getCaseById(caseId).catch(() => null);
+            const quarantined = await this.quarantineMissingCasePage(caseData, 'add_ai_summary', error).catch(() => false);
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'add_ai_summary',
                 caseId,
-                retryable: isRetryableNotionError(error),
+                retryable: quarantined ? false : isRetryableNotionError(error),
+                metadata: {
+                    notionPageId: caseData?.notion_page_id || null,
+                    quarantinedMissingPage: quarantined,
+                },
             });
             console.error('Error adding AI summary to Notion:', error);
         }
@@ -2133,12 +2215,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 });
                 console.log(`📝 Submission comment added to case #${caseId} Notion page`);
             } catch (err) {
+                const quarantined = await this.quarantineMissingCasePage(caseData, 'add_submission_comment_case', err).catch(() => false);
                 await errorTrackingService.captureException(err, {
                     sourceService: 'notion_service',
                     operation: 'add_submission_comment_case',
                     caseId,
-                    retryable: isRetryableNotionError(err),
-                    metadata: { notionPageId: caseData?.notion_page_id || null },
+                    retryable: quarantined ? false : isRetryableNotionError(err),
+                    metadata: {
+                        notionPageId: caseData?.notion_page_id || null,
+                        quarantinedMissingPage: quarantined,
+                    },
                 });
                 console.error(`Failed to add case submission comment for case ${caseId}:`, err.message);
             }
@@ -2301,6 +2387,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             });
             return properties;
         } catch (error) {
+            if (isNotionObjectNotFoundError(error)) {
+                this.pagePropertyCache.delete(pageId);
+                throw error;
+            }
             await errorTrackingService.captureException(error, {
                 sourceService: 'notion_service',
                 operation: 'get_page_property_names',

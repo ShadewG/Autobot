@@ -42,6 +42,14 @@ function normalizePortalKey(portalUrl = '') {
     return normalized ? normalized.toLowerCase() : null;
 }
 
+function hasSyntheticPlaceholderBackfill({ agencyEmail, portalUrl, addedSource }) {
+    return Boolean(
+        ['case_row_backfill', 'case_row_fallback'].includes(String(addedSource || ''))
+        && isPlaceholderAgencyEmail(agencyEmail)
+        && !normalizePortalUrl(portalUrl)
+    );
+}
+
 function dedupeCanonicalCaseAgencies(caseAgencies = []) {
     const deduped = new Map();
 
@@ -111,6 +119,11 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
         currentAgencyName: caseAgency?.agency_name || caseData?.agency_name,
         additionalDetails: caseData?.additional_details,
     });
+    const syntheticPlaceholderBackfill = hasSyntheticPlaceholderBackfill({
+        agencyEmail: caseAgency?.agency_email || caseData?.agency_email,
+        portalUrl: caseAgency?.portal_url || caseData?.portal_url,
+        addedSource: caseAgency?.added_source,
+    });
     const shouldPreferResearchDisplay = Boolean(
         researchSuggestedAgency
         && ['case_row_backfill', 'case_row_fallback'].includes(caseAgency?.added_source)
@@ -122,7 +135,7 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
         agencyEmail: caseAgency?.agency_email || caseData?.agency_email,
         portalUrl: caseAgency?.portal_url || caseData?.portal_url,
         addedSource: caseAgency?.added_source,
-    });
+    }) || (syntheticPlaceholderBackfill && !researchSuggestedAgency);
     const canonicalAgency = await findCanonicalAgency(db, {
         portalUrl: (shouldPreferResearchDisplay || suppressPlaceholderDisplay) ? null : caseAgency?.portal_url,
         portalMailbox: (shouldPreferResearchDisplay || suppressPlaceholderDisplay) ? null : (caseAgency?.agency_email || caseData?.agency_email || null),
@@ -140,18 +153,25 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
         metadataAgencyMismatch?.expectedAgencyName ||
         metadataAgencyHint?.name ||
         null;
+    const forceCorrectedAgencyDisplay = Boolean(
+        syntheticPlaceholderBackfill &&
+        resolvedFallbackName &&
+        !researchSuggestedAgency
+    );
 
     return {
         ...caseAgency,
-        agency_id: suppressPlaceholderDisplay
+        agency_id: (suppressPlaceholderDisplay || forceCorrectedAgencyDisplay)
             ? null
             : shouldPreferResearchDisplay
             ? (canonicalAgency?.id || null)
             : (canonicalAgency?.id || caseAgency?.agency_id || null),
         agency_name: suppressPlaceholderDisplay
             ? (resolvedFallbackName || 'Unknown agency')
+            : forceCorrectedAgencyDisplay
+            ? resolvedFallbackName
             : (canonicalAgency?.name || (shouldPreferResearchDisplay ? researchSuggestedAgency?.name : caseAgency?.agency_name)),
-        agency_email: suppressPlaceholderDisplay
+        agency_email: (suppressPlaceholderDisplay || forceCorrectedAgencyDisplay)
             ? null
             : shouldPreferResearchDisplay
             ? (normalizeAgencyEmailHint(canonicalAgency?.email_foia)
@@ -161,8 +181,8 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
             || normalizeAgencyEmailHint(canonicalAgency?.email_foia)
             || normalizeAgencyEmailHint(canonicalAgency?.email_main)
             || null),
-        portal_url: suppressPlaceholderDisplay ? null : resolvedPortalUrl,
-        portal_provider: suppressPlaceholderDisplay
+        portal_url: (suppressPlaceholderDisplay || forceCorrectedAgencyDisplay) ? null : resolvedPortalUrl,
+        portal_provider: (suppressPlaceholderDisplay || forceCorrectedAgencyDisplay)
             ? null
             :
             caseAgency?.portal_provider

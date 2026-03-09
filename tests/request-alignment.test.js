@@ -1000,6 +1000,10 @@ describe('Request alignment regressions', function () {
       requires_human: false,
       pause_reason: null,
       substatus: 'Resolving: custom',
+      import_warnings: [
+        { type: 'email_validation', message: 'No MX records for domain \"placeholder.invalid\"' },
+        { type: 'agency_lookup', message: 'Agency \"Stow Police Department\" not found in directory' },
+      ],
       contact_research_notes: JSON.stringify({
         cleared: true,
         retryReason: 'user_retry',
@@ -1060,6 +1064,7 @@ describe('Request alignment regressions', function () {
       assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
       assert.strictEqual(response.body.case_agencies[0].agency_name, 'Unknown agency');
       assert.strictEqual(response.body.case_agencies[0].agency_email, null);
+      assert.strictEqual(response.body.request.import_warnings, null);
     } finally {
       db.getCaseById = originalDbMethods.getCaseById;
       db.getCaseAgencies = originalDbMethods.getCaseAgencies;
@@ -1638,6 +1643,184 @@ describe('Request alignment regressions', function () {
       db.getCaseById = originalGetCaseById;
       db.getCaseAgencies = originalGetCaseAgencies;
       db.query = originalQuery;
+    }
+  });
+
+  it('GET /api/cases/:id/agencies masks cleared synthetic placeholder agencies as unknown when no real agency was confirmed', async function () {
+    const originalGetCaseById = db.getCaseById;
+    const originalGetCaseAgencies = db.getCaseAgencies;
+    const originalQuery = db.query;
+
+    db.getCaseById = async () => ({
+      id: 25243,
+      agency_name: 'Stow Police Department',
+      agency_email: 'pending-research@placeholder.invalid',
+      portal_url: null,
+      state: 'GA',
+      contact_research_notes: JSON.stringify({
+        cleared: true,
+        retryReason: 'user_retry',
+      }),
+      additional_details: 'Title: Father of Georgia school shooter found guilty',
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 65,
+      case_id: 25243,
+      agency_id: 152,
+      agency_name: 'Stow Police Department',
+      agency_email: 'pending-research@placeholder.invalid',
+      portal_url: null,
+      portal_provider: null,
+      added_source: 'case_row_backfill',
+      is_primary: true,
+      is_active: true,
+    }]);
+    db.query = async (sql) => {
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) {
+        return { rows: [] };
+      }
+      throw new Error(`Unexpected query in cleared placeholder masking test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/cases', caseAgenciesRouter);
+      const response = await supertest(app).get('/api/cases/25243/agencies');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.agencies[0].agency_id, null);
+      assert.strictEqual(response.body.agencies[0].agency_name, 'Unknown agency');
+      assert.strictEqual(response.body.agencies[0].agency_email, null);
+      assert.strictEqual(response.body.agencies[0].portal_url, null);
+    } finally {
+      db.getCaseById = originalGetCaseById;
+      db.getCaseAgencies = originalGetCaseAgencies;
+      db.query = originalQuery;
+    }
+  });
+
+  it('GET /api/requests/:id/workspace suppresses pending proposals when latest inbound manual paste mismatches the case thread', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getAnalysisByMessageId: db.getAnalysisByMessageId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 25148,
+      subject_name: 'Anthony Douglas Shoffner Jr.',
+      case_name: 'Anthony Douglas Shoffner Jr.',
+      agency_id: null,
+      agency_name: 'Perry Police Department, Georgia',
+      agency_email: 'kayla.neesmith@perry-ga.gov',
+      portal_url: null,
+      portal_provider: null,
+      state: 'GA',
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: 'PENDING_APPROVAL',
+      substatus: 'Proposal pending review',
+      contact_research_notes: null,
+      additional_details: '**Police Department:** Perry Police Department, Georgia',
+      requested_records: [],
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-05T00:00:00.000Z',
+      updated_at: '2026-03-06T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 77,
+      case_id: 25148,
+      agency_id: null,
+      agency_name: 'Perry Police Department, Georgia',
+      agency_email: 'kayla.neesmith@perry-ga.gov',
+      portal_url: null,
+      portal_provider: null,
+      is_primary: true,
+      is_active: true,
+      added_source: 'research',
+      status: 'active',
+      created_at: '2026-03-05T00:00:00.000Z',
+      updated_at: '2026-03-06T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => ([{
+      id: 53,
+      case_id: 25148,
+      agency_email: 'kayla.neesmith@perry-ga.gov',
+      created_at: '2026-03-05T00:00:00.000Z',
+    }]);
+    db.getMessagesByThreadId = async () => ([{
+      id: 990,
+      thread_id: 53,
+      case_id: null,
+      direction: 'inbound',
+      from_email: 'records@atlanta.gov',
+      subject: 'Denial',
+      body_text: 'This is an Atlanta denial copied onto the wrong thread.',
+      body_html: null,
+      raw_body: 'This is an Atlanta denial copied onto the wrong thread.',
+      metadata: { source: 'manual_paste', manual_paste: true },
+      received_at: '2026-03-06T00:00:00.000Z',
+      created_at: '2026-03-06T00:00:00.000Z',
+    }]);
+    db.getAttachmentsByCaseId = async () => [];
+    db.getAnalysisByMessageId = async () => null;
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM proposals')) {
+        return {
+          rows: [{
+            id: 1183,
+            action_type: 'SEND_REBUTTAL',
+            status: 'PENDING_APPROVAL',
+            draft_subject: 'Re: Public records request',
+            draft_body_text: 'I would like to narrow the request.',
+            reasoning: ['Generated from denial'],
+            confidence: '0.88',
+            gate_options: ['APPROVE', 'ADJUST', 'DISMISS'],
+          }],
+        };
+      }
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in manual paste mismatch workspace test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/25148/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.next_action_proposal, null);
+      assert.strictEqual(response.body.pending_proposal, null);
+      assert.strictEqual(response.body.review_state, 'IDLE');
+      assert.strictEqual(response.body.control_state, 'BLOCKED');
+      assert.match(response.body.request.substatus, /manual review required/i);
+      assert.match(response.body.request.substatus, /records@atlanta\.gov/i);
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getAnalysisByMessageId = originalDbMethods.getAnalysisByMessageId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
     }
   });
 

@@ -175,4 +175,79 @@ describe("AI Router v2 deterministic fallback", function () {
       `expected deterministic override reasoning, got: ${JSON.stringify(result.reasoning)}`
     );
   });
+
+  it("overrides AI ESCALATE for no-records denials when the custodian is already verified", async function () {
+    const ai = require("ai");
+    ai.generateObject.resetBehavior();
+    ai.generateObject.resolves({
+      object: {
+        action: "ESCALATE",
+        confidence: 0.71,
+        requiresHuman: true,
+        pauseReason: "DENIAL",
+        reasoning: ["Escalate for operator review."],
+      },
+      usage: {},
+      response: {},
+    });
+
+    sinon.stub(database, "getCaseById").resolves({
+      id: 99125,
+      status: "awaiting_response",
+      agency_id: 555,
+      agency_name: "City of Test Records Unit",
+      agency_email: "records@test.gov",
+      additional_details: "Police incident report request",
+      constraints_jsonb: [],
+      constraints: [],
+      requested_records: ["incident report"],
+      portal_url: null,
+      portal_provider: null,
+      contact_research_notes: JSON.stringify({
+        suggested_agency: {
+          email: "records@test.gov",
+          phone: "(555) 555-1212",
+        },
+      }),
+    });
+    sinon.stub(database, "getLatestResponseAnalysis").resolves({ full_analysis_json: {} });
+    sinon.stub(database, "getMessagesByCaseId").resolves([]);
+    sinon.stub(database, "getLatestInboundMessage").resolves(null);
+    sinon.stub(database, "query").callsFake(async (sql) => {
+      const text = String(sql);
+      if (text.includes("COUNT(*)")) {
+        return { rows: [{ cnt: 0 }] };
+      }
+      return { rows: [] };
+    });
+
+    const { decideNextAction } = require("../trigger/steps/decide-next-action.ts");
+
+    const result = await decideNextAction(
+      99125,
+      "DENIAL",
+      [],
+      null,
+      "neutral",
+      "SUPERVISED",
+      "INBOUND_MESSAGE",
+      true,
+      null,
+      "respond",
+      null,
+      "no_records",
+      null,
+      null,
+      null,
+      null,
+      ["No responsive records were located for your request."]
+    );
+
+    assert.strictEqual(result.actionType, "SEND_REBUTTAL");
+    assert.strictEqual(result.pauseReason, "DENIAL");
+    assert.ok(
+      result.reasoning.some((line) => /deterministic denial routing preferred send_rebuttal/i.test(String(line))),
+      `expected deterministic override reasoning, got: ${JSON.stringify(result.reasoning)}`
+    );
+  });
 });

@@ -47,6 +47,12 @@ const REQUEST_FORM_CLARIFICATION_OVERRIDE_INTENTS = new Set([
   "other",
 ]);
 
+const PORTAL_SUBSTANTIVE_OVERRIDE_INTENTS = new Set([
+  "acknowledgment",
+  "other",
+  "portal_redirect",
+]);
+
 function normalizeClassificationText(input: any): string {
   if (!input) return "";
   return String(input)
@@ -68,6 +74,78 @@ function extractFirstUrlHint(...values: any[]): string | null {
   const match = raw.match(/https?:\/\/[^\s"'<>]+/i);
   if (!match) return null;
   return match[0].replace(/[)\].,;!?]+$/g, "");
+}
+
+function looksLikePortalSystemMessage(message: any): boolean {
+  const corpus = [
+    message?.from_email,
+    message?.sender_email,
+    message?.subject,
+    message?.body_text,
+    message?.body_html,
+  ]
+    .map(normalizeClassificationText)
+    .filter(Boolean)
+    .join("\n");
+
+  if (!corpus) return false;
+
+  return /govqa|nextrequest|justfoia|civicplus|records center|open records center|mycusthelp/.test(
+    corpus
+  );
+}
+
+function looksLikeExplicitNoRecordsDenial(message: any, attachments: any[] = []): boolean {
+  const corpus = [
+    message?.subject,
+    message?.body_text,
+    message?.body_html,
+    ...(Array.isArray(attachments)
+      ? attachments.flatMap((attachment: any) => [
+          attachment?.filename,
+          attachment?.extracted_text,
+        ])
+      : []),
+  ]
+    .map(normalizeClassificationText)
+    .filter(Boolean)
+    .join("\n");
+
+  if (!corpus) return false;
+
+  return /no responsive (?:documents|records)|determined there are no responsive (?:documents|records)|has reviewed .* determined there are no responsive (?:documents|records)|no records responsive to your request|no documents responsive to your request/.test(
+    corpus
+  );
+}
+
+function looksLikeStatutoryWithholdingDenial(message: any, attachments: any[] = []): boolean {
+  const corpus = [
+    message?.subject,
+    message?.body_text,
+    message?.body_html,
+    ...(Array.isArray(attachments)
+      ? attachments.flatMap((attachment: any) => [
+          attachment?.filename,
+          attachment?.extracted_text,
+        ])
+      : []),
+  ]
+    .map(normalizeClassificationText)
+    .filter(Boolean)
+    .join("\n");
+
+  if (!corpus) return false;
+
+  const statutoryConfidentiality =
+    /confidential pursuant to|cannot be disseminated|confidential by statute|remove records .* confidential|remove records that are clearly confidential|unwarranted invasion of personal privacy|exempt from disclosure|privileged and confidential|withheld pursuant to|withhold|withheld|redact|redacted/.test(
+      corpus
+    );
+  const legalSignal =
+    /§|\bpursuant to\b|\bby statute\b|\bchapter\b|\bch\.\s*\d+\b|\b\d+\s+[a-z]\.?r\.?s\.?\b/.test(
+      corpus
+    );
+
+  return statutoryConfidentiality && legalSignal;
 }
 
 export function looksLikeRequestFormClarification(message: any, attachments: any[] = []): boolean {
@@ -105,17 +183,65 @@ function applyDeterministicClassificationOverrides(
   message: any,
   attachments: any[] = []
 ): ClassificationOutput {
-  const normalizedIntent = String(aiResult?.intent || "").toLowerCase();
+  let normalizedResult = { ...aiResult };
+  let normalizedIntent = String(normalizedResult?.intent || "").toLowerCase();
+  if (
+    PORTAL_SUBSTANTIVE_OVERRIDE_INTENTS.has(normalizedIntent) &&
+    looksLikePortalSystemMessage(message) &&
+    looksLikeExplicitNoRecordsDenial(message, attachments)
+  ) {
+    normalizedResult = {
+      ...normalizedResult,
+      intent: "denial",
+      denial_subtype: "no_records",
+      requires_response: true,
+      suggested_action: "respond",
+      reason_no_response: null,
+    };
+    normalizedIntent = "denial";
+  }
+
+  if (
+    ["fee_request", "acknowledgment", "other"].includes(normalizedIntent) &&
+    normalizedResult.fee_amount == null &&
+    looksLikeStatutoryWithholdingDenial(message, attachments)
+  ) {
+    normalizedResult = {
+      ...normalizedResult,
+      intent: "denial",
+      denial_subtype: normalizedResult.denial_subtype || "privacy_exemption",
+      requires_response: true,
+      suggested_action: "respond",
+      reason_no_response: null,
+    };
+    normalizedIntent = "denial";
+  }
+
+  if (
+    ["denial", "partial_denial", "wrong_agency"].includes(normalizedIntent) &&
+    normalizedResult.requires_response !== true
+  ) {
+    normalizedResult = {
+      ...normalizedResult,
+      requires_response: true,
+      suggested_action:
+        normalizedResult.suggested_action && normalizedResult.suggested_action !== "wait"
+          ? normalizedResult.suggested_action
+          : "respond",
+      reason_no_response: null,
+    };
+  }
+
   if (!REQUEST_FORM_CLARIFICATION_OVERRIDE_INTENTS.has(normalizedIntent)) {
-    return aiResult;
+    return normalizedResult;
   }
 
   if (!looksLikeRequestFormClarification(message, attachments)) {
-    return aiResult;
+    return normalizedResult;
   }
 
   return {
-    ...aiResult,
+    ...normalizedResult,
     intent: "question",
     requires_response: true,
     suggested_action: "respond",

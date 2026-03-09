@@ -13,6 +13,7 @@ const {
     isPlaceholderAgencyEmail,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
+const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
 
 function shouldPreferResearchAgencyDisplay({ researchSuggestedAgency, agencyEmail, portalUrl, addedSource }) {
     return Boolean(
@@ -205,6 +206,59 @@ function pickAgencyDisplayName(...candidates) {
     }
 
     return fallback;
+}
+
+function buildManualPasteMismatchSubstatus(result) {
+    if (!result?.mismatch) return null;
+    const sender = result.senderEmail || 'unknown sender';
+    const expected = Array.isArray(result.expectedEmails) && result.expectedEmails.length > 0
+        ? result.expectedEmails.join(', ')
+        : 'known agency channels';
+    return `Manual review required: pasted inbound sender ${sender} does not match expected agency channel(s): ${expected}`;
+}
+
+function filterStaleImportWarnings(importWarnings, {
+    originalAgencyName,
+    resolvedAgencyName,
+    currentAgencyEmail,
+    suppressPlaceholderAgencyDisplay,
+    forceCorrectedAgencyDisplay,
+    useResearchSuggestedDisplay,
+}) {
+    if (!Array.isArray(importWarnings) || importWarnings.length === 0) {
+        return importWarnings || null;
+    }
+
+    const originalName = String(originalAgencyName || '').trim();
+    const resolvedName = String(resolvedAgencyName || '').trim();
+    const hideSyntheticPlaceholderWarnings = Boolean(
+        suppressPlaceholderAgencyDisplay ||
+        forceCorrectedAgencyDisplay ||
+        useResearchSuggestedDisplay ||
+        /^unknown agency$/i.test(resolvedName)
+    );
+
+    const filtered = importWarnings.filter((warning) => {
+        const message = String(warning?.message || '');
+
+        if (/placeholder\\.invalid/i.test(message)) {
+            return false;
+        }
+
+        if (
+            hideSyntheticPlaceholderWarnings &&
+            originalName &&
+            resolvedName &&
+            originalName.toLowerCase() !== resolvedName.toLowerCase() &&
+            message.includes(`Agency "${originalName}" not found in directory`)
+        ) {
+            return false;
+        }
+
+        return true;
+    });
+
+    return filtered.length > 0 ? filtered : null;
 }
 
 /**
@@ -764,6 +818,8 @@ router.get('/:id/workspace', async (req, res) => {
         const latestThread = threads.length > 0 ? threads[threads.length - 1] : null;
         let threadMessages = [];
         let analysisMap = {};
+        let latestInboundMessageForGuard = null;
+        let latestInboundThreadForGuard = null;
         const caseAttachments = await db.getAttachmentsByCaseId(requestId);
 
         if (threads.length > 0) {
@@ -773,14 +829,28 @@ router.get('/:id/workspace', async (req, res) => {
                     return messages;
                 })
             );
-            const messages = threadMessagesByThread
-                .flat()
+            const messagesWithThread = threadMessagesByThread
+                .flatMap((messagesForThread, index) => {
+                    const thread = threads[index];
+                    return messagesForThread.map((message) => ({
+                        ...message,
+                        __thread: thread,
+                    }));
+                })
                 .sort((a, b) => {
                     const aTime = new Date(a.sent_at || a.received_at || a.created_at || 0).getTime();
                     const bTime = new Date(b.sent_at || b.received_at || b.created_at || 0).getTime();
                     if (aTime !== bTime) return aTime - bTime;
                     return Number(a.id || 0) - Number(b.id || 0);
                 });
+            const messages = messagesWithThread.map(({ __thread, ...message }) => message);
+            const latestInboundPair = [...messagesWithThread]
+                .reverse()
+                .find((message) => message.direction === 'inbound');
+            latestInboundMessageForGuard = latestInboundPair
+                ? Object.fromEntries(Object.entries(latestInboundPair).filter(([key]) => key !== '__thread'))
+                : null;
+            latestInboundThreadForGuard = latestInboundPair?.__thread || latestThread || null;
 
             // Fetch analysis for all inbound messages first
             for (const msg of messages.filter(m => m.direction === 'inbound')) {
@@ -1361,7 +1431,7 @@ router.get('/:id/workspace', async (req, res) => {
             ORDER BY created_at DESC
             LIMIT 1
         `, [requestId]);
-        const pendingProposal = pendingProposalResult.rows[0]
+        let pendingProposal = pendingProposalResult.rows[0]
             ? {
                 ...pendingProposalResult.rows[0],
                 gate_options: Array.isArray(pendingProposalResult.rows[0].gate_options)
@@ -1391,6 +1461,20 @@ router.get('/:id/workspace', async (req, res) => {
                 draft_preview: pendingProposal.draft_body_text ? pendingProposal.draft_body_text.substring(0, 200) : null,
                 gate_options: Array.isArray(pendingProposal.gate_options) ? pendingProposal.gate_options : null,
                 status: pendingProposal.status || null,
+            };
+        }
+        const manualPasteMismatch = shouldEscalateManualPasteMismatch(
+            latestInboundMessageForGuard,
+            latestInboundThreadForGuard,
+            caseData
+        );
+        if (manualPasteMismatch.mismatch) {
+            nextActionProposal = null;
+            pendingProposal = null;
+            caseData = {
+                ...caseData,
+                requires_human: true,
+                substatus: buildManualPasteMismatchSubstatus(manualPasteMismatch),
             };
         }
 
@@ -1489,25 +1573,30 @@ router.get('/:id/workspace', async (req, res) => {
             : null;
 
         // Compute derived review_state
-        const review_state = resolveReviewState({
+        let review_state = resolveReviewState({
             caseData: rawCaseData,
             activeProposal: pendingProposal,
             activeRun,
         });
-        const control_mismatches = detectControlMismatches({
+        let control_mismatches = detectControlMismatches({
             caseData: rawCaseData,
             reviewState: review_state,
             pendingProposal,
             activeRun,
             activePortalTaskStatus: caseData.active_portal_task_status || null,
         });
-        const control_state = resolveControlState({
+        let control_state = resolveControlState({
             caseData: rawCaseData,
             reviewState: review_state,
             pendingProposal,
             activeRun,
             activePortalTaskStatus: caseData.active_portal_task_status || null,
         });
+        if (manualPasteMismatch.mismatch) {
+            review_state = 'IDLE';
+            control_state = 'BLOCKED';
+            control_mismatches = [];
+        }
         if (control_mismatches.length > 0) {
             logger.warn('[control-state-mismatch]', {
                 case_id: requestId,
@@ -1585,6 +1674,14 @@ router.get('/:id/workspace', async (req, res) => {
             extracted_text: att.extracted_text || null,
             has_extracted_text: !!att.extracted_text,
         }));
+        requestDetail.import_warnings = filterStaleImportWarnings(requestDetail.import_warnings, {
+            originalAgencyName: primaryCaseAgency?.agency_name || caseData.agency_name,
+            resolvedAgencyName,
+            currentAgencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
+            suppressPlaceholderAgencyDisplay,
+            forceCorrectedAgencyDisplay,
+            useResearchSuggestedDisplay,
+        });
 
         // Keep workspace request fields aligned with derived state to prevent
         // transient "needs decision" UI while an execution run is active.
