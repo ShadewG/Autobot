@@ -807,15 +807,39 @@ router.get('/:id/workspace', async (req, res) => {
         }
 
         // Fetch activity log for timeline events
-        const activityResult = await db.query(
-            `SELECT * FROM activity_log
-             WHERE case_id = $1
-             ORDER BY created_at DESC
-             LIMIT 50`,
-            [requestId]
-        );
+        const [activityResult, constraintHistoryResult] = await Promise.all([
+            db.query(
+                `SELECT * FROM activity_log
+                 WHERE case_id = $1
+                 ORDER BY created_at DESC
+                 LIMIT 50`,
+                [requestId]
+            ),
+            // Dedicated constraint history query (not subject to timeline LIMIT)
+            db.query(
+                `SELECT id, event_type, description, meta_jsonb, created_at,
+                        COALESCE(meta_jsonb->>'actor_type', 'system') AS actor_type,
+                        meta_jsonb->>'source_service' AS source_service
+                 FROM activity_log
+                 WHERE case_id = $1
+                   AND event_type IN ('constraint_detected', 'constraint_added', 'constraint_removed')
+                 ORDER BY created_at ASC`,
+                [requestId]
+            ),
+        ]);
         const activityRows = activityResult.rows || [];
         const timelineEvents = dedupeTimelineEvents(activityRows.map(a => toTimelineEvent(a, analysisMap, caseData)));
+
+        // Build constraint history from dedicated query
+        const constraintHistory = (constraintHistoryResult.rows || []).map(row => ({
+            id: row.id,
+            event: row.event_type,
+            description: row.description,
+            constraint: row.meta_jsonb?.constraint || row.meta_jsonb?.constraint_type || null,
+            actor: row.actor_type,
+            source: row.source_service || null,
+            timestamp: row.created_at,
+        }));
 
         // Build next action proposal from latest pending reply
         let nextActionProposal = null;
@@ -1629,6 +1653,7 @@ router.get('/:id/workspace', async (req, res) => {
             control_mismatches,
             active_run: activeRun,
             agent_decisions: agentDecisions,
+            constraint_history: constraintHistory,
         });
     } catch (error) {
         console.error('Error fetching request workspace:', error);

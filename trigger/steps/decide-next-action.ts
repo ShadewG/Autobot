@@ -2940,6 +2940,32 @@ export async function decideNextAction(
       }
     }
 
+    if (classification === "DENIAL" && denialSubtype === "no_records") {
+      await db.getLatestResponseAnalysis(caseId);
+      const deterministicNoRecordsDecision = await deterministicRouting(
+        caseId,
+        classification,
+        extractedFeeAmount,
+        sentiment,
+        autopilotMode,
+        triggerType,
+        requiresResponse,
+        portalUrl,
+        denialSubtype,
+        inlineKeyPoints
+      );
+      if (
+        deterministicNoRecordsDecision.actionType === "RESEARCH_AGENCY" &&
+        deterministicNoRecordsDecision.reasoning.some((line) =>
+          /case metadata names .*researching the correct custodian instead of rebutting the wrong agency/i.test(
+            String(line)
+          )
+        )
+      ) {
+        return deterministicNoRecordsDecision;
+      }
+    }
+
     // === AI Router v2 vs Legacy routing ===
     if (useAIRouter(caseId)) {
       logger.info("AI Router v2 active", { caseId, classification });

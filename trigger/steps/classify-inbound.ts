@@ -386,9 +386,10 @@ export async function classifyInbound(
   const subjectLower = (message.subject || "").toLowerCase();
   const bodySnippet = ((message.body_text || message.body_html || "").substring(0, 500)).toLowerCase();
 
-  // Phone call updates and manual notes are internal records, not agency responses
+  // Phone call updates, manual notes, and synthetic QA are internal records, not agency responses
+  const INTERNAL_MESSAGE_TYPES = ["phone_call", "manual_note", "synthetic_qa", "system_note", "manual_trigger", "portal_submission"];
   const isInternalNote =
-    (message as any).message_type === "phone_call" ||
+    INTERNAL_MESSAGE_TYPES.includes((message as any).message_type) ||
     /phone\s*call\s*(update|log|note)/i.test(message.subject || "") ||
     /manual\s*phone\s*call/i.test(message.subject || "");
 
@@ -694,6 +695,18 @@ export async function classifyInbound(
       classification,
     });
     suggestedAction = "respond";
+  }
+
+  // Consistency validation: if requiresResponse is false but suggestedAction is actionable,
+  // either flip requiresResponse or clear the action to avoid impossible combinations
+  const passiveActions = new Set(["wait", "monitor", "none", ""]);
+  if (!requiresResponse && suggestedAction && !passiveActions.has(suggestedAction.toLowerCase())) {
+    logger.warn("requires_response=false but suggested_action is actionable — overriding requires_response to true", {
+      caseId: context.caseId,
+      classification,
+      suggestedAction,
+    });
+    requiresResponse = true;
   }
 
   return {

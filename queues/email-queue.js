@@ -371,6 +371,14 @@ const analysisWorker = connection ? new Worker('analysis-queue', async (job) => 
             throw new Error(`Message ${messageId} not found`);
         }
 
+        // Skip non-agency messages: phone call transcripts, manual notes, and synthetic QA
+        const EXCLUDED_MESSAGE_TYPES = ['phone_call', 'manual_note', 'synthetic_qa', 'system_note'];
+        if (messageData.message_type && EXCLUDED_MESSAGE_TYPES.includes(messageData.message_type)) {
+            console.log(`Skipping analysis for ${messageData.message_type} message ${messageId} — not an agency response`);
+            await db.query('UPDATE messages SET processed_at = COALESCE(processed_at, NOW()) WHERE id = $1', [messageId]);
+            return { skipped: true, reason: `excluded_message_type:${messageData.message_type}` };
+        }
+
         // Verify message belongs to this case — self-heal if wrong
         if (messageData.case_id && String(messageData.case_id) !== String(caseId)) {
             console.error(`[Analysis] Message ${messageId} belongs to case ${messageData.case_id}, not ${caseId} — fixing`);

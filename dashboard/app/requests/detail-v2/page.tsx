@@ -2185,6 +2185,20 @@ function DetailV2Content() {
   };
 
   const constraintHistory = useMemo(() => {
+    // Prefer dedicated constraint_history from workspace API (not subject to timeline LIMIT)
+    const dedicated = (data as any)?.constraint_history;
+    if (Array.isArray(dedicated) && dedicated.length > 0) {
+      return dedicated.map((h: any) => ({
+        timestamp: h.timestamp,
+        action: h.event === "constraint_removed" ? "removed" as const
+          : h.event === "constraint_added" ? "added" as const
+          : "detected" as const,
+        description: h.description,
+        actor: h.actor === "human" ? "operator" : (h.source || "AI"),
+        constraint: h.constraint,
+      })).slice(0, 20);
+    }
+    // Fallback: parse from timeline_events
     const events = (data as any)?.timeline_events || [];
     const eventTypes = new Set(["constraint_added", "constraint_removed", "constraint_detected"]);
     return events

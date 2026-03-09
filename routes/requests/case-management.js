@@ -1352,7 +1352,7 @@ router.get('/:id/provider-payloads', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Case not found' });
         }
 
-        const [messageResult, executionResult, emailEvents] = await Promise.all([
+        const [messageResult, executionResult, emailEvents, allCaseMessageIds] = await Promise.all([
             db.query(
                 `SELECT id, direction, message_type, subject, from_email, to_email, provider_payload, created_at,
                         delivered_at, bounced_at, sendgrid_message_id
@@ -1376,11 +1376,17 @@ router.get('/:id/provider-payloads', async (req, res) => {
                 [caseId, limit, executionId]
             ),
             db.getCaseEmailEvents(caseId, { limit }),
+            // Also fetch all message IDs + sendgrid IDs for email-event correlation
+            // (messages without provider_payload can still have email_events via sendgrid_message_id)
+            db.query(
+                `SELECT id, sendgrid_message_id FROM messages WHERE case_id = $1`,
+                [caseId]
+            ),
         ]);
 
-        const relevantMessageIds = new Set(messageResult.rows.map((row) => row.id));
+        const relevantMessageIds = new Set(allCaseMessageIds.rows.map((row) => row.id));
         const relevantProviderMessageIds = new Set(
-            messageResult.rows.map((row) => row.sendgrid_message_id).filter(Boolean)
+            allCaseMessageIds.rows.map((row) => row.sendgrid_message_id).filter(Boolean)
         );
         executionResult.rows.forEach((row) => {
             if (row.provider_message_id) {

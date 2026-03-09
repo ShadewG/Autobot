@@ -478,6 +478,18 @@ export const processInbound = task({
     await markStep("load_context", `Run #${runId}: loading inbound context`);
     const context = await loadContext(caseId, messageId);
 
+    // Step 1a: Skip non-agency messages (phone call transcripts, manual notes, synthetic QA)
+    const EXCLUDED_MESSAGE_TYPES = ["phone_call", "manual_note", "synthetic_qa", "system_note"];
+    const triggerMsg = context.messages?.find((m: any) => m.id === messageId);
+    if (triggerMsg?.message_type && EXCLUDED_MESSAGE_TYPES.includes(triggerMsg.message_type)) {
+      logger.info("Skipping non-agency message — not classifying", {
+        caseId, messageId, messageType: triggerMsg.message_type,
+      });
+      await markStep("skip_non_agency", `Run #${runId}: skipping ${triggerMsg.message_type} message`);
+      try { await completeRun(caseId, runId); } catch {}
+      return { status: "skipped", reason: `excluded_message_type:${triggerMsg.message_type}` };
+    }
+
     // Step 1b: Extract text from any unprocessed PDF attachments
     const inboundAttachments = context.attachments.filter(
       (a: any) => a.message_id === messageId && !a.extracted_text
