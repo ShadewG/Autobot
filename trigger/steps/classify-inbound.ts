@@ -723,7 +723,7 @@ export async function classifyInbound(
 
   // Consistency validation: if requiresResponse is false but suggestedAction is actionable,
   // either flip requiresResponse or clear the action to avoid impossible combinations
-  const passiveActions = new Set(["wait", "monitor", "none", ""]);
+  const passiveActions = new Set(["wait", "monitor", "none", "", "use_portal", "download", "download_records", "find_correct_agency"]);
   if (!requiresResponse && suggestedAction && !passiveActions.has(suggestedAction.toLowerCase())) {
     logger.warn("requires_response=false but suggested_action is actionable — overriding requires_response to true", {
       caseId: context.caseId,
