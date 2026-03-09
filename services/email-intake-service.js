@@ -103,12 +103,14 @@ async function createEmailIntakeCase({
       cleanedSubject ? `Forwarded subject: ${cleanedSubject}` : null,
     ].filter(Boolean).join('\n');
 
+    // Use placeholder email to satisfy email_or_portal_required constraint.
+    // Case starts in needs_human_review — operator will set real contact info.
     const newCase = await db.createCase({
       notion_page_id: syntheticId,
       case_name: resolvedCaseName,
       subject_name: resolvedSubjectName,
       agency_name: resolvedAgencyName,
-      agency_email: null,
+      agency_email: 'pending-research@intake.autobot',
       alternate_agency_email: null,
       portal_url: null,
       portal_provider: null,

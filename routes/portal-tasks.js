@@ -58,10 +58,17 @@ router.get('/', async (req, res) => {
     const limit = parseInt(req.query.limit) || 50;
     const tasks = await getPendingPortalTasks(limit);
 
+    // Normalize status to lowercase — DB stores UPPERCASE but frontend expects lowercase
+    const normalizedTasks = tasks.map(t => ({
+      ...t,
+      status: (t.status || '').toLowerCase(),
+      task_type: (t.task_type || '').toLowerCase(),
+    }));
+
     res.json({
       success: true,
-      count: tasks.length,
-      tasks
+      count: normalizedTasks.length,
+      tasks: normalizedTasks
     });
   } catch (error) {
     logger.error('Error fetching portal tasks', { error: error.message });
@@ -97,7 +104,7 @@ router.get('/:id', async (req, res) => {
 
     res.json({
       success: true,
-      task,
+      task: { ...task, status: (task.status || '').toLowerCase(), task_type: (task.task_type || '').toLowerCase() },
       proposal
     });
   } catch (error) {
@@ -322,10 +329,16 @@ router.get('/case/:caseId', async (req, res) => {
       ORDER BY pt.created_at DESC
     `, [caseId]);
 
+    const normalizedRows = result.rows.map(t => ({
+      ...t,
+      status: (t.status || '').toLowerCase(),
+      task_type: (t.task_type || '').toLowerCase(),
+    }));
+
     res.json({
       success: true,
-      count: result.rows.length,
-      tasks: result.rows
+      count: normalizedRows.length,
+      tasks: normalizedRows
     });
   } catch (error) {
     logger.error('Error fetching case portal tasks', { caseId: req.params.caseId, error: error.message });
