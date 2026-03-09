@@ -101,23 +101,40 @@ interface HourlyActivityResponse {
   }>;
 }
 
-interface AgencyLeaderboardResponse {
+interface DepartmentEntry {
+  agency_name: string;
+  state: string | null;
+  total_cases: number;
+  sent_cases: number;
+  responded_cases: number;
+  completed_cases: number;
+  denied_cases: number;
+  open_cases: number;
+  overdue_cases: number;
+  total_reviews: number;
+  approve_count: number;
+  response_rate: number | null;
+  avg_response_days: number | null;
+  completion_rate: number | null;
+  denial_rate: number | null;
+  overdue_rate: number | null;
+  approval_rate: number | null;
+}
+
+interface DepartmentAnalyticsResponse {
   success: boolean;
-  min_cases: number;
-  agencies: Array<{
-    agency_name: string;
-    state: string;
-    total_cases: number;
-    completed: number;
-    responded: number;
-    denied: number;
-    overdue: number;
-    avg_response_days: number | null;
-    response_rate: number | null;
-    completion_rate: number | null;
-    denial_rate: number | null;
-    overdue_rate: number | null;
-  }>;
+  departments_considered: number;
+  cases_considered: number;
+  sample_thresholds: { min_cases: number; min_reviews: number };
+  leaderboards: {
+    response_rate: DepartmentEntry[];
+    avg_response_time: DepartmentEntry[];
+    completion_rate: DepartmentEntry[];
+    approval_rate: DepartmentEntry[];
+    denial_rate: DepartmentEntry[];
+    overdue_rate: DepartmentEntry[];
+  };
+  departments: DepartmentEntry[];
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -171,8 +188,8 @@ export default function AnalyticsPage() {
     { refreshInterval: 120000 }
   );
 
-  const { data: leaderboardData } = useSWR<AgencyLeaderboardResponse>(
-    "/dashboard/agency-leaderboard?min_cases=5",
+  const { data: deptData } = useSWR<DepartmentAnalyticsResponse>(
+    "/dashboard/departments?min_cases=5&limit=20",
     fetcher,
     { refreshInterval: 120000 }
   );
@@ -756,8 +773,8 @@ export default function AnalyticsPage() {
       )}
 
       {/* ── Department Rankings ── */}
-      {leaderboardData?.success && leaderboardData.agencies.length > 0 && (
-        <AgencyLeaderboard agencies={leaderboardData.agencies} minCases={leaderboardData.min_cases} />
+      {deptData?.success && deptData.departments.length > 0 && (
+        <DepartmentRankings data={deptData} />
       )}
     </div>
   );
@@ -797,113 +814,107 @@ function KPICard({
 
 // ── Department Rankings ──────────────────────────────────────────────────────
 
-const LEADERBOARD_COLORS = {
-  response_rate: "#4ade80",
-  completion_rate: "#60a5fa",
-  avg_response_days: "#fbbf24",
-  denial_rate: "#f87171",
-  overdue_rate: "#fb923c",
-};
+type LeaderboardKey = keyof DepartmentAnalyticsResponse["leaderboards"];
 
-type SortMetric = "response_rate" | "completion_rate" | "avg_response_days" | "denial_rate" | "overdue_rate";
-
-const METRIC_CONFIG: Record<SortMetric, {
+const LEADERBOARD_CONFIG: Record<LeaderboardKey, {
   label: string;
   icon: typeof Trophy;
   color: string;
+  dataKey: keyof DepartmentEntry;
   format: (v: number | null) => string;
-  sortDir: "desc" | "asc";
+  xDomain: [number, number | string];
+  xFormat: (v: number) => string;
   description: string;
 }> = {
   response_rate: {
     label: "Response Rate",
     icon: TrendingUp,
-    color: LEADERBOARD_COLORS.response_rate,
+    color: "#4ade80",
+    dataKey: "response_rate",
     format: (v) => v != null ? `${v}%` : "—",
-    sortDir: "desc",
-    description: "% of cases that received an agency response",
+    xDomain: [0, 100],
+    xFormat: (v) => `${v}%`,
+    description: "% of sent cases that received an agency response",
+  },
+  avg_response_time: {
+    label: "Avg Response Time",
+    icon: Clock,
+    color: "#fbbf24",
+    dataKey: "avg_response_days",
+    format: (v) => v != null ? `${v}d` : "—",
+    xDomain: [0, "auto"],
+    xFormat: (v) => `${v}d`,
+    description: "Average days from request to first response (lower is better)",
   },
   completion_rate: {
     label: "Completion Rate",
     icon: Trophy,
-    color: LEADERBOARD_COLORS.completion_rate,
+    color: "#60a5fa",
+    dataKey: "completion_rate",
     format: (v) => v != null ? `${v}%` : "—",
-    sortDir: "desc",
+    xDomain: [0, 100],
+    xFormat: (v) => `${v}%`,
     description: "% of cases fully completed",
   },
-  avg_response_days: {
-    label: "Avg Response Time",
-    icon: Clock,
-    color: LEADERBOARD_COLORS.avg_response_days,
-    format: (v) => v != null ? `${v}d` : "—",
-    sortDir: "asc",
-    description: "Average days from request to first response",
+  approval_rate: {
+    label: "Approval Rate",
+    icon: TrendingUp,
+    color: "#a78bfa",
+    dataKey: "approval_rate",
+    format: (v) => v != null ? `${v}%` : "—",
+    xDomain: [0, 100],
+    xFormat: (v) => `${v}%`,
+    description: "% of human reviews that were approved",
   },
   denial_rate: {
     label: "Denial Rate",
     icon: TrendingDown,
-    color: LEADERBOARD_COLORS.denial_rate,
+    color: "#f87171",
+    dataKey: "denial_rate",
     format: (v) => v != null ? `${v}%` : "—",
-    sortDir: "desc",
-    description: "% of cases denied or withdrawn",
+    xDomain: [0, 100],
+    xFormat: (v) => `${v}%`,
+    description: "% of cases denied by agency",
   },
   overdue_rate: {
     label: "Overdue Rate",
     icon: AlertTriangle,
-    color: LEADERBOARD_COLORS.overdue_rate,
+    color: "#fb923c",
+    dataKey: "overdue_rate",
     format: (v) => v != null ? `${v}%` : "—",
-    sortDir: "desc",
-    description: "% of active cases past statutory deadline",
+    xDomain: [0, 100],
+    xFormat: (v) => `${v}%`,
+    description: "% of open cases past statutory deadline",
   },
 };
 
-function AgencyLeaderboard({
-  agencies,
-  minCases,
-}: {
-  agencies: AgencyLeaderboardResponse["agencies"];
-  minCases: number;
-}) {
-  const [activeMetric, setActiveMetric] = useState<SortMetric>("response_rate");
-  const [showAll, setShowAll] = useState(false);
+function DepartmentRankings({ data }: { data: DepartmentAnalyticsResponse }) {
+  const [activeTab, setActiveTab] = useState<LeaderboardKey>("response_rate");
 
-  const config = METRIC_CONFIG[activeMetric];
-
-  const sorted = useMemo(() => {
-    const filtered = agencies.filter((a) => {
-      const val = a[activeMetric];
-      return val != null;
-    });
-
-    return [...filtered].sort((a, b) => {
-      const aVal = a[activeMetric] ?? (config.sortDir === "desc" ? -Infinity : Infinity);
-      const bVal = b[activeMetric] ?? (config.sortDir === "desc" ? -Infinity : Infinity);
-      return config.sortDir === "desc"
-        ? (bVal as number) - (aVal as number)
-        : (aVal as number) - (bVal as number);
-    });
-  }, [agencies, activeMetric, config.sortDir]);
-
-  const displayed = showAll ? sorted : sorted.slice(0, 10);
-  const maxVal = Math.max(...displayed.map((a) => Math.abs(Number(a[activeMetric]) || 0)), 1);
+  const config = LEADERBOARD_CONFIG[activeTab];
+  const entries = data.leaderboards[activeTab];
+  const maxVal = Math.max(...entries.map((e) => Math.abs(Number(e[config.dataKey]) || 0)), 1);
 
   return (
     <>
-      <h2 className="text-lg font-semibold mt-4">Department Rankings</h2>
-      <p className="text-xs text-muted-foreground -mt-2">
-        Agencies with {minCases}+ cases. Excludes test/synthetic data.
-      </p>
+      <div className="flex items-baseline gap-3 mt-4">
+        <h2 className="text-lg font-semibold">Department Rankings</h2>
+        <span className="text-[10px] text-muted-foreground">
+          {data.departments_considered} agencies · {data.cases_considered} cases · min {data.sample_thresholds.min_cases} cases
+        </span>
+      </div>
 
       {/* Metric Selector Tabs */}
       <div className="flex flex-wrap gap-2">
-        {(Object.keys(METRIC_CONFIG) as SortMetric[]).map((metric) => {
-          const mc = METRIC_CONFIG[metric];
+        {(Object.keys(LEADERBOARD_CONFIG) as LeaderboardKey[]).map((key) => {
+          const mc = LEADERBOARD_CONFIG[key];
           const Icon = mc.icon;
-          const isActive = activeMetric === metric;
+          const isActive = activeTab === key;
+          const count = data.leaderboards[key].length;
           return (
             <button
-              key={metric}
-              onClick={() => setActiveMetric(metric)}
+              key={key}
+              onClick={() => setActiveTab(key)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                 isActive
                   ? "bg-foreground/10 text-foreground"
@@ -912,6 +923,9 @@ function AgencyLeaderboard({
             >
               <Icon className="h-3.5 w-3.5" style={isActive ? { color: mc.color } : undefined} />
               {mc.label}
+              {count > 0 && (
+                <span className="text-[10px] opacity-60">({count})</span>
+              )}
             </button>
           );
         })}
@@ -922,153 +936,147 @@ function AgencyLeaderboard({
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center gap-2">
             {config.label}
-            {config.sortDir === "asc" ? (
-              <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-            )}
             <span className="text-[10px] font-normal text-muted-foreground ml-1">
               {config.description}
             </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ResponsiveContainer width="100%" height={Math.max(displayed.length * 36, 200)}>
-            <BarChart
-              data={displayed}
-              layout="vertical"
-              margin={{ left: 8, right: 60, top: 4, bottom: 4 }}
-            >
-              <XAxis
-                type="number"
-                tick={{ fontSize: 10 }}
-                domain={[0, activeMetric === "avg_response_days" ? "auto" : 100]}
-                tickFormatter={(v) =>
-                  activeMetric === "avg_response_days" ? `${v}d` : `${v}%`
-                }
-              />
-              <YAxis
-                type="category"
-                dataKey="agency_name"
-                width={220}
-                tick={({ x, y, payload }: any) => {
-                  const agency = displayed.find((a) => a.agency_name === payload.value);
-                  const label = payload.value.length > 30 ? payload.value.slice(0, 28) + "…" : payload.value;
-                  return (
-                    <g transform={`translate(${x},${y})`}>
-                      <text x={-4} y={0} dy={4} textAnchor="end" fill="#a1a1aa" fontSize={10}>
-                        {label}
-                      </text>
-                      {agency?.state && (
-                        <text x={-4} y={0} dy={14} textAnchor="end" fill="#525252" fontSize={9}>
-                          {agency.state} · {agency.total_cases} cases
+          {entries.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(entries.length * 40, 200)}>
+              <BarChart
+                data={entries}
+                layout="vertical"
+                margin={{ left: 8, right: 60, top: 4, bottom: 4 }}
+              >
+                <XAxis
+                  type="number"
+                  tick={{ fontSize: 10 }}
+                  domain={config.xDomain as any}
+                  tickFormatter={config.xFormat}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="agency_name"
+                  width={220}
+                  tick={({ x, y, payload }: any) => {
+                    const dept = entries.find((e) => e.agency_name === payload.value);
+                    const label = payload.value.length > 32 ? payload.value.slice(0, 30) + "…" : payload.value;
+                    return (
+                      <g transform={`translate(${x},${y})`}>
+                        <text x={-4} y={0} dy={3} textAnchor="end" fill="#a1a1aa" fontSize={10}>
+                          {label}
                         </text>
-                      )}
-                    </g>
-                  );
-                }}
-                interval={0}
-              />
-              <Tooltip
-                formatter={(value: any) => [config.format(value), config.label]}
-                labelFormatter={(label) => label}
-                contentStyle={{
-                  backgroundColor: "#18181b",
-                  border: "1px solid #27272a",
-                  borderRadius: "6px",
-                  fontSize: 12,
-                }}
-              />
-              <Bar dataKey={activeMetric} radius={[0, 4, 4, 0]} barSize={20}>
-                {displayed.map((entry, i) => {
-                  const val = Number(entry[activeMetric]) || 0;
-                  const intensity = maxVal > 0 ? val / maxVal : 0;
-                  return (
-                    <Cell
-                      key={i}
-                      fill={config.color}
-                      fillOpacity={0.3 + intensity * 0.7}
-                    />
-                  );
-                })}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-
-          {sorted.length > 10 && (
-            <button
-              onClick={() => setShowAll(!showAll)}
-              className="mt-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {showAll ? `Show top 10` : `Show all ${sorted.length} agencies`}
-            </button>
+                        <text x={-4} y={0} dy={14} textAnchor="end" fill="#525252" fontSize={9}>
+                          {dept?.state || "—"} · {dept?.total_cases || 0} cases
+                        </text>
+                      </g>
+                    );
+                  }}
+                  interval={0}
+                />
+                <Tooltip
+                  formatter={(value: any) => [config.format(value), config.label]}
+                  labelFormatter={(label) => label}
+                  contentStyle={{
+                    backgroundColor: "#18181b",
+                    border: "1px solid #27272a",
+                    borderRadius: "6px",
+                    fontSize: 12,
+                  }}
+                />
+                <Bar dataKey={config.dataKey} radius={[0, 4, 4, 0]} barSize={22}>
+                  {entries.map((entry, i) => {
+                    const val = Number(entry[config.dataKey]) || 0;
+                    const intensity = maxVal > 0 ? val / maxVal : 0;
+                    return (
+                      <Cell
+                        key={i}
+                        fill={config.color}
+                        fillOpacity={0.3 + intensity * 0.7}
+                      />
+                    );
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-sm text-muted-foreground py-8 text-center">
+              No agencies meet the minimum sample size for this metric
+            </p>
           )}
         </CardContent>
       </Card>
 
-      {/* Detail Table */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">All Department Metrics</CardTitle>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="border-b border-border text-muted-foreground">
-                <th className="text-left py-2 px-2">Agency</th>
-                <th className="text-left py-2 px-2">State</th>
-                <th className="text-right py-2 px-2">Cases</th>
-                <th className="text-right py-2 px-2">Response %</th>
-                <th className="text-right py-2 px-2">Avg Days</th>
-                <th className="text-right py-2 px-2">Complete %</th>
-                <th className="text-right py-2 px-2">Denial %</th>
-                <th className="text-right py-2 px-2">Overdue %</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayed.map((a) => (
-                <tr key={`${a.agency_name}-${a.state}`} className="border-b border-border/50 hover:bg-muted/30">
-                  <td className="py-1.5 px-2 font-medium max-w-[200px] truncate" title={a.agency_name}>
-                    {a.agency_name}
-                  </td>
-                  <td className="py-1.5 px-2 text-muted-foreground">{a.state}</td>
-                  <td className="text-right py-1.5 px-2">{a.total_cases}</td>
-                  <td className={`text-right py-1.5 px-2 ${
-                    a.response_rate != null && a.response_rate >= 70 ? "text-green-400" :
-                    a.response_rate != null && a.response_rate >= 40 ? "text-amber-400" : "text-red-400"
-                  }`}>
-                    {a.response_rate != null ? `${a.response_rate}%` : "—"}
-                  </td>
-                  <td className={`text-right py-1.5 px-2 ${
-                    a.avg_response_days != null && a.avg_response_days <= 5 ? "text-green-400" :
-                    a.avg_response_days != null && a.avg_response_days <= 14 ? "text-amber-400" : "text-red-400"
-                  }`}>
-                    {a.avg_response_days != null ? `${a.avg_response_days}d` : "—"}
-                  </td>
-                  <td className={`text-right py-1.5 px-2 ${
-                    a.completion_rate != null && a.completion_rate >= 70 ? "text-green-400" :
-                    a.completion_rate != null && a.completion_rate >= 40 ? "text-amber-400" : "text-red-400"
-                  }`}>
-                    {a.completion_rate != null ? `${a.completion_rate}%` : "—"}
-                  </td>
-                  <td className={`text-right py-1.5 px-2 ${
-                    a.denial_rate != null && a.denial_rate > 50 ? "text-red-400" :
-                    a.denial_rate != null && a.denial_rate > 20 ? "text-amber-400" : "text-green-400"
-                  }`}>
-                    {a.denial_rate != null ? `${a.denial_rate}%` : "—"}
-                  </td>
-                  <td className={`text-right py-1.5 px-2 ${
-                    a.overdue_rate != null && a.overdue_rate > 30 ? "text-red-400" :
-                    a.overdue_rate != null && a.overdue_rate > 10 ? "text-amber-400" : "text-green-400"
-                  }`}>
-                    {a.overdue_rate != null ? `${a.overdue_rate}%` : "—"}
-                  </td>
+      {/* Detail Table — shows the full departments list */}
+      {data.departments.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">All Department Metrics</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-border text-muted-foreground">
+                  <th className="text-left py-2 px-2">Agency</th>
+                  <th className="text-left py-2 px-2">State</th>
+                  <th className="text-right py-2 px-2">Cases</th>
+                  <th className="text-right py-2 px-2">Response %</th>
+                  <th className="text-right py-2 px-2">Avg Days</th>
+                  <th className="text-right py-2 px-2">Complete %</th>
+                  <th className="text-right py-2 px-2">Approval %</th>
+                  <th className="text-right py-2 px-2">Denial %</th>
+                  <th className="text-right py-2 px-2">Overdue %</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </CardContent>
-      </Card>
+              </thead>
+              <tbody>
+                {data.departments.map((a) => (
+                  <tr key={`${a.agency_name}-${a.state}`} className="border-b border-border/50 hover:bg-muted/30">
+                    <td className="py-1.5 px-2 font-medium max-w-[200px] truncate" title={a.agency_name}>
+                      {a.agency_name}
+                    </td>
+                    <td className="py-1.5 px-2 text-muted-foreground">{a.state || "—"}</td>
+                    <td className="text-right py-1.5 px-2">{a.total_cases}</td>
+                    <td className={`text-right py-1.5 px-2 ${rateColor(a.response_rate, 70, 40)}`}>
+                      {a.response_rate != null ? `${a.response_rate}%` : "—"}
+                    </td>
+                    <td className={`text-right py-1.5 px-2 ${daysColor(a.avg_response_days)}`}>
+                      {a.avg_response_days != null ? `${a.avg_response_days}d` : "—"}
+                    </td>
+                    <td className={`text-right py-1.5 px-2 ${rateColor(a.completion_rate, 70, 40)}`}>
+                      {a.completion_rate != null ? `${a.completion_rate}%` : "—"}
+                    </td>
+                    <td className={`text-right py-1.5 px-2 ${rateColor(a.approval_rate, 70, 40)}`}>
+                      {a.approval_rate != null ? `${a.approval_rate}%` : "—"}
+                    </td>
+                    <td className={`text-right py-1.5 px-2 ${invertedRateColor(a.denial_rate, 50, 20)}`}>
+                      {a.denial_rate != null ? `${a.denial_rate}%` : "—"}
+                    </td>
+                    <td className={`text-right py-1.5 px-2 ${invertedRateColor(a.overdue_rate, 30, 10)}`}>
+                      {a.overdue_rate != null ? `${a.overdue_rate}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
     </>
   );
+}
+
+function rateColor(v: number | null, good: number, mid: number) {
+  if (v == null) return "text-muted-foreground";
+  return v >= good ? "text-green-400" : v >= mid ? "text-amber-400" : "text-red-400";
+}
+
+function daysColor(v: number | null) {
+  if (v == null) return "text-muted-foreground";
+  return v <= 5 ? "text-green-400" : v <= 14 ? "text-amber-400" : "text-red-400";
+}
+
+function invertedRateColor(v: number | null, bad: number, mid: number) {
+  if (v == null) return "text-muted-foreground";
+  return v > bad ? "text-red-400" : v > mid ? "text-amber-400" : "text-green-400";
 }
