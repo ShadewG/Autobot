@@ -6,9 +6,12 @@ const pdContactService = require('../services/pd-contact-service');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { normalizeAgencyEmailHint, findCanonicalAgency } = require('../services/canonical-agency');
 const {
+    deriveDisplayState,
+    extractAgencyNameFromAdditionalDetails,
     extractMetadataAgencyHint,
     detectCaseMetadataAgencyMismatch,
     extractResearchSuggestedAgency,
+    evaluateImportAutoDispatchSafety,
     isPlaceholderAgencyEmail,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../utils/request-normalization');
@@ -114,6 +117,84 @@ function buildExistingContactFallback(caseAgency, caseData) {
     };
 }
 
+function hasImportReviewSignals(caseData, agencies = []) {
+    const hasWarnings = Array.isArray(caseData?.import_warnings) && caseData.import_warnings.length > 0;
+    const hasImportAgency = Array.isArray(agencies) && agencies.some((agency) =>
+        ['notion_import', 'notion_relation', 'import_review_mask'].includes(String(agency?.added_source || ''))
+    );
+    const pauseReason = String(caseData?.pause_reason || '').trim().toUpperCase();
+    const substatus = String(caseData?.substatus || '').trim();
+
+    return Boolean(
+        hasWarnings ||
+        hasImportAgency ||
+        pauseReason === 'IMPORT_REVIEW' ||
+        /imported case/i.test(substatus)
+    );
+}
+
+function stripTrailingStateLabel(name, state) {
+    const value = String(name || '').trim();
+    if (!value) return null;
+    const normalizedState = deriveDisplayState(state, state);
+    if (!normalizedState) return value;
+
+    const stateSuffixes = {
+        AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', DC: 'District of Columbia',
+        FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana',
+        ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska',
+        NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma',
+        OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+        VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+    };
+    const fullName = stateSuffixes[normalizedState];
+    if (!fullName) return value;
+
+    return value.replace(new RegExp(`,\\s*${fullName}$`, 'i'), '').trim();
+}
+
+function buildImportBlockedAgencyDisplay(caseData, agencies = []) {
+    const metadataAgencyHint = extractMetadataAgencyHint(caseData?.additional_details);
+    const narrativeAgencyName = extractAgencyNameFromAdditionalDetails(caseData?.additional_details);
+    const primaryAgency = agencies.find((agency) => agency?.is_primary) || agencies[0] || null;
+    const importSafety = evaluateImportAutoDispatchSafety({
+        caseName: caseData?.case_name,
+        subjectName: caseData?.subject_name,
+        agencyName: primaryAgency?.agency_name || caseData?.agency_name,
+        state: caseData?.state,
+        additionalDetails: caseData?.additional_details,
+        importWarnings: caseData?.import_warnings,
+        agencyEmail: primaryAgency?.agency_email || caseData?.agency_email,
+        portalUrl: primaryAgency?.portal_url || caseData?.portal_url,
+    });
+
+    if (!importSafety.shouldBlockAutoDispatch || !hasImportReviewSignals(caseData, agencies)) {
+        return null;
+    }
+
+    const agencyName = stripTrailingStateLabel(
+        metadataAgencyHint?.name || narrativeAgencyName || 'Unknown agency',
+        caseData?.state
+    ) || 'Unknown agency';
+    return {
+        id: primaryAgency?.id || -Number(caseData?.id || 0),
+        case_id: caseData?.id || primaryAgency?.case_id || null,
+        agency_id: null,
+        agency_name: agencyName,
+        agency_email: null,
+        portal_url: null,
+        portal_provider: null,
+        is_primary: true,
+        is_active: true,
+        added_source: 'import_review_mask',
+        status: primaryAgency?.status || 'pending',
+        state: deriveDisplayState(caseData?.state, agencyName) || caseData?.state || null,
+        notes: 'Imported case is blocked until the correct agency is confirmed.',
+        created_at: primaryAgency?.created_at || caseData?.created_at || null,
+        updated_at: primaryAgency?.updated_at || caseData?.updated_at || null,
+    };
+}
+
 async function canonicalizeCaseAgency(caseAgency, caseData) {
     const researchSuggestedAgency = extractResearchSuggestedAgency(caseData?.contact_research_notes);
     const metadataAgencyHint = extractMetadataAgencyHint(caseData?.additional_details);
@@ -207,6 +288,10 @@ router.get('/:id/agencies', async (req, res) => {
             db.getCaseById(caseId),
             db.getCaseAgencies(caseId, includeInactive),
         ]);
+        const importBlockedAgencyDisplay = buildImportBlockedAgencyDisplay(caseData, agencies);
+        if (importBlockedAgencyDisplay) {
+            return res.json({ success: true, agencies: [importBlockedAgencyDisplay] });
+        }
         const canonicalAgencies = await Promise.all(
             agencies.map((agency) => canonicalizeCaseAgency(agency, caseData))
         );

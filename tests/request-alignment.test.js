@@ -2269,6 +2269,14 @@ describe('Request alignment regressions', function () {
       assert.strictEqual(response.body.next_action_proposal, null);
       assert.strictEqual(response.body.request.control_state, 'BLOCKED');
       assert.match(response.body.request.substatus, /does not match case details/i);
+      assert.strictEqual(response.body.request.agency_name, 'Denver Police Department');
+      assert.strictEqual(response.body.request.agency_email, null);
+      assert.strictEqual(response.body.request.portal_url, null);
+      assert.strictEqual(response.body.request.state, 'CO');
+      assert.strictEqual(response.body.agency_summary.name, 'Denver Police Department');
+      assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
+      assert.strictEqual(response.body.case_agencies[0].agency_name, 'Denver Police Department');
+      assert.strictEqual(response.body.case_agencies[0].agency_email, null);
     } finally {
       db.getCaseById = originalDbMethods.getCaseById;
       db.getCaseAgencies = originalDbMethods.getCaseAgencies;
@@ -2375,6 +2383,14 @@ describe('Request alignment regressions', function () {
       assert.strictEqual(response.body.request.control_state, 'BLOCKED');
       assert.match(response.body.request.substatus, /state/i);
       assert.match(response.body.request.substatus, /routed agency state/i);
+      assert.strictEqual(response.body.request.agency_name, 'Unknown agency');
+      assert.strictEqual(response.body.request.agency_email, null);
+      assert.strictEqual(response.body.request.portal_url, null);
+      assert.strictEqual(response.body.request.state, 'CO');
+      assert.strictEqual(response.body.agency_summary.name, 'Unknown agency');
+      assert.strictEqual(response.body.agency_summary.submission_method, 'UNKNOWN');
+      assert.strictEqual(response.body.case_agencies[0].agency_name, 'Unknown agency');
+      assert.strictEqual(response.body.case_agencies[0].portal_url, null);
     } finally {
       db.getCaseById = originalDbMethods.getCaseById;
       db.getCaseAgencies = originalDbMethods.getCaseAgencies;
@@ -2383,6 +2399,110 @@ describe('Request alignment regressions', function () {
       db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
       db.getUserById = originalDbMethods.getUserById;
       db.query = originalDbMethods.query;
+    }
+  });
+
+  it('GET /api/cases/:id/agencies masks imported agency/channel mismatches behind the metadata agency hint', async function () {
+    const originalGetCaseById = db.getCaseById;
+    const originalGetCaseAgencies = db.getCaseAgencies;
+
+    db.getCaseById = async () => ({
+      id: 26636,
+      subject_name: 'Ryan Campbell',
+      case_name: 'Denver request',
+      agency_id: null,
+      agency_name: 'Police Department',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      portal_provider: 'govqa',
+      state: 'CO',
+      additional_details: '**Police Department:** Denver Police Department, Colorado',
+      import_warnings: [{ type: 'AGENCY_METADATA_MISMATCH' }],
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 301,
+      case_id: 26636,
+      agency_id: 1365,
+      agency_name: 'Lubbock Police Department, Texas',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      portal_provider: 'govqa',
+      is_primary: true,
+      is_active: true,
+      added_source: 'notion_import',
+      status: 'active',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    }]);
+
+    try {
+      const app = express();
+      app.use('/api/cases', caseAgenciesRouter);
+      const response = await supertest(app).get('/api/cases/26636/agencies');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.agencies.length, 1);
+      assert.strictEqual(response.body.agencies[0].agency_name, 'Denver Police Department');
+      assert.strictEqual(response.body.agencies[0].agency_id, null);
+      assert.strictEqual(response.body.agencies[0].agency_email, null);
+      assert.strictEqual(response.body.agencies[0].portal_url, null);
+    } finally {
+      db.getCaseById = originalGetCaseById;
+      db.getCaseAgencies = originalGetCaseAgencies;
+    }
+  });
+
+  it('GET /api/cases/:id/agencies masks routed-agency state mismatches as unknown when no safe department hint exists', async function () {
+    const originalGetCaseById = db.getCaseById;
+    const originalGetCaseAgencies = db.getCaseAgencies;
+
+    db.getCaseById = async () => ({
+      id: 26637,
+      subject_name: 'Jose Sandoval-Romero',
+      case_name: 'Granddaughter of Manson Family Victim Brutally Stabbed in Denver',
+      agency_id: 1365,
+      agency_name: 'Lubbock Police Department, Texas',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      portal_provider: 'govqa',
+      state: 'CO',
+      additional_details: 'Title: Granddaughter of Manson Family Victim Brutally Stabbed in Denver',
+      import_warnings: [],
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 302,
+      case_id: 26637,
+      agency_id: 1365,
+      agency_name: 'Lubbock Police Department, Texas',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      portal_provider: 'govqa',
+      is_primary: true,
+      is_active: true,
+      added_source: 'notion_import',
+      status: 'active',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    }]);
+
+    try {
+      const app = express();
+      app.use('/api/cases', caseAgenciesRouter);
+      const response = await supertest(app).get('/api/cases/26637/agencies');
+
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.agencies.length, 1);
+      assert.strictEqual(response.body.agencies[0].agency_name, 'Unknown agency');
+      assert.strictEqual(response.body.agencies[0].agency_id, null);
+      assert.strictEqual(response.body.agencies[0].agency_email, null);
+      assert.strictEqual(response.body.agencies[0].portal_url, null);
+    } finally {
+      db.getCaseById = originalGetCaseById;
+      db.getCaseAgencies = originalGetCaseAgencies;
     }
   });
 
