@@ -403,6 +403,61 @@ class NotionService {
         return caseData;
     }
 
+    /**
+     * Download file/PDF attachments from Notion and store them as case attachments.
+     * Notion internal URLs expire after 1 hour, so we download immediately.
+     */
+    async importNotionFiles(caseId, files) {
+        const storageService = require('./storage-service');
+        let imported = 0;
+        for (const file of files) {
+            try {
+                const response = await fetch(file.url);
+                if (!response.ok) {
+                    console.warn(`[import] Failed to download ${file.name}: HTTP ${response.status}`);
+                    continue;
+                }
+
+                const buffer = Buffer.from(await response.arrayBuffer());
+                const contentType = response.headers.get('content-type') || 'application/octet-stream';
+                // Ensure filename has an extension
+                let filename = file.name;
+                if (contentType.includes('pdf') && !filename.toLowerCase().endsWith('.pdf')) {
+                    filename += '.pdf';
+                }
+
+                let storageUrl = null;
+                let storagePath = null;
+                if (storageService.isConfigured()) {
+                    const key = `attachments/${caseId}/notion_${Date.now()}_${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+                    const result = await storageService.upload(caseId, 'notion', filename, buffer, contentType);
+                    if (result) {
+                        storageUrl = result.storageUrl;
+                        storagePath = result.key;
+                    }
+                }
+
+                await db.createAttachment({
+                    case_id: caseId,
+                    message_id: null,
+                    filename,
+                    content_type: contentType,
+                    size_bytes: buffer.length,
+                    storage_url: storageUrl,
+                    storage_path: storagePath,
+                    file_data: storageService.isConfigured() ? null : buffer,
+                });
+                imported++;
+                console.log(`[import] Attached ${filename} (${(buffer.length / 1024).toFixed(1)} KB) to case ${caseId}`);
+            } catch (err) {
+                console.warn(`[import] Failed to import file "${file.name}": ${err.message}`);
+            }
+        }
+        if (imported > 0) {
+            await db.logActivity('files_imported', `Imported ${imported} file(s) from Notion`, { case_id: caseId });
+        }
+    }
+
     applySinglePageAIResult(caseData, aiResult) {
         if (!caseData || !aiResult) return caseData;
 
@@ -1399,6 +1454,15 @@ Respond with JSON:
         }
 
         const type = block.type;
+
+        // File/PDF blocks don't have rich_text — note them in text output
+        if (type === 'file' || type === 'pdf') {
+            const fileData = block[type];
+            const caption = (fileData?.caption || []).map(c => c.plain_text).join('').trim();
+            const name = fileData?.name || caption || 'attachment';
+            return `[${type.toUpperCase()}: ${name}]`;
+        }
+
         const richText = block[type]?.rich_text || [];
 
         const plain = richText
@@ -2743,15 +2807,32 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             const page = await this.notion.pages.retrieve({ page_id: pageId });
 
             let pageContent = '';
+            const notionFiles = []; // Collect file/PDF blocks for later download
             try {
                 const blocks = await this.notion.blocks.children.list({
                     block_id: pageId,
                     page_size: 100
                 });
-                pageContent = blocks.results
-                    .map(block => this.extractTextFromBlock(block))
-                    .filter(text => text.length > 0)
-                    .join('\n');
+                const textLines = [];
+                for (const block of blocks.results) {
+                    const text = this.extractTextFromBlock(block);
+                    if (text) textLines.push(text);
+
+                    // Collect file and PDF blocks
+                    if (block.type === 'file' || block.type === 'pdf') {
+                        const fileData = block[block.type];
+                        const url = fileData?.type === 'file'
+                            ? fileData.file?.url
+                            : fileData?.external?.url;
+                        const caption = (fileData?.caption || []).map(c => c.plain_text).join('').trim();
+                        const name = fileData?.name || caption || `notion_${block.type}_${block.id.slice(0, 8)}`;
+                        if (url) notionFiles.push({ url, name, type: block.type });
+                    }
+                }
+                pageContent = textLines.join('\n');
+                if (notionFiles.length > 0) {
+                    console.log(`[import] Found ${notionFiles.length} file/PDF block(s) on page`);
+                }
                 console.log(`[import] Extracted ${pageContent.length} chars of content`);
             } catch (contentError) {
                 await errorTrackingService.captureException(contentError, {
@@ -2761,6 +2842,21 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     metadata: { pageId },
                 });
                 console.warn('[import] Could not fetch page content:', contentError.message);
+            }
+
+            // Also collect files from Notion page file-type properties
+            try {
+                for (const [propName, prop] of Object.entries(page.properties || {})) {
+                    if (prop.type === 'files' && Array.isArray(prop.files)) {
+                        for (const f of prop.files) {
+                            const url = f.file?.url || f.external?.url;
+                            const name = f.name || `${propName}_file`;
+                            if (url) notionFiles.push({ url, name, type: 'property' });
+                        }
+                    }
+                }
+            } catch (filePropErr) {
+                console.warn('[import] Error scanning file properties:', filePropErr.message);
             }
 
             const notionCase = this.parseNotionPage(page);
@@ -2914,6 +3010,11 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             const newCase = await db.createCase(notionCase);
             console.log(`[import] Created case: ${newCase.case_name} (${newCase.id})`);
+
+            // Import Notion file attachments (PDFs, documents, etc.)
+            if (notionFiles.length > 0) {
+                await this.importNotionFiles(newCase.id, notionFiles);
+            }
 
             // Import additional Police Departments as case_agencies
             const additionalPDIds = notionCase.additional_police_dept_ids || [];
