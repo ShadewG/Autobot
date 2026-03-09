@@ -15,6 +15,22 @@ const CRITICAL_RISK_FLAGS = [
   "LAW_JURISDICTION_MISMATCH", "CONTRADICTS_SCOPE_NARROWING",
 ];
 
+function hasExplicitSensitivePii(text: string): boolean {
+  if (!text) return false;
+
+  const ssnPattern = /\b\d{3}-\d{2}-\d{4}\b/;
+  const creditCardPattern = /\b(?:\d[ -]*?){13,16}\b/;
+  const ibanPattern = /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/i;
+
+  return ssnPattern.test(text) || creditCardPattern.test(text) || ibanPattern.test(text);
+}
+
+function isHeuristicPhoneOrAddressWarning(warning: string): boolean {
+  return /(personal phone number|mailing address|physical address|releasable to others|concrete narrowing|narrower subset)/i.test(
+    String(warning || "")
+  );
+}
+
 function runRegexSafetyChecks(
   draftBodyText: string,
   proposalActionType: string,
@@ -82,8 +98,7 @@ function runRegexSafetyChecks(
   }
 
   // PII check
-  const ssnPattern = /\d{3}-\d{2}-\d{4}/;
-  if (ssnPattern.test(draftBodyText)) {
+  if (/\b\d{3}-\d{2}-\d{4}\b/.test(draftBodyText)) {
     riskFlags.push("CONTAINS_PII");
     warnings.push("Draft may contain SSN - review before sending");
   }
@@ -287,6 +302,16 @@ export async function safetyCheck(
     const filteredWarnings = mergedWarnings.filter(
       (w) => !/(possible agency mismatch|confirm the correct agency\/state|suggestive of)/i.test(String(w))
     );
+    mergedRiskFlags.length = 0;
+    mergedRiskFlags.push(...filteredFlags);
+    mergedWarnings.length = 0;
+    mergedWarnings.push(...filteredWarnings);
+  }
+
+  const regexPiiFlagged = regexResult.riskFlags.includes("CONTAINS_PII");
+  if (!regexPiiFlagged && mergedRiskFlags.includes("CONTAINS_PII") && !hasExplicitSensitivePii(draftBodyText)) {
+    const filteredFlags = mergedRiskFlags.filter((flag) => flag !== "CONTAINS_PII");
+    const filteredWarnings = mergedWarnings.filter((warning) => !isHeuristicPhoneOrAddressWarning(warning));
     mergedRiskFlags.length = 0;
     mergedRiskFlags.push(...filteredFlags);
     mergedWarnings.length = 0;

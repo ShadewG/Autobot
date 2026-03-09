@@ -507,6 +507,22 @@ describe("Pipeline E2E: Safety Check Step", function () {
         expect(result.requiresHuman).to.equal(true);
       });
 
+      it("does not flag ordinary phone or mailing-address text as highly sensitive PII", async function () {
+        const { safetyCheck } = require("../../trigger/steps/safety-check.ts");
+
+        const result = await safetyCheck(
+          "Please mail the CD to 3021 21st Ave W, Apt 202, Seattle, WA 98199 or call me at 206-555-1234 if needed.",
+          "RE: Request",
+          "SEND_CLARIFICATION",
+          [],
+          [],
+          "local",
+          "WA"
+        );
+
+        expect(result.riskFlags).to.not.include("CONTAINS_PII");
+      });
+
       it("catches BWC exempt constraint contradiction", async function () {
         const { safetyCheck } = require("../../trigger/steps/safety-check.ts");
 

@@ -259,7 +259,7 @@ export function isUnknownAgency(request: { state: string | null | undefined; age
 
 // Risk flag humanization — maps raw SCREAMING_SNAKE flags to user-friendly text
 const RISK_FLAG_LABELS: Record<string, string> = {
-  CONTAINS_PII: 'Contains personal info (SSN, etc.)',
+  CONTAINS_PII: 'Contains highly sensitive personal info',
   REQUESTS_EXEMPT_ITEM: 'Requests records the agency marked exempt',
   CONTRADICTS_FEE_ACCEPTANCE: 'Contradicts a prior fee acceptance',
   CONTRADICTS_SCOPE_NARROWING: 'Re-expands scope after narrowing',
@@ -294,7 +294,18 @@ export function condenseReviewNotes(warnings: string[]): { actionable: string[];
   const actionable: string[] = [];
   const informational: string[] = [];
 
-  for (const w of warnings) {
+  const filteredWarnings = warnings.filter((warning) => !(
+    /includes your personal phone number/i.test(warning) ||
+    /consider whether you want this in the agency record/i.test(warning) ||
+    /does not explicitly restate .* narrower subset/i.test(warning) ||
+    /adding a concrete narrowing could improve effectiveness/i.test(warning)
+  ));
+
+  if (filteredWarnings.length === 0) {
+    return { actionable: [], informational: [] };
+  }
+
+  for (const w of filteredWarnings) {
     // Actionable: reviewer needs to decide or verify something
     if (/\b(should|must|consider|confirm|verify|check|ensure|avoid|may trigger|could be seen|re-request)/i.test(w)) {
       actionable.push(w);
