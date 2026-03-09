@@ -929,6 +929,14 @@ class DatabaseService {
 
     // Messages
     async createMessage(messageData) {
+        let resolvedCaseId = messageData.case_id || null;
+        if (!resolvedCaseId && messageData.thread_id) {
+            const thread = await this.getThreadById(messageData.thread_id);
+            if (thread?.case_id) {
+                resolvedCaseId = thread.case_id;
+            }
+        }
+
         const query = `
             INSERT INTO messages (
                 thread_id, case_id, message_id, sendgrid_message_id, direction,
@@ -939,6 +947,8 @@ class DatabaseService {
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
             ON CONFLICT (message_id) DO UPDATE SET
+                thread_id = COALESCE(messages.thread_id, EXCLUDED.thread_id),
+                case_id = COALESCE(messages.case_id, EXCLUDED.case_id),
                 sendgrid_message_id = COALESCE(messages.sendgrid_message_id, EXCLUDED.sendgrid_message_id),
                 metadata = COALESCE(messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
                 provider_payload = COALESCE(messages.provider_payload, '{}'::jsonb) || COALESCE(EXCLUDED.provider_payload, '{}'::jsonb)
@@ -946,7 +956,7 @@ class DatabaseService {
         `;
         const values = [
             messageData.thread_id,
-            messageData.case_id,
+            resolvedCaseId,
             messageData.message_id,
             messageData.sendgrid_message_id,
             messageData.direction,

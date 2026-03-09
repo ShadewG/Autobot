@@ -20,6 +20,7 @@ import { commitState } from "../steps/commit-state";
 import { researchContext, determineResearchLevel, emptyResearchContext } from "../steps/research-context";
 import db, { logger, attachmentProcessor, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
+import { shouldEscalateManualPasteMismatch } from "../lib/manual-paste-guard";
 import type { HumanDecision, InboundPayload, ResearchContext, ChainAction, ActionType } from "../lib/types";
 const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
@@ -51,6 +52,38 @@ async function waitForHumanDecision(
   const result = await wait.forToken<HumanDecision>(token);
   if (!result.ok) return { ok: false };
   return { ok: true, output: result.output };
+}
+
+async function reconcileInboundMessageCaseOwnership(caseId: number, messageId: number) {
+  const message = await db.getMessageById(messageId);
+  if (!message) {
+    throw new Error(`Message ${messageId} not found`);
+  }
+
+  const thread = message.thread_id ? await db.getThreadById(message.thread_id) : null;
+
+  if (message.case_id && Number(message.case_id) !== Number(caseId)) {
+    throw new Error(`Message ${messageId} belongs to case ${message.case_id}, not case ${caseId}`);
+  }
+
+  if (thread?.case_id && Number(thread.case_id) !== Number(caseId)) {
+    throw new Error(`Message ${messageId} is attached to thread ${thread.id} for case ${thread.case_id}, not case ${caseId}`);
+  }
+
+  if (!message.case_id && thread?.case_id && Number(thread.case_id) === Number(caseId)) {
+    const repaired = await db.query(
+      `UPDATE messages
+       SET case_id = $2
+       WHERE id = $1 AND case_id IS NULL
+       RETURNING *`,
+      [messageId, caseId]
+    );
+    if (repaired.rows[0]) {
+      return { message: repaired.rows[0], thread, repaired: true };
+    }
+  }
+
+  return { message, thread, repaired: false };
 }
 
 export const processInbound = task({
@@ -478,13 +511,29 @@ export const processInbound = task({
       }
     }
 
+    const inboundMessageContext = await reconcileInboundMessageCaseOwnership(caseId, messageId);
+    if (inboundMessageContext.repaired) {
+      logger.info("Repaired inbound message case ownership from thread", {
+        caseId,
+        messageId,
+        threadId: inboundMessageContext.thread?.id || null,
+      });
+      await db.logActivity("message_case_repaired", `Inbound message ${messageId} inherited case ${caseId} from thread`, {
+        case_id: caseId,
+        message_id: messageId,
+        thread_id: inboundMessageContext.thread?.id || null,
+        actor_type: "system",
+        source_service: "trigger.dev",
+      });
+    }
+
     // Step 1: Load context
     await markStep("load_context", `Run #${runId}: loading inbound context`);
     const context = await loadContext(caseId, messageId);
 
     // Step 1a: Skip non-agency messages (phone call transcripts, manual notes, synthetic QA)
     const EXCLUDED_MESSAGE_TYPES = ["phone_call", "manual_note", "synthetic_qa", "system_note"];
-    const triggerMsg = context.messages?.find((m: any) => m.id === messageId);
+    const triggerMsg = inboundMessageContext.message || context.messages?.find((m: any) => m.id === messageId);
     if (triggerMsg?.message_type && EXCLUDED_MESSAGE_TYPES.includes(triggerMsg.message_type)) {
       logger.info("Skipping non-agency message — not classifying", {
         caseId, messageId, messageType: triggerMsg.message_type,
@@ -514,9 +563,56 @@ export const processInbound = task({
       }
     }
 
+    const manualPasteMismatch = shouldEscalateManualPasteMismatch(
+      inboundMessageContext.message,
+      inboundMessageContext.thread,
+      context.caseData
+    );
+
     // Step 2: Classify inbound (Vercel AI SDK + Zod)
-    await markStep("classify_inbound", `Run #${runId}: classifying inbound message`, { message_id: messageId });
-    const classification = await classifyInbound(context, messageId, "INBOUND_MESSAGE");
+    let classification: any;
+    if (manualPasteMismatch.mismatch) {
+      await markStep("classify_inbound", `Run #${runId}: manual pasted inbound sender mismatched case thread`, {
+        message_id: messageId,
+        sender_email: manualPasteMismatch.senderEmail,
+        expected_emails: manualPasteMismatch.expectedEmails,
+      });
+      await db.updateMessageMetadata(messageId, {
+        suspected_case_mismatch: true,
+        suspected_case_mismatch_reason: 'manual_paste_sender_mismatch',
+        suspected_case_mismatch_sender: manualPasteMismatch.senderEmail,
+        suspected_case_mismatch_expected_emails: manualPasteMismatch.expectedEmails,
+      });
+      await db.logActivity(
+        "manual_paste_case_mismatch",
+        `Manual pasted inbound sender ${manualPasteMismatch.senderEmail} does not match case ${caseId} correspondence channel`,
+        {
+          case_id: caseId,
+          message_id: messageId,
+          thread_id: inboundMessageContext.thread?.id || null,
+          sender_email: manualPasteMismatch.senderEmail,
+          expected_emails: manualPasteMismatch.expectedEmails,
+          actor_type: "system",
+          source_service: "trigger.dev",
+        }
+      );
+      classification = {
+        classification: "UNKNOWN",
+        confidence: 1,
+        sentiment: "neutral",
+        requiresResponse: true,
+        suggestedAction: null,
+        reasonNoResponse: "Manual pasted inbound sender does not match the case correspondence channel",
+        denialSubtype: null,
+        extractedFeeAmount: null,
+        portalUrl: null,
+        jurisdiction_level: null,
+        referralContact: null,
+      };
+    } else {
+      await markStep("classify_inbound", `Run #${runId}: classifying inbound message`, { message_id: messageId });
+      classification = await classifyInbound(context, messageId, "INBOUND_MESSAGE");
+    }
 
     // Step 2b: Classification safety gates (before constraint mutation)
     let effectiveClassification = classification.classification;
