@@ -1428,8 +1428,8 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
                 const deterministicBody = [
                     `To ${caseData.agency_name || 'Records Unit'},`,
                     '',
-                    `Thank you for the fee estimate of ${feeLabel} for ${shortReference}. I authorize you to proceed with processing this request.`,
-                    'Please send any invoice or payment instructions needed to complete payment.',
+                    `I received your fee estimate of ${feeLabel}. Please proceed with processing this request up to ${feeLabel}.`,
+                    `If the total cost will exceed ${feeLabel}, please let me know before incurring any additional charges.`,
                     '',
                     'Thank you,',
                     userSignature?.name || 'Requester',
@@ -1440,7 +1440,7 @@ Return ONLY the email body, no greetings beyond what belongs in the email.`;
                     { includeEmail: false, includeAddress: false, includePhone: false }
                 );
                 return {
-                    subject: `RE: Fee Response - ${shortReference}`,
+                    subject: 'RE: Fee Authorization',
                     body_text: normalizedBodyText,
                     body_html: null,
                     model: 'deterministic-fee-accept-template',

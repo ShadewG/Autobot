@@ -982,6 +982,24 @@ async function makeAIDecisionV2(params: {
         continue;
       }
 
+      const policyValidation = await validateDecision(object, {
+        caseId,
+        classification,
+        extractedFeeAmount,
+        autopilotMode,
+        denialSubtype: params.denialSubtype,
+        dismissedProposals: preComputed.dismissedProposals,
+        constraints,
+        inlineKeyPoints: params.inlineKeyPoints,
+      });
+      if (!policyValidation.valid) {
+        lastError = policyValidation.reason || "policy validation failed";
+        logger.warn("AI Router v2 decision failed policy validation", {
+          caseId, attempt, reason: policyValidation.reason, action: object.action,
+        });
+        continue;
+      }
+
       // Apply post-decision flags
       const requiresHuman = (object.action as ActionType) === "RESEARCH_AGENCY"
         ? false
@@ -1120,6 +1138,18 @@ function validateStructureV2(
     return {
       valid: false,
       reason: `Fee $${fee} is within auto-approve max $${FEE_AUTO_APPROVE_MAX}; must auto-accept without human gating`,
+    };
+  }
+  if (
+    fee != null &&
+    isFinite(fee) &&
+    fee > FEE_AUTO_APPROVE_MAX &&
+    fee <= FEE_NEGOTIATE_THRESHOLD &&
+    aiResult.action !== "ACCEPT_FEE"
+  ) {
+    return {
+      valid: false,
+      reason: `Fee $${fee} is within the acceptable review band ($${FEE_AUTO_APPROVE_MAX}-$${FEE_NEGOTIATE_THRESHOLD}); must use ACCEPT_FEE`,
     };
   }
   if (fee != null && isFinite(fee) && fee > FEE_NEGOTIATE_THRESHOLD && aiResult.action !== "NEGOTIATE_FEE" && aiResult.action !== "SEND_FEE_WAIVER_REQUEST" && aiResult.action !== "ESCALATE") {
@@ -1294,6 +1324,25 @@ function shouldPrioritizeBodycamCustodianResearch(
   // does not address where body-cam/video custody is held.
   // We allow either explicit body-cam signals OR wrong-agency->911 handoff signals.
   return is911Scoped && formGate && !mentionsBodycamHandling && (bodycamSignal || wrongAgencyTo911Signal);
+}
+
+function shouldRebutPrivacyDenialForAccountabilityRecords(
+  caseData: any,
+  inlineKeyPoints: string[] = []
+): boolean {
+  const requested = Array.isArray(caseData?.requested_records)
+    ? caseData.requested_records.join(" ")
+    : caseData?.requested_records || "";
+  const scopeText = Array.isArray(caseData?.scope_items_jsonb)
+    ? caseData.scope_items_jsonb.map((s: any) => s?.name || "").join(" ")
+    : Array.isArray(caseData?.scope_items)
+      ? caseData.scope_items.map((s: any) => s?.name || "").join(" ")
+      : "";
+  const detailsText = String(caseData?.additional_details || "");
+  const keyPointsText = Array.isArray(inlineKeyPoints) ? inlineKeyPoints.join(" ") : "";
+  const corpus = `${requested} ${scopeText} ${detailsText} ${keyPointsText}`.toLowerCase();
+
+  return /body.?cam|body.?worn|bwc|dash.?cam|dispatch audio|911 audio|911 call|radio traffic|cad audio/.test(corpus);
 }
 
 function buildHumanDirectivesSection(
@@ -1702,12 +1751,23 @@ export async function validateDecision(
     return { valid: false, reason: `${aiDecisionResult.action} must require human review` };
   }
 
-  // Strong ongoing_investigation, sealed_court_order, or privacy_exemption denials should close, not rebuttal
+  // Strong ongoing_investigation or sealed_court_order denials should close, not rebuttal.
+  // Privacy-exemption denials for body-cam / dispatch accountability records should stay rebuttable.
   if (
     classification === "DENIAL" &&
     (denialSubtype === "ongoing_investigation" || denialSubtype === "sealed_court_order" || denialSubtype === "privacy_exemption") &&
     aiDecisionResult.action === "SEND_REBUTTAL"
   ) {
+    const caseData =
+      denialSubtype === "privacy_exemption" && Number.isFinite(caseId) && caseId > 0
+        ? await db.getCaseById(caseId)
+        : null;
+    const rebuttablePrivacyDenial =
+      denialSubtype === "privacy_exemption" &&
+      shouldRebutPrivacyDenialForAccountabilityRecords(caseData, inlineKeyPoints);
+    if (rebuttablePrivacyDenial) {
+      return { valid: true };
+    }
     const strength = await assessDenialStrength(caseId, denialSubtype, inlineKeyPoints);
     if (strength === "strong") {
       return {
@@ -1737,6 +1797,16 @@ export async function validateDecision(
         reason: `Fee $${fee} is within auto-approve max $${FEE_AUTO_APPROVE_MAX}; must auto-accept without human gating`,
       };
     }
+    if (
+      fee > FEE_AUTO_APPROVE_MAX &&
+      fee <= FEE_NEGOTIATE_THRESHOLD &&
+      aiDecisionResult.action !== "ACCEPT_FEE"
+    ) {
+      return {
+        valid: false,
+        reason: `Fee $${fee} is within the acceptable review band ($${FEE_AUTO_APPROVE_MAX}-$${FEE_NEGOTIATE_THRESHOLD}); must use ACCEPT_FEE`,
+      };
+    }
     if (fee > FEE_NEGOTIATE_THRESHOLD && aiDecisionResult.action !== "NEGOTIATE_FEE") {
       return {
         valid: false,
@@ -1755,6 +1825,17 @@ export async function validateDecision(
         reason: `Fee $${fee} exceeds auto-approve max $${FEE_AUTO_APPROVE_MAX}; cannot auto-accept`,
       };
     }
+  }
+
+  if (
+    classification === "DENIAL" &&
+    (denialSubtype === "juvenile_records" || denialSubtype === "sealed_court_order") &&
+    aiDecisionResult.action !== "CLOSE_CASE"
+  ) {
+    return {
+      valid: false,
+      reason: `Strong ${denialSubtype} denial — should CLOSE_CASE`,
+    };
   }
 
   return { valid: true };
@@ -2105,8 +2186,7 @@ async function deterministicRouting(
       }
       case "overly_broad":
         return decision("REFORMULATE_REQUEST", { pauseReason: "DENIAL", reasoning: [...reasoning, "Overly broad - narrowing scope"] });
-      case "ongoing_investigation":
-      case "privacy_exemption": {
+      case "ongoing_investigation": {
         const strength = await assessDenialStrength(caseId, resolvedSubtype, inlineKeyPoints);
         if (strength === "strong") {
           return decision("CLOSE_CASE", {
@@ -2121,6 +2201,26 @@ async function deterministicRouting(
           pauseReason: "DENIAL",
           researchLevel: "medium",
           reasoning: [...reasoning, `${resolvedSubtype} denial (${strength}) - drafting rebuttal for review`],
+        });
+      }
+      case "privacy_exemption": {
+        const rebuttablePrivacyDenial = shouldRebutPrivacyDenialForAccountabilityRecords(caseData, inlineKeyPoints);
+        const strength = await assessDenialStrength(caseId, resolvedSubtype, inlineKeyPoints);
+        if (!rebuttablePrivacyDenial && strength === "strong") {
+          return decision("CLOSE_CASE", {
+            pauseReason: "DENIAL",
+            gateOptions: ["APPROVE", "ADJUST", "DISMISS"],
+            reasoning: [...reasoning, `Strong ${resolvedSubtype} denial - recommending closure`],
+          });
+        }
+        return decision("SEND_REBUTTAL", {
+          canAutoExecute: false,
+          requiresHuman: true,
+          pauseReason: "DENIAL",
+          researchLevel: "medium",
+          reasoning: rebuttablePrivacyDenial
+            ? [...reasoning, "Privacy denial targets body-camera/dispatch accountability records - drafting rebuttal for review"]
+            : [...reasoning, `${resolvedSubtype} denial (${strength}) - drafting rebuttal for review`],
         });
       }
       case "excessive_fees":
@@ -3167,6 +3267,54 @@ export async function decideNextAction(
         preComputed,
       });
 
+      if (classification === "DENIAL") {
+        const deterministicDenialResult = await deterministicRouting(
+          caseId,
+          classification,
+          extractedFeeAmount,
+          sentiment,
+          autopilotMode,
+          triggerType,
+          requiresResponse,
+          portalUrl,
+          denialSubtype,
+          inlineKeyPoints
+        );
+        const resolvedDenialSubtype = String(denialSubtype || "");
+        const deterministicSpecificDenialActions = new Set<ActionType>([
+          "SEND_REBUTTAL",
+          "SEND_APPEAL",
+          "CLOSE_CASE",
+        ]);
+        const preferDeterministicDenial =
+          (deterministicDenialResult.actionType === "CLOSE_CASE" && v2Result.actionType !== "CLOSE_CASE") ||
+          (["wrong_agency", "no_duty_to_create", "no_records"].includes(resolvedDenialSubtype) &&
+            deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
+            v2Result.actionType !== "RESEARCH_AGENCY") ||
+          (["privacy_exemption", "third_party_confidential", "retention_expired", "glomar_ncnd", "privilege_attorney_work_product"].includes(resolvedDenialSubtype) &&
+            v2Result.actionType === "ESCALATE" &&
+            deterministicSpecificDenialActions.has(deterministicDenialResult.actionType)) ||
+          (looksLikeContractorCustodyDenial(inlineKeyPoints) &&
+            deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
+            v2Result.actionType !== "RESEARCH_AGENCY");
+        if (preferDeterministicDenial) {
+          logger.info("Overriding AI Router v2 denial decision with deterministic denial routing", {
+            caseId,
+            classification,
+            denialSubtype,
+            aiAction: v2Result.actionType,
+            deterministicAction: deterministicDenialResult.actionType,
+          });
+          return {
+            ...deterministicDenialResult,
+            reasoning: [
+              `AI Router v2 suggested ${v2Result.actionType}, but deterministic denial routing preferred ${deterministicDenialResult.actionType}`,
+              ...(deterministicDenialResult.reasoning || []),
+            ],
+          };
+        }
+      }
+
       logger.info("AI Router v2 decision", {
         caseId, classification,
         action: v2Result.actionType,
@@ -3231,11 +3379,20 @@ export async function decideNextAction(
           denialSubtype,
           inlineKeyPoints
         );
+        const resolvedDenialSubtype = String(denialSubtype || "");
+        const deterministicSpecificDenialActions = new Set<ActionType>([
+          "SEND_REBUTTAL",
+          "SEND_APPEAL",
+          "CLOSE_CASE",
+        ]);
         const preferDeterministicDenial =
           (deterministicDenialResult.actionType === "CLOSE_CASE" && aiResult.actionType !== "CLOSE_CASE") ||
-          (["wrong_agency", "no_duty_to_create", "no_records"].includes(String(denialSubtype || "")) &&
+          (["wrong_agency", "no_duty_to_create", "no_records"].includes(resolvedDenialSubtype) &&
             deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
             aiResult.actionType !== "RESEARCH_AGENCY") ||
+          (["privacy_exemption", "third_party_confidential", "retention_expired", "glomar_ncnd", "privilege_attorney_work_product"].includes(resolvedDenialSubtype) &&
+            aiResult.actionType === "ESCALATE" &&
+            deterministicSpecificDenialActions.has(deterministicDenialResult.actionType)) ||
           (looksLikeContractorCustodyDenial(inlineKeyPoints) &&
             deterministicDenialResult.actionType === "RESEARCH_AGENCY" &&
             aiResult.actionType !== "RESEARCH_AGENCY");

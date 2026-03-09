@@ -583,10 +583,16 @@ export async function draftResponse(
   draft.body_text = collapseDuplicateClosingBlocks(draft.body_text);
   if (draft.body_text) {
     const userSignature = await aiService.getUserSignatureForCase(caseData);
+    const excludePhoneFromSignature = [
+      "ACCEPT_FEE",
+      "NEGOTIATE_FEE",
+      "DECLINE_FEE",
+      "SEND_FEE_WAIVER_REQUEST",
+    ].includes(actionType);
     draft.body_text = aiService.normalizeGeneratedDraftSignature(
       draft.body_text,
       userSignature,
-      { includeEmail: false, includeAddress: false }
+      { includeEmail: false, includeAddress: false, includePhone: !excludePhoneFromSignature }
     );
   }
 

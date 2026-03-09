@@ -41,7 +41,7 @@ class DatabaseService {
             max: (() => {
                 const configured = parseInt(process.env.PG_POOL_MAX, 10);
                 if (Number.isFinite(configured) && configured > 0) return configured;
-                return process.env.NODE_ENV === 'production' ? 10 : 3;
+                return process.env.NODE_ENV === 'production' ? 4 : 3;
             })(),
             allowExitOnIdle: process.env.NODE_ENV === 'production' ? false : true,
         };
@@ -62,6 +62,7 @@ class DatabaseService {
         return [
             'ECONNRESET',
             'ETIMEDOUT',
+            '53300',
             '57P01',
             '57P02',
             '57P03',
@@ -71,6 +72,7 @@ class DatabaseService {
         ].includes(code)
             || message.includes('connection terminated')
             || message.includes('connection timeout')
+            || message.includes('too many clients already')
             || message.includes('read econnreset')
             || message.includes('socket hang up')
             || message.includes('the client was closed')
@@ -176,7 +178,8 @@ class DatabaseService {
                 }
 
                 await this._resetPool();
-                await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+                const backoffMs = error?.code === '53300' ? 1000 * attempt : 150 * attempt;
+                await new Promise((resolve) => setTimeout(resolve, backoffMs));
             }
         }
     }
