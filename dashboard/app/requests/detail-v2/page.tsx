@@ -1117,10 +1117,10 @@ function DecisionTracesSection({ caseId }: { caseId: string }) {
       setIsLoading(true);
       setError(null);
       try {
-        const data = await fetcher<{ success: boolean; count: number; events: Array<{ source: string; payload: DecisionTrace }> }>(
+        const data = await fetcher<{ success: boolean; count: number; entries: Array<{ source: string; payload: DecisionTrace }> }>(
           `/requests/${caseId}/audit-stream?source=decision_traces&limit=20`
         );
-        setTraces((data.events || []).map(e => e.payload));
+        setTraces((data.entries || []).map(e => e.payload));
         setHasLoaded(true);
       } catch (err: any) {
         setError(err?.message || "Failed to load decision traces");
