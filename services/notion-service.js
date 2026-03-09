@@ -365,6 +365,7 @@ class NotionService {
             caseName: caseData.case_name,
             subjectName: caseData.subject_name,
             agencyName: caseData.agency_name,
+            state: caseData.state,
             additionalDetails: caseData.additional_details,
             importWarnings: warnings,
             agencyEmail: caseData.agency_email,

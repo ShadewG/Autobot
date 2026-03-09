@@ -2280,6 +2280,112 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests/:id/workspace suppresses imported initial proposals when routed agency state conflicts with the case state', async function () {
+    const originalDbMethods = {
+      getCaseById: db.getCaseById,
+      getCaseAgencies: db.getCaseAgencies,
+      getThreadsByCaseId: db.getThreadsByCaseId,
+      getMessagesByThreadId: db.getMessagesByThreadId,
+      getAttachmentsByCaseId: db.getAttachmentsByCaseId,
+      getUserById: db.getUserById,
+      query: db.query,
+    };
+
+    db.getCaseById = async () => ({
+      id: 26637,
+      subject_name: 'Jose Sandoval-Romero',
+      case_name: 'Granddaughter of Manson Family Victim Brutally Stabbed in Denver',
+      agency_id: 1365,
+      agency_name: 'Lubbock Police Department, Texas',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      portal_provider: 'govqa',
+      state: 'CO',
+      status: 'needs_human_review',
+      requires_human: true,
+      pause_reason: 'PENDING_APPROVAL',
+      substatus: 'Proposal pending review',
+      contact_research_notes: null,
+      additional_details: 'Title: Granddaughter of Manson Family Victim Brutally Stabbed in Denver',
+      requested_records: ['Body camera footage'],
+      autopilot_mode: 'SUPERVISED',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+      next_due_at: null,
+      last_response_date: null,
+      user_id: null,
+      import_warnings: [],
+    });
+    db.getCaseAgencies = async () => ([{
+      id: 302,
+      case_id: 26637,
+      agency_id: 1365,
+      agency_name: 'Lubbock Police Department, Texas',
+      agency_email: 'ORR@mylubbock.us',
+      portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      portal_provider: 'govqa',
+      is_primary: true,
+      is_active: true,
+      added_source: 'notion_import',
+      status: 'active',
+      created_at: '2026-03-09T00:00:00.000Z',
+      updated_at: '2026-03-09T00:00:00.000Z',
+    }]);
+    db.getThreadsByCaseId = async () => [];
+    db.getMessagesByThreadId = async () => [];
+    db.getAttachmentsByCaseId = async () => [];
+    db.getUserById = async () => null;
+    db.query = async (sql) => {
+      if (sql.includes('FROM portal_tasks')) return { rows: [] };
+      if (sql.includes('FROM activity_log')) return { rows: [] };
+      if (sql.includes('FROM auto_reply_queue')) return { rows: [] };
+      if (sql.includes('FROM agent_decisions')) return { rows: [] };
+      if (sql.includes('FROM agent_runs')) return { rows: [] };
+      if (sql.includes('FROM proposals')) {
+        return {
+          rows: [{
+            id: 1941,
+            action_type: 'SEND_INITIAL_REQUEST',
+            status: 'PENDING_APPROVAL',
+            draft_subject: 'Public Records Request - Jose Sandoval-Romero',
+            draft_body_text: 'Draft body',
+            reasoning: ['Generated initial request'],
+            confidence: '0.81',
+            gate_options: ['APPROVE', 'ADJUST', 'DISMISS'],
+          }],
+        };
+      }
+      if (sql.includes('FROM agencies a') && sql.includes('score DESC')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes("LOWER(REPLACE(COALESCE(notion_page_id, ''), '-', ''))")) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE id = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE name = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE portal_url = $1')) return { rows: [] };
+      if (sql.includes('FROM agencies') && sql.includes('WHERE LOWER(email_main) = LOWER($1)')) return { rows: [] };
+      throw new Error(`Unexpected workspace query in state mismatch suppression test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests/26637/workspace');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.pending_proposal, null);
+      assert.strictEqual(response.body.next_action_proposal, null);
+      assert.strictEqual(response.body.request.control_state, 'BLOCKED');
+      assert.match(response.body.request.substatus, /state/i);
+      assert.match(response.body.request.substatus, /routed agency state/i);
+    } finally {
+      db.getCaseById = originalDbMethods.getCaseById;
+      db.getCaseAgencies = originalDbMethods.getCaseAgencies;
+      db.getThreadsByCaseId = originalDbMethods.getThreadsByCaseId;
+      db.getMessagesByThreadId = originalDbMethods.getMessagesByThreadId;
+      db.getAttachmentsByCaseId = originalDbMethods.getAttachmentsByCaseId;
+      db.getUserById = originalDbMethods.getUserById;
+      db.query = originalDbMethods.query;
+    }
+  });
+
   it('GET /api/cases/:id/agencies prefers the research-suggested agency even when the placeholder row is not tagged as a backfill', async function () {
     const originalGetCaseById = db.getCaseById;
     const originalGetCaseAgencies = db.getCaseAgencies;

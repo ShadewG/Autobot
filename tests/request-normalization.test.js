@@ -109,6 +109,7 @@ describe('request normalization helpers', function () {
       caseName: 'Untitled Case',
       subjectName: 'Ryan Campbell',
       agencyName: 'Denver Police Department, Colorado',
+      state: 'CO',
       agencyEmail: 'records@denvergov.org',
       portalUrl: null,
       additionalDetails: '**Police Department:** Denver Police Department, Colorado',
@@ -116,6 +117,28 @@ describe('request normalization helpers', function () {
     });
 
     assert.strictEqual(result.shouldBlockAutoDispatch, false);
+  });
+
+  it('blocks auto-dispatch when routed agency state conflicts with the case state', function () {
+    const result = evaluateImportAutoDispatchSafety({
+      caseName: 'Granddaughter of Manson Family Victim Brutally Stabbed in Denver',
+      subjectName: 'Jose Sandoval-Romero',
+      agencyName: 'Lubbock Police Department, Texas',
+      state: 'CO',
+      agencyEmail: 'orr@mylubbock.us',
+      portalUrl: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+      additionalDetails: 'Title: Granddaughter of Manson Family Victim Brutally Stabbed in Denver',
+      importWarnings: [],
+    });
+
+    assert.strictEqual(result.shouldBlockAutoDispatch, true);
+    assert.strictEqual(result.reasonCode, 'AGENCY_STATE_MISMATCH');
+    assert.deepStrictEqual(result.agencyStateMismatch, {
+      currentAgencyName: 'Lubbock Police Department, Texas',
+      agencyState: 'TX',
+      caseState: 'CO',
+      source: 'case_state',
+    });
   });
 
   it('ignores raw Notion relation ids in metadata agency hints', function () {

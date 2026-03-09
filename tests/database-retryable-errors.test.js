@@ -12,4 +12,13 @@ describe("database retryable errors", function () {
       true
     );
   });
+
+  it("treats connection acquisition timeouts as retryable and uses a slower backoff", function () {
+    const error = {
+      message: "Connection terminated due to connection timeout",
+    };
+
+    assert.strictEqual(db._isRetryableQueryError(error), true);
+    assert.strictEqual(db._getRetryBackoffMs(error, 1), 1000);
+  });
 });

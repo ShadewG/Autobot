@@ -1555,6 +1555,7 @@ router.get('/:id/workspace', async (req, res) => {
             caseName: caseData.case_name,
             subjectName: caseData.subject_name,
             agencyName: caseData.agency_name,
+            state: caseData.state,
             additionalDetails: caseData.additional_details,
             importWarnings: caseData.import_warnings,
             agencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
@@ -1574,6 +1575,8 @@ router.get('/:id/workspace', async (req, res) => {
                 status: 'needs_human_review',
                 substatus: importSafety.metadataMismatch?.expectedAgencyName
                     ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
+                    : importSafety.agencyStateMismatch
+                        ? `Imported case state (${importSafety.agencyStateMismatch.caseState}) does not match routed agency state (${importSafety.agencyStateMismatch.agencyState})`
                     : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
                         ? 'Imported case title/subject is still placeholder text'
                         : 'Imported case needs human review before sending',

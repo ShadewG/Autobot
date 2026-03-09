@@ -375,6 +375,7 @@ export const processInitialRequest = task({
         caseName: context.caseData?.case_name,
         subjectName: context.caseData?.subject_name,
         agencyName: context.caseData?.agency_name,
+        state: context.caseData?.state,
         additionalDetails: context.caseData?.additional_details,
         importWarnings: context.caseData?.import_warnings,
         agencyEmail: context.caseData?.agency_email,
@@ -383,6 +384,8 @@ export const processInitialRequest = task({
       if (importSafety.shouldBlockAutoDispatch) {
         const substatus = importSafety.metadataMismatch?.expectedAgencyName
           ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName}). Review before sending.`
+          : importSafety.agencyStateMismatch
+            ? `Imported case state (${importSafety.agencyStateMismatch.caseState}) does not match routed agency state (${importSafety.agencyStateMismatch.agencyState}). Review before sending.`
           : importSafety.reasonCode === "PLACEHOLDER_TITLE"
             ? "Imported case title/subject is still placeholder text. Review before sending."
             : "Imported case needs human review before sending.";

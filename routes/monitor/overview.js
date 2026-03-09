@@ -683,6 +683,7 @@ router.get('/live-overview', async (req, res) => {
                 caseName: row.case_name,
                 subjectName: row.subject_name,
                 agencyName: primaryCaseAgency?.agency_name || row.agency_name,
+                state: row.state,
                 additionalDetails: row.additional_details,
                 importWarnings: row.import_warnings,
                 agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,

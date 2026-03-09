@@ -108,6 +108,7 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
         caseName: caseData.case_name,
         subjectName: caseData.subject_name,
         agencyName: caseData.agency_name,
+        state: caseData.state,
         additionalDetails: caseData.additional_details,
         importWarnings: caseData.import_warnings,
         agencyEmail: caseData.agency_email,
@@ -116,6 +117,8 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
     if (importSafety.shouldBlockAutoDispatch) {
         const reasonDetail = importSafety.metadataMismatch?.expectedAgencyName
             ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
+            : importSafety.agencyStateMismatch
+                ? `Imported case state (${importSafety.agencyStateMismatch.caseState}) does not match routed agency state (${importSafety.agencyStateMismatch.agencyState})`
             : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
                 ? 'Imported case title/subject is still placeholder text'
                 : 'Imported case needs human review before auto-dispatch';

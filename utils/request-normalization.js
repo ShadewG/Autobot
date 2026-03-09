@@ -311,10 +311,27 @@ function detectCaseMetadataAgencyMismatch({ currentAgencyName, additionalDetails
   };
 }
 
+function detectAgencyStateMismatch({ currentAgencyName, caseState }) {
+  const normalizedCaseState = normalizeStateCode(caseState);
+  const currentName = String(currentAgencyName || '').trim();
+  if (!normalizedCaseState || !currentName) return null;
+
+  const agencyState = parseStateFromAgencyName(currentName);
+  if (!agencyState || agencyState === normalizedCaseState) return null;
+
+  return {
+    currentAgencyName: currentName,
+    agencyState,
+    caseState: normalizedCaseState,
+    source: 'case_state',
+  };
+}
+
 function evaluateImportAutoDispatchSafety({
   caseName,
   subjectName,
   agencyName,
+  state,
   additionalDetails,
   importWarnings,
   agencyEmail,
@@ -330,6 +347,10 @@ function evaluateImportAutoDispatchSafety({
     currentAgencyName: agencyName,
     additionalDetails,
   });
+  const agencyStateMismatch = detectAgencyStateMismatch({
+    currentAgencyName: agencyName,
+    caseState: state,
+  });
   const metadataHint = extractMetadataAgencyHint(additionalDetails);
   const notionReferenceAgency = Boolean(
     normalizeNotionReferenceId(agencyName) ||
@@ -341,7 +362,7 @@ function evaluateImportAutoDispatchSafety({
   const hasDeliveryPath = Boolean(normalizeImportText(agencyEmail) || normalizePortalUrl(portalUrl));
 
   const shouldBlockAutoDispatch = Boolean(
-    ((!notionReferenceAgency) && (metadataMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH'))) ||
+    ((!notionReferenceAgency) && (metadataMismatch || agencyStateMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH'))) ||
     (placeholderCaseTitle && placeholderSubject) ||
     (genericAgency && metadataHint && hasDeliveryPath)
   );
@@ -349,6 +370,8 @@ function evaluateImportAutoDispatchSafety({
   let reasonCode = null;
   if (metadataMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH')) {
     reasonCode = 'AGENCY_METADATA_MISMATCH';
+  } else if (agencyStateMismatch) {
+    reasonCode = 'AGENCY_STATE_MISMATCH';
   } else if (placeholderCaseTitle && placeholderSubject) {
     reasonCode = 'PLACEHOLDER_TITLE';
   } else if (genericAgency && metadataHint && hasDeliveryPath) {
@@ -359,6 +382,7 @@ function evaluateImportAutoDispatchSafety({
     shouldBlockAutoDispatch,
     reasonCode,
     metadataMismatch,
+    agencyStateMismatch,
     metadataHint,
     warningTypes,
     placeholderCaseTitle,
@@ -380,6 +404,7 @@ module.exports = {
   extractMetadataAgencyHint,
   isGenericAgencyLabel,
   detectCaseMetadataAgencyMismatch,
+  detectAgencyStateMismatch,
   evaluateImportAutoDispatchSafety,
   isNotionReferenceList,
 };

@@ -35,7 +35,11 @@ class DatabaseService {
             keepAlive: true,
             keepAliveInitialDelayMillis: 10000,
             idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 10000,
+            connectionTimeoutMillis: (() => {
+                const configured = parseInt(process.env.PG_CONNECT_TIMEOUT_MS, 10);
+                if (Number.isFinite(configured) && configured > 0) return configured;
+                return process.env.NODE_ENV === 'production' ? 20000 : 10000;
+            })(),
             // Explicit pool size — keep local/test usage conservative so many parallel
             // helper processes don't exhaust the shared Postgres connection budget.
             max: (() => {
@@ -73,10 +77,29 @@ class DatabaseService {
             || message.includes('connection terminated')
             || message.includes('connection timeout')
             || message.includes('too many clients already')
+            || message.includes('timeout exceeded when trying to connect')
             || message.includes('read econnreset')
             || message.includes('socket hang up')
             || message.includes('the client was closed')
             || message.includes('server closed the connection unexpectedly');
+    }
+
+    _getRetryBackoffMs(error, attempt) {
+        const code = String(error?.code || '').toUpperCase();
+        const message = String(error?.message || '').toLowerCase();
+
+        if (code === '53300' || message.includes('too many clients already')) {
+            return 1000 * attempt;
+        }
+
+        if (
+            message.includes('connection terminated due to connection timeout')
+            || message.includes('timeout exceeded when trying to connect')
+        ) {
+            return 750 * attempt + 250;
+        }
+
+        return 150 * attempt;
     }
 
     async _resetPool() {
@@ -155,7 +178,7 @@ class DatabaseService {
     }
 
     async query(text, params, options = {}) {
-        const maxAttempts = Number.isFinite(options.maxAttempts) ? options.maxAttempts : 3;
+        const maxAttempts = Number.isFinite(options.maxAttempts) ? options.maxAttempts : 4;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
             const start = Date.now();
@@ -178,7 +201,7 @@ class DatabaseService {
                 }
 
                 await this._resetPool();
-                const backoffMs = error?.code === '53300' ? 1000 * attempt : 150 * attempt;
+                const backoffMs = this._getRetryBackoffMs(error, attempt);
                 await new Promise((resolve) => setTimeout(resolve, backoffMs));
             }
         }
