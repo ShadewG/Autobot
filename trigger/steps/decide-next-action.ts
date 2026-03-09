@@ -1259,26 +1259,28 @@ async function assessDenialStrength(caseId: number, denialSubtype?: string | nul
   return "weak";
 }
 
-async function checkUnansweredClarification(caseId: number): Promise<number | null> {
+export async function checkUnansweredClarification(caseId: number): Promise<number | null> {
   const threadMessages = await db.getMessagesByCaseId(caseId);
   const inboundAnalyses = await db.query(
-    `SELECT ra.message_id, ra.intent FROM response_analysis ra
+    `SELECT ra.message_id, ra.intent, m.created_at FROM response_analysis ra
      JOIN messages m ON m.id = ra.message_id
      WHERE ra.case_id = $1 AND m.direction = 'inbound'
-     ORDER BY ra.created_at ASC`,
+     ORDER BY m.created_at DESC, ra.created_at DESC`,
     [caseId]
   );
-  const clarificationMsgIds = inboundAnalyses.rows
-    .filter((a: any) => a.intent === "question" || a.intent === "more_info_needed")
-    .map((a: any) => a.message_id);
+  const latestInbound = inboundAnalyses.rows?.[0];
+  if (!latestInbound) return null;
 
-  if (clarificationMsgIds.length > 0) {
-    const lastClarificationId = clarificationMsgIds[clarificationMsgIds.length - 1];
-    const outboundAfter = threadMessages.filter(
-      (m: any) => m.direction === "outbound" && m.id > lastClarificationId
-    );
-    if (outboundAfter.length === 0) return lastClarificationId;
-  }
+  const latestIntent = String(latestInbound.intent || "").toLowerCase();
+  const latestIsClarification = latestIntent === "question" || latestIntent === "more_info_needed";
+  if (!latestIsClarification) return null;
+
+  const outboundAfter = threadMessages.filter((m: any) => {
+    const direction = String(m.direction || "").toLowerCase();
+    return direction === "outbound" && Number(m.id) > Number(latestInbound.message_id);
+  });
+  if (outboundAfter.length === 0) return latestInbound.message_id;
+
   return null;
 }
 

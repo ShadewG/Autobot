@@ -95,6 +95,31 @@ function looksLikePortalSystemMessage(message: any): boolean {
   );
 }
 
+function looksLikePortalOnboardingAcknowledgment(message: any): boolean {
+  const corpus = normalizeClassificationText([
+    message?.subject,
+    message?.body_text,
+    message?.body_html,
+  ].join("\n"));
+
+  if (!corpus) return false;
+
+  const receivedSignal =
+    /request has been received|we are in receipt of your (?:records )?request|received and is being processed|given the reference number|tracking purposes/.test(
+      corpus
+    );
+  const portalOnboardingSignal =
+    /added to our govqa portal|records center|primary means of contact|monitor your email for(?: any)? updates|you can expect an email response|track the progress of your request|request temporary password|log in to the records center/.test(
+      corpus
+    );
+  const directQuestionSignal =
+    /please provide|can you provide|please confirm|what is|which records|please clarify|let me know (?:which|what)|advise whether/.test(
+      corpus
+    );
+
+  return receivedSignal && portalOnboardingSignal && !directQuestionSignal;
+}
+
 function looksLikeExplicitNoRecordsDenial(message: any, attachments: any[] = []): boolean {
   const corpus = [
     message?.subject,
@@ -218,7 +243,23 @@ function applyDeterministicClassificationOverrides(
   }
 
   if (
-    ["denial", "partial_denial", "wrong_agency"].includes(normalizedIntent) &&
+    ["question", "more_info_needed", "acknowledgment", "other"].includes(normalizedIntent) &&
+    looksLikePortalOnboardingAcknowledgment(message)
+  ) {
+    normalizedResult = {
+      ...normalizedResult,
+      intent: "acknowledgment",
+      requires_response: false,
+      suggested_action: "wait",
+      reason_no_response: "Agency acknowledged receipt and is onboarding the request into the portal.",
+      unanswered_agency_question: null,
+    };
+    normalizedIntent = "acknowledgment";
+  }
+
+  if (
+    ["denial", "partial_denial"].includes(normalizedIntent) &&
+    normalizedResult.denial_subtype !== "wrong_agency" &&
     normalizedResult.requires_response !== true
   ) {
     normalizedResult = {

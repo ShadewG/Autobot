@@ -33,6 +33,11 @@ const DRAFT_REQUIRED_ACTIONS = [
   "RESPOND_PARTIAL_APPROVAL", "ACCEPT_FEE", "NEGOTIATE_FEE", "DECLINE_FEE",
 ];
 
+function draftSignalsNoResponse(draft: any): boolean {
+  const text = String(draft?.bodyText || draft?.body_text || "").trim();
+  return /^(no response needed|no reply needed)\b/i.test(text);
+}
+
 async function waitForHumanDecision(
   idempotencyKey: string,
   proposalId: number
@@ -798,6 +803,41 @@ export const processInbound = task({
         decision.overrideMessageId || messageId,
         research
       );
+
+      if (draftSignalsNoResponse(draft) && decision.actionType !== "NONE") {
+        const suppressedReasoning = [
+          ...(decision.reasoning || []),
+          "Suppressed contradictory draft because the generated reply explicitly said no response was needed.",
+        ];
+        logger.warn("Draft signaled no response needed; suppressing contradictory proposal", {
+          caseId,
+          actionType: decision.actionType,
+          messageId,
+        });
+        await markStep("commit_state", `Run #${runId}: suppressing contradictory no-response draft`);
+        trace.markOutcome("completed", {
+          action: "none",
+          actionType: "NONE",
+          suppressedActionType: decision.actionType,
+        });
+        await commitState(
+          caseId,
+          runId,
+          "NONE",
+          suppressedReasoning,
+          classification.confidence,
+          effectiveTriggerType,
+          false,
+          null
+        );
+        await completeRun(caseId, runId);
+        return {
+          status: "completed",
+          action: "none",
+          suppressedActionType: decision.actionType,
+          reasoning: suppressedReasoning,
+        };
+      }
     }
 
     // Step 5b: Draft chain follow-up (if decision includes a chain)
