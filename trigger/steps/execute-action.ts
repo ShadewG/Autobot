@@ -20,6 +20,8 @@ import { hasAutomatablePortal, isNonAutomatablePortalProvider } from "../lib/por
 import { textClaimsAttachment, stripAttachmentClaimLines } from "../lib/text-sanitize";
 // @ts-ignore
 const { detectCaseMetadataAgencyMismatch } = require("../../utils/request-normalization");
+// @ts-ignore
+const { isTestAgencyEmail } = require("../../services/canonical-agency");
 
 const AI_ROUTER_V2_EXEC = process.env.AI_ROUTER_V2 || "false";
 
@@ -110,6 +112,45 @@ function normalizePhoneForCompare(value: any): string | null {
   const digits = String(value || "").replace(/\D/g, "");
   if (digits.length < 7) return null;
   return digits;
+}
+
+function looksSyntheticAgencyName(value: any): boolean {
+  const name = String(value || "").trim().toLowerCase();
+  if (!name) return false;
+  return /\b(e2e|synthetic|scenario agency|localhost qa)\b/.test(name);
+}
+
+export function isSyntheticKnownChannelSignal({
+  agencyName,
+  agencyEmail,
+  portalUrl,
+  addedSource,
+}: {
+  agencyName?: any;
+  agencyEmail?: any;
+  portalUrl?: any;
+  addedSource?: any;
+}): boolean {
+  const normalizedEmail = normalizeEmail(agencyEmail);
+  const normalizedPortal = normalizePortalForCompare(portalUrl);
+  const source = String(addedSource || "").trim().toLowerCase();
+  const backfilled = source === "case_row_backfill" || source === "case_row_fallback";
+
+  if (normalizedEmail) {
+    if (isTestAgencyEmail(normalizedEmail)) return true;
+    if (/placeholder\.invalid/i.test(normalizedEmail)) return true;
+    if (/test@agency\.gov/i.test(normalizedEmail)) return true;
+  }
+
+  if (backfilled && looksSyntheticAgencyName(agencyName)) {
+    return true;
+  }
+
+  if (backfilled && normalizedPortal && looksSyntheticAgencyName(agencyName)) {
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeConstraintArray(value: any): string[] {
@@ -1076,7 +1117,7 @@ export async function executeAction(
           }
         }
       }
-      const knownCaseEmailSignal = ignoreCurrentAgencySignals
+      const rawKnownCaseEmailSignal = ignoreCurrentAgencySignals
         ? null
         : (
           caseSignalsSource?.alternate_agency_email ||
@@ -1085,9 +1126,17 @@ export async function executeAction(
           caseData?.agency_email ||
           null
         );
-      const knownCasePortalSignal = ignoreCurrentAgencySignals
+      const rawKnownCasePortalSignal = ignoreCurrentAgencySignals
         ? null
         : (caseSignalsSource?.portal_url || caseData?.portal_url || null);
+      const ignoreSyntheticKnownSignals = isSyntheticKnownChannelSignal({
+        agencyName: caseSignalsSource?.agency_name || caseData?.agency_name,
+        agencyEmail: rawKnownCaseEmailSignal,
+        portalUrl: rawKnownCasePortalSignal,
+        addedSource: caseSignalsSource?.agency_added_source || caseData?.agency_added_source,
+      });
+      const knownCaseEmailSignal = ignoreSyntheticKnownSignals ? null : rawKnownCaseEmailSignal;
+      const knownCasePortalSignal = ignoreSyntheticKnownSignals ? null : rawKnownCasePortalSignal;
       const hasContactSignals = !!(contactSignalEmail || contactSignalPortal || contactSignalPhone || contactSignalFax);
       const hasKnownCaseSignals = !!(knownCaseEmailSignal || knownCasePortalSignal);
 
@@ -1272,24 +1321,41 @@ export async function executeAction(
       const existingFaxes = new Set<string>();
       try {
         const existingCaseAgencies = await db.query(
-          `SELECT ca.agency_email, ca.portal_url, a.phone, a.fax
+          `SELECT ca.agency_name, ca.agency_email, ca.portal_url, ca.added_source, a.phone, a.fax
            FROM case_agencies ca
            LEFT JOIN agencies a ON ca.agency_id = a.id
            WHERE ca.case_id = $1`,
           [caseId]
         );
+        const filteredCaseAgencyRows = (existingCaseAgencies.rows || []).filter((r: any) => !isSyntheticKnownChannelSignal({
+          agencyName: r.agency_name,
+          agencyEmail: r.agency_email,
+          portalUrl: r.portal_url,
+          addedSource: r.added_source,
+        }));
+        const usableThreadAgencyEmail = isSyntheticKnownChannelSignal({
+          agencyName: caseData?.agency_name,
+          agencyEmail: thread?.agency_email,
+          portalUrl: null,
+          addedSource: "thread",
+        })
+          ? null
+          : thread?.agency_email;
         const knownEmails = [
-          caseData?.agency_email,
-          caseData?.alternate_agency_email,
-          thread?.agency_email,
-          ...(existingCaseAgencies.rows || []).map((r: any) => r.agency_email),
+          ...(
+            ignoreSyntheticKnownSignals
+              ? []
+              : [caseData?.agency_email, caseData?.alternate_agency_email]
+          ),
+          usableThreadAgencyEmail,
+          ...filteredCaseAgencyRows.map((r: any) => r.agency_email),
         ];
         const knownPortals = [
-          caseData?.portal_url,
-          ...(existingCaseAgencies.rows || []).map((r: any) => r.portal_url),
+          ...(ignoreSyntheticKnownSignals ? [] : [caseData?.portal_url]),
+          ...filteredCaseAgencyRows.map((r: any) => r.portal_url),
         ];
-        const knownPhones = (existingCaseAgencies.rows || []).map((r: any) => r.phone);
-        const knownFaxes = (existingCaseAgencies.rows || []).map((r: any) => r.fax);
+        const knownPhones = filteredCaseAgencyRows.map((r: any) => r.phone);
+        const knownFaxes = filteredCaseAgencyRows.map((r: any) => r.fax);
 
         for (const v of knownEmails) {
           const n = normalizeEmail(v);

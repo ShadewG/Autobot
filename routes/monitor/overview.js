@@ -15,6 +15,7 @@ const {
     normalizePortalTimeoutSubstatus,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
+const { buildRealCaseWhereClause } = require('../../utils/analytics-test-filter');
 
 const CONTRADICTORY_NO_RESPONSE_ACTIONS = new Set([
     'SEND_INITIAL_REQUEST',
@@ -554,7 +555,7 @@ router.get('/live-overview', async (req, res) => {
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
             WHERE p.status IN (${HUMAN_REVIEW_PROPOSAL_STATUSES_SQL})
-            AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+            AND ${buildRealCaseWhereClause('c', 'm_filter')}
             ${caseUserFilter}
             ORDER BY
                 CASE WHEN COALESCE(c.priority, 0) = 2 THEN 0 ELSE 1 END ASC,
@@ -964,7 +965,7 @@ router.get('/live-overview', async (req, res) => {
                   SELECT 1 FROM proposals p WHERE p.case_id = c.id
                   AND p.status IN (${HUMAN_REVIEW_PROPOSAL_STATUSES_SQL})
               )
-              AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+              AND ${buildRealCaseWhereClause('c', 'm_filter')}
               ${caseUserFilter}
             ORDER BY
                 CASE c.pause_reason WHEN 'FEE_QUOTE' THEN 0 WHEN 'DENIAL' THEN 1

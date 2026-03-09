@@ -1,6 +1,7 @@
 const assert = require('assert');
 const express = require('express');
 const supertest = require('supertest');
+const { buildSyntheticCaseExclusionSql } = require('../utils/analytics-test-filter');
 
 function injectModule(modulePath, exportsValue, tracker) {
   const resolved = require.resolve(modulePath);
@@ -30,6 +31,16 @@ describe('dashboard analytics filters', function () {
       }
     }
     injected = [];
+  });
+
+  it('treats E2E names and test@agency.gov channels as synthetic', function () {
+    const sql = buildSyntheticCaseExclusionSql('c', 'm');
+    assert.match(sql, /agency_name.*e2e/i);
+    assert.match(sql, /subject_name.*e2e/i);
+    assert.match(sql, /case_name.*e2e/i);
+    assert.match(sql, /agency_email.*test@agency\.gov/i);
+    assert.match(sql, /to_email.*test@agency\.gov/i);
+    assert.match(sql, /from_email.*test@agency\.gov/i);
   });
 
   it('filters test cases out of /dashboard/outcomes analytics queries', async function () {

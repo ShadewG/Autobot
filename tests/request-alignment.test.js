@@ -280,6 +280,35 @@ describe('Request alignment regressions', function () {
     }
   });
 
+  it('GET /api/requests excludes E2E and test mailbox cases from the base query', async function () {
+    const originalQuery = requestHelpers.db.query;
+
+    requestHelpers.db.query = async (sql) => {
+      if (sql.includes('FROM cases c') && sql.includes('LEFT JOIN LATERAL')) {
+        assert.match(sql, /test@agency\.gov/i);
+        assert.match(sql, /%e2e%/i);
+        return { rows: [] };
+      }
+
+      if (sql.includes("WHERE c.status IN ('completed', 'cancelled')")) {
+        return { rows: [] };
+      }
+
+      throw new Error(`Unexpected query in synthetic queue filter test: ${sql}`);
+    };
+
+    try {
+      const app = express();
+      app.use('/api/requests', requestRouter);
+
+      const response = await supertest(app).get('/api/requests');
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(response.body.requests, []);
+    } finally {
+      requestHelpers.db.query = originalQuery;
+    }
+  });
+
   it('GET /api/requests ignores wrong_agency_referral rows for display identity', async function () {
     const originalQuery = requestHelpers.db.query;
 

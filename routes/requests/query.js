@@ -4,6 +4,7 @@ const { db, logger, toRequestListItem, toRequestDetail, toThreadMessage, toTimel
 const { ACTIVE_PROPOSAL_STATUSES_SQL } = require('../../lib/case-truth');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../../utils/portal-utils');
 const { normalizeAgencyEmailHint, isTestAgencyEmail, findCanonicalAgency } = require('../../services/canonical-agency');
+const { buildRealCaseWhereClause } = require('../../utils/analytics-test-filter');
 const {
     deriveDisplayState,
     detectCaseMetadataAgencyMismatch,
@@ -432,7 +433,7 @@ router.get('/', async (req, res) => {
                 ORDER BY created_at DESC
                 LIMIT 1
             ) pp ON TRUE
-            WHERE (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+            WHERE ${buildRealCaseWhereClause('c', 'm_filter')}
         `;
         const params = [];
 

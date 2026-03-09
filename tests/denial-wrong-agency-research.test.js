@@ -7,7 +7,10 @@ process.env.OPENAI_API_KEY = "";
 
 const database = require("../services/database");
 const { decideNextAction } = require("../trigger/steps/decide-next-action.ts");
-const { reasoningForcesCorrectedAgencyResearch } = require("../trigger/steps/execute-action.ts");
+const {
+  reasoningForcesCorrectedAgencyResearch,
+  isSyntheticKnownChannelSignal,
+} = require("../trigger/steps/execute-action.ts");
 
 describe("DENIAL no-records wrong-agency routing", function () {
   let getCaseByIdStub;
@@ -156,5 +159,17 @@ describe("DENIAL no-records wrong-agency routing", function () {
     ]);
 
     assert.strictEqual(result, true);
+  });
+
+  it("treats backfilled test channels as synthetic known signals", function () {
+    assert.strictEqual(
+      isSyntheticKnownChannelSignal({
+        agencyName: "E2E_multi_portal_plus_fee_1773011979834",
+        agencyEmail: "test@agency.gov",
+        portalUrl: "https://sanfrancisco.nextrequest.com",
+        addedSource: "case_row_backfill",
+      }),
+      true
+    );
   });
 });
