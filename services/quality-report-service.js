@@ -399,7 +399,7 @@ async function buildReconciliationReport() {
       SELECT COUNT(*) as count FROM messages
       WHERE direction = 'inbound' AND case_id IS NULL
         AND processed_at IS NULL
-        AND (metadata->>'source' IS DISTINCT FROM 'manual_paste')
+        AND (metadata->>'source' IS NULL)
     `),
     db.query(`
       SELECT COUNT(*) as count FROM proposals
