@@ -12,6 +12,7 @@ const {
     isGenericAgencyLabel,
     isNotionReferenceList,
     isPlaceholderAgencyEmail,
+    evaluateImportAutoDispatchSafety,
     shouldSuppressPlaceholderAgencyDisplay,
 } = require('../../utils/request-normalization');
 const { shouldEscalateManualPasteMismatch } = require('../../trigger/lib/manual-paste-guard.ts');
@@ -21,7 +22,6 @@ function shouldPreferResearchAgencyDisplay({ researchSuggestedAgency, agencyEmai
         researchSuggestedAgency
         && isPlaceholderAgencyEmail(agencyEmail)
         && !normalizePortalUrl(portalUrl)
-        && (!addedSource || ['case_row_backfill', 'case_row_fallback'].includes(addedSource))
     );
 }
 
@@ -1551,6 +1551,35 @@ router.get('/:id/workspace', async (req, res) => {
                 substatus: buildManualPasteMismatchSubstatus(manualPasteMismatch),
             };
         }
+        const importSafety = evaluateImportAutoDispatchSafety({
+            caseName: caseData.case_name,
+            subjectName: caseData.subject_name,
+            agencyName: caseData.agency_name,
+            additionalDetails: caseData.additional_details,
+            importWarnings: caseData.import_warnings,
+            agencyEmail: primaryCaseAgency?.agency_email || caseData.agency_email,
+            portalUrl: primaryCaseAgency?.portal_url || caseData.portal_url,
+        });
+        const importSafetyBlockedProposal = Boolean(
+            importSafety.shouldBlockAutoDispatch &&
+            pendingProposal &&
+            ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(pendingProposal.action_type || '').toUpperCase())
+        );
+        if (importSafetyBlockedProposal) {
+            nextActionProposal = null;
+            pendingProposal = null;
+            caseData = {
+                ...caseData,
+                requires_human: true,
+                status: 'needs_human_review',
+                substatus: importSafety.metadataMismatch?.expectedAgencyName
+                    ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
+                    : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
+                        ? 'Imported case title/subject is still placeholder text'
+                        : 'Imported case needs human review before sending',
+                pause_reason: 'IMPORT_REVIEW',
+            };
+        }
 
         // Build portal_helper for portal execution proposals and manual portal fallback handoffs.
         let portalHelper = null;
@@ -1667,6 +1696,11 @@ router.get('/:id/workspace', async (req, res) => {
             activePortalTaskStatus: caseData.active_portal_task_status || null,
         });
         if (manualPasteMismatch.mismatch) {
+            review_state = 'IDLE';
+            control_state = 'BLOCKED';
+            control_mismatches = [];
+        }
+        if (importSafetyBlockedProposal) {
             review_state = 'IDLE';
             control_state = 'BLOCKED';
             control_mismatches = [];

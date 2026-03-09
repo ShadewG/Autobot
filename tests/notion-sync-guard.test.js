@@ -259,4 +259,150 @@ describe('Notion sync guards', function () {
     assert.strictEqual(captureStub.firstCall.args[1].operation, 'process_single_page');
     assert.strictEqual(captureStub.firstCall.args[1].metadata.pageId, '12345678123412341234123456789012');
   });
+
+  it('parks placeholder imports in human review when the page has no request content', function () {
+    const caseData = {
+      case_name: 'Untitled Case',
+      requested_records: [],
+      additional_details: '--- Notion Fields ---\nTitle: &nbsp;\nStatus: Research\nSummary: not available',
+      status: 'ready_to_send',
+    };
+
+    const warnings = notionService.applyImportReadinessGuard(caseData, {
+      pageContent: '# 📋 Case Summary\nSummary not available\n## 👥 Individuals Involved',
+    });
+
+    assert.strictEqual(caseData.status, 'needs_human_review');
+    assert.strictEqual(warnings.some((warning) => warning.type === 'PLACEHOLDER_TITLE'), true);
+    assert.strictEqual(warnings.some((warning) => warning.type === 'MISSING_REQUEST_CONTENT'), true);
+  });
+
+  it('blocks imports when both title and subject are placeholder text even if request content exists', function () {
+    const caseData = {
+      case_name: 'Untitled Case',
+      subject_name: '&nbsp;',
+      requested_records: [],
+      additional_details: '',
+      agency_email: 'records@example.gov',
+      status: 'ready_to_send',
+    };
+
+    const warnings = notionService.applyImportReadinessGuard(caseData, {
+      pageContent: 'Please request all body camera, dash camera, CAD logs, and incident reports for the arrest on March 1.',
+    });
+
+    assert.strictEqual(caseData.status, 'needs_human_review');
+    assert.strictEqual(warnings.some((warning) => warning.type === 'PLACEHOLDER_TITLE'), true);
+    assert.strictEqual(warnings.some((warning) => warning.type === 'MISSING_REQUEST_CONTENT'), false);
+  });
+
+  it('does not block imports when the title is weak but the subject and agency are concrete', function () {
+    const caseData = {
+      case_name: 'Untitled Case',
+      subject_name: 'Ryan Campbell',
+      agency_name: 'Denver Police Department, Colorado',
+      requested_records: [],
+      additional_details: '**Police Department:** Denver Police Department, Colorado',
+      agency_email: 'records@example.gov',
+      status: 'ready_to_send',
+    };
+
+    const warnings = notionService.applyImportReadinessGuard(caseData, {
+      pageContent: 'Please request all body camera, dash camera, CAD logs, and incident reports for the arrest on March 1.',
+    });
+
+    assert.strictEqual(caseData.status, 'ready_to_send');
+    assert.strictEqual(warnings.some((warning) => warning.type === 'PLACEHOLDER_TITLE'), true);
+  });
+
+  it('routes real requests with no delivery path into needs_contact_info', function () {
+    const caseData = {
+      case_name: 'Officer misconduct records request',
+      requested_records: [],
+      additional_details: '',
+      agency_email: '',
+      portal_url: '',
+      status: 'ready_to_send',
+    };
+
+    const warnings = notionService.applyImportReadinessGuard(caseData, {
+      pageContent: 'Please provide body camera, incident report, CAD logs, and dash camera for the March 1 arrest.',
+    });
+
+    assert.strictEqual(caseData.status, 'needs_contact_info');
+    assert.strictEqual(warnings.some((warning) => warning.type === 'MISSING_DELIVERY_PATH'), true);
+    assert.strictEqual(warnings.some((warning) => warning.type === 'MISSING_REQUEST_CONTENT'), false);
+  });
+
+  it('uses a placeholder email for needs_contact_info imports so the case can persist', function () {
+    const caseData = {
+      case_name: 'Officer misconduct records request',
+      requested_records: ['Body camera footage'],
+      agency_email: null,
+      portal_url: null,
+      status: 'needs_contact_info',
+    };
+
+    notionService.applyImportDeliveryFallback(caseData);
+
+    assert.strictEqual(caseData.agency_email, 'pending-research@intake.autobot');
+  });
+
+  it('applies AI-resolved agency metadata during single-page import', function () {
+    const caseData = {
+      case_name: 'Original title',
+      agency_name: null,
+      state: null,
+      incident_date: null,
+      incident_location: '',
+      subject_name: 'Original subject',
+      requested_records: [],
+      additional_details: '',
+    };
+
+    notionService.applySinglePageAIResult(caseData, {
+      agency_name: "Jacksonville Sheriff's Office (JSO)",
+      state: 'Florida',
+      incident_date: 'February 2022',
+      incident_location: 'Jacksonville, Florida',
+      subject_name: 'Nathaniel Slade',
+      records_requested: ['911 Call Recordings'],
+    });
+
+    assert.strictEqual(caseData.agency_name, "Jacksonville Sheriff's Office (JSO)");
+    assert.strictEqual(caseData.state, 'Florida');
+    assert.strictEqual(caseData.incident_date, '2022-02-01');
+    assert.deepStrictEqual(caseData.requested_records, ['911 Call Recordings']);
+  });
+
+  it('normalizes loose imported incident dates to a DB-safe date', function () {
+    assert.strictEqual(notionService.normalizeImportedDateValue('February 2022'), '2022-02-01');
+    assert.strictEqual(notionService.normalizeImportedDateValue('2022-02-14T15:04:05.000Z'), '2022-02-14');
+    assert.strictEqual(notionService.normalizeImportedDateValue('not a real date'), null);
+  });
+
+  it('omits relation ids from free-text property exports', function () {
+    const properties = {
+      'Police Department': {
+        id: 'abc',
+        type: 'relation',
+        relation: [
+          { id: '20987c20-070a-8183-b16b-d52aba959eb7' },
+          { id: '24587c20-070a-8046-b4d8-fdef0dd2713f' },
+        ],
+      },
+      'Case Summary': {
+        id: 'def',
+        type: 'rich_text',
+        rich_text: [{ plain_text: 'Body camera request' }],
+      },
+    };
+
+    const allPropsText = notionService.formatAllPropertiesAsText(properties);
+    const aiProps = notionService.preparePropertiesForAI(properties);
+
+    assert.match(allPropsText, /Case Summary: Body camera request/);
+    assert.doesNotMatch(allPropsText, /20987c20-070a-8183-b16b-d52aba959eb7/);
+    assert.strictEqual(aiProps['Police Department'], null);
+  });
 });

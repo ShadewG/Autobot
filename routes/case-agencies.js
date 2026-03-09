@@ -128,7 +128,6 @@ async function canonicalizeCaseAgency(caseAgency, caseData) {
     });
     const shouldPreferResearchDisplay = Boolean(
         researchSuggestedAgency
-        && ['case_row_backfill', 'case_row_fallback'].includes(caseAgency?.added_source)
         && isPlaceholderAgencyEmail(caseAgency?.agency_email || caseData?.agency_email)
         && !normalizePortalUrl(caseAgency?.portal_url || caseData?.portal_url)
     );

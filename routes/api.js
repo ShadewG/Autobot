@@ -39,21 +39,30 @@ async function syncSingleNotionPage(pageId) {
     }
 
     const caseData = await notionService.processSinglePage(pageId);
+    const normalizedStatus = typeof caseData.status === 'string'
+        ? caseData.status.toLowerCase()
+        : '';
+    const shouldQueueProcessing = normalizedStatus === 'ready_to_send';
 
-    await generateQueue.add('generate-and-send', {
-        caseId: caseData.id
-    });
+    if (shouldQueueProcessing) {
+        await generateQueue.add('generate-and-send', {
+            caseId: caseData.id
+        });
+    }
 
     return {
         success: true,
-        message: 'Case imported and queued for processing',
+        message: shouldQueueProcessing
+            ? 'Case imported and queued for processing'
+            : 'Case imported without auto-queue because it requires review',
         case: {
             id: caseData.id,
             case_name: caseData.case_name,
             agency_name: caseData.agency_name,
             status: caseData.status
         },
-        delay_minutes: Math.round(Math.random() * 8) + 2
+        queued: shouldQueueProcessing,
+        delay_minutes: shouldQueueProcessing ? Math.round(Math.random() * 8) + 2 : null
     };
 }
 

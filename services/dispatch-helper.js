@@ -2,6 +2,7 @@ const db = require('./database');
 const { notify } = require('./event-bus');
 const triggerDispatch = require('./trigger-dispatch-service');
 const aiService = require('./ai-service');
+const { evaluateImportAutoDispatchSafety } = require('../utils/request-normalization');
 
 function canMaterializeReadyToSendLocally(caseData) {
     return (
@@ -101,6 +102,42 @@ async function dispatchReadyToSend(caseId, { source = 'reactive' } = {}) {
     // Only dispatch cases that are actually ready_to_send
     if (caseData.status !== 'ready_to_send') {
         return { dispatched: false, reason: `unexpected_status_${caseData.status}` };
+    }
+
+    const importSafety = evaluateImportAutoDispatchSafety({
+        caseName: caseData.case_name,
+        subjectName: caseData.subject_name,
+        agencyName: caseData.agency_name,
+        additionalDetails: caseData.additional_details,
+        importWarnings: caseData.import_warnings,
+        agencyEmail: caseData.agency_email,
+        portalUrl: caseData.portal_url,
+    });
+    if (importSafety.shouldBlockAutoDispatch) {
+        const reasonDetail = importSafety.metadataMismatch?.expectedAgencyName
+            ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName})`
+            : importSafety.reasonCode === 'PLACEHOLDER_TITLE'
+                ? 'Imported case title/subject is still placeholder text'
+                : 'Imported case needs human review before auto-dispatch';
+        try {
+            await db.query(
+                `UPDATE cases
+                    SET status = 'needs_human_review',
+                        substatus = $2,
+                        updated_at = NOW()
+                  WHERE id = $1`,
+                [caseId, reasonDetail]
+            );
+            await db.logActivity('import_dispatch_blocked', reasonDetail, {
+                case_id: caseId,
+                source,
+                reason_code: importSafety.reasonCode,
+                expected_agency_name: importSafety.metadataMismatch?.expectedAgencyName || null,
+            });
+        } catch (err) {
+            console.warn(`[dispatch] Failed to persist blocked import status for case ${caseId}:`, err.message);
+        }
+        return { dispatched: false, reason: 'unsafe_import_routing' };
     }
 
     // Don't dispatch if there's already a pending proposal waiting for human review

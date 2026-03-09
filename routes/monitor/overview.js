@@ -10,6 +10,7 @@ const {
     buildCaseTruth,
 } = require('../../lib/case-truth');
 const {
+    evaluateImportAutoDispatchSafety,
     extractResearchSuggestedAgency,
     normalizePortalTimeoutSubstatus,
     shouldSuppressPlaceholderAgencyDisplay,
@@ -457,11 +458,14 @@ router.get('/live-overview', async (req, res) => {
                 p.warnings,
                 p.gate_options,
                 c.case_name,
+                c.subject_name,
                 c.agency_name,
                 c.status AS case_status,
                 c.substatus AS case_substatus,
                 c.portal_url,
                 c.agency_email,
+                c.additional_details,
+                c.import_warnings,
                 c.deadline_date,
                 c.contact_research_notes,
                 COALESCE(
@@ -675,6 +679,21 @@ router.get('/live-overview', async (req, res) => {
                 .filter((attachment, index, arr) => arr.findIndex((candidate) => candidate.id === attachment.id) === index);
             const reviewCtx = latestReviewByCase.get(Number(row.case_id)) || {};
             const primaryCaseAgency = primaryCaseAgencyByCase.get(Number(row.case_id)) || null;
+            const importSafety = evaluateImportAutoDispatchSafety({
+                caseName: row.case_name,
+                subjectName: row.subject_name,
+                agencyName: primaryCaseAgency?.agency_name || row.agency_name,
+                additionalDetails: row.additional_details,
+                importWarnings: row.import_warnings,
+                agencyEmail: primaryCaseAgency?.agency_email || row.agency_email,
+                portalUrl: primaryCaseAgency?.portal_url || row.portal_url,
+            });
+            if (
+                importSafety.shouldBlockAutoDispatch &&
+                ['SEND_INITIAL_REQUEST', 'SUBMIT_PORTAL', 'SEND_CLARIFICATION'].includes(String(row.action_type || '').toUpperCase())
+            ) {
+                return null;
+            }
             const researchSuggestedAgency = row.action_type === 'RESEARCH_AGENCY'
                 ? extractResearchSuggestedAgency(row.contact_research_notes)
                 : null;
@@ -717,7 +736,7 @@ router.get('/live-overview', async (req, res) => {
                 attachments,
                 attachment_insights: extractAttachmentInsights(attachments)
             };
-        });
+        }).filter(Boolean);
 
         const activeRunsResult = await db.query(`
             SELECT

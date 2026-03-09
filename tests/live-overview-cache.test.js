@@ -42,6 +42,7 @@ describe('Live overview cache fallback', function () {
       filename: normalizationPath,
       loaded: true,
       exports: {
+        evaluateImportAutoDispatchSafety: () => ({ shouldBlockAutoDispatch: false }),
         extractResearchSuggestedAgency: () => null,
         normalizePortalTimeoutSubstatus: (value) => value,
         shouldSuppressPlaceholderAgencyDisplay: () => false,

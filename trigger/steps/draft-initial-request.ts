@@ -8,6 +8,7 @@
 import db, { aiService, logger } from "../lib/db";
 import type { AutopilotMode, ProposalRecord, AIModelMetadata } from "../lib/types";
 import { hasAutomatablePortal } from "../lib/portal-utils";
+const { pickSafeSubjectDescriptor } = require("../../utils/request-normalization");
 
 function generateInitialRequestProposalKey(caseId: number, hasPortal: boolean): string {
   const action = hasPortal ? "SUBMIT_PORTAL" : "SEND_INITIAL_REQUEST";
@@ -76,9 +77,14 @@ export async function draftInitialRequest(
     throw new Error(`AI returned null/invalid result for case ${caseId}`);
   }
 
+  const subjectDescriptor = pickSafeSubjectDescriptor(
+    caseData.subject_name,
+    caseData.case_name,
+    caseData.requested_records?.[0]
+  );
   const subject =
     draftResult.subject ||
-    `Public Records Request - ${caseData.subject_name || "Records Request"}`;
+    `Public Records Request - ${subjectDescriptor}`;
   const bodyText = draftResult.body || draftResult.requestText || draftResult.request_text;
 
   if (!bodyText || typeof bodyText !== "string" || !bodyText.trim()) {
@@ -104,7 +110,7 @@ export async function draftInitialRequest(
   const deliveryMethod = hasPortal ? `Portal: ${caseData.portal_url}` : `Email: ${caseData.agency_email || "N/A"}`;
   const reasoning = [
     `Generated initial FOIA request for ${caseData.agency_name}`,
-    `Subject: ${caseData.subject_name || "N/A"}`,
+    `Subject: ${subjectDescriptor || "N/A"}`,
     `Delivery: ${deliveryMethod}`,
     `Records: ${(caseData.requested_records || []).join(", ") || "Various records"}`,
     `Autopilot: ${autopilotMode}`,

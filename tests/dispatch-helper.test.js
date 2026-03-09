@@ -19,24 +19,36 @@ const dbStub = {
     getActiveRunForCase: sinon.stub(),
     createAgentRunFull: sinon.stub(),
     updateAgentRun: sinon.stub(),
-    logActivity: sinon.stub()
+    logActivity: sinon.stub(),
+    query: sinon.stub()
 };
 
 const notifyStub = sinon.stub();
-const enqueueStub = sinon.stub();
+const triggerTaskStub = sinon.stub();
+const aiGenerateStub = sinon.stub();
 
 // Resolve the exact paths that dispatch-helper.js will require()
 const helperPath = path.resolve(__dirname, '../services/dispatch-helper.js');
 const dbPath = path.resolve(__dirname, '../services/database.js');
 const eventBusPath = path.resolve(__dirname, '../services/event-bus.js');
-const loggerPath = path.resolve(__dirname, '../services/logger.js');
-const agentQueuePath = path.resolve(__dirname, '../queues/agent-queue.js');
+const triggerDispatchPath = path.resolve(__dirname, '../services/trigger-dispatch-service.js');
+const aiServicePath = path.resolve(__dirname, '../services/ai-service.js');
 
 // Pre-seed require cache with stubs
 require.cache[dbPath] = { id: dbPath, filename: dbPath, loaded: true, exports: dbStub };
 require.cache[eventBusPath] = { id: eventBusPath, filename: eventBusPath, loaded: true, exports: { notify: notifyStub } };
-require.cache[loggerPath] = { id: loggerPath, filename: loggerPath, loaded: true, exports: { info: () => {}, warn: () => {}, error: () => {} } };
-require.cache[agentQueuePath] = { id: agentQueuePath, filename: agentQueuePath, loaded: true, exports: { enqueueInitialRequestJob: enqueueStub } };
+require.cache[triggerDispatchPath] = {
+    id: triggerDispatchPath,
+    filename: triggerDispatchPath,
+    loaded: true,
+    exports: { triggerTask: triggerTaskStub },
+};
+require.cache[aiServicePath] = {
+    id: aiServicePath,
+    filename: aiServicePath,
+    loaded: true,
+    exports: { generateFOIARequest: aiGenerateStub },
+};
 
 // Now load dispatch-helper — it will pick up our cached stubs
 const { dispatchReadyToSend } = require(helperPath);
@@ -51,8 +63,11 @@ function resetStubs() {
     dbStub.createAgentRunFull.reset();
     dbStub.updateAgentRun.reset();
     dbStub.logActivity.reset();
+    dbStub.query.reset();
+    dbStub.query.resolves({ rows: [], rowCount: 0 });
     notifyStub.reset();
-    enqueueStub.reset();
+    triggerTaskStub.reset();
+    aiGenerateStub.reset();
 }
 
 const results = [];
@@ -73,7 +88,7 @@ async function testHappyPath() {
     dbStub.getCaseById.resolves({ id: 100, status: 'ready_to_send', case_name: 'Test Case' });
     dbStub.getActiveRunForCase.resolves(null);
     dbStub.createAgentRunFull.resolves({ id: 42, langgraph_thread_id: 'initial:100:123' });
-    enqueueStub.resolves({ id: 'job-1' });
+    triggerTaskStub.resolves({ id: 'job-1' });
     dbStub.logActivity.resolves();
 
     const result = await dispatchReadyToSend(100, { source: 'reactive' });
@@ -85,7 +100,7 @@ async function testHappyPath() {
     log('agent_run has case_id', createArgs.case_id === 100);
     log('agent_run has trigger_type', createArgs.trigger_type === 'initial_request');
     log('agent_run has status queued', createArgs.status === 'queued');
-    log('Enqueues job', enqueueStub.calledOnce);
+    log('Triggers task', triggerTaskStub.calledOnce);
     log('Logs activity', dbStub.logActivity.calledOnce);
     log('Notifies', notifyStub.calledOnce);
 }
@@ -103,7 +118,7 @@ async function testDedupActiveRun() {
     log('Reason is active_run_exists', result.reason === 'active_run_exists');
     log('Returns existing runId', result.runId === 77);
     log('Does not create agent_run', dbStub.createAgentRunFull.notCalled);
-    log('Does not enqueue', enqueueStub.notCalled);
+    log('Does not trigger task', triggerTaskStub.notCalled);
 }
 
 async function testSkipAlreadyAdvanced() {
@@ -140,7 +155,7 @@ async function testEnqueueFailureCleanup() {
     dbStub.getCaseById.resolves({ id: 100, status: 'ready_to_send', case_name: 'Test Case' });
     dbStub.getActiveRunForCase.resolves(null);
     dbStub.createAgentRunFull.resolves({ id: 42, langgraph_thread_id: 'initial:100:123' });
-    enqueueStub.rejects(new Error('Redis down'));
+    triggerTaskStub.rejects(new Error('Trigger down'));
     dbStub.updateAgentRun.resolves();
 
     let threw = false;
@@ -148,7 +163,7 @@ async function testEnqueueFailureCleanup() {
         await dispatchReadyToSend(100, { source: 'reactive' });
     } catch (err) {
         threw = true;
-        log('Error propagates', err.message === 'Redis down');
+        log('Error propagates', err.message === 'Trigger down');
     }
 
     log('Threw an error', threw);
@@ -156,7 +171,7 @@ async function testEnqueueFailureCleanup() {
     const updateArgs = dbStub.updateAgentRun.firstCall.args;
     log('Correct runId in update', updateArgs[0] === 42);
     log('Status set to failed', updateArgs[1].status === 'failed');
-    log('Error message recorded', updateArgs[1].error.includes('Redis down'));
+    log('Error message recorded', updateArgs[1].error.includes('Trigger down'));
 }
 
 async function testSourceMetadata() {
@@ -166,7 +181,7 @@ async function testSourceMetadata() {
     dbStub.getCaseById.resolves({ id: 200, status: 'ready_to_send', case_name: 'Notion Case' });
     dbStub.getActiveRunForCase.resolves(null);
     dbStub.createAgentRunFull.resolves({ id: 55, langgraph_thread_id: 'initial:200:456' });
-    enqueueStub.resolves({ id: 'job-2' });
+    triggerTaskStub.resolves({ id: 'job-2' });
     dbStub.logActivity.resolves();
 
     await dispatchReadyToSend(200, { source: 'notion_sync' });
@@ -183,6 +198,33 @@ async function testSourceMetadata() {
     log('Notify message contains source', notifyArgs[1].includes('notion_sync'));
 }
 
+async function testUnsafeImportedCaseIsBlocked() {
+    console.log('\\n--- 7. BLOCK UNSAFE IMPORTED CASES ---');
+    resetStubs();
+
+    dbStub.getCaseById.resolves({
+        id: 300,
+        status: 'ready_to_send',
+        case_name: 'Untitled Case',
+        subject_name: '&nbsp;',
+        agency_name: 'Police Department',
+        agency_email: 'orr@mylubbock.us',
+        portal_url: 'https://lubbocktx.govqa.us/WEBAPP/_rs/SupportHome.aspx',
+        additional_details: '**Police Department:** Denver Police Department, Colorado',
+        import_warnings: [],
+    });
+    dbStub.query.resolves({ rowCount: 1, rows: [] });
+    dbStub.logActivity.resolves();
+
+    const result = await dispatchReadyToSend(300, { source: 'notion_sync' });
+
+    log('Returns dispatched: false', result.dispatched === false);
+    log('Reason is unsafe_import_routing', result.reason === 'unsafe_import_routing');
+    log('Persists blocked status', dbStub.query.calledOnce);
+    log('Does not create agent_run', dbStub.createAgentRunFull.notCalled);
+    log('Logs blocked import activity', dbStub.logActivity.calledOnce);
+}
+
 // ============================================================
 // RUNNER
 // ============================================================
@@ -196,6 +238,7 @@ async function main() {
     await testCaseNotFound();
     await testEnqueueFailureCleanup();
     await testSourceMetadata();
+    await testUnsafeImportedCaseIsBlocked();
 
     console.log('\n=== SUMMARY ===');
     const passed = results.filter(r => r.pass).length;

@@ -20,6 +20,7 @@ import { researchContext, emptyResearchContext } from "../steps/research-context
 import db, { logger, caseRuntime, completeRun, waitRun } from "../lib/db";
 import { reconcileCaseAfterDismiss } from "../lib/reconcile-case";
 import type { ActionType, HumanDecision, InitialRequestPayload, ResearchContext } from "../lib/types";
+const { evaluateImportAutoDispatchSafety } = require("../../utils/request-normalization");
 const proposalLifecycle = require("../../services/proposal-lifecycle");
 const { createDecisionTraceTracker, summarizeExecutionResult } = require("../../services/decision-trace-service");
 
@@ -369,6 +370,44 @@ export const processInitialRequest = task({
       // Step 1: Load context
       await markStep("load_context", `Run #${runId}: loading initial-request context`);
       const context = await loadContext(caseId, null);
+
+      const importSafety = evaluateImportAutoDispatchSafety({
+        caseName: context.caseData?.case_name,
+        subjectName: context.caseData?.subject_name,
+        agencyName: context.caseData?.agency_name,
+        additionalDetails: context.caseData?.additional_details,
+        importWarnings: context.caseData?.import_warnings,
+        agencyEmail: context.caseData?.agency_email,
+        portalUrl: context.caseData?.portal_url,
+      });
+      if (importSafety.shouldBlockAutoDispatch) {
+        const substatus = importSafety.metadataMismatch?.expectedAgencyName
+          ? `Imported case agency does not match case details (${importSafety.metadataMismatch.expectedAgencyName}). Review before sending.`
+          : importSafety.reasonCode === "PLACEHOLDER_TITLE"
+            ? "Imported case title/subject is still placeholder text. Review before sending."
+            : "Imported case needs human review before sending.";
+        trace.setRouterOutput({
+          aborted: true,
+          reason: "unsafe_import_routing",
+          importGuard: importSafety.reasonCode,
+          expectedAgencyName: importSafety.metadataMismatch?.expectedAgencyName || null,
+        });
+        trace.markOutcome("aborted", {
+          reason: "unsafe_import_routing",
+          importGuard: importSafety.reasonCode,
+        });
+        logger.warn("process-initial-request aborted: imported case failed readiness guard", {
+          caseId,
+          reasonCode: importSafety.reasonCode,
+          expectedAgencyName: importSafety.metadataMismatch?.expectedAgencyName || null,
+        });
+        await caseRuntime.transitionCaseRuntime(caseId, "CASE_ESCALATED", {
+          substatus,
+          pauseReason: "IMPORT_REVIEW",
+        });
+        await completeRun(caseId, runId);
+        return { status: "aborted", reason: "unsafe_import_routing", importGuard: importSafety.reasonCode };
+      }
 
       // Step 1.5: Proactive contact research if import warnings suggest bad agency info
       const importWarnings: any[] = context.caseData?.import_warnings || [];

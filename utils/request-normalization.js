@@ -1,4 +1,13 @@
+const { normalizePortalUrl } = require('./portal-utils');
 const { normalizeStateCode, parseStateFromAgencyName } = require('./state-utils');
+
+function normalizeImportText(value = '') {
+  return String(value || '')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function safeJsonParse(value) {
   if (!value) return null;
@@ -13,6 +22,21 @@ function safeJsonParse(value) {
 
 function isPlaceholderAgencyEmail(email) {
   return /placeholder\.invalid/i.test(String(email || '').trim());
+}
+
+function isPlaceholderCaseTitle(value = '') {
+  const normalized = normalizeImportText(value).toLowerCase();
+  return !normalized || normalized === 'untitled case' || normalized === 'untitled';
+}
+
+function pickSafeSubjectDescriptor(...values) {
+  for (const value of values) {
+    const normalized = normalizeImportText(value);
+    if (!normalized) continue;
+    if (isPlaceholderCaseTitle(normalized)) continue;
+    return normalized;
+  }
+  return 'Records Request';
 }
 
 function normalizePortalTimeoutSubstatus(substatus) {
@@ -137,13 +161,31 @@ function normalizeNotionReferenceId(value = '') {
   return /^[a-f0-9]{32}$/.test(normalized) ? normalized : null;
 }
 
+function hasAlphabeticCharacters(value = '') {
+  return /[a-z]/i.test(String(value || ''));
+}
+
 function isNotionReferenceList(value = '') {
   const parts = String(value || '')
-    .split(',')
+    .split(/[;,]/)
     .map((part) => part.trim())
     .filter(Boolean);
 
   return parts.length > 0 && parts.every((part) => Boolean(normalizeNotionReferenceId(part)));
+}
+
+function isReferenceLikeMetadataValue(value = '') {
+  const normalized = cleanMetadataLine(String(value || ''));
+  if (!normalized) return true;
+  if (normalizeNotionReferenceId(normalized) || isNotionReferenceList(normalized)) return true;
+
+  const withoutIds = normalized
+    .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/gi, ' ')
+    .replace(/\b[a-f0-9]{32}\b/gi, ' ')
+    .replace(/[,\s]+/g, ' ')
+    .trim();
+
+  return !hasAlphabeticCharacters(withoutIds);
 }
 
 function extractMetadataAgencyHint(additionalDetails) {
@@ -160,7 +202,7 @@ function extractMetadataAgencyHint(additionalDetails) {
     let match;
     while ((match = pattern.exec(text)) !== null) {
       const name = cleanMetadataLine(match[1]);
-      if (!name || isNotionReferenceList(name) || normalizeNotionReferenceId(name)) {
+      if (!name || isReferenceLikeMetadataValue(name)) {
         continue;
       }
 
@@ -269,9 +311,67 @@ function detectCaseMetadataAgencyMismatch({ currentAgencyName, additionalDetails
   };
 }
 
+function evaluateImportAutoDispatchSafety({
+  caseName,
+  subjectName,
+  agencyName,
+  additionalDetails,
+  importWarnings,
+  agencyEmail,
+  portalUrl,
+}) {
+  const warningTypes = Array.isArray(importWarnings)
+    ? importWarnings
+        .map((warning) => String(warning?.type || '').trim().toUpperCase())
+        .filter(Boolean)
+    : [];
+
+  const metadataMismatch = detectCaseMetadataAgencyMismatch({
+    currentAgencyName: agencyName,
+    additionalDetails,
+  });
+  const metadataHint = extractMetadataAgencyHint(additionalDetails);
+  const notionReferenceAgency = Boolean(
+    normalizeNotionReferenceId(agencyName) ||
+    isNotionReferenceList(agencyName)
+  );
+  const placeholderCaseTitle = isPlaceholderCaseTitle(caseName);
+  const placeholderSubject = isPlaceholderCaseTitle(subjectName);
+  const genericAgency = isGenericAgencyLabel(agencyName);
+  const hasDeliveryPath = Boolean(normalizeImportText(agencyEmail) || normalizePortalUrl(portalUrl));
+
+  const shouldBlockAutoDispatch = Boolean(
+    ((!notionReferenceAgency) && (metadataMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH'))) ||
+    (placeholderCaseTitle && placeholderSubject) ||
+    (genericAgency && metadataHint && hasDeliveryPath)
+  );
+
+  let reasonCode = null;
+  if (metadataMismatch || warningTypes.includes('AGENCY_METADATA_MISMATCH')) {
+    reasonCode = 'AGENCY_METADATA_MISMATCH';
+  } else if (placeholderCaseTitle && placeholderSubject) {
+    reasonCode = 'PLACEHOLDER_TITLE';
+  } else if (genericAgency && metadataHint && hasDeliveryPath) {
+    reasonCode = 'GENERIC_AGENCY_WITH_CHANNEL';
+  }
+
+  return {
+    shouldBlockAutoDispatch,
+    reasonCode,
+    metadataMismatch,
+    metadataHint,
+    warningTypes,
+    placeholderCaseTitle,
+    placeholderSubject,
+  };
+}
+
 module.exports = {
   safeJsonParse,
+  normalizeImportText,
   isPlaceholderAgencyEmail,
+  isPlaceholderCaseTitle,
+  pickSafeSubjectDescriptor,
   normalizePortalTimeoutSubstatus,
   deriveDisplayState,
   extractResearchSuggestedAgency,
@@ -280,5 +380,6 @@ module.exports = {
   extractMetadataAgencyHint,
   isGenericAgencyLabel,
   detectCaseMetadataAgencyMismatch,
+  evaluateImportAutoDispatchSafety,
   isNotionReferenceList,
 };

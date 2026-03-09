@@ -5,7 +5,7 @@ const pdContactService = require('./pd-contact-service');
 const errorTrackingService = require('./error-tracking-service');
 const { extractEmails, extractUrls, isValidEmail } = require('../utils/contact-utils');
 const { normalizePortalUrl, isSupportedPortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
-const { detectCaseMetadataAgencyMismatch } = require('../utils/request-normalization');
+const { detectCaseMetadataAgencyMismatch, evaluateImportAutoDispatchSafety } = require('../utils/request-normalization');
 const dns = require('dns').promises;
 
 /**
@@ -16,7 +16,7 @@ async function validateImportedCase(caseData) {
     const warnings = [];
 
     // 1. Email format validation
-    if (caseData.agency_email) {
+    if (caseData.agency_email && caseData.agency_email !== IMPORT_PLACEHOLDER_EMAIL) {
         if (!isValidEmail(caseData.agency_email)) {
             warnings.push({
                 type: 'INVALID_EMAIL_FORMAT',
@@ -129,6 +129,8 @@ const NOTION_STATUS_MAP = {
     'id_state': 'ID State',
 };
 
+const IMPORT_PLACEHOLDER_EMAIL = 'pending-research@intake.autobot';
+
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -149,9 +151,75 @@ function isNotionObjectNotFoundError(error) {
     return /could not find (page|block) with id/i.test(message);
 }
 
+function normalizeNotionText(value) {
+    return String(value || '')
+        .replace(/&nbsp;|&#160;/gi, ' ')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function stripImportBoilerplate(value) {
+    return normalizeNotionText(value)
+        .replace(/https?:\/\/\S+/gi, ' ')
+        .replace(/\b(summary not available|not available|case summary|individuals involved|legal details|notion fields)\b/gi, ' ')
+        .replace(/\b(last status change|researcher|sub-status|live status|status|title)\s*:/gi, ' ')
+        .replace(/\b(import|research|ready to send)\b/gi, ' ')
+        .replace(/[|:_#*`>\-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function hasMeaningfulImportContent(value) {
+    const stripped = stripImportBoilerplate(value);
+    if (!stripped) return false;
+    const words = stripped.split(/\s+/).filter(Boolean);
+    return stripped.length >= 24 && words.length >= 4;
+}
+
 function hasValidNotionPageId(pageId) {
     const normalized = db.normalizeNotionPageId(pageId);
     return Boolean(normalized && /^[0-9a-f]{32}$/i.test(normalized));
+}
+
+function normalizeImportedDateValue(value) {
+    const raw = normalizeNotionText(value);
+    if (!raw) return null;
+
+    const formatCalendarDate = (year, month, day) => {
+        const yyyy = String(year).padStart(4, '0');
+        const mm = String(month).padStart(2, '0');
+        const dd = String(day).padStart(2, '0');
+        return `${yyyy}-${mm}-${dd}`;
+    };
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+        return raw;
+    }
+
+    const isoDateTimeMatch = raw.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+    if (isoDateTimeMatch) {
+        return isoDateTimeMatch[1];
+    }
+
+    const monthYearMatch = raw.match(/^([A-Za-z]+)\s+(\d{4})$/);
+    if (monthYearMatch) {
+        const months = {
+            january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+            july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+        };
+        const month = months[String(monthYearMatch[1]).toLowerCase()];
+        if (month) {
+            return formatCalendarDate(monthYearMatch[2], month, 1);
+        }
+    }
+
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+        return null;
+    }
+
+    return formatCalendarDate(parsed.getFullYear(), parsed.getMonth() + 1, parsed.getDate());
 }
 
 const POLICE_DEPARTMENT_FIELD_SPECS = [
@@ -247,6 +315,109 @@ class NotionService {
         });
 
         return true;
+    }
+
+    applyImportReadinessGuard(caseData, options = {}) {
+        if (!caseData) return [];
+
+        const warnings = Array.isArray(caseData.import_warnings) ? [...caseData.import_warnings] : [];
+        const placeholderTitle = normalizeNotionText(caseData.case_name) === '' || caseData.case_name === 'Untitled Case';
+        const hasRequestedRecords = Array.isArray(caseData.requested_records) && caseData.requested_records.length > 0;
+        const hasSummary = hasMeaningfulImportContent(caseData.additional_details);
+        const hasPageNarrative = hasMeaningfulImportContent(options.pageContent || '');
+        const hasRequestSignals = hasRequestedRecords || hasSummary || hasPageNarrative;
+        const hasDeliveryPath = Boolean(normalizeNotionText(caseData.agency_email) || normalizeNotionText(caseData.portal_url));
+
+        if (placeholderTitle) {
+            warnings.push({
+                type: 'PLACEHOLDER_TITLE',
+                message: 'Notion page title is blank or placeholder text',
+                field: 'case_name',
+            });
+        }
+
+        if (!hasRequestSignals) {
+            warnings.push({
+                type: 'MISSING_REQUEST_CONTENT',
+                message: 'Notion page has no substantive request content yet',
+                field: 'additional_details',
+            });
+        }
+
+        if (placeholderTitle && !hasRequestSignals) {
+            caseData.status = 'needs_human_review';
+            caseData.import_warnings = warnings;
+            return warnings;
+        }
+
+        if (hasRequestSignals && !hasDeliveryPath) {
+            warnings.push({
+                type: 'MISSING_DELIVERY_PATH',
+                message: 'Case has request content but no portal URL or agency email after import research',
+                field: 'agency_email',
+            });
+            if (!['needs_human_review', 'needs_human_fee_approval', 'needs_phone_call'].includes(caseData.status)) {
+                caseData.status = 'needs_contact_info';
+            }
+        }
+
+        const importSafety = evaluateImportAutoDispatchSafety({
+            caseName: caseData.case_name,
+            subjectName: caseData.subject_name,
+            agencyName: caseData.agency_name,
+            additionalDetails: caseData.additional_details,
+            importWarnings: warnings,
+            agencyEmail: caseData.agency_email,
+            portalUrl: caseData.portal_url,
+        });
+
+        if (importSafety.metadataMismatch && !warnings.some((warning) => warning.type === 'AGENCY_METADATA_MISMATCH')) {
+            warnings.push({
+                type: 'AGENCY_METADATA_MISMATCH',
+                message: `Agency name "${importSafety.metadataMismatch.currentAgencyName}" may not match case details which reference "${importSafety.metadataMismatch.expectedAgencyName}"`,
+                field: 'agency_name',
+                expected: importSafety.metadataMismatch.expectedAgencyName,
+                expectedState: importSafety.metadataMismatch.expectedState,
+            });
+        }
+
+        if (importSafety.shouldBlockAutoDispatch) {
+            caseData.status = 'needs_human_review';
+        }
+
+        caseData.import_warnings = warnings;
+        return warnings;
+    }
+
+    normalizeImportedDateValue(value) {
+        return normalizeImportedDateValue(value);
+    }
+
+    applyImportDeliveryFallback(caseData) {
+        if (!caseData) return caseData;
+        if (caseData.portal_url || caseData.agency_email) return caseData;
+        if (caseData.status !== 'needs_contact_info') return caseData;
+
+        caseData.agency_email = IMPORT_PLACEHOLDER_EMAIL;
+        return caseData;
+    }
+
+    applySinglePageAIResult(caseData, aiResult) {
+        if (!caseData || !aiResult) return caseData;
+
+        if (aiResult.case_name) caseData.case_name = aiResult.case_name;
+        if (aiResult.agency_name) caseData.agency_name = aiResult.agency_name;
+        if (aiResult.state) caseData.state = aiResult.state;
+        if (aiResult.incident_date) caseData.incident_date = this.normalizeImportedDateValue(aiResult.incident_date);
+        if (aiResult.incident_location) caseData.incident_location = aiResult.incident_location;
+        if (aiResult.subject_name) caseData.subject_name = aiResult.subject_name;
+        if (aiResult.additional_details) caseData.additional_details = aiResult.additional_details;
+        if (aiResult.records_requested?.length) caseData.requested_records = aiResult.records_requested;
+        if (aiResult.tags?.length) caseData.tags = aiResult.tags;
+        if (aiResult.portal_url) caseData.portal_url = aiResult.portal_url;
+        if (aiResult.agency_email) caseData.agency_email = aiResult.agency_email;
+
+        return caseData;
     }
 
     /**
@@ -523,7 +694,7 @@ class NotionService {
 
         // Get title from any title property (sanitize HTML entities like &nbsp;)
         const titleProp = Object.values(props).find(p => p.type === 'title');
-        const rawTitle = (titleProp?.title?.[0]?.plain_text || '').replace(/&nbsp;/gi, ' ').trim();
+        const rawTitle = normalizeNotionText(titleProp?.title?.[0]?.plain_text || '');
         const caseName = rawTitle || 'Untitled Case';
 
         // Get portal URL if available (fall back to other portal-labeled fields)
@@ -555,8 +726,8 @@ class NotionService {
             // State will be extracted by AI from page content
             state: null,
             // ACTUAL NOTION FIELDS: "Crime Date" or "Date of arrest"
-            incident_date: this.getProperty(props, 'Crime Date', 'date') ||
-                          this.getProperty(props, 'Date of arrest', 'date') ||
+            incident_date: this.normalizeImportedDateValue(this.getProperty(props, 'Crime Date', 'date')) ||
+                          this.normalizeImportedDateValue(this.getProperty(props, 'Date of arrest', 'date')) ||
                           null,
             // ACTUAL NOTION FIELD: "Location"
             incident_location: this.getProperty(props, 'Location', 'rich_text') ||
@@ -661,10 +832,7 @@ class NotionService {
             /on\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i
         ]);
         if (dateFromText && !caseData.incident_date) {
-            const parsed = new Date(dateFromText);
-            if (!Number.isNaN(parsed.getTime())) {
-                caseData.incident_date = parsed.toISOString().slice(0, 10);
-            }
+            caseData.incident_date = this.normalizeImportedDateValue(dateFromText) || caseData.incident_date;
         }
 
         const hasRequestedRecords = Array.isArray(caseData.requested_records) && caseData.requested_records.length > 0;
@@ -847,19 +1015,15 @@ class NotionService {
 
         switch (type) {
             case 'title': {
-                const t = (prop.title || [])
+                const t = normalizeNotionText((prop.title || [])
                     .map((part) => part.plain_text || '')
-                    .join(' ')
-                    .replace(/&nbsp;/gi, ' ')
-                    .trim();
+                    .join(' '));
                 return t || null;
             }
             case 'rich_text': {
-                const t = (prop.rich_text || [])
+                const t = normalizeNotionText((prop.rich_text || [])
                     .map((part) => part.plain_text || '')
-                    .join(' ')
-                    .replace(/&nbsp;/gi, ' ')
-                    .trim();
+                    .join(' '));
                 return t || null;
             }
             case 'email':
@@ -1889,6 +2053,8 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                         }
                     }
 
+                    this.applyImportReadinessGuard(notionCase);
+
                     // Calculate deadline based on state
                     const deadline = await this.calculateDeadline(notionCase.state);
                     notionCase.deadline_date = deadline;
@@ -1900,8 +2066,11 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
                     // Validate imported case and store warnings
                     try {
-                        const importWarnings = await validateImportedCase(notionCase);
-                        if (importWarnings) {
+                        const importWarnings = [
+                            ...(Array.isArray(notionCase.import_warnings) ? notionCase.import_warnings : []),
+                            ...((await validateImportedCase(notionCase)) || []),
+                        ];
+                        if (importWarnings.length > 0) {
                             await db.query(
                                 'UPDATE cases SET import_warnings = $1, last_notion_synced_at = NOW() WHERE id = $2',
                                 [JSON.stringify(importWarnings), newCase.id]
@@ -2631,20 +2800,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 casePropsForAI, pageContent, pdPropsForAI, deptText
             );
 
-            // Apply AI results to notionCase (only overwrite if AI returned non-null values)
-            if (aiResult) {
-                if (aiResult.case_name) notionCase.case_name = aiResult.case_name;
-                if (aiResult.state) notionCase.state = aiResult.state;
-                if (aiResult.incident_date) notionCase.incident_date = aiResult.incident_date;
-                if (aiResult.incident_location) notionCase.incident_location = aiResult.incident_location;
-                if (aiResult.subject_name) notionCase.subject_name = aiResult.subject_name;
-                if (aiResult.additional_details) notionCase.additional_details = aiResult.additional_details;
-                if (aiResult.records_requested?.length) notionCase.requested_records = aiResult.records_requested;
-                if (aiResult.tags?.length) notionCase.tags = aiResult.tags;
-                // Contact info — only overwrite if AI found something (fix email preservation bug)
-                if (aiResult.portal_url) notionCase.portal_url = aiResult.portal_url;
-                if (aiResult.agency_email) notionCase.agency_email = aiResult.agency_email;
-            }
+            this.applySinglePageAIResult(notionCase, aiResult);
 
             // Apply agency name from PD page title (more reliable than AI extraction)
             if (deptPage) {
@@ -2703,6 +2859,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             }
 
             notionCase.state = this.normalizeStateCode(notionCase.state);
+            notionCase.incident_date = this.normalizeImportedDateValue(notionCase.incident_date);
 
             // Step 5: Firecrawl fallback — ONLY if still missing portal_url or agency_email
             if ((!notionCase.portal_url || !notionCase.agency_email) && notionCase.agency_name) {
@@ -2729,6 +2886,9 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                 }
             }
 
+            this.applyImportReadinessGuard(notionCase, { pageContent });
+            this.applyImportDeliveryFallback(notionCase);
+
             // Step 6: Resolve user, calculate deadline, create case
 
             // Resolve assigned person to user_id
@@ -2749,6 +2909,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             const deadline = await this.calculateDeadline(notionCase.state);
             notionCase.deadline_date = deadline;
+            notionCase.incident_date = this.normalizeImportedDateValue(notionCase.incident_date);
 
             const newCase = await db.createCase(notionCase);
             console.log(`[import] Created case: ${newCase.case_name} (${newCase.id})`);
@@ -2815,8 +2976,11 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             // Run import validation (same as bulk sync)
             try {
-                const importWarnings = await validateImportedCase(newCase);
-                if (importWarnings) {
+                const importWarnings = [
+                    ...(Array.isArray(notionCase.import_warnings) ? notionCase.import_warnings : []),
+                    ...((await validateImportedCase(newCase)) || []),
+                ];
+                if (importWarnings.length > 0) {
                     await db.query(
                         'UPDATE cases SET import_warnings = $1 WHERE id = $2',
                         [JSON.stringify(importWarnings), newCase.id]
@@ -2883,16 +3047,16 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         if (!prop || !prop.type) return null;
         switch (prop.type) {
             case 'title':
-                return prop.title?.map(t => t.plain_text).join(' ').trim() || null;
+                return normalizeNotionText(prop.title?.map(t => t.plain_text).join(' ')) || null;
             case 'rich_text':
-                return prop.rich_text?.map(t => t.plain_text).join(' ').trim() || null;
+                return normalizeNotionText(prop.rich_text?.map(t => t.plain_text).join(' ')) || null;
             case 'select':
             case 'status':
                 return prop[prop.type]?.name || null;
             case 'multi_select':
                 return prop.multi_select?.map(item => item.name) || [];
             case 'date':
-                return prop.date?.start || null;
+                return normalizeImportedDateValue(prop.date?.start) || null;
             case 'number':
                 return prop.number || null;
             case 'email':
@@ -2908,7 +3072,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
             case 'files':
                 return prop.files?.map(f => f.name || f.file?.url).filter(Boolean) || [];
             case 'relation':
-                return prop.relation?.map(rel => rel.id).filter(Boolean) || [];
+                return null;
             case 'rollup': {
                 const rollup = prop.rollup;
                 if (!rollup) return null;
@@ -2925,10 +3089,10 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
                     return rollup.date?.start || null;
                 }
                 if (rollup.type === 'rich_text') {
-                    return rollup.rich_text?.map(t => t.plain_text).join(' ').trim() || null;
+                    return normalizeNotionText(rollup.rich_text?.map(t => t.plain_text).join(' ')) || null;
                 }
                 if (rollup.type === 'title') {
-                    return rollup.title?.map(t => t.plain_text).join(' ').trim() || null;
+                    return normalizeNotionText(rollup.title?.map(t => t.plain_text).join(' ')) || null;
                 }
                 return null;
             }
@@ -2953,7 +3117,7 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
         assignIfEmpty('agency_name', normalized.agency_name);
         const normalizedState = this.normalizeStateCode(normalized.state);
         assignIfEmpty('state', normalizedState);
-        assignIfEmpty('incident_date', normalized.incident_date);
+        assignIfEmpty('incident_date', this.normalizeImportedDateValue(normalized.incident_date));
         assignIfEmpty('incident_location', normalized.incident_location);
         assignIfEmpty('subject_name', normalized.subject_name);
         assignIfEmpty('additional_details', normalized.additional_details);
