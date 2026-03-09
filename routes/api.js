@@ -1040,87 +1040,44 @@ router.get('/dashboard/message-volume', async (req, res) => {
     }
 });
 
-/**
- * GET /api/dashboard/agency-leaderboard
- * Per-department analytics rankings with minimum sample size.
- * Uses canonical agency identity (agencies table) where available.
- */
-router.get('/dashboard/agency-leaderboard', async (req, res) => {
+async function handleDepartmentAnalyticsRequest(req, res) {
     try {
-        const minCases = parseInt(req.query.min_cases) || 5;
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
+        const minCases = Math.min(
+            Math.max(parseInt(req.query.minCases || req.query.min_cases, 10) || 5, 1),
+            100
+        );
+        const minReviews = Math.min(
+            Math.max(parseInt(req.query.minReviews || req.query.min_reviews, 10) || 3, 1),
+            100
+        );
 
-        const result = await db.query(`
-            WITH agency_cases AS (
-                SELECT
-                    COALESCE(a.name, c.agency_name) AS agency_name,
-                    COALESCE(a.state, c.state) AS state,
-                    c.id AS case_id,
-                    c.status,
-                    c.created_at,
-                    c.deadline_date,
-                    c.days_overdue,
-                    -- first inbound response timestamp
-                    (SELECT MIN(m.received_at) FROM messages m
-                     WHERE m.case_id = c.id AND m.direction = 'inbound'
-                       AND m.portal_notification = false
-                       AND (m.metadata->>'source' IS NULL)
-                    ) AS first_response_at,
-                    -- first outbound sent timestamp
-                    (SELECT MIN(m.sent_at) FROM messages m
-                     WHERE m.case_id = c.id AND m.direction = 'outbound'
-                    ) AS first_sent_at
-                FROM cases c
-                LEFT JOIN agencies a ON a.id = c.agency_id
-                WHERE c.agency_name NOT LIKE 'Synthetic %'
-                  AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
-                  AND c.status NOT IN ('cancelled')
-            ),
-            ranked AS (
-                SELECT
-                    agency_name,
-                    state,
-                    COUNT(*) AS total_cases,
-                    COUNT(*) FILTER (WHERE status IN ('completed', 'closed')) AS completed,
-                    COUNT(*) FILTER (WHERE status = 'completed' AND first_response_at IS NOT NULL) AS responded,
-                    COUNT(*) FILTER (WHERE status IN ('withdrawn') OR status LIKE '%denied%') AS denied,
-                    COUNT(*) FILTER (WHERE deadline_date IS NOT NULL AND deadline_date < CURRENT_DATE
-                        AND status NOT IN ('completed', 'closed', 'withdrawn')) AS overdue,
-                    ROUND(AVG(
-                        CASE WHEN first_response_at IS NOT NULL AND first_sent_at IS NOT NULL
-                            THEN EXTRACT(EPOCH FROM (first_response_at - first_sent_at)) / 86400.0
-                        END
-                    )::numeric, 1) AS avg_response_days
-                FROM agency_cases
-                GROUP BY agency_name, state
-                HAVING COUNT(*) >= $1
-            )
-            SELECT
-                agency_name,
-                state,
-                total_cases,
-                completed,
-                responded,
-                denied,
-                overdue,
-                avg_response_days,
-                ROUND((responded::numeric / NULLIF(total_cases, 0)) * 100, 1) AS response_rate,
-                ROUND((completed::numeric / NULLIF(total_cases, 0)) * 100, 1) AS completion_rate,
-                ROUND((denied::numeric / NULLIF(total_cases, 0)) * 100, 1) AS denial_rate,
-                ROUND((overdue::numeric / NULLIF(total_cases, 0)) * 100, 1) AS overdue_rate
-            FROM ranked
-            ORDER BY total_cases DESC
-        `, [minCases]);
+        const analytics = await dashboardService.getDepartmentAnalytics({
+            limit,
+            minCases,
+            minReviews,
+        });
 
         res.json({
             success: true,
-            min_cases: minCases,
-            agencies: result.rows,
+            ...analytics,
         });
     } catch (error) {
-        console.error('Error getting agency leaderboard:', error);
+        console.error('Error getting department analytics:', error);
         res.status(500).json({ success: false, error: error.message });
     }
-});
+}
+
+/**
+ * GET /api/dashboard/departments
+ * Canonical per-department analytics leaderboards for the analytics dashboard.
+ */
+router.get('/dashboard/departments', handleDepartmentAnalyticsRequest);
+
+/**
+ * Legacy alias kept for compatibility while the frontend migrates.
+ */
+router.get('/dashboard/agency-leaderboard', handleDepartmentAnalyticsRequest);
 
 /**
  * Get queued messages (pending emails)
