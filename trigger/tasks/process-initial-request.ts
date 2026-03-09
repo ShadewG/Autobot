@@ -214,7 +214,11 @@ export const processInitialRequest = task({
             null, adjustedDraft, adjustedSafety,
             false, true, null,
             adjustmentReasoning,
-            0.9, 1, null, adjustedDraft.lessonsApplied
+            0.9, 1, null, adjustedDraft.lessonsApplied,
+            undefined,
+            undefined,
+            null,
+            adjustedDraft.modelMetadata || null
           );
           trace.setGateDecision({
             proposalId: adjustedGate.proposalId,
@@ -575,7 +579,11 @@ export const processInitialRequest = task({
           null, adjustedDraft, adjustedSafety,
           false, true, null,
           [...draft.reasoning, `Adjusted per human: ${instruction}`],
-          0.9, 1, null, adjustedDraft.lessonsApplied
+          0.9, 1, null, adjustedDraft.lessonsApplied,
+          undefined,
+          undefined,
+          null,
+          adjustedDraft.modelMetadata || null
         );
 
         if (adjustedGate.shouldWait && adjustedGate.waitpointTokenId) {

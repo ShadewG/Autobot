@@ -273,7 +273,11 @@ export const processInbound = task({
           confidence,
           adjustmentCount,
           null,
-          adjustedDraft.lessonsApplied
+          adjustedDraft.lessonsApplied,
+          undefined,
+          undefined,
+          null,
+          adjustedDraft.modelMetadata || null
         );
         trace.setGateDecision({
           proposalId: adjustedGate.proposalId,
@@ -770,7 +774,9 @@ export const processInbound = task({
       decision.pauseReason, decision.reasoning,
       classification.confidence, 0, null,
       proposalLessonsApplied, decision.gateOptions,
-      chainActions
+      chainActions,
+      decision.modelMetadata || null,
+      draft.modelMetadata || null
     );
     trace.setGateDecision({
       proposalId: gate.proposalId,

@@ -222,7 +222,11 @@ export const processFollowup = task({
         null, draft, safety,
         decision.canAutoExecute, decision.requiresHuman,
         decision.pauseReason, decision.reasoning,
-        1.0, 0, null, proposalLessonsApplied
+        1.0, 0, null, proposalLessonsApplied,
+        undefined,
+        undefined,
+        decision.modelMetadata || null,
+        draft.modelMetadata || null
       );
       trace.setGateDecision({
         proposalId: gate.proposalId,
