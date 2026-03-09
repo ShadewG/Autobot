@@ -622,7 +622,16 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
    Health Metric Detail — drill-down panel
    ───────────────────────────────────────────── */
 
-type HealthMetricKey = "stuck_cases" | "orphaned_runs" | "stale_proposals" | "overdue_deadlines" | "bounced_emails" | "portal_failures";
+type HealthMetricKey =
+  | "stuck_cases"
+  | "orphaned_runs"
+  | "stale_proposals"
+  | "overdue_deadlines"
+  | "bounced_emails"
+  | "portal_failures"
+  | "inbound_linkage_gaps"
+  | "empty_normalized_inbound"
+  | "proposal_message_mismatches";
 
 function HealthMetricDetail({ metric, onClose }: { metric: HealthMetricKey; onClose: () => void }) {
   const { data, isLoading, error } = useSWR<{
@@ -837,6 +846,97 @@ function HealthMetricDetail({ metric, onClose }: { metric: HealthMetricKey; onCl
     </table>
   );
 
+  const renderInboundLinkageGaps = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Message</th>
+          <th className="pb-1 font-medium">From</th>
+          <th className="pb-1 font-medium">Subject</th>
+          <th className="pb-1 font-medium">Thread</th>
+          <th className="pb-1 font-medium">Received</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.message_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5 text-muted-foreground">#{item.message_id}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.from_email || "-"}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[280px]">{item.subject || "(no subject)"}</td>
+            <td className="py-1.5 text-muted-foreground">{item.thread_id ? `#${item.thread_id}` : "-"}</td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.received_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderEmptyNormalizedInbound = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Message</th>
+          <th className="pb-1 font-medium">Case</th>
+          <th className="pb-1 font-medium">From</th>
+          <th className="pb-1 font-medium">Source</th>
+          <th className="pb-1 font-medium">Attachments</th>
+          <th className="pb-1 font-medium">Received</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.message_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5 text-muted-foreground">#{item.message_id}</td>
+            <td className="py-1.5">
+              {item.case_id ? (
+                <Link href={`/requests/detail-v2?id=${item.case_id}`} className="text-blue-400 hover:underline">
+                  #{item.case_id}
+                </Link>
+              ) : "-"}
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[160px]">{item.from_email || "-"}</td>
+            <td className="py-1.5 text-muted-foreground">{item.normalized_body_source || "-"}</td>
+            <td className="py-1.5 text-muted-foreground">{item.attachment_count ?? 0}</td>
+            <td className="py-1.5 text-muted-foreground">{formatRelativeTime(item.received_at)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderProposalMessageMismatches = () => (
+    <table className="w-full text-xs">
+      <thead>
+        <tr className="text-muted-foreground text-left">
+          <th className="pb-1 font-medium">Proposal</th>
+          <th className="pb-1 font-medium">Proposal Case</th>
+          <th className="pb-1 font-medium">Message Case</th>
+          <th className="pb-1 font-medium">Proposal Agency</th>
+          <th className="pb-1 font-medium">Message Agency</th>
+        </tr>
+      </thead>
+      <tbody>
+        {data.items.map((item: any) => (
+          <tr key={item.proposal_id} className="border-t border-border/50 hover:bg-muted/30">
+            <td className="py-1.5 text-muted-foreground">#{item.proposal_id}</td>
+            <td className="py-1.5">
+              <Link href={`/requests/detail-v2?id=${item.proposal_case_id}`} className="text-blue-400 hover:underline">
+                #{item.proposal_case_id}
+              </Link>
+            </td>
+            <td className="py-1.5">
+              <Link href={`/requests/detail-v2?id=${item.message_case_id}`} className="text-blue-400 hover:underline">
+                #{item.message_case_id}
+              </Link>
+            </td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[180px]">{item.proposal_agency_name || "-"}</td>
+            <td className="py-1.5 text-muted-foreground truncate max-w-[180px]">{item.message_agency_name || "-"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
   const renderers: Record<HealthMetricKey, () => React.ReactNode> = {
     stuck_cases: renderStuckCases,
     stale_proposals: renderStaleProposals,
@@ -844,6 +944,9 @@ function HealthMetricDetail({ metric, onClose }: { metric: HealthMetricKey; onCl
     portal_failures: renderPortalFailures,
     orphaned_runs: renderOrphanedRuns,
     bounced_emails: renderBouncedEmails,
+    inbound_linkage_gaps: renderInboundLinkageGaps,
+    empty_normalized_inbound: renderEmptyNormalizedInbound,
+    proposal_message_mismatches: renderProposalMessageMismatches,
   };
 
   return (
@@ -972,6 +1075,9 @@ function MonitorPageContent() {
       overdue_deadlines: number;
       bounced_emails: number;
       portal_failures: number;
+      inbound_linkage_gaps: number;
+      empty_normalized_inbound: number;
+      proposal_message_mismatches: number;
     };
   }>("/api/monitor/system-health", { refreshInterval: 60000 });
 
@@ -1924,6 +2030,9 @@ function MonitorPageContent() {
                 { label: "Overdue deadlines", value: healthData.metrics.overdue_deadlines, metric: "overdue_deadlines" as HealthMetricKey },
                 { label: "Bounced emails (24h)", value: healthData.metrics.bounced_emails, metric: "bounced_emails" as HealthMetricKey },
                 { label: "Portal failures (24h)", value: healthData.metrics.portal_failures, metric: "portal_failures" as HealthMetricKey },
+                { label: "Inbound linkage gaps", value: healthData.metrics.inbound_linkage_gaps, metric: "inbound_linkage_gaps" as HealthMetricKey },
+                { label: "Empty normalized inbound", value: healthData.metrics.empty_normalized_inbound, metric: "empty_normalized_inbound" as HealthMetricKey },
+                { label: "Proposal/message mismatches", value: healthData.metrics.proposal_message_mismatches, metric: "proposal_message_mismatches" as HealthMetricKey },
               ].map((m) => (
                 <div
                   key={m.label}

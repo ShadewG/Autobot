@@ -111,4 +111,31 @@ describe('Quality report service', function () {
     assert.strictEqual(normalizeIntentToCanonicalClass(''), 'unknown');
     assert.strictEqual(normalizeIntentToCanonicalClass(null), 'unknown');
   });
+
+  it('builds reconciliation sections for inbound integrity gaps', async function () {
+    const queryStub = sinon.stub(db, 'query');
+    queryStub.onCall(0).resolves({ rows: [{ case_id: 25148, suggested_action: 'SEND_REBUTTAL', analysis_at: '2026-03-09T00:00:00.000Z', status: 'awaiting_response', agency_name: 'Perry PD' }] });
+    queryStub.onCall(1).resolves({ rows: [] });
+    queryStub.onCall(2).resolves({ rows: [{ count: '1' }] });
+    queryStub.onCall(3).resolves({ rows: [{ count: '2' }] });
+    queryStub.onCall(4).resolves({ rows: [] });
+    queryStub.onCall(5).resolves({ rows: [] });
+    queryStub.onCall(6).resolves({ rows: [] });
+    queryStub.onCall(7).resolves({ rows: [{ inbound_with_attachments: '4', has_extraction: '3', missing_extraction: '1' }] });
+    queryStub.onCall(8).resolves({ rows: [] });
+    queryStub.onCall(9).resolves({ rows: [{ message_id: 9001, from_email: 'records@example.gov', subject: 'Unmatched inbound', thread_id: null, case_id: null, received_at: '2026-03-09T01:00:00.000Z' }] });
+    queryStub.onCall(10).resolves({ rows: [{ message_id: 9002, case_id: 25157, from_email: 'govqa@example.gov', subject: 'HTML only', thread_id: 53, normalized_body_source: null, attachment_count: 1, received_at: '2026-03-09T02:00:00.000Z' }] });
+    queryStub.onCall(11).resolves({ rows: [{ proposal_id: 1183, proposal_case_id: 25148, proposal_status: 'PENDING_APPROVAL', trigger_message_id: 990, message_case_id: 25157, proposal_agency_name: 'Perry PD', message_agency_name: 'SJSO', subject: 'Wrong thread', message_received_at: '2026-03-09T03:00:00.000Z' }] });
+
+    const report = await qualityReportService.buildReconciliationReport();
+
+    assert.strictEqual(report.orphaned_inbound, 1);
+    assert.strictEqual(report.stale_proposals, 2);
+    assert.strictEqual(report.inbound_linkage_gaps.count, 1);
+    assert.strictEqual(report.inbound_linkage_gaps.messages[0].message_id, 9001);
+    assert.strictEqual(report.empty_normalized_inbound.count, 1);
+    assert.strictEqual(report.empty_normalized_inbound.messages[0].attachment_count, 1);
+    assert.strictEqual(report.proposal_message_mismatches.count, 1);
+    assert.strictEqual(report.proposal_message_mismatches.proposals[0].proposal_id, 1183);
+  });
 });

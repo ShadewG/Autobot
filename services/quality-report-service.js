@@ -367,7 +367,20 @@ async function buildClassificationConfusionMatrix({ windowDays = 30 } = {}) {
 }
 
 async function buildReconciliationReport() {
-  const [droppedActions, branchErrors, orphanedInbound, staleProposals, unanalyzedInbound, portalMissingRequestNumber, runsWithoutTraces, attachmentGaps, deadEndCases] = await Promise.all([
+  const [
+    droppedActions,
+    branchErrors,
+    orphanedInbound,
+    staleProposals,
+    unanalyzedInbound,
+    portalMissingRequestNumber,
+    runsWithoutTraces,
+    attachmentGaps,
+    deadEndCases,
+    inboundLinkageGaps,
+    emptyNormalizedInbound,
+    proposalMessageMismatches,
+  ] = await Promise.all([
     db.query(`
       WITH latest_analysis AS (
         SELECT DISTINCT ON (case_id) case_id, requires_action, suggested_action, created_at
@@ -478,6 +491,75 @@ async function buildReconciliationReport() {
       ORDER BY c.updated_at DESC
       LIMIT 20
     `),
+    db.query(`
+      SELECT
+        m.id AS message_id,
+        m.from_email,
+        m.subject,
+        m.thread_id,
+        m.case_id,
+        COALESCE(m.received_at, m.created_at) AS received_at
+      FROM messages m
+      WHERE m.direction = 'inbound'
+        AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
+        AND m.case_id IS NULL
+        AND (m.thread_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM email_threads t
+          WHERE t.id = m.thread_id
+            AND t.case_id IS NOT NULL
+        ))
+        AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.trigger_message_id = m.id)
+        AND NOT EXISTS (SELECT 1 FROM agent_runs ar WHERE ar.message_id = m.id)
+        AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+        AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+      ORDER BY COALESCE(m.received_at, m.created_at) DESC
+      LIMIT 20
+    `),
+    db.query(`
+      SELECT
+        m.id AS message_id,
+        m.case_id,
+        m.from_email,
+        m.subject,
+        m.thread_id,
+        m.normalized_body_source,
+        m.attachment_count,
+        COALESCE(m.received_at, m.created_at) AS received_at
+      FROM messages m
+      WHERE m.direction = 'inbound'
+        AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
+        AND COALESCE(NULLIF(m.normalized_body_text, ''), '') = ''
+        AND (
+          COALESCE(NULLIF(m.body_text, ''), NULLIF(m.body_html, '')) IS NOT NULL
+          OR COALESCE(m.attachment_count, 0) > 0
+        )
+        AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+        AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+      ORDER BY COALESCE(m.received_at, m.created_at) DESC
+      LIMIT 20
+    `),
+    db.query(`
+      SELECT
+        p.id AS proposal_id,
+        p.case_id AS proposal_case_id,
+        p.status AS proposal_status,
+        p.trigger_message_id,
+        m.case_id AS message_case_id,
+        m.subject,
+        COALESCE(m.received_at, m.created_at) AS message_received_at,
+        pc.agency_name AS proposal_agency_name,
+        mc.agency_name AS message_agency_name
+      FROM proposals p
+      JOIN messages m ON m.id = p.trigger_message_id
+      LEFT JOIN cases pc ON pc.id = p.case_id
+      LEFT JOIN cases mc ON mc.id = m.case_id
+      WHERE m.case_id IS NOT NULL
+        AND m.case_id <> p.case_id
+        AND COALESCE(p.created_at, m.created_at) > NOW() - INTERVAL '30 days'
+        AND (pc.notion_page_id IS NULL OR pc.notion_page_id NOT LIKE 'test-%')
+      ORDER BY COALESCE(p.created_at, m.created_at) DESC
+      LIMIT 20
+    `),
   ]);
 
   return {
@@ -555,6 +637,44 @@ async function buildReconciliationReport() {
         status: r.status,
         pause_reason: r.pause_reason,
         updated_at: r.updated_at,
+      })),
+    },
+    inbound_linkage_gaps: {
+      count: inboundLinkageGaps.rows.length,
+      messages: inboundLinkageGaps.rows.map(r => ({
+        message_id: r.message_id,
+        from_email: r.from_email,
+        subject: (r.subject || '').substring(0, 120),
+        thread_id: r.thread_id,
+        case_id: r.case_id,
+        received_at: r.received_at,
+      })),
+    },
+    empty_normalized_inbound: {
+      count: emptyNormalizedInbound.rows.length,
+      messages: emptyNormalizedInbound.rows.map(r => ({
+        message_id: r.message_id,
+        case_id: r.case_id,
+        from_email: r.from_email,
+        subject: (r.subject || '').substring(0, 120),
+        thread_id: r.thread_id,
+        normalized_body_source: r.normalized_body_source || null,
+        attachment_count: Number(r.attachment_count) || 0,
+        received_at: r.received_at,
+      })),
+    },
+    proposal_message_mismatches: {
+      count: proposalMessageMismatches.rows.length,
+      proposals: proposalMessageMismatches.rows.map(r => ({
+        proposal_id: r.proposal_id,
+        proposal_case_id: r.proposal_case_id,
+        proposal_status: r.proposal_status,
+        trigger_message_id: r.trigger_message_id,
+        message_case_id: r.message_case_id,
+        proposal_agency_name: r.proposal_agency_name,
+        message_agency_name: r.message_agency_name,
+        subject: (r.subject || '').substring(0, 120),
+        message_received_at: r.message_received_at,
       })),
     },
   };

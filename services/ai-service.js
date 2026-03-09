@@ -5,6 +5,7 @@ const documentaryFOIAPrompts = require('../prompts/documentary-foia-prompts');
 const responseHandlingPrompts = require('../prompts/response-handling-prompts');
 const denialResponsePrompts = require('../prompts/denial-response-prompts');
 const { buildModelMetadata } = require('../utils/ai-model-metadata');
+const { getCanonicalMessageText, normalizeMessageBody } = require('../lib/message-normalization');
 
 const DEFAULT_REQUEST_STRATEGY = {
     tone: 'collaborative',
@@ -244,6 +245,53 @@ class AIService {
 
         const trimmed = lines.slice(0, cutIndex).join('\n').trim();
         return trimmed.length >= 5 ? trimmed : text;
+    }
+
+    extractVisibleTextFromHtml(html) {
+        return normalizeMessageBody({ body_html: html }).normalized_body_text;
+        return String(html)
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<br\s*\/?>/gi, '\n')
+            .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&nbsp;|&#160;/gi, ' ')
+            .replace(/&amp;/gi, '&')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#39;|&apos;/gi, "'")
+            .replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>')
+            .replace(/\r/g, '')
+            .replace(/[ \t]+\n/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/[ \t]{2,}/g, ' ')
+            .trim();
+    }
+
+    getMessageBodyForPrompt(messageData) {
+        return this.stripQuotedText(getCanonicalMessageText(messageData)).trim();
+    }
+
+    inferDenialSubtype(messageData, analysis = {}) {
+        if (analysis.denial_subtype) return analysis.denial_subtype;
+
+        const combinedText = [
+            this.getMessageBodyForPrompt(messageData),
+            ...(Array.isArray(analysis.key_points) ? analysis.key_points : []),
+            ...(Array.isArray(analysis.detected_exemption_citations) ? analysis.detected_exemption_citations : []),
+            ...(Array.isArray(analysis.decision_evidence_quotes) ? analysis.decision_evidence_quotes : []),
+        ].join(' ').toLowerCase();
+
+        if (!combinedText) return 'overly_broad';
+        if (/wrong agency|not the custodian|not our records|contact .* instead|maintained by another agency/.test(combinedText)) return 'wrong_agency';
+        if (/no responsive records|no records exist|no records were found/.test(combinedText)) return 'no_records';
+        if (/ongoing investigation|active investigation|open investigation|pending prosecution|criminal investigative information/.test(combinedText)) return 'ongoing_investigation';
+        if (/too broad|overly broad|undue burden|voluminous|narrow your request|narrow the request/.test(combinedText)) return 'overly_broad';
+        if (/fee|invoice|estimate|deposit|cost to fulfill/.test(combinedText)) return 'excessive_fees';
+        if (/surveillance techniques|surveillance procedures|surveillance personnel|privacy|personnel record|medical record|personally identifiable|juvenile|redaction|redact|exempt from.*119\.07|s\.\s*119\.07|24\(a\)/.test(combinedText)) return 'privacy_exemption';
+        if (/retention|destroyed|purged|deleted pursuant to retention/.test(combinedText)) return 'retention_expired';
+        if (/expired link|broken link|portal issue|format unavailable/.test(combinedText)) return 'format_issue';
+        return 'overly_broad';
     }
 
     /**
@@ -610,7 +658,7 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
         try {
             console.log(`Analyzing response for case: ${caseData.case_name}`);
 
-            const cleanedBody = this.stripQuotedText(messageData.body_text || '');
+            const cleanedBody = this.getMessageBodyForPrompt(messageData);
 
             // Build prior correspondence context (exclude the current message)
             // Note: threadMessages may arrive in DESC order (from getMessagesByCaseId),
@@ -631,7 +679,7 @@ Generate ONLY the email body following the structure. Do NOT add a subject line.
                             const dir = m.direction === 'outbound' ? 'US →' : '← AGENCY';
                             const date = m.sent_at || m.received_at || m.created_at;
                             const dateStr = date ? new Date(date).toLocaleDateString() : 'unknown date';
-                            const body = this.stripQuotedText(m.body_text || '').substring(0, 300);
+                            const body = this.stripQuotedText(getCanonicalMessageText(m)).substring(0, 300);
                             return `[${dir} ${dateStr}] Subject: ${m.subject || '(none)'}\n${body}${body.length >= 300 ? '...' : ''}`;
                         }).join('\n---\n') + '\n';
                 }
@@ -862,7 +910,7 @@ ${prompt}`
                 };
             }
 
-            const cleanedBody = this.stripQuotedText(messageData.body_text || '');
+            const cleanedBody = this.getMessageBodyForPrompt(messageData);
 
             const prompt = `Generate a professional email reply to this FOIA response:
 
@@ -1023,7 +1071,9 @@ Return concise legal citations and key statutory language with sources.`;
      */
     async generateDenialRebuttal(messageData, analysis, caseData, options = {}) {
         try {
-            console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${analysis.denial_subtype}`);
+            const agencyResponseText = this.getMessageBodyForPrompt(messageData);
+            const denialSubtype = this.inferDenialSubtype(messageData, analysis);
+            console.log(`Evaluating denial rebuttal for case: ${caseData.case_name}, subtype: ${denialSubtype}`);
             const { adjustmentInstruction, lessonsContext, examplesContext, correspondenceContext, legalResearchOverride, rebuttalSupportPoints } = options;
             const userSignature = await this.getUserSignatureForCase(caseData);
             const requesterName = userSignature?.name || process.env.REQUESTER_NAME || 'Requester';
@@ -1031,8 +1081,6 @@ Return concise legal citations and key statutory language with sources.`;
             const correspondenceSection = correspondenceContext
                 ? `\n\n## Full Correspondence Thread (most recent last)\n${correspondenceContext}\n\nIMPORTANT: Your response MUST be consistent with the thread above. Acknowledge any prior replies and do NOT contradict what has already been communicated.`
                 : '';
-
-            const denialSubtype = analysis.denial_subtype || 'overly_broad';
 
             // CHECK: Should we even rebuttal this?
             // Some "denials" are just process redirects - don't fight them
@@ -1055,7 +1103,7 @@ Return concise legal citations and key statutory language with sources.`;
             // For "overly_broad" - check if this is really a fight worth having
             if (denialSubtype === 'overly_broad') {
                 // If they just asked us to narrow or use a portal, do that instead
-                const bodyLower = (messageData.body_text || '').toLowerCase();
+                const bodyLower = agencyResponseText.toLowerCase();
                 if (bodyLower.includes('portal') || bodyLower.includes('nextrequest') || bodyLower.includes('govqa')) {
                     console.log('Agency suggested portal - use portal instead of arguing');
                     return {
@@ -1083,7 +1131,7 @@ Return concise legal citations and key statutory language with sources.`;
             const prompt = `Generate a strategic FOIA denial rebuttal for this response:
 
 **Denial Type:** ${strategy.name}
-**Agency Response:** ${messageData.body_text}
+**Agency Response:** ${agencyResponseText}
 
 **Case Context:**
 - Subject: ${caseData.subject_name}
@@ -1396,7 +1444,7 @@ Jurisdiction: ${caseData.state}
 Requested records: ${Array.isArray(caseData.requested_records) ? caseData.requested_records.join(', ') : caseData.requested_records}
 Quoted fee: ${feeAmount ? `${currency} ${typeof feeAmount === 'number' ? feeAmount.toFixed(2) : feeAmount}` : 'No specific amount quoted by agency'}
 Recommended action: ${recommendedAction.toUpperCase()}
-${agencyMessage ? `\nAgency's full response:\n${this.stripQuotedText(agencyMessage.body_text || '').substring(0, 500)}` : ''}
+${agencyMessage ? `\nAgency's full response:\n${this.stripQuotedText(getCanonicalMessageText(agencyMessage)).substring(0, 500)}` : ''}
 ${agencyAnalysis?.full_analysis_json?.key_points ? `\nKey points from agency response: ${agencyAnalysis.full_analysis_json.key_points.join('; ')}` : ''}
 
 Goals:
@@ -1665,7 +1713,7 @@ Return JSON only:
      */
     async triageStuckCase(caseData, messages = [], priorProposals = []) {
         const messagesSummary = messages.slice(0, 5).map(m => {
-            const body = this.stripQuotedText(m.body_text || '');
+            const body = this.stripQuotedText(getCanonicalMessageText(m));
             return `[${m.direction}] Subject: ${m.subject || 'N/A'}\n${body.substring(0, 400)}`;
         }).join('\n---\n') || 'No messages found.';
 
@@ -1947,7 +1995,7 @@ Return valid JSON matching the schema below. Use null for missing fields, [] for
         const prompt = `You are responding to a public records request clarification from a government agency.
 
 AGENCY MESSAGE:
-${message.body_text || message.body || ''}
+${getCanonicalMessageText(message) || message.body || ''}
 
 ORIGINAL REQUEST:
 - Subject: ${caseData.subject_name || 'Unknown'}
@@ -2026,7 +2074,7 @@ Return ONLY the email body text, no subject line or greetings beyond what belong
 - Denial type: ${denialSubtype}
 - Agency: ${caseData.agency_name}
 - State: ${stateName}
-- Agency response: ${(messageData?.body_text || '').substring(0, 500)}
+- Agency response: ${this.getMessageBodyForPrompt(messageData).substring(0, 500)}
 
 ${legalResearch ? `**Legal Research for ${stateName}:**\n${legalResearch}` : ''}
 ${rebuttalSupportPoints && rebuttalSupportPoints.length > 0 ? `\n**Support Points:**\n${rebuttalSupportPoints.map((p, i) => `${i + 1}. ${p}`).join('\n')}` : ''}

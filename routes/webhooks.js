@@ -350,25 +350,27 @@ router.post('/inbound', upload.any(), async (req, res) => {
                 const textRaw = emailText || inboundData.text || inboundData.body_text || '';
                 const htmlRaw = emailHtml || inboundData.html || inboundData.body_html || '';
 
-                const unmatchedMsg = await db.query(`
-                    INSERT INTO messages (direction, from_email, to_email, subject, body_text, body_html, received_at, created_at, provider_payload)
-                    VALUES ('inbound', $1, $2, $3, $4, $5, NOW(), NOW(), $6)
-                    RETURNING id
-                `, [
-                    fromRaw,
-                    toRaw,
-                    subjectRaw,
-                    textRaw,
-                    htmlRaw,
-                    sendgridService.buildInboundProviderPayload({
+                const unmatchedMessage = await db.createMessage({
+                    message_id: inboundData['Message-Id'] || inboundData.message_id || null,
+                    provider_message_id: inboundData['X-Message-Id'] || inboundData.provider_message_id || null,
+                    sendgrid_message_id: inboundData['X-Message-Id'] || inboundData.provider_message_id || null,
+                    direction: 'inbound',
+                    from_email: fromRaw,
+                    to_email: toRaw,
+                    subject: subjectRaw,
+                    body_text: textRaw,
+                    body_html: htmlRaw,
+                    received_at: new Date(),
+                    provider_payload: sendgridService.buildInboundProviderPayload({
                         ...inboundData,
                         text: textRaw,
                         html: htmlRaw,
                         attachments: inboundAttachments,
                     }),
-                ]);
+                    metadata: { source: 'unmatched_inbound_webhook' },
+                });
 
-                const savedMsgId = unmatchedMsg.rows[0]?.id;
+                const savedMsgId = unmatchedMessage?.id;
 
                 // Check if this is a portal system email (password reset, welcome, etc.)
                 // These don't need matching or analysis — just log and mark processed

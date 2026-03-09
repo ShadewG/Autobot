@@ -21,6 +21,29 @@ const LIVE_OVERVIEW_CACHE_TTL_MS = 15_000;
 const LIVE_OVERVIEW_STALE_TTL_MS = 5 * 60_000;
 const liveOverviewCache = new Map();
 
+const INBOUND_PREVIEW_SQL = `LEFT(
+    COALESCE(
+        NULLIF(m.normalized_body_text, ''),
+        NULLIF(m.body_text, ''),
+        NULLIF(
+            regexp_replace(
+                regexp_replace(
+                    regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g'),
+                    '&nbsp;|&#160;',
+                    ' ',
+                    'gi'
+                ),
+                '\\s+',
+                ' ',
+                'g'
+            ),
+            ''
+        ),
+        CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))
+    ),
+    1200
+)`;
+
 function buildReadableResearchSummary(rawNotes) {
     if (!rawNotes) return null;
     let parsed = rawNotes;
@@ -489,10 +512,7 @@ router.get('/live-overview', async (req, res) => {
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id) AS message_count,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (
-                    SELECT COALESCE(
-                        NULLIF(m2.body_text, ''),
-                        CONCAT('[No text body] ', COALESCE(m2.subject, '(no subject)'))
-                    )
+                    SELECT ${INBOUND_PREVIEW_SQL.replace(/\bm\b/g, 'm2')}
                     FROM messages m2
                     WHERE m2.case_id = c.id
                       AND m2.direction = 'inbound'
@@ -500,6 +520,18 @@ router.get('/live-overview', async (req, res) => {
                     LIMIT 1
                 ) AS last_inbound_preview,
                 (SELECT m3.subject FROM messages m3 WHERE m3.case_id = c.id AND m3.direction = 'inbound' ORDER BY COALESCE(m3.received_at, m3.created_at) DESC LIMIT 1) AS last_inbound_subject,
+                (
+                    SELECT
+                        CASE
+                            WHEN m6.from_email ~ '<[^>]+>' THEN substring(m6.from_email from '<([^>]+)>')
+                            ELSE m6.from_email
+                        END
+                    FROM messages m6
+                    WHERE m6.case_id = c.id
+                      AND m6.direction = 'inbound'
+                    ORDER BY COALESCE(m6.received_at, m6.created_at) DESC
+                    LIMIT 1
+                ) AS last_inbound_from_email,
                 (SELECT COALESCE(m4.received_at, m4.created_at) FROM messages m4 WHERE m4.case_id = c.id AND m4.direction = 'inbound' ORDER BY COALESCE(m4.received_at, m4.created_at) DESC LIMIT 1) AS last_inbound_date
             FROM proposals p
             LEFT JOIN cases c ON c.id = p.case_id
@@ -581,9 +613,30 @@ router.get('/live-overview', async (req, res) => {
             const triggerMsgResult = await db.query(`
                 SELECT
                     m.id,
+                    m.direction,
                     m.from_email,
                     m.subject,
-                    LEFT(m.body_text, 200) AS body_preview
+                    LEFT(
+                        COALESCE(
+                            NULLIF(m.body_text, ''),
+                            NULLIF(
+                                regexp_replace(
+                                    regexp_replace(
+                                        regexp_replace(COALESCE(m.body_html, ''), '<[^>]+>', ' ', 'g'),
+                                        '&nbsp;|&#160;',
+                                        ' ',
+                                        'gi'
+                                    ),
+                                    '\\s+',
+                                    ' ',
+                                    'g'
+                                ),
+                                ''
+                            ),
+                            CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))
+                        ),
+                        200
+                    ) AS body_preview
                 FROM messages m
                 WHERE m.id = ANY($1::int[])
             `, [triggerMessageIds]);
@@ -718,12 +771,26 @@ router.get('/live-overview', async (req, res) => {
                 activeRun: null,
             });
             const triggerMsg = triggerMessageById.get(messageId) || null;
+            const triggerInbound = triggerMsg && String(triggerMsg.direction || '').toLowerCase() === 'inbound'
+                ? triggerMsg
+                : null;
+            const inbound_count = Math.max(
+                Number(row.inbound_count) || 0,
+                triggerInbound ? 1 : 0
+            );
+            const last_inbound_preview = row.last_inbound_preview || triggerInbound?.body_preview || null;
+            const last_inbound_subject = row.last_inbound_subject || triggerInbound?.subject || null;
+            const last_inbound_from_email = row.last_inbound_from_email || triggerInbound?.from_email || null;
             return {
                 ...row,
                 agency_name: suppressPlaceholderDisplay
                     ? 'Unknown agency'
                     : (researchSuggestedAgency?.name || primaryCaseAgency?.agency_name || row.agency_name),
                 case_substatus: normalizePortalTimeoutSubstatus(row.case_substatus),
+                inbound_count,
+                last_inbound_preview,
+                last_inbound_subject,
+                last_inbound_from_email,
                 review_state: truth.review_state,
                 reasoning: normalizeProposalReasoning(row, {
                     reviewAction: reviewCtx.review_action,
@@ -778,7 +845,7 @@ router.get('/live-overview', async (req, res) => {
                 m.subject,
                 m.received_at,
                 m.created_at,
-                LEFT(m.body_text, 200) AS body_preview,
+                LEFT(COALESCE(NULLIF(m.normalized_body_text, ''), NULLIF(m.body_text, ''), '(no body)'), 200) AS body_preview,
                 (
                     SELECT json_agg(json_build_object('id', c.id, 'case_name', c.case_name, 'agency_name', c.agency_name))
                     FROM (
@@ -852,10 +919,7 @@ router.get('/live-overview', async (req, res) => {
                 c.user_id,
                 (SELECT COUNT(*) FROM messages m WHERE m.case_id = c.id AND m.direction = 'inbound') AS inbound_count,
                 (
-                    SELECT COALESCE(
-                        NULLIF(m2.body_text, ''),
-                        CONCAT('[No text body] ', COALESCE(m2.subject, '(no subject)'))
-                    )
+                    SELECT ${INBOUND_PREVIEW_SQL.replace(/\bm\b/g, 'm2')}
                     FROM messages m2
                     WHERE m2.case_id = c.id
                       AND m2.direction = 'inbound'

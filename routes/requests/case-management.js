@@ -1165,7 +1165,9 @@ router.get('/:id/export', async (req, res) => {
 
         const [messagesResult, proposalsResult, activityResult, portalResult] = await Promise.all([
             db.query(
-                `SELECT id, direction, subject, body_text, from_email, to_email,
+                `SELECT id, direction, subject,
+                        COALESCE(NULLIF(normalized_body_text, ''), body_text) AS body_text,
+                        from_email, to_email,
                         sent_at, received_at, message_type
                  FROM messages WHERE case_id = $1
                  ORDER BY COALESCE(sent_at, received_at) ASC`, [caseId]

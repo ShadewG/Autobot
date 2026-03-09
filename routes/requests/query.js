@@ -449,7 +449,7 @@ router.get('/', async (req, res) => {
         if (q) {
             params.push(`%${q}%`);
             const p = params.length;
-            query += ` AND (c.subject_name ILIKE $${p} OR c.agency_name ILIKE $${p} OR c.case_name ILIKE $${p} OR CAST(c.id AS TEXT) LIKE $${p} OR EXISTS (SELECT 1 FROM messages m WHERE m.case_id = c.id AND (m.subject ILIKE $${p} OR m.body_text ILIKE $${p} OR m.from_email ILIKE $${p})))`;
+            query += ` AND (c.subject_name ILIKE $${p} OR c.agency_name ILIKE $${p} OR c.case_name ILIKE $${p} OR CAST(c.id AS TEXT) LIKE $${p} OR EXISTS (SELECT 1 FROM messages m WHERE m.case_id = c.id AND (m.subject ILIKE $${p} OR COALESCE(m.normalized_body_text, m.body_text) ILIKE $${p} OR m.from_email ILIKE $${p})))`;
         }
 
         // Sort: requires_human first (by next_due_at), then by last_activity

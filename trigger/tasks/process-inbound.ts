@@ -641,7 +641,7 @@ export const processInbound = task({
     const clf = effectiveClassification as string;
     if (clf === "PARTIAL_DELIVERY" || clf === "ACKNOWLEDGMENT") {
       const msg = await db.getMessageById(messageId);
-      const bodyText = (msg?.body_text || "").substring(0, 1000);
+      const bodyText = String(msg?.normalized_body_text || msg?.body_text || "").substring(0, 1000);
       // Only match strong denial phrases, not generic words
       const hasDenialLanguage = /\bexempt from disclosure\b|\bdenied your request\b|\bunable to release\b|\bwithheld pursuant to\b|\bnot subject to disclosure\b/i.test(bodyText);
       const hasFeeLanguage = /\bprocessing fee\b|\bestimated cost\b|\bfee of \$\d|\binvoice attached\b|\bpayment of \$\d/i.test(bodyText);
@@ -687,7 +687,7 @@ export const processInbound = task({
           caseId,
           messageId,
           classification: effectiveClassification,
-          bodyText: triggerMessage?.body_text || "",
+          bodyText: String(triggerMessage?.normalized_body_text || triggerMessage?.body_text || ""),
         });
         trace.setExecutionDetail("delivery_catalog", {
           cataloged: deliveryCatalog.cataloged,

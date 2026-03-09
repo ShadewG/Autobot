@@ -11,6 +11,7 @@
  */
 
 const db = require('./database');
+const { getCanonicalMessageText } = require('../lib/message-normalization');
 const logger = require('./logger');
 
 class DecisionMemoryService {
@@ -252,7 +253,7 @@ class DecisionMemoryService {
 
         // From messages — detect denials, fees, etc.
         for (const m of (messages || []).slice(0, 5)) {
-            const text = ((m.body_text || '') + ' ' + (m.subject || '')).toLowerCase();
+            const text = `${getCanonicalMessageText(m) || ''} ${m.subject || ''}`.toLowerCase();
             if (text.includes('denied') || text.includes('denial') || text.includes('unable to release')) keywords.add('denial');
             if (text.includes('ongoing investigation') || text.includes('active investigation')) keywords.add('ongoing_investigation');
             if (text.includes('privacy') || text.includes('exemption')) keywords.add('privacy_exemption');

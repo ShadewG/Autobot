@@ -81,6 +81,7 @@ function looksLikePortalSystemMessage(message: any): boolean {
     message?.from_email,
     message?.sender_email,
     message?.subject,
+    message?.normalized_body_text,
     message?.body_text,
     message?.body_html,
   ]
@@ -98,6 +99,7 @@ function looksLikePortalSystemMessage(message: any): boolean {
 function looksLikePortalOnboardingAcknowledgment(message: any): boolean {
   const corpus = normalizeClassificationText([
     message?.subject,
+    message?.normalized_body_text,
     message?.body_text,
     message?.body_html,
   ].join("\n"));
@@ -123,6 +125,7 @@ function looksLikePortalOnboardingAcknowledgment(message: any): boolean {
 function looksLikeExplicitNoRecordsDenial(message: any, attachments: any[] = []): boolean {
   const corpus = [
     message?.subject,
+    message?.normalized_body_text,
     message?.body_text,
     message?.body_html,
     ...(Array.isArray(attachments)
@@ -146,6 +149,7 @@ function looksLikeExplicitNoRecordsDenial(message: any, attachments: any[] = [])
 function looksLikeStatutoryWithholdingDenial(message: any, attachments: any[] = []): boolean {
   const corpus = [
     message?.subject,
+    message?.normalized_body_text,
     message?.body_text,
     message?.body_html,
     ...(Array.isArray(attachments)
@@ -176,6 +180,7 @@ function looksLikeStatutoryWithholdingDenial(message: any, attachments: any[] = 
 export function looksLikeRequestFormClarification(message: any, attachments: any[] = []): boolean {
   const corpus = [
     message?.subject,
+    message?.normalized_body_text,
     message?.body_text,
     message?.body_html,
     ...(Array.isArray(attachments)
@@ -325,7 +330,7 @@ export function buildClassificationPrompt(
       const date = m.sent_at || m.received_at || m.created_at;
       const dateStr = date ? new Date(date).toISOString().split("T")[0] : "unknown";
       const sender = m.direction === "inbound" ? (m.from_email || "unknown") : (m.to_email || "unknown");
-      const messageText = toPromptText(m.body_text || m.body_html || m.summary || "");
+      const messageText = toPromptText(m.normalized_body_text || m.body_text || m.body_html || m.summary || "");
       return `[${label} | ${dateStr} | ${sender}] ${m.subject || ""}\n${messageText.substring(0, 800)}`;
     })
     .join("\n---\n");
@@ -405,7 +410,7 @@ ${threadContext || "No prior messages."}
 **From**: ${message.from_email || message.sender_email || "Unknown"}
 **Subject**: ${message.subject || "No subject"}
 **Body**:
-${(message.body_text || message.body_html || "").substring(0, 3000)}
+${(message.normalized_body_text || toPromptText(message.body_text || message.body_html || "")).substring(0, 3000)}
 ${attachments.length > 0 ? `
 **Attachments** (${attachments.length} file${attachments.length > 1 ? "s" : ""}):
 ${attachments.map((a: any) => `- ${a.filename} (${a.content_type}, ${Math.round((a.size_bytes || 0) / 1024)}KB)`).join("\n")}
@@ -562,7 +567,7 @@ export async function classifyInbound(
   // Pre-check: detect internal/synthetic messages that shouldn't be classified
   const fromAddr = (message.from_email || message.sender_email || "").toLowerCase();
   const subjectLower = (message.subject || "").toLowerCase();
-  const bodySnippet = ((message.body_text || message.body_html || "").substring(0, 500)).toLowerCase();
+  const bodySnippet = ((message.normalized_body_text || message.body_text || message.body_html || "").substring(0, 500)).toLowerCase();
 
   // Phone call updates, manual notes, and synthetic QA are internal records, not agency responses
   const INTERNAL_MESSAGE_TYPES = ["phone_call", "manual_note", "synthetic_qa", "system_note", "manual_trigger", "portal_submission"];
@@ -608,6 +613,7 @@ export async function classifyInbound(
   const isNoReply = /no.?reply|do.?not.?reply/.test(fromAddr);
   const portalUrlHint = extractFirstUrlHint(
     message.subject,
+    message.normalized_body_text,
     message.body_text,
     message.body_html,
     context.caseData?.portal_url
@@ -615,6 +621,7 @@ export async function classifyInbound(
 
   const portalAccessCorpus = normalizeClassificationText([
     message.subject,
+    message.normalized_body_text,
     message.body_text,
     message.body_html,
   ].join("\n"));

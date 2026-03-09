@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS messages (
     subject VARCHAR(500),
     body_text TEXT,
     body_html TEXT,
+    normalized_body_text TEXT,
+    normalized_body_source VARCHAR(50),
+    is_substantive BOOLEAN,
     has_attachments BOOLEAN DEFAULT FALSE,
     attachment_count INTEGER DEFAULT 0,
     message_type VARCHAR(50), -- initial_request, follow_up, response, auto_reply

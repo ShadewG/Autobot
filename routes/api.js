@@ -320,7 +320,8 @@ router.get('/cases/:caseId/thread', async (req, res) => {
 router.get('/auto-replies/pending', async (req, res) => {
     try {
         const pending = await db.query(
-            `SELECT ar.*, c.case_name, c.agency_name, m.subject, m.body_text as original_message
+            `SELECT ar.*, c.case_name, c.agency_name, m.subject,
+                    COALESCE(NULLIF(m.normalized_body_text, ''), m.body_text) as original_message
              FROM auto_reply_queue ar
              JOIN cases c ON ar.case_id = c.id
              JOIN messages m ON ar.message_id = m.id

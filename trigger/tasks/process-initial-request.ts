@@ -340,7 +340,7 @@ export const processInitialRequest = task({
       // (don't blindly send a new FOIA when the agency already said no)
       const denialCheck = await db.query(
         `SELECT ra.intent, ra.full_analysis_json->>'denial_subtype' AS denial_subtype,
-                LEFT(m.body_text, 200) AS body_preview
+                LEFT(COALESCE(NULLIF(m.normalized_body_text, ''), NULLIF(m.body_text, ''), ''), 200) AS body_preview
          FROM response_analysis ra
          JOIN messages m ON m.id = ra.message_id
          WHERE ra.case_id = $1 AND m.case_id = $1 AND m.direction = 'inbound'

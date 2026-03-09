@@ -217,6 +217,34 @@ function extractMetadataAgencyHint(additionalDetails) {
   return null;
 }
 
+function extractAgencyNameFromAdditionalDetails(additionalDetails = '') {
+  const metadataHint = extractMetadataAgencyHint(additionalDetails);
+  if (metadataHint?.name) {
+    return metadataHint.name;
+  }
+
+  const lines = String(additionalDetails || '').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!/^(?:\*\*)?Police Department:?/i.test(line)) continue;
+
+    const candidate = line
+      .replace(/^(?:\*\*)?Police Department:?\s*/i, '')
+      .replace(/\*\*$/g, '')
+      .trim();
+
+    if (!candidate || normalizeNotionReferenceId(candidate) || isNotionReferenceList(candidate)) {
+      continue;
+    }
+
+    return candidate
+      .replace(/\s*,?\s*with\s+.+$/i, '')
+      .trim();
+  }
+
+  return null;
+}
+
 function isGenericAgencyLabel(value) {
   const normalized = String(value || '')
     .toLowerCase()
@@ -402,6 +430,7 @@ module.exports = {
   hasUnresolvedResearchPlaceholder,
   shouldSuppressPlaceholderAgencyDisplay,
   extractMetadataAgencyHint,
+  extractAgencyNameFromAdditionalDetails,
   isGenericAgencyLabel,
   detectCaseMetadataAgencyMismatch,
   detectAgencyStateMismatch,

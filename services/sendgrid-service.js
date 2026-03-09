@@ -12,6 +12,7 @@ const {
     detectPortalProviderByUrl,
     isSupportedPortalUrl
 } = require('../utils/portal-utils');
+const { getCanonicalMessageText } = require('../lib/message-normalization');
 
 class SendGridService {
     constructor() {
@@ -2360,7 +2361,10 @@ class SendGridService {
 
             // Generate and save a one-sentence summary (non-blocking)
             try {
-                const summary = await aiService.generateMessageSummary(messageData.subject, messageData.body_text);
+                const summary = await aiService.generateMessageSummary(
+                    messageData.subject,
+                    getCanonicalMessageText(messageData)
+                );
                 if (summary) await db.query('UPDATE messages SET summary = $1 WHERE id = $2', [summary, message.id]);
             } catch (_) { /* non-critical */ }
 

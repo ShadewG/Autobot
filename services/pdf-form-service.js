@@ -20,6 +20,7 @@ const { PDFExtract } = require('pdf.js-extract');
 const OpenAI = require('openai');
 const database = require('./database');
 const os = require('os');
+const { getCanonicalMessageText } = require('../lib/message-normalization');
 
 let _openai;
 function getOpenAI() {
@@ -227,8 +228,7 @@ async function _getPdfReplyRequirements(caseData) {
     const latestInbound = await database.getLatestInboundMessage(caseData.id);
     const combined = [
         latestInbound?.subject || '',
-        latestInbound?.body_text || '',
-        latestInbound?.body_html || '',
+        getCanonicalMessageText(latestInbound),
     ].join('\n');
 
     return buildPdfReplyRequirementsFromText(combined);

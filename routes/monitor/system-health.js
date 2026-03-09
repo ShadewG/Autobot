@@ -8,7 +8,17 @@ const { db } = require('./_helpers');
  */
 router.get('/system-health', async (req, res) => {
     try {
-        const [stuckCasesGrouped, orphanedRuns, staleProposals, overdueDeadlines, bouncedEmails, portalFailures] = await Promise.all([
+        const [
+            stuckCasesGrouped,
+            orphanedRuns,
+            staleProposals,
+            overdueDeadlines,
+            bouncedEmails,
+            portalFailures,
+            inboundLinkageGaps,
+            emptyNormalizedInbound,
+            proposalMessageMismatches,
+        ] = await Promise.all([
             // Stuck cases grouped by status and pause_reason
             db.query(`
                 SELECT c.status, COALESCE(c.pause_reason, 'none') AS pause_reason, COUNT(*)::int AS count
@@ -73,6 +83,51 @@ router.get('/system-health', async (req, res) => {
                 WHERE status = 'FAILED'
                   AND updated_at > NOW() - INTERVAL '24 hours'
             `),
+
+            // Recent inbound with no case/thread/proposal/run linkage
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM messages m
+                WHERE m.direction = 'inbound'
+                  AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
+                  AND m.case_id IS NULL
+                  AND (m.thread_id IS NULL OR NOT EXISTS (
+                      SELECT 1 FROM email_threads t
+                      WHERE t.id = m.thread_id
+                        AND t.case_id IS NOT NULL
+                  ))
+                  AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.trigger_message_id = m.id)
+                  AND NOT EXISTS (SELECT 1 FROM agent_runs ar WHERE ar.message_id = m.id)
+                  AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+                  AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+            `),
+
+            // Recent inbound with empty normalized text
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM messages m
+                WHERE m.direction = 'inbound'
+                  AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
+                  AND COALESCE(NULLIF(m.normalized_body_text, ''), '') = ''
+                  AND (
+                    COALESCE(NULLIF(m.body_text, ''), NULLIF(m.body_html, '')) IS NOT NULL
+                    OR COALESCE(m.attachment_count, 0) > 0
+                  )
+                  AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+                  AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+            `),
+
+            // Proposal trigger messages linked to the wrong case
+            db.query(`
+                SELECT COUNT(*)::int AS count
+                FROM proposals p
+                JOIN messages m ON m.id = p.trigger_message_id
+                LEFT JOIN cases c ON c.id = p.case_id
+                WHERE m.case_id IS NOT NULL
+                  AND m.case_id <> p.case_id
+                  AND COALESCE(p.created_at, m.created_at) > NOW() - INTERVAL '30 days'
+                  AND (c.notion_page_id IS NULL OR c.notion_page_id NOT LIKE 'test-%')
+            `),
         ]);
 
         // Build stuck cases breakdown from grouped query
@@ -102,6 +157,9 @@ router.get('/system-health', async (req, res) => {
             overdue_deadlines: overdueDeadlines.rows[0]?.count || 0,
             bounced_emails: bouncedEmails.rows[0]?.count || 0,
             portal_failures: portalFailures.rows[0]?.count || 0,
+            inbound_linkage_gaps: inboundLinkageGaps.rows[0]?.count || 0,
+            empty_normalized_inbound: emptyNormalizedInbound.rows[0]?.count || 0,
+            proposal_message_mismatches: proposalMessageMismatches.rows[0]?.count || 0,
         };
 
         const issues = Object.values(metrics).reduce((sum, v) => sum + (typeof v === 'number' ? v : 0), 0);
@@ -118,7 +176,7 @@ router.get('/system-health', async (req, res) => {
 });
 
 /**
- * GET /api/monitor/system-health/details?metric=stuck_cases|stale_proposals|overdue_deadlines|portal_failures
+ * GET /api/monitor/system-health/details?metric=stuck_cases|stale_proposals|overdue_deadlines|portal_failures|inbound_linkage_gaps|empty_normalized_inbound|proposal_message_mismatches
  * Returns the actual records behind each health metric
  */
 router.get('/system-health/details', async (req, res) => {
@@ -191,6 +249,55 @@ router.get('/system-health/details', async (req, res) => {
             WHERE m.bounced_at IS NOT NULL
               AND m.bounced_at > NOW() - INTERVAL '24 hours'
             ORDER BY m.bounced_at DESC LIMIT 100`,
+        inbound_linkage_gaps: `
+            SELECT m.id AS message_id, m.from_email, m.subject, m.thread_id, m.case_id,
+                   COALESCE(m.received_at, m.created_at) AS received_at
+            FROM messages m
+            WHERE m.direction = 'inbound'
+              AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
+              AND m.case_id IS NULL
+              AND (m.thread_id IS NULL OR NOT EXISTS (
+                  SELECT 1 FROM email_threads t
+                  WHERE t.id = m.thread_id
+                    AND t.case_id IS NOT NULL
+              ))
+              AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.trigger_message_id = m.id)
+              AND NOT EXISTS (SELECT 1 FROM agent_runs ar WHERE ar.message_id = m.id)
+              AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+              AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+            ORDER BY COALESCE(m.received_at, m.created_at) DESC LIMIT 100`,
+        empty_normalized_inbound: `
+            SELECT m.id AS message_id, m.case_id, m.from_email, m.subject, m.thread_id,
+                   m.normalized_body_source, m.attachment_count,
+                   COALESCE(m.received_at, m.created_at) AS received_at,
+                   c.agency_name, c.state
+            FROM messages m
+            LEFT JOIN cases c ON c.id = m.case_id
+            WHERE m.direction = 'inbound'
+              AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '7 days'
+              AND COALESCE(NULLIF(m.normalized_body_text, ''), '') = ''
+              AND (
+                COALESCE(NULLIF(m.body_text, ''), NULLIF(m.body_html, '')) IS NOT NULL
+                OR COALESCE(m.attachment_count, 0) > 0
+              )
+              AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+              AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+            ORDER BY COALESCE(m.received_at, m.created_at) DESC LIMIT 100`,
+        proposal_message_mismatches: `
+            SELECT p.id AS proposal_id, p.case_id AS proposal_case_id, p.status AS proposal_status,
+                   p.trigger_message_id, m.case_id AS message_case_id, m.subject,
+                   COALESCE(m.received_at, m.created_at) AS message_received_at,
+                   pc.agency_name AS proposal_agency_name,
+                   mc.agency_name AS message_agency_name
+            FROM proposals p
+            JOIN messages m ON m.id = p.trigger_message_id
+            LEFT JOIN cases pc ON pc.id = p.case_id
+            LEFT JOIN cases mc ON mc.id = m.case_id
+            WHERE m.case_id IS NOT NULL
+              AND m.case_id <> p.case_id
+              AND COALESCE(p.created_at, m.created_at) > NOW() - INTERVAL '30 days'
+              AND (pc.notion_page_id IS NULL OR pc.notion_page_id NOT LIKE 'test-%')
+            ORDER BY COALESCE(p.created_at, m.created_at) DESC LIMIT 100`,
     };
 
     if (!metric || !queries[metric]) {

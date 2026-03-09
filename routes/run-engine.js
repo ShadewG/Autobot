@@ -2885,7 +2885,7 @@ router.get('/runs', async (req, res) => {
         p.status AS proposal_status,
         m.from_email AS trigger_from_email,
         m.subject AS trigger_subject,
-        m.body_text AS trigger_body_text,
+        COALESCE(NULLIF(m.normalized_body_text, ''), m.body_text) AS trigger_body_text,
         m.created_at AS trigger_received_at,
         ra.intent AS trigger_classification,
         ra.sentiment AS trigger_sentiment,
@@ -3385,41 +3385,31 @@ router.post('/cases/:id/ingest-email', async (req, res) => {
     );
 
     // === CREATE MESSAGE ===
-    const messageResult = await db.query(`
-      INSERT INTO messages (
-        thread_id,
-        case_id,
-        direction,
-        from_email,
-        to_email,
-        subject,
-        body_text,
-        received_at,
-        created_at,
-        provider_message_id,
-        metadata
-      )
-      VALUES ($1, $2, 'inbound', $3, $4, $5, $6, $7, NOW(), $8, $9)
-      RETURNING *
-    `, [
-      thread.id,
-      caseId,
+    const syntheticProviderMessageId = `ingest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = await db.createMessage({
+      thread_id: thread.id,
+      case_id: caseId,
+      message_id: message_id_header || `<${syntheticProviderMessageId}@manual.autobot>`,
+      provider_message_id: syntheticProviderMessageId,
+      sendgrid_message_id: null,
+      direction: 'inbound',
       from_email,
-      caseData.our_email || process.env.FOIA_FROM_EMAIL || 'noreply@example.com',
-      subject || '(No subject)',
+      to_email: caseData.our_email || process.env.FOIA_FROM_EMAIL || 'noreply@example.com',
+      subject: subject || '(No subject)',
       body_text,
-      received_at ? new Date(received_at) : new Date(),
-      `ingest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      JSON.stringify({
+      body_html: null,
+      has_attachments: attachments.length > 0,
+      attachment_count: attachments.length,
+      message_type: 'manual_ingest',
+      received_at: received_at ? new Date(received_at) : new Date(),
+      metadata: {
         source,
         manual_paste: true,
         dedupe_key: dedupeKey,
         message_id_header: message_id_header || null,
         attachment_count: attachments.length
-      })
-    ]);
-
-    const message = messageResult.rows[0];
+      }
+    });
 
     if (attachments.length > 0) {
       for (const attachment of attachments) {
@@ -3648,34 +3638,30 @@ router.post('/cases/:id/add-correspondence', async (req, res) => {
     const toLabel = direction === 'inbound' ? 'Our Team' : (contact_name || 'Agency Contact');
     const typeLabel = correspondence_type.replace(/_/g, ' ');
 
-    const messageResult = await db.query(`
-      INSERT INTO messages (
-        thread_id, case_id, direction, from_email, to_email, subject,
-        body_text, received_at, created_at, provider_message_id,
-        message_type, metadata
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW(), $8, $9, $10)
-      RETURNING *
-    `, [
-      thread.id,
-      caseId,
+    const syntheticProviderMessageId = `correspondence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const message = await db.createMessage({
+      thread_id: thread.id,
+      case_id: caseId,
+      message_id: `<${syntheticProviderMessageId}@manual.autobot>`,
+      provider_message_id: syntheticProviderMessageId,
+      sendgrid_message_id: null,
       direction,
-      fromLabel,
-      toLabel,
-      `Manual ${typeLabel}${contact_name ? ` - ${contact_name}` : ''}`,
-      summary,
-      `correspondence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      correspondence_type,
-      JSON.stringify({
+      from_email: fromLabel,
+      to_email: toLabel,
+      subject: `Manual ${typeLabel}${contact_name ? ` - ${contact_name}` : ''}`,
+      body_text: summary,
+      body_html: null,
+      message_type: correspondence_type,
+      received_at: direction === 'inbound' ? new Date() : null,
+      sent_at: direction === 'outbound' ? new Date() : null,
+      metadata: {
         source: 'manual_correspondence',
         correspondence_type,
         contact_name: contact_name || null,
         contact_info: contact_info || null,
         dedupe_key: dedupeKey
-      })
-    ]);
-
-    const message = messageResult.rows[0];
+      }
+    });
 
     // Update case status based on direction
     if (direction === 'inbound') {
@@ -3830,34 +3816,23 @@ router.post('/cases/:id/inbound-and-run', async (req, res) => {
     );
 
     // Create the inbound message
-    const messageResult = await db.query(`
-      INSERT INTO messages (
-        thread_id,
-        direction,
-        from_email,
-        to_email,
-        subject,
-        body_text,
-        body_html,
-        received_at,
-        created_at,
-        provider_message_id,
-        metadata
-      )
-      VALUES ($1, 'inbound', $2, $3, $4, $5, $6, NOW(), NOW(), $7, $8)
-      RETURNING *
-    `, [
-      thread.id,
-      from_email || caseData.agency_email || 'agency@test.example.com',
-      process.env.FOIA_FROM_EMAIL || 'foia@autobot.example.com',
-      subject || `RE: ${caseData.case_name || 'FOIA Request'}`,
+    const syntheticProviderMessageId = `inbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const message = await db.createMessage({
+      thread_id: thread.id,
+      case_id: caseId,
+      message_id: `<${syntheticProviderMessageId}@synthetic.autobot>`,
+      provider_message_id: syntheticProviderMessageId,
+      sendgrid_message_id: null,
+      direction: 'inbound',
+      from_email: from_email || caseData.agency_email || 'agency@test.example.com',
+      to_email: process.env.FOIA_FROM_EMAIL || 'foia@autobot.example.com',
+      subject: subject || `RE: ${caseData.case_name || 'FOIA Request'}`,
       body_text,
-      `<p>${body_text.replace(/\n/g, '</p><p>')}</p>`,
-      `inbound-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      JSON.stringify({ source: 'inbound-and-run', classification, extracted_fee })
-    ]);
-
-    const message = messageResult.rows[0];
+      body_html: `<p>${body_text.replace(/\n/g, '</p><p>')}</p>`,
+      message_type: 'response',
+      received_at: new Date(),
+      metadata: { source: 'inbound-and-run', classification, extracted_fee }
+    });
 
     // Create response analysis record if classification provided
     if (classification || extracted_fee) {

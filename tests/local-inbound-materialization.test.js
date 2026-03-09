@@ -114,13 +114,13 @@ describe('Local inbound materialization', function () {
         subject: 'RE: Request',
         agency_email: 'agency@example.gov',
       }),
+      createMessage: sinon.stub().resolves({ id: 8001, thread_id: 7001, received_at: new Date().toISOString() }),
       updateCase: sinon.stub().resolves(),
       logActivity: sinon.stub().resolves(),
       query: sinon.stub(),
     };
 
     dbStub.query.onCall(0).resolves({ rows: [] });
-    dbStub.query.onCall(1).resolves({ rows: [{ id: 8001, thread_id: 7001, received_at: new Date().toISOString() }] });
 
     const aiServiceStub = {};
     const triggerDispatchStub = { triggerTask: sinon.stub().resolves({ handle: { id: 'unused' } }) };
@@ -164,6 +164,7 @@ describe('Local inbound materialization', function () {
         agency_email: 'agency@example.gov',
       }),
       createEmailThread: sinon.stub().resolves(),
+      createMessage: sinon.stub().resolves({ id: 8002, thread_id: 7002, received_at: new Date().toISOString() }),
       createAttachment: sinon.stub().resolves({ id: 9101 }),
       updateCase: sinon.stub().resolves(),
       logActivity: sinon.stub().resolves(),
@@ -171,8 +172,7 @@ describe('Local inbound materialization', function () {
     };
 
     dbStub.query.onCall(0).resolves({ rows: [] });
-    dbStub.query.onCall(1).resolves({ rows: [{ id: 8002, thread_id: 7002, received_at: new Date().toISOString() }] });
-    dbStub.query.onCall(2).resolves({ rows: [] });
+    dbStub.query.onCall(1).resolves({ rows: [] });
 
     const aiServiceStub = {};
     const triggerDispatchStub = { triggerTask: sinon.stub().resolves({ handle: { id: 'unused' } }) };
@@ -208,7 +208,7 @@ describe('Local inbound materialization', function () {
       assert.strictEqual(attachmentArgs.filename, 'request-form.pdf');
       assert.ok(Buffer.isBuffer(attachmentArgs.file_data));
       sinon.assert.calledWithExactly(
-        dbStub.query.getCall(2),
+        dbStub.query.getCall(1),
         'UPDATE attachments SET extracted_text = $1 WHERE id = $2',
         ['PUBLIC RECORDS REQUEST FORM', 9101]
       );

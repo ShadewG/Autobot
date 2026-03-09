@@ -17,6 +17,7 @@ const router = express.Router();
 const shadowMode = require('../services/shadow-mode');
 const db = require('../services/database');
 const logger = require('../services/logger');
+const { buildMessagePreviewText } = require('../lib/message-normalization');
 
 /**
  * GET /shadow/status
@@ -161,7 +162,7 @@ router.get('/proposals/:id', async (req, res) => {
         id: m.id,
         direction: m.direction,
         subject: m.subject,
-        body_preview: (m.body_text || '').substring(0, 500),
+        body_preview: buildMessagePreviewText(m, 500),
         created_at: m.created_at
       })),
       existing_review: existingReview

@@ -7,6 +7,10 @@ const { DRAFT_REQUIRED_ACTIONS } = require('../constants/action-types');
 const { emitDataUpdate } = require('./event-bus');
 const { normalizePortalUrl, detectPortalProviderByUrl } = require('../utils/portal-utils');
 const { buildOriginalDraftInsertFields } = require('./proposal-draft-history');
+const {
+    normalizeMessageBody,
+    isSubstantiveMessage,
+} = require('../lib/message-normalization');
 
 const ACTIVE_PROPOSAL_STATUSES = ['PENDING_APPROVAL', 'BLOCKED', 'DECISION_RECEIVED', 'PENDING_PORTAL'];
 const HUMAN_REVIEW_CASE_STATUSES = [
@@ -292,6 +296,9 @@ class DatabaseService {
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP');
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS bounced_at TIMESTAMP');
             await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS provider_payload JSONB');
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS normalized_body_text TEXT');
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS normalized_body_source VARCHAR(50)');
+            await this.query('ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_substantive BOOLEAN');
             await this.query(`
                 CREATE TABLE IF NOT EXISTS email_events (
                     id SERIAL PRIMARY KEY,
@@ -960,19 +967,26 @@ class DatabaseService {
             }
         }
 
+        const normalizedBody = normalizeMessageBody(messageData);
+
         const query = `
             INSERT INTO messages (
-                thread_id, case_id, message_id, sendgrid_message_id, direction,
+                thread_id, case_id, message_id, sendgrid_message_id, provider_message_id, direction,
                 from_email, to_email, cc_emails, subject, body_text, body_html,
                 has_attachments, attachment_count, message_type, portal_notification,
                 portal_notification_type, portal_notification_provider, sent_at, received_at,
-                summary, metadata, provider_payload
+                summary, metadata, provider_payload,
+                normalized_body_text, normalized_body_source, is_substantive
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
             ON CONFLICT (message_id) DO UPDATE SET
                 thread_id = COALESCE(messages.thread_id, EXCLUDED.thread_id),
                 case_id = COALESCE(messages.case_id, EXCLUDED.case_id),
                 sendgrid_message_id = COALESCE(messages.sendgrid_message_id, EXCLUDED.sendgrid_message_id),
+                provider_message_id = COALESCE(messages.provider_message_id, EXCLUDED.provider_message_id),
+                normalized_body_text = COALESCE(NULLIF(messages.normalized_body_text, ''), EXCLUDED.normalized_body_text),
+                normalized_body_source = COALESCE(messages.normalized_body_source, EXCLUDED.normalized_body_source),
+                is_substantive = COALESCE(messages.is_substantive, false) OR COALESCE(EXCLUDED.is_substantive, false),
                 metadata = COALESCE(messages.metadata, '{}'::jsonb) || COALESCE(EXCLUDED.metadata, '{}'::jsonb),
                 provider_payload = COALESCE(messages.provider_payload, '{}'::jsonb) || COALESCE(EXCLUDED.provider_payload, '{}'::jsonb)
             RETURNING *
@@ -982,6 +996,7 @@ class DatabaseService {
             resolvedCaseId,
             messageData.message_id,
             messageData.sendgrid_message_id,
+            messageData.provider_message_id || null,
             messageData.direction,
             messageData.from_email,
             messageData.to_email,
@@ -999,7 +1014,16 @@ class DatabaseService {
             messageData.received_at || null,
             messageData.summary || null,
             messageData.metadata || null,
-            messageData.provider_payload || null
+            messageData.provider_payload || null,
+            normalizedBody.normalized_body_text,
+            normalizedBody.normalized_body_source,
+            typeof messageData.is_substantive === 'boolean'
+                ? messageData.is_substantive
+                : isSubstantiveMessage({
+                    ...messageData,
+                    ...normalizedBody,
+                    case_id: resolvedCaseId,
+                })
         ];
         const result = await this.query(query, values);
         if (result.rows.length > 0) {
@@ -1024,7 +1048,12 @@ class DatabaseService {
 
     async getMessageByMessageIdentifier(messageIdentifier) {
         const result = await this.query(
-            'SELECT * FROM messages WHERE message_id = $1 LIMIT 1',
+            `SELECT messages.*,
+                    messages.body_text AS raw_body_text,
+                    COALESCE(NULLIF(messages.normalized_body_text, ''), messages.body_text) AS body_text
+             FROM messages
+             WHERE message_id = $1
+             LIMIT 1`,
             [messageIdentifier]
         );
         return result.rows[0];
@@ -1032,20 +1061,37 @@ class DatabaseService {
 
     async getMessagesByThreadId(threadId) {
         const result = await this.query(
-            'SELECT * FROM messages WHERE thread_id = $1 ORDER BY created_at DESC',
+            `SELECT messages.*,
+                    messages.body_text AS raw_body_text,
+                    COALESCE(NULLIF(messages.normalized_body_text, ''), messages.body_text) AS body_text
+             FROM messages
+             WHERE thread_id = $1
+             ORDER BY created_at DESC`,
             [threadId]
         );
         return result.rows;
     }
 
     async getMessageById(id) {
-        const result = await this.query('SELECT * FROM messages WHERE id = $1', [id]);
+        const result = await this.query(
+            `SELECT messages.*,
+                    messages.body_text AS raw_body_text,
+                    COALESCE(NULLIF(messages.normalized_body_text, ''), messages.body_text) AS body_text
+             FROM messages
+             WHERE id = $1`,
+            [id]
+        );
         return result.rows[0];
     }
 
     async getMessageBySendgridMessageId(sendgridMessageId) {
         const result = await this.query(
-            'SELECT * FROM messages WHERE sendgrid_message_id = $1 LIMIT 1',
+            `SELECT messages.*,
+                    messages.body_text AS raw_body_text,
+                    COALESCE(NULLIF(messages.normalized_body_text, ''), messages.body_text) AS body_text
+             FROM messages
+             WHERE sendgrid_message_id = $1
+             LIMIT 1`,
             [sendgridMessageId]
         );
         return result.rows[0] || null;
@@ -1278,7 +1324,7 @@ class DatabaseService {
                 la.description AS last_activity_description,
                 la.created_at AS last_activity_at,
                 lm.subject AS last_message_subject,
-                lm.body_text AS last_message_body,
+                COALESCE(NULLIF(lm.normalized_body_text, ''), NULLIF(lm.body_text, '')) AS last_message_body,
                 lm.received_at AS last_message_received_at,
                 lm.sent_at AS last_message_sent_at,
                 portal_events.portal_events
@@ -1291,7 +1337,7 @@ class DatabaseService {
                 LIMIT 1
             ) la ON true
             LEFT JOIN LATERAL (
-                SELECT subject, body_text, received_at, sent_at
+                SELECT subject, body_text, normalized_body_text, received_at, sent_at
                 FROM messages
                 WHERE case_id = c.id
                 ORDER BY COALESCE(received_at, sent_at, created_at) DESC
@@ -3176,7 +3222,8 @@ class DatabaseService {
         const result = await this.query(
             `SELECT * FROM messages
              WHERE case_id = $1 AND direction = 'inbound'
-             ORDER BY COALESCE(received_at, created_at) DESC
+             ORDER BY CASE WHEN COALESCE(is_substantive, false) THEN 0 ELSE 1 END,
+                      COALESCE(received_at, created_at) DESC
              LIMIT 1`,
             [caseId]
         );
@@ -3339,11 +3386,19 @@ class DatabaseService {
                     LIMIT 1
                 ) AS last_inbound_from_email,
                 (
-                    SELECT LEFT(COALESCE(NULLIF(m.body_text, ''), CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))), 1200)
+                    SELECT LEFT(
+                        COALESCE(
+                            NULLIF(m.normalized_body_text, ''),
+                            NULLIF(m.body_text, ''),
+                            CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))
+                        ),
+                        1200
+                    )
                     FROM messages m
                     WHERE m.case_id = c.id
                       AND m.direction = 'inbound'
-                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    ORDER BY CASE WHEN COALESCE(m.is_substantive, false) THEN 0 ELSE 1 END,
+                             COALESCE(m.received_at, m.created_at) DESC
                     LIMIT 1
                 ) AS last_inbound_preview
             FROM phone_call_queue pcq
@@ -3381,11 +3436,19 @@ class DatabaseService {
                     LIMIT 1
                 ) AS last_inbound_from_email,
                 (
-                    SELECT LEFT(COALESCE(NULLIF(m.body_text, ''), CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))), 1200)
+                    SELECT LEFT(
+                        COALESCE(
+                            NULLIF(m.normalized_body_text, ''),
+                            NULLIF(m.body_text, ''),
+                            CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))
+                        ),
+                        1200
+                    )
                     FROM messages m
                     WHERE m.case_id = c.id
                       AND m.direction = 'inbound'
-                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    ORDER BY CASE WHEN COALESCE(m.is_substantive, false) THEN 0 ELSE 1 END,
+                             COALESCE(m.received_at, m.created_at) DESC
                     LIMIT 1
                 ) AS last_inbound_preview
             FROM phone_call_queue pcq
@@ -3423,11 +3486,19 @@ class DatabaseService {
                     LIMIT 1
                 ) AS last_inbound_from_email,
                 (
-                    SELECT LEFT(COALESCE(NULLIF(m.body_text, ''), CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))), 1200)
+                    SELECT LEFT(
+                        COALESCE(
+                            NULLIF(m.normalized_body_text, ''),
+                            NULLIF(m.body_text, ''),
+                            CONCAT('[No text body] ', COALESCE(m.subject, '(no subject)'))
+                        ),
+                        1200
+                    )
                     FROM messages m
                     WHERE m.case_id = c.id
                       AND m.direction = 'inbound'
-                    ORDER BY COALESCE(m.received_at, m.created_at) DESC
+                    ORDER BY CASE WHEN COALESCE(m.is_substantive, false) THEN 0 ELSE 1 END,
+                             COALESCE(m.received_at, m.created_at) DESC
                     LIMIT 1
                 ) AS last_inbound_preview
             FROM phone_call_queue pcq

@@ -34,6 +34,9 @@ class CronService {
         this.lastOperationalAlert = {
             portalHardTimeout: null,
             processInboundSuperseded: null,
+            inboundLinkageGaps: null,
+            emptyNormalizedInbound: null,
+            proposalMessageMismatch: null,
         };
     }
 
@@ -2047,8 +2050,14 @@ class CronService {
     async checkOperationalAlerts() {
         const portalThresholdRaw = parseInt(process.env.PORTAL_HARD_TIMEOUT_ALERT_THRESHOLD || '0', 10);
         const supersededThresholdRaw = parseInt(process.env.PROCESS_INBOUND_SUPERSEDED_ALERT_THRESHOLD || '5', 10);
+        const inboundLinkageThresholdRaw = parseInt(process.env.INBOUND_LINKAGE_GAP_ALERT_THRESHOLD || '0', 10);
+        const emptyNormalizedThresholdRaw = parseInt(process.env.EMPTY_NORMALIZED_INBOUND_ALERT_THRESHOLD || '0', 10);
+        const proposalMismatchThresholdRaw = parseInt(process.env.PROPOSAL_MESSAGE_MISMATCH_ALERT_THRESHOLD || '0', 10);
         const portalThreshold = Number.isFinite(portalThresholdRaw) ? portalThresholdRaw : 0;
         const supersededThreshold = Number.isFinite(supersededThresholdRaw) ? supersededThresholdRaw : 5;
+        const inboundLinkageThreshold = Number.isFinite(inboundLinkageThresholdRaw) ? inboundLinkageThresholdRaw : 0;
+        const emptyNormalizedThreshold = Number.isFinite(emptyNormalizedThresholdRaw) ? emptyNormalizedThresholdRaw : 0;
+        const proposalMismatchThreshold = Number.isFinite(proposalMismatchThresholdRaw) ? proposalMismatchThresholdRaw : 0;
 
         const countersResult = await db.query(`
             SELECT
@@ -2068,7 +2077,44 @@ class CronService {
                     WHERE status = 'cancelled'
                       AND (error = 'superseded' OR error LIKE 'deduped to active%')
                       AND COALESCE(ended_at, started_at) > NOW() - INTERVAL '1 hour'
-                ) AS process_inbound_superseded_total
+                ) AS process_inbound_superseded_total,
+                (
+                    SELECT COUNT(*)::int
+                    FROM messages m
+                    WHERE m.direction = 'inbound'
+                      AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '1 hour'
+                      AND m.case_id IS NULL
+                      AND (m.thread_id IS NULL OR NOT EXISTS (
+                          SELECT 1 FROM email_threads t
+                          WHERE t.id = m.thread_id
+                            AND t.case_id IS NOT NULL
+                      ))
+                      AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.trigger_message_id = m.id)
+                      AND NOT EXISTS (SELECT 1 FROM agent_runs ar WHERE ar.message_id = m.id)
+                      AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+                      AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+                ) AS inbound_linkage_gap_total,
+                (
+                    SELECT COUNT(*)::int
+                    FROM messages m
+                    WHERE m.direction = 'inbound'
+                      AND COALESCE(m.received_at, m.created_at) > NOW() - INTERVAL '1 hour'
+                      AND COALESCE(NULLIF(m.normalized_body_text, ''), '') = ''
+                      AND (
+                        COALESCE(NULLIF(m.body_text, ''), NULLIF(m.body_html, '')) IS NOT NULL
+                        OR COALESCE(m.attachment_count, 0) > 0
+                      )
+                      AND COALESCE(m.message_type, '') NOT IN ('simulated_inbound', 'manual_trigger')
+                      AND COALESCE(m.metadata->>'source', '') NOT IN ('synthetic', 'simulation')
+                ) AS empty_normalized_inbound_total,
+                (
+                    SELECT COUNT(*)::int
+                    FROM proposals p
+                    JOIN messages m ON m.id = p.trigger_message_id
+                    WHERE m.case_id IS NOT NULL
+                      AND m.case_id <> p.case_id
+                      AND COALESCE(p.created_at, m.created_at) > NOW() - INTERVAL '1 hour'
+                ) AS proposal_message_mismatch_total
         `);
 
         const counters = countersResult.rows[0] || {};
@@ -2078,6 +2124,9 @@ class CronService {
             counters.process_inbound_superseded_total || 0,
             10
         );
+        const inboundLinkageGapTotal = parseInt(counters.inbound_linkage_gap_total || 0, 10);
+        const emptyNormalizedInboundTotal = parseInt(counters.empty_normalized_inbound_total || 0, 10);
+        const proposalMessageMismatchTotal = parseInt(counters.proposal_message_mismatch_total || 0, 10);
 
         const windowHour = new Date();
         const hourBucket = `${windowHour.getUTCFullYear()}-${windowHour.getUTCMonth() + 1}-${windowHour.getUTCDate()}-${windowHour.getUTCHours()}`;
@@ -2133,6 +2182,87 @@ class CronService {
                         { name: 'Metric', value: 'process_inbound_superseded_total', inline: true },
                         { name: 'Value', value: `${processInboundSupersededTotal}`, inline: true },
                         { name: 'Threshold', value: `>${supersededThreshold}`, inline: true },
+                    ],
+                });
+            }
+        }
+
+        if (inboundLinkageGapTotal > inboundLinkageThreshold) {
+            const dedupeKey = `${hourBucket}:${inboundLinkageGapTotal}`;
+            if (this.lastOperationalAlert.inboundLinkageGaps !== dedupeKey) {
+                this.lastOperationalAlert.inboundLinkageGaps = dedupeKey;
+                await db.logActivity(
+                    'operational_alert',
+                    `inbound_linkage_gap_total=${inboundLinkageGapTotal} exceeded threshold ${inboundLinkageThreshold} in last 1h`,
+                    {
+                        metric: 'inbound_linkage_gap_total',
+                        value: inboundLinkageGapTotal,
+                        threshold: inboundLinkageThreshold,
+                        window: '1h',
+                    }
+                );
+                await discordService.notify({
+                    title: 'Operational Alert: Inbound Linkage Gaps',
+                    description: `Last 1h inbound messages with no case/thread/proposal linkage: ${inboundLinkageGapTotal}`,
+                    color: 0xf56565,
+                    fields: [
+                        { name: 'Metric', value: 'inbound_linkage_gap_total', inline: true },
+                        { name: 'Value', value: `${inboundLinkageGapTotal}`, inline: true },
+                        { name: 'Threshold', value: `>${inboundLinkageThreshold}`, inline: true },
+                    ],
+                });
+            }
+        }
+
+        if (emptyNormalizedInboundTotal > emptyNormalizedThreshold) {
+            const dedupeKey = `${hourBucket}:${emptyNormalizedInboundTotal}`;
+            if (this.lastOperationalAlert.emptyNormalizedInbound !== dedupeKey) {
+                this.lastOperationalAlert.emptyNormalizedInbound = dedupeKey;
+                await db.logActivity(
+                    'operational_alert',
+                    `empty_normalized_inbound_total=${emptyNormalizedInboundTotal} exceeded threshold ${emptyNormalizedThreshold} in last 1h`,
+                    {
+                        metric: 'empty_normalized_inbound_total',
+                        value: emptyNormalizedInboundTotal,
+                        threshold: emptyNormalizedThreshold,
+                        window: '1h',
+                    }
+                );
+                await discordService.notify({
+                    title: 'Operational Alert: Empty Normalized Inbound',
+                    description: `Last 1h inbound messages with empty normalized body text: ${emptyNormalizedInboundTotal}`,
+                    color: 0xed8936,
+                    fields: [
+                        { name: 'Metric', value: 'empty_normalized_inbound_total', inline: true },
+                        { name: 'Value', value: `${emptyNormalizedInboundTotal}`, inline: true },
+                        { name: 'Threshold', value: `>${emptyNormalizedThreshold}`, inline: true },
+                    ],
+                });
+            }
+        }
+
+        if (proposalMessageMismatchTotal > proposalMismatchThreshold) {
+            const dedupeKey = `${hourBucket}:${proposalMessageMismatchTotal}`;
+            if (this.lastOperationalAlert.proposalMessageMismatch !== dedupeKey) {
+                this.lastOperationalAlert.proposalMessageMismatch = dedupeKey;
+                await db.logActivity(
+                    'operational_alert',
+                    `proposal_message_mismatch_total=${proposalMessageMismatchTotal} exceeded threshold ${proposalMismatchThreshold} in last 1h`,
+                    {
+                        metric: 'proposal_message_mismatch_total',
+                        value: proposalMessageMismatchTotal,
+                        threshold: proposalMismatchThreshold,
+                        window: '1h',
+                    }
+                );
+                await discordService.notify({
+                    title: 'Operational Alert: Proposal/Message Case Mismatch',
+                    description: `Last 1h proposals whose trigger message points at a different case: ${proposalMessageMismatchTotal}`,
+                    color: 0xf56565,
+                    fields: [
+                        { name: 'Metric', value: 'proposal_message_mismatch_total', inline: true },
+                        { name: 'Value', value: `${proposalMessageMismatchTotal}`, inline: true },
+                        { name: 'Threshold', value: `>${proposalMismatchThreshold}`, inline: true },
                     ],
                 });
             }

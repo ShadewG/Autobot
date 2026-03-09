@@ -86,6 +86,38 @@ interface DeadEndCase {
   updated_at: string;
 }
 
+interface InboundLinkageGap {
+  message_id: number;
+  from_email: string;
+  subject: string;
+  thread_id: number | null;
+  case_id: number | null;
+  received_at: string;
+}
+
+interface EmptyNormalizedInbound {
+  message_id: number;
+  case_id: number | null;
+  from_email: string;
+  subject: string;
+  thread_id: number | null;
+  normalized_body_source: string | null;
+  attachment_count: number;
+  received_at: string;
+}
+
+interface ProposalMessageMismatch {
+  proposal_id: number;
+  proposal_case_id: number;
+  proposal_status: string;
+  trigger_message_id: number;
+  message_case_id: number;
+  proposal_agency_name: string | null;
+  message_agency_name: string | null;
+  subject: string;
+  message_received_at: string;
+}
+
 interface ReconciliationReport {
   generated_at: string;
   dropped_actions: { count: number; cases: DroppedAction[] };
@@ -102,6 +134,9 @@ interface ReconciliationReport {
     extraction_rate: number | null;
   };
   dead_end_cases: { count: number; cases: DeadEndCase[] };
+  inbound_linkage_gaps: { count: number; messages: InboundLinkageGap[] };
+  empty_normalized_inbound: { count: number; messages: EmptyNormalizedInbound[] };
+  proposal_message_mismatches: { count: number; proposals: ProposalMessageMismatch[] };
 }
 
 interface ReconciliationResponse {
@@ -182,6 +217,27 @@ const SECTIONS: SectionConfig[] = [
     description: "Inbound messages not matched to any case",
     icon: <FileWarning className="h-4 w-4" />,
     getCount: (r) => r.orphaned_inbound,
+  },
+  {
+    key: "inbound_linkage_gaps",
+    title: "Inbound Linkage Gaps",
+    description: "Recent inbound messages with no case, thread, proposal, or run linkage",
+    icon: <FileWarning className="h-4 w-4" />,
+    getCount: (r) => r.inbound_linkage_gaps.count,
+  },
+  {
+    key: "empty_normalized_inbound",
+    title: "Empty Normalized Inbound",
+    description: "Recent inbound messages that normalized to empty text",
+    icon: <AlertTriangle className="h-4 w-4" />,
+    getCount: (r) => r.empty_normalized_inbound.count,
+  },
+  {
+    key: "proposal_message_mismatches",
+    title: "Proposal / Message Mismatch",
+    description: "Proposal trigger message points at a different case than the proposal",
+    icon: <ShieldAlert className="h-4 w-4" />,
+    getCount: (r) => r.proposal_message_mismatches.count,
   },
 ];
 
@@ -329,6 +385,12 @@ function SectionDetail({
           count={report.orphaned_inbound}
         />
       );
+    case "inbound_linkage_gaps":
+      return <InboundLinkageGapsDetail items={report.inbound_linkage_gaps.messages} />;
+    case "empty_normalized_inbound":
+      return <EmptyNormalizedInboundDetail items={report.empty_normalized_inbound.messages} />;
+    case "proposal_message_mismatches":
+      return <ProposalMessageMismatchDetail items={report.proposal_message_mismatches.proposals} />;
     default:
       return null;
   }
@@ -426,6 +488,79 @@ function UnanalyzedInboundDetail({ items }: { items: UnanalyzedMessage[] }) {
           <span className="text-muted-foreground">
             {formatRelativeTime(item.created_at)}
           </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InboundLinkageGapsDetail({ items }: { items: InboundLinkageGap[] }) {
+  if (items.length === 0) return <EmptyMessage message="No recent inbound linkage gaps found." />;
+  return (
+    <div className="space-y-2">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-center justify-between rounded-md border border-border/50 px-3 py-2 text-xs">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <span className="font-mono text-muted-foreground">#{item.message_id}</span>
+            <span className="text-muted-foreground truncate max-w-[240px]">{item.from_email}</span>
+            <span className="text-muted-foreground truncate max-w-[280px]">{item.subject || "(no subject)"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {item.thread_id ? <Badge variant="outline" className="text-[10px]">thread #{item.thread_id}</Badge> : null}
+            <span className="text-muted-foreground">{formatRelativeTime(item.received_at)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyNormalizedInboundDetail({ items }: { items: EmptyNormalizedInbound[] }) {
+  if (items.length === 0) return <EmptyMessage message="All recent inbound messages normalized correctly." />;
+  return (
+    <div className="space-y-2">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-center justify-between rounded-md border border-border/50 px-3 py-2 text-xs">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <span className="font-mono text-muted-foreground">#{item.message_id}</span>
+            <CaseLink caseId={item.case_id} />
+            <span className="text-muted-foreground truncate max-w-[200px]">{item.from_email}</span>
+            <span className="text-muted-foreground truncate max-w-[260px]">{item.subject || "(no subject)"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-[10px]">
+              {item.normalized_body_source || "empty"}
+            </Badge>
+            {item.attachment_count > 0 ? (
+              <Badge variant="outline" className="text-[10px]">
+                {item.attachment_count} attachment{item.attachment_count === 1 ? "" : "s"}
+              </Badge>
+            ) : null}
+            <span className="text-muted-foreground">{formatRelativeTime(item.received_at)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProposalMessageMismatchDetail({ items }: { items: ProposalMessageMismatch[] }) {
+  if (items.length === 0) return <EmptyMessage message="No proposal/message case mismatches found." />;
+  return (
+    <div className="space-y-2">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-center justify-between rounded-md border border-border/50 px-3 py-2 text-xs">
+          <div className="flex items-center gap-3 overflow-hidden">
+            <span className="font-mono text-muted-foreground">P#{item.proposal_id}</span>
+            <CaseLink caseId={item.proposal_case_id} />
+            <span className="text-muted-foreground">vs</span>
+            <CaseLink caseId={item.message_case_id} />
+            <span className="text-muted-foreground truncate max-w-[260px]">{item.subject || "(no subject)"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="text-[10px]">{item.proposal_status}</Badge>
+            <span className="text-muted-foreground">{formatRelativeTime(item.message_received_at)}</span>
+          </div>
         </div>
       ))}
     </div>

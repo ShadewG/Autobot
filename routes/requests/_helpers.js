@@ -4,6 +4,7 @@ const actionValidator = require('../../services/action-validator');
 const logger = require('../../services/logger');
 const triggerDispatch = require('../../services/trigger-dispatch-service');
 const { cleanEmailBody, htmlToPlainText } = require('../../lib/email-cleaner');
+const { getCanonicalMessageText } = require('../../lib/message-normalization');
 const { resolveReviewState } = require('../../lib/resolve-review-state');
 const { normalizePortalUrl, isSupportedPortalUrl } = require('../../utils/portal-utils');
 const {
@@ -103,8 +104,9 @@ async function generateOutcomeSummary(caseId, caseData, closeInstruction) {
             parts.push(`Fee: $${caseData.fee_quote_jsonb.amount}`);
         }
 
-        if (lastInbound?.body_text) {
-            const preview = lastInbound.body_text.substring(0, 300);
+        const lastInboundBody = getCanonicalMessageText(lastInbound);
+        if (lastInboundBody) {
+            const preview = lastInboundBody.substring(0, 300);
             parts.push(`Last agency response: ${preview}`);
         }
 
@@ -1015,8 +1017,7 @@ function toRequestDetail(caseData) {
  * Includes cleaned body (boilerplate removed) and raw_body (original)
  */
 function toThreadMessage(message, attachments = [], caseData = null) {
-    // Prefer body_text; fall back to body_html converted to plain text
-    const sourceBody = message.body_text || (message.body_html ? htmlToPlainText(message.body_html) : '');
+    const sourceBody = getCanonicalMessageText(message) || (message.body_html ? htmlToPlainText(message.body_html) : '');
     const rawBody = normalizeThreadBody(sourceBody, caseData);
     const cleanedBody = cleanEmailBody(rawBody);
     const timestamp = message.sent_at || message.received_at || message.created_at;
