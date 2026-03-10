@@ -2,9 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { db } = require('./_helpers');
 const { resolveReviewState, resolveControlState } = require('../requests/_helpers');
+const { evaluateImportAutoDispatchSafety } = require('../../utils/request-normalization');
 
 const STUCK_CASES_CANDIDATE_SQL = `
-    SELECT c.id, c.agency_name, c.state, c.status, c.pause_reason, c.substatus, c.requires_human, c.updated_at
+    SELECT c.id, c.notion_page_id, c.agency_name, c.agency_email, c.portal_url, c.state, c.status, c.pause_reason, c.substatus,
+           c.requires_human, c.updated_at, c.additional_details, c.import_warnings, c.case_name, c.subject_name
     FROM cases c
     WHERE c.status IN ('needs_human_review', 'needs_phone_call', 'needs_contact_info', 'needs_human_fee_approval')
       AND NOT EXISTS (
@@ -27,9 +29,37 @@ const STUCK_CASES_CANDIDATE_SQL = `
       AND COALESCE(c.agency_name, '') NOT LIKE 'Synthetic %'
 `;
 
+function hasImportSafetyContext(row = {}) {
+    return Boolean(
+        String(row.notion_page_id || '').trim() ||
+        (Array.isArray(row.import_warnings) && row.import_warnings.length > 0) ||
+        String(row.pause_reason || '').trim().toUpperCase() === 'IMPORT_REVIEW' ||
+        /imported case/i.test(String(row.substatus || ''))
+    );
+}
+
 function normalizeStuckCases(rows = []) {
     return rows
         .map((row) => {
+            const importSafety = evaluateImportAutoDispatchSafety({
+                caseName: row.case_name,
+                subjectName: row.subject_name,
+                agencyName: row.agency_name,
+                state: row.state,
+                agencyEmail: row.agency_email,
+                portalUrl: row.portal_url,
+                additionalDetails: row.additional_details,
+                importWarnings: row.import_warnings,
+            });
+            if (importSafety.shouldBlockAutoDispatch && hasImportSafetyContext(row)) {
+                return {
+                    ...row,
+                    status: 'needs_human_review',
+                    pause_reason: 'IMPORT_REVIEW',
+                    review_state: 'IDLE',
+                    control_state: 'BLOCKED',
+                };
+            }
             const reviewState = resolveReviewState({
                 caseData: row,
                 activeProposal: null,
