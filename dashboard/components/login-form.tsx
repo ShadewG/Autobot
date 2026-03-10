@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "./auth-provider";
 
 export function LoginForm() {
-  const { login, error } = useAuth();
+  const { login, error, redirectToPortal } = useAuth();
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -77,11 +77,19 @@ export function LoginForm() {
         )}
 
         <button
+          type="button"
+          onClick={redirectToPortal}
+          className="w-full h-9 text-xs font-medium uppercase tracking-wider border border-border text-foreground hover:bg-card transition-colors"
+        >
+          Continue with Portal Access
+        </button>
+
+        <button
           type="submit"
           disabled={submitting}
           className="w-full h-9 text-xs font-medium uppercase tracking-wider bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          {submitting ? "..." : "Sign in"}
+          {submitting ? "..." : "Sign in with Local Account"}
         </button>
       </form>
     </div>
