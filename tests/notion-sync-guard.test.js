@@ -4,6 +4,7 @@ const sinon = require('sinon');
 const db = require('../services/database');
 const aiService = require('../services/ai-service');
 const notionService = require('../services/notion-service');
+const pdContactService = require('../services/pd-contact-service');
 const errorTrackingService = require('../services/error-tracking-service');
 
 describe('Notion sync guards', function () {
@@ -20,6 +21,20 @@ describe('Notion sync guards', function () {
     );
 
     assert.strictEqual(propertyStub.called, false);
+  });
+
+  it('times out imported agency contact lookup instead of hanging sync', async function () {
+    sinon.stub(pdContactService, 'lookupContact').returns(new Promise(() => {}));
+
+    const started = Date.now();
+    const result = await notionService.lookupImportedAgencyContact(
+      "Boone County Sheriff's Office",
+      'WV',
+      { timeoutMs: 25 }
+    );
+
+    assert.strictEqual(result, null);
+    assert.ok(Date.now() - started < 500);
   });
 
   it('tracks fetchCasesWithStatus failures with status context', async function () {

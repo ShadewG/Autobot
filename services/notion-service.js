@@ -461,6 +461,28 @@ const POLICE_DEPARTMENT_FIELD_SPECS = [
 ];
 
 class NotionService {
+    async lookupImportedAgencyContact(agencyName, location, { timeoutMs = 20000 } = {}) {
+        if (!agencyName) return null;
+
+        const timeoutSentinel = Symbol('import-contact-timeout');
+        try {
+            const result = await Promise.race([
+                pdContactService.lookupContact(agencyName, location),
+                new Promise((resolve) => setTimeout(() => resolve(timeoutSentinel), timeoutMs)),
+            ]);
+
+            if (result === timeoutSentinel) {
+                console.warn(`[import] pd-contact lookup timed out for "${agencyName}" after ${timeoutMs}ms`);
+                return null;
+            }
+
+            return result || null;
+        } catch (error) {
+            console.warn(`pd-contact lookup failed for "${agencyName}": ${error.message}`);
+            return null;
+        }
+    }
+
     hasConcreteImportedAgencyIdentity(caseData = {}) {
         const agencyName = normalizeNotionText(caseData.agency_name || '');
         const hasTrustedDeliveryPath = Boolean(
@@ -1130,7 +1152,7 @@ class NotionService {
                 let pdContactHandled = false;
                 if (enrichedCase.agency_name) {
                     try {
-                        const pdResult = await pdContactService.lookupContact(
+                        const pdResult = await this.lookupImportedAgencyContact(
                             enrichedCase.agency_name,
                             enrichedCase.state || enrichedCase.incident_location
                         );
@@ -3516,11 +3538,12 @@ If you cannot find an email, return: {"email": null, "confidence": "low", "reaso
 
             // Step 5: Firecrawl fallback — ONLY if still missing portal_url or agency_email
             if ((!notionCase.portal_url || !notionCase.agency_email) && notionCase.agency_name) {
-                try {
+                    try {
                     console.log(`[import] Missing ${!notionCase.portal_url ? 'portal' : ''}${!notionCase.portal_url && !notionCase.agency_email ? '+' : ''}${!notionCase.agency_email ? 'email' : ''}, trying Firecrawl...`);
-                    const pdResult = await pdContactService.lookupContact(
+                    const pdResult = await this.lookupImportedAgencyContact(
                         notionCase.agency_name,
-                        notionCase.state || notionCase.incident_location
+                        notionCase.state || notionCase.incident_location,
+                        { timeoutMs: 20000 }
                     );
                     if (pdResult) {
                         if (pdResult.portal_url && !notionCase.portal_url) {
